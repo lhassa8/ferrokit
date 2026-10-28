@@ -1,6 +1,7 @@
-//! CSV browser: the M2 demo. A real NSTableView inside an Iced app, with an
+//! CSV browser: the M2/M3 demo. A real NSTableView inside an Iced app, with an
 //! Iced filter field, an Iced dropdown that opens over the table, a details
-//! modal, and File → Open through a native sheet.
+//! modal, File → Open through a native sheet, and a native notes editor
+//! (NSTextView: spell check, IME, find, undo) for the selected record.
 //!
 //!   cargo run --release -p iced-appkit --example csv_browser [file.csv]
 //!
@@ -13,6 +14,7 @@ use std::time::{Duration, Instant};
 use iced::widget::{button, center, column, container, opaque, pick_list, row, stack, text, text_input};
 use iced::{Color, Element, Length, Point, Size, Subscription, Task, Theme, window};
 use iced_appkit::table::{Column, Sort, TableModel};
+use iced_appkit::text::TextModel;
 use iced_appkit::{Event, ViewId, host};
 
 const FILTER: &str = "filter";
@@ -66,6 +68,8 @@ enum Message {
     Sorted(Sort),
     Toggled(usize, String, bool),
     CloseDetails,
+    Selected(Vec<usize>),
+    NotesChanged(String),
     Open,
     Loaded(Result<(String, Vec<Vec<String>>, Duration), String>),
     Auto(u32),
@@ -82,7 +86,14 @@ struct App {
     error: Option<String>,
     /// Each data set gets a new table (its columns differ).
     next_table: u64,
+    notes: TextModel,
+    /// Notes per record id, and the record the editor shows.
+    notes_by_record: std::collections::HashMap<usize, String>,
+    notes_for: Option<usize>,
 }
+
+const NOTES: ViewId = ViewId(1_000);
+const NO_RECORD: &str = "Select a row to write notes about it.";
 
 thread_local! {
     /// A path chosen in the Open panel, picked up on the next native event.
@@ -101,6 +112,14 @@ impl App {
             filter_time: Duration::ZERO,
             error: None,
             next_table: 1,
+            notes: {
+                let notes = TextModel::new(NOTES, NO_RECORD);
+                notes.set_editable(false);
+                notes.set_font(None, 13.0);
+                notes
+            },
+            notes_by_record: std::collections::HashMap::new(),
+            notes_for: None,
         };
         (app, Task::none())
     }
@@ -138,6 +157,12 @@ impl App {
             Message::Sorted(sort) => self.sort = Some(sort),
             Message::Toggled(row, column, value) => self.toggle(row, &column, value),
             Message::CloseDetails => self.details = None,
+            Message::Selected(rows) => self.show_notes(rows.first().copied()),
+            Message::NotesChanged(text) => {
+                if let Some(id) = self.notes_for {
+                    self.notes_by_record.insert(id, text);
+                }
+            }
             Message::Open => open_panel(),
             Message::Auto(step) => return self.auto(step),
         }
@@ -180,6 +205,25 @@ impl App {
         self.error = None;
     }
 
+    /// Points the notes editor at a record (by model row), or at nothing.
+    fn show_notes(&mut self, row: Option<usize>) {
+        let record = row.and_then(|r| self.model.as_ref()?.rows().get(r).map(|rec| rec.id));
+        if record == self.notes_for {
+            return;
+        }
+        self.notes_for = record;
+        match record {
+            Some(id) => {
+                self.notes.set_text(self.notes_by_record.get(&id).map_or("", String::as_str));
+                self.notes.set_editable(true);
+            }
+            None => {
+                self.notes.set_text(NO_RECORD);
+                self.notes.set_editable(false);
+            }
+        }
+    }
+
     fn apply_filter(&mut self) {
         let (Some(data), Some(model)) = (&self.data, &self.model) else { return };
         let t = Instant::now();
@@ -196,6 +240,7 @@ impl App {
         };
         let rows: Vec<Record> = data.records.iter().filter(|r| matches(r)).cloned().collect();
         model.set_rows(rows);
+        self.show_notes(None);
         self.filter_time = t.elapsed();
     }
 
@@ -238,10 +283,17 @@ impl App {
             }
             3 => {
                 self.details = None;
+                let top = self.model.as_ref().and_then(|m| m.selection().first().copied());
+                self.show_notes(top);
+                self.notes.replace_selection("Call the customer about delivery. Recieved twice?");
+                next(800)
+            }
+            4 => {
+                eprintln!("[demo] notes for {:?}: {:?}", self.notes_for, self.notes_by_record.get(&self.notes_for.unwrap_or(usize::MAX)));
                 next(500)
             }
             _ => {
-                eprintln!("[demo] tour done");
+                eprintln!("[demo] tour done ({} notes)", self.notes_by_record.len());
                 Task::none()
             }
         }
@@ -281,13 +333,25 @@ impl App {
         };
         let table: Element<'_, Message> = match &self.model {
             Some(model) => iced_appkit::table(model)
+                .on_select(Message::Selected)
                 .on_activate(Message::Activated)
                 .on_sort(Message::Sorted)
                 .on_toggle(Message::Toggled)
                 .into(),
             None => center(text("Loading…")).into(),
         };
-        let base = column![toolbar, table, text(status).size(12)].spacing(10).padding(14);
+        let notes_title = match (self.notes_for, &self.data) {
+            (Some(id), Some(data)) => format!("Notes · {} {}", data.headers.first().map_or("", String::as_str), data.records[id].fields.first().map_or("", String::as_str)),
+            _ => "Notes".to_string(),
+        };
+        let notes = column![
+            text(notes_title).size(13),
+            iced_appkit::text_editor(&self.notes).on_change(Message::NotesChanged),
+            text(format!("{} records with notes", self.notes_by_record.values().filter(|n| !n.is_empty()).count())).size(11),
+        ]
+        .spacing(6)
+        .width(280);
+        let base = column![toolbar, row![table, notes].spacing(10), text(status).size(12)].spacing(10).padding(14);
         let content: Element<'_, Message> = match (self.details, &self.data, &self.model) {
             (Some(row), Some(data), Some(model)) => {
                 let record = model.rows().get(row).cloned();

@@ -10,7 +10,7 @@ publish.workspace = true
 [dependencies]
 raw-window-handle = "0.6"
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSArray", "NSDictionary", "NSGeometry", "NSIndexSet", "NSKeyValueObserving", "NSSortDescriptor", "NSNotification", "NSObject", "NSOperation", "NSString"] }
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-core-foundation", "objc2-quartz-core", "NSAppearance", "NSApplication", "NSBitmapImageRep", "NSButton", "NSCell", "NSColor", "NSColorSpace", "NSControl", "NSEvent", "NSGraphics", "NSGraphicsContext", "NSImageRep", "NSMenu", "NSMenuItem", "NSParagraphStyle", "NSResponder", "NSScrollView", "NSTableColumn", "NSTableView", "NSText", "NSTextField", "NSUserInterfaceItemIdentification", "NSView", "NSWindow"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSArray", "NSAttributedString", "NSDictionary", "NSGeometry", "NSIndexSet", "NSKeyValueObserving", "NSRange", "NSSortDescriptor", "NSUndoManager", "NSNotification", "NSObject", "NSOperation", "NSString"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-core-foundation", "objc2-quartz-core", "NSAppearance", "NSApplication", "NSBitmapImageRep", "NSButton", "NSCell", "NSColor", "NSColorSpace", "NSControl", "NSEvent", "NSGraphics", "NSGraphicsContext", "NSImageRep", "NSMenu", "NSMenuItem", "NSParagraphStyle", "NSResponder", "NSScrollView", "NSTableColumn", "NSTableView", "NSFont", "NSText", "NSTextContainer", "NSTextField", "NSTextInputClient", "NSTextView", "NSUserInterfaceItemIdentification", "NSView", "NSWindow"] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "CFRunLoop", "CFDate"] }
 block2 = "0.6"

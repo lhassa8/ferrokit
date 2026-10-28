@@ -153,3 +153,15 @@ pub fn make_first_responder_raw(id: ViewId) -> bool {
     })
     .unwrap_or(false)
 }
+
+/// Posts a key-down with explicit modifier flags (e.g. Control for Ctrl-Tab).
+pub fn post_key_with(chars: &str, key_code: u16, flags: NSEventModifierFlags) {
+    let Some(window_number) = with_host(|h| h.content.window().map(|w| w.windowNumber())).flatten() else { return };
+    let chars = objc2_foundation::NSString::from_str(chars);
+    let event = NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+        NSEventType::KeyDown, NSPoint::ZERO, flags, 0.0, window_number, None, &chars, &chars, false, key_code,
+    );
+    if let Some(event) = event {
+        NSApplication::sharedApplication(mtm()).postEvent_atStart(&event, false);
+    }
+}

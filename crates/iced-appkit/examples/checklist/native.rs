@@ -5,7 +5,7 @@ use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
-    NSButton, NSControlTextEditingDelegate, NSColor, NSFont, NSScrollView, NSTableColumn, NSTableView, NSTableViewDataSource, NSTableViewDelegate,
+    NSButton, NSControlTextEditingDelegate, NSColor, NSScrollView, NSTableColumn, NSTableView, NSTableViewDataSource, NSTableViewDelegate,
     NSTableViewStyle, NSTextAlignment, NSTextField, NSTextView, NSUserInterfaceItemIdentification, NSView,
 };
 use objc2_foundation::{NSInteger, NSString};
@@ -87,18 +87,6 @@ pub fn mount_table(id: u64, rows: NSInteger, keep: &mut Keep) {
     scroll.setDocumentView(Some(&table));
     host::mount(ViewId(id), Retained::into_super(scroll));
     keep.0.push(Retained::into_super(source));
-}
-
-pub fn mount_text(id: u64, initial: &str) {
-    let mtm = MainThreadMarker::new().unwrap();
-    let scroll = NSTextView::scrollableTextView(mtm);
-    if let Some(text) = scroll.documentView().and_then(|v| v.downcast::<NSTextView>().ok()) {
-        text.setRichText(false);
-        text.setFont(Some(&NSFont::systemFontOfSize(14.0)));
-        text.setString(&NSString::from_str(initial));
-        text.setAllowsUndo(true);
-    }
-    host::mount(ViewId(id), Retained::into_super(scroll));
 }
 
 pub fn mount_button(id: u64, title: &str) {
@@ -301,4 +289,84 @@ pub fn ax_dump(object: &objc2::runtime::AnyObject, depth: usize, max_depth: usiz
             }
         }
     }
+}
+
+/// Drives the editor's NSTextInputClient exactly as an input method does:
+/// compose `marked`, report where the candidate window would go, then
+/// commit `committed`. Returns (candidate rect on screen, text view's screen rect).
+pub fn ime_compose(view: &NSTextView, marked: &str) -> (objc2_foundation::NSRect, objc2_foundation::NSRect) {
+    use objc2_foundation::{NSRange, NSRect};
+    let not_found = NSRange::new(usize::MAX as i64 as usize, 0);
+    let marked = NSString::from_str(marked);
+    let length = marked.length();
+    // SAFETY: NSTextInputClient methods with valid ranges.
+    unsafe {
+        let () = msg_send![view, setMarkedText: &*marked, selectedRange: NSRange::new(length, 0), replacementRange: not_found];
+        let range: NSRange = msg_send![view, markedRange];
+        let rect: NSRect = msg_send![view, firstRectForCharacterRange: NSRange::new(range.location + range.length, 0), actualRange: std::ptr::null_mut::<NSRange>()];
+        let window = view.window().unwrap();
+        let in_window = view.convertRect_toView(view.visibleRect(), None);
+        (rect, window.convertRectToScreen(in_window))
+    }
+}
+
+pub fn ime_commit(view: &NSTextView, committed: &str) {
+    use objc2_foundation::NSRange;
+    let not_found = NSRange::new(usize::MAX as i64 as usize, 0);
+    // SAFETY: NSTextInputClient insertText with "no replacement range".
+    unsafe {
+        let () = msg_send![view, insertText: &*NSString::from_str(committed), replacementRange: not_found];
+    }
+}
+
+/// The text view's context menu for a right-click on `word` (titles).
+pub fn context_menu_for_word(view: &NSTextView, word: &str) -> Vec<String> {
+    use objc2_app_kit::{NSEvent, NSEventModifierFlags, NSEventType};
+    use objc2_foundation::{NSPoint, NSRange, NSRect};
+    let Some(window) = view.window() else { return Vec::new() };
+    let text = view.string().to_string();
+    let Some(byte_index) = text.find(word) else { return Vec::new() };
+    let location = text[..byte_index].encode_utf16().count();
+    // SAFETY: NSTextInputClient geometry query.
+    let screen: NSRect = unsafe {
+        msg_send![view, firstRectForCharacterRange: NSRange::new(location + word.len() / 2, 1), actualRange: std::ptr::null_mut::<NSRange>()]
+    };
+    let w = window.convertRectFromScreen(screen);
+    let point = NSPoint::new(w.origin.x + w.size.width / 2.0, w.origin.y + w.size.height / 2.0);
+    let Some(event) = NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+        NSEventType::RightMouseDown, point, NSEventModifierFlags::empty(), 0.0, window.windowNumber(), None, 0, 1, 1.0,
+    ) else {
+        return Vec::new();
+    };
+    let Some(menu) = view.menuForEvent(&event) else { return Vec::new() };
+    (0..menu.numberOfItems()).filter_map(|i| menu.itemAtIndex(i)).map(|item| item.title().to_string()).collect()
+}
+
+/// Whether the system spell checker flags `word` in English. (With
+/// automatic language detection, one isolated word can be guessed as another
+/// language and pass, so the language is given.)
+pub fn is_misspelled(word: &str) -> bool {
+    let checker = objc2_app_kit::NSSpellChecker::sharedSpellChecker();
+    let mut count: isize = 0;
+    // SAFETY: documented NSSpellChecker method; wordCount out-pointer is valid.
+    let range: objc2_foundation::NSRange = unsafe {
+        msg_send![&*checker, checkSpellingOfString: &*NSString::from_str(word), startingAt: 0isize,
+            language: &*NSString::from_str("en"), wrap: false, inSpellDocumentWithTag: 0isize, wordCount: &mut count]
+    };
+    range.length > 0
+}
+
+/// Accessibility role and value of an editor's text view.
+pub fn text_accessibility(view: &NSTextView) -> (String, String) {
+    use objc2::runtime::AnyObject;
+    let get = |name: &str| -> String {
+        let v: Option<Retained<AnyObject>> = objc2::exception::catch(std::panic::AssertUnwindSafe(|| unsafe {
+            msg_send![view, accessibilityAttributeValue: &*NSString::from_str(name)]
+        }))
+        .ok()
+        .flatten();
+        let d: Option<Retained<NSString>> = v.and_then(|v| unsafe { msg_send![&*v, description] });
+        d.map(|d| d.to_string()).unwrap_or_default()
+    };
+    (get("AXRole"), get("AXValue"))
 }

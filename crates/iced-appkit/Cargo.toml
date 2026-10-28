@@ -14,7 +14,7 @@ iced = { version = "0.14", features = ["advanced", "image"] }
 
 [dev-dependencies]
 objc2 = { version = "0.6", features = ["exception"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSIndexSet", "NSNotification", "NSRange", "NSSortDescriptor", "NSString", "NSURL"] }
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSButton", "NSClipView", "NSColor", "NSControl", "NSFont", "NSMenu", "NSMenuItem", "NSOpenPanel", "NSPanel", "NSResponder", "NSSavePanel", "NSScrollView", "NSTableColumn", "NSTableView", "NSText", "NSTextField", "NSTextView", "NSUserInterfaceItemIdentification", "NSView", "NSWindow", "objc2-core-foundation"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSGeometry", "NSIndexSet", "NSNotification", "NSRange", "NSSortDescriptor", "NSString", "NSURL"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSButton", "NSClipView", "NSColor", "NSControl", "NSFont", "NSMenu", "NSMenuItem", "NSOpenPanel", "NSPanel", "NSResponder", "NSSavePanel", "NSEvent", "NSGraphicsContext", "NSScrollView", "NSSpellChecker", "NSTableColumn", "NSTableView", "NSText", "NSTextField", "NSTextView", "NSUserInterfaceItemIdentification", "NSView", "NSWindow", "objc2-core-foundation"] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "CFDate", "CFRunLoop"] }
 block2 = "0.6"

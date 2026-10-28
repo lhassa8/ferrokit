@@ -25,6 +25,7 @@ use iced::widget::{
 };
 use iced::{Color, Element, Length, Point, Rectangle, Size, Subscription, Task, Theme, Vector, window};
 use iced_appkit::table::{Column, Sort, TableModel};
+use iced_appkit::text::TextModel;
 use iced_appkit::{Event, NativeSlot, ViewId, host};
 
 const TESTS: &[(u8, &str)] = &[
@@ -40,8 +41,11 @@ const TESTS: &[(u8, &str)] = &[
     (13, "Dark Mode"),
     (14, "Teardown"),
     (15, "Table features"),
+    (10, "Japanese input"),
+    (11, "Spell check"),
+    (16, "Text editor features"),
 ];
-const AUTOMATED: &[u8] = &[1, 2, 3, 4, 5, 6, 7, 8, 9, 13, 14, 15];
+const AUTOMATED: &[u8] = &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16];
 
 const T1_BUTTON: u64 = 10;
 const T2_LABELS: &[(u64, &str, (f32, f32, f32))] = &[
@@ -95,6 +99,12 @@ fn people(n: usize) -> Vec<Person> {
         })
         .collect()
 }
+const T10_TEXT: u64 = 100;
+const T11_TEXT: u64 = 110;
+const T16_A: u64 = 160;
+const T16_B: u64 = 161;
+const T16_INPUT: &str = "t16-input";
+const T11_INITIAL: &str = "This sentense has a speling error. Look up a word or translate it.";
 const T9_INITIAL: &str = "Select all of this, type over it, undo.";
 const SCROLLABLE: &str = "t6-scroll";
 const INPUT1: &str = "t8-input-1";
@@ -120,6 +130,9 @@ enum Message {
     TableActivate(usize),
     TableSort(Sort),
     TableToggle(usize, String, bool),
+    EditorChanged(u64, String),
+    EditorSelection(u64, std::ops::Range<usize>),
+    EditorComposition(u64, Option<String>),
 }
 
 struct App {
@@ -153,6 +166,10 @@ struct App {
     last_sort: Option<Sort>,
     last_toggle: Option<(usize, String, bool)>,
     t15_saved_selection: Vec<usize>,
+    editors: std::collections::HashMap<u64, TextModel>,
+    /// Editor events seen by the app: (editor, "changed: …" / "selection …" / "composition …").
+    editor_log: Vec<(u64, String)>,
+    t16_input: String,
 }
 
 fn env(name: &str) -> Option<String> {
@@ -231,6 +248,9 @@ impl App {
             last_sort: None,
             last_toggle: None,
             t15_saved_selection: Vec::new(),
+            editors: std::collections::HashMap::new(),
+            editor_log: Vec::new(),
+            t16_input: String::new(),
         };
         (app, Task::none())
     }
@@ -266,11 +286,17 @@ impl App {
         native::mount_table(T6_TABLE, 1000, &mut self.keep);
         native::mount_button(T6_BUTTON, "Native button in scroll");
         native::mount_table(T8_TABLE, 1000, &mut self.keep);
-        native::mount_text(T8_TEXT, "Native NSTextView (Tab leaves it)");
-        native::mount_text(T9_TEXT, T9_INITIAL);
+        let t8 = TextModel::new(ViewId(T8_TEXT), "Native NSTextView (Tab leaves it)");
+        t8.set_accepts_tab(false);
+        self.editors.insert(T8_TEXT, t8);
+        self.editors.insert(T9_TEXT, TextModel::new(ViewId(T9_TEXT), T9_INITIAL));
+        self.editors.insert(T10_TEXT, TextModel::new(ViewId(T10_TEXT), "Tokyo: "));
+        self.editors.insert(T11_TEXT, TextModel::new(ViewId(T11_TEXT), T11_INITIAL));
+        self.editors.insert(T16_A, TextModel::new(ViewId(T16_A), "Editor A"));
+        self.editors.insert(T16_B, TextModel::new(ViewId(T16_B), "Editor B"));
         native::mount_table(T9_TABLE, 1000, &mut self.keep);
         native::mount_table(T13_TABLE, 1000, &mut self.keep);
-        native::mount_text(T13_TEXT, "Native text view follows the appearance.");
+        self.editors.insert(T13_TEXT, TextModel::new(ViewId(T13_TEXT), "Native text view follows the appearance."));
         let rss = native::rss_mb();
         let big = TableModel::new(
             ViewId(T7_TABLE),
@@ -382,6 +408,9 @@ impl App {
                 }
             }
             Message::TableSelect(rows) => self.last_select = Some(rows),
+            Message::EditorChanged(id, text) => self.editor_log.push((id, format!("changed: {text}"))),
+            Message::EditorSelection(id, range) => self.editor_log.push((id, format!("selection {range:?}"))),
+            Message::EditorComposition(id, marked) => self.editor_log.push((id, format!("composition {marked:?}"))),
             Message::TableActivate(row) => self.last_activate = Some(row),
             Message::TableSort(sort) => self.last_sort = Some(sort),
             Message::TableToggle(row, column, value) => {
@@ -687,6 +716,152 @@ impl App {
                 self.record(7, pass, format!("{summary}; RSS during 10 s of scrolling {:.0} → {rss:.0} MB; {cells} cell views ever created", self.t7_rss));
                 done
             }
+            (10, 1) => {
+                let model = self.editors[&T10_TEXT].clone();
+                model.set_text("Tokyo: ");
+                model.set_selection(8..8);
+                host::focus(model.id());
+                self.editor_log.clear();
+                let (candidate, view_rect) = native::ime_compose(&model.text_view(), "とうきょう");
+                let inside = candidate.origin.x >= view_rect.origin.x
+                    && candidate.origin.x <= view_rect.origin.x + view_rect.size.width
+                    && candidate.origin.y >= view_rect.origin.y
+                    && candidate.origin.y <= view_rect.origin.y + view_rect.size.height;
+                self.record(10, model.composition().as_deref() == Some("とうきょう") && inside, format!(
+                    "composing: marked text {:?}; candidate-window anchor ({:.0}, {:.0}) inside the editor on screen: {inside}",
+                    model.composition(), candidate.origin.x, candidate.origin.y
+                ));
+                next(300)
+            }
+            (10, 2) => {
+                let events = self.events_for(T10_TEXT);
+                let ok = events.iter().any(|e| e == "composition Some(\"とうきょう\")") && !events.iter().any(|e| e.starts_with("changed"));
+                self.record(10, ok, format!("app saw the composition and no text change while composing: {events:?}"));
+                native::ime_commit(&self.editors[&T10_TEXT].text_view(), "東京");
+                next(300)
+            }
+            (10, 3) => {
+                let model = self.editors[&T10_TEXT].clone();
+                let events = self.events_for(T10_TEXT);
+                let ok = model.text() == "Tokyo: 東京"
+                    && events.iter().any(|e| e == "composition None")
+                    && events.iter().any(|e| e == "changed: Tokyo: 東京")
+                    && model.selection() == (13..13);
+                self.record(10, ok, format!("committed 東京: text {:?}, caret {:?} (bytes), events {events:?}", model.text(), model.selection()));
+                done
+            }
+            // Continuous spell checking runs asynchronously once the text is
+            // on screen: give it a moment before reading its results.
+            (11, 1) => next(1500),
+            (11, 2) => {
+                let model = self.editors[&T11_TEXT].clone();
+                let view = model.text_view();
+                let flagged = ["sentense", "speling"].map(native::is_misspelled);
+                let spelling = view.isContinuousSpellCheckingEnabled();
+                self.record(11, spelling && flagged == [true, true], format!("continuous spell checking {spelling}; 'sentense', 'speling' flagged {flagged:?}"));
+                let menu = native::context_menu_for_word(&view, "speling");
+                let suggests = menu.iter().any(|t| t == "spelling");
+                // Writing Tools appears only where Apple Intelligence is on.
+                let services: Vec<&str> = ["Look Up", "Translate", "Writing Tools", "Spelling and Grammar"]
+                    .into_iter()
+                    .filter(|want| menu.iter().any(|t| t.starts_with(want)))
+                    .collect();
+                self.record(11, suggests && services.contains(&"Spelling and Grammar"), format!("right-click 'speling': suggestions first {:?}; menu has {services:?}", &menu[..menu.len().min(3)]));
+                model.set_grammar_checking(true);
+                self.record(11, view.isGrammarCheckingEnabled(), "grammar checking can be turned on");
+                done
+            }
+            (16, 1) => {
+                let a = self.editors[&T16_A].clone();
+                self.editor_log.clear();
+                a.set_text("Hello");
+                a.set_selection(5..5);
+                let quiet = self.events_for(T16_A).is_empty() && !a.can_undo();
+                a.replace_selection(" wörld");
+                let replaced = a.text() == "Hello wörld" && a.selection() == (12..12);
+                self.record(16, quiet && replaced, format!("set_text/set_selection emit nothing and reset undo: {quiet}; replace_selection → {:?}, caret {:?}", a.text(), a.selection()));
+                next(200)
+            }
+            (16, 2) => {
+                let a = self.editors[&T16_A].clone();
+                let changed = self.events_for(T16_A).iter().any(|e| e == "changed: Hello wörld");
+                a.undo();
+                self.record(16, changed && a.text() == "Hello", format!("replace_selection emitted Changed: {changed}; undo → {:?}", a.text()));
+                // Typing goes to the focused editor; Tab inserts a tab there.
+                host::focus(a.id());
+                a.set_selection(5..5);
+                host::testing::post_key("\t", 48, false, false);
+                host::testing::post_key("A", 0, false, false);
+                next(250)
+            }
+            (16, 3) => {
+                let a = self.editors[&T16_A].clone();
+                self.record(16, a.text() == "Hello\tA", format!("Tab inserts a tab in the editor: {:?}", a.text()));
+                // Ctrl-Tab moves on to the next stop: editor B.
+                host::testing::post_key_with("\t", 48, objc2_app_kit::NSEventModifierFlags::Control);
+                next(250)
+            }
+            (16, 4) => {
+                let focus = host::focused_view();
+                self.record(16, focus == Some(ViewId(T16_B)), format!("Ctrl-Tab moves focus from A to B: {focus:?}"));
+                // Each editor has its own undo: type in B, ⌘Z in B undoes only B.
+                let b = self.editors[&T16_B].clone();
+                b.set_selection(8..8);
+                host::testing::post_key("!", 18, false, false);
+                next(250)
+            }
+            (16, 5) => {
+                host::testing::post_key("z", 6, true, false);
+                next(250)
+            }
+            (16, 6) => {
+                let (a, b) = (self.editors[&T16_A].text(), self.editors[&T16_B].text());
+                self.record(16, a == "Hello\tA" && b == "Editor B", format!("⌘Z in B undid B's edit only: A {a:?}, B {b:?}"));
+                // ⌘Z with the Iced input focused touches neither editor.
+                operation::focus(T16_INPUT).chain(after(200, Message::Step(16, 7)))
+            }
+            (16, 7) => {
+                host::testing::post_key("z", 6, true, false);
+                next(250)
+            }
+            (16, 8) => {
+                let (a, b) = (self.editors[&T16_A].text(), self.editors[&T16_B].text());
+                self.record(16, a == "Hello\tA" && b == "Editor B", format!("⌘Z with Iced focused: A {a:?}, B {b:?} unchanged"));
+                // Read-only: keys don't change the text, selection still works.
+                let a = self.editors[&T16_A].clone();
+                a.set_editable(false);
+                host::focus(a.id());
+                a.set_selection(0..0);
+                host::testing::post_key("x", 7, false, false);
+                next(250)
+            }
+            (16, 9) => {
+                let a = self.editors[&T16_A].clone();
+                self.record(16, a.text() == "Hello\tA" && !a.is_editable(), format!("read-only ignores typing: {:?}", a.text()));
+                a.set_editable(true);
+                // Find bar, font.
+                a.show_find();
+                a.set_font(Some("Menlo"), 15.0);
+                next(300)
+            }
+            (16, 10) => {
+                let a = self.editors[&T16_A].clone();
+                self.record(16, a.is_find_visible() && a.font_size() == Some(15.0), format!("find bar shown {}; font size {:?}", a.is_find_visible(), a.font_size()));
+                // A selection made by the user (AppKit) arrives in byte offsets.
+                a.set_text("a東京😀b");
+                self.editor_log.clear();
+                a.text_view().setSelectedRange(objc2_foundation::NSRange::new(3, 2));
+                next(250)
+            }
+            (16, 11) => {
+                let a = self.editors[&T16_A].clone();
+                let events = self.events_for(T16_A);
+                let ok = events.last().map(String::as_str) == Some("selection 7..11") && &a.text()[7..11] == "😀";
+                self.record(16, ok, format!("selecting 😀 (UTF-16 3+2) arrives as bytes: {events:?}"));
+                let (role, value) = native::text_accessibility(&a.text_view());
+                self.record(16, role == "AXTextArea" && value == a.text(), format!("accessibility: {role} with value {value:?}"));
+                done
+            }
             (15, 1) => {
                 let model = self.people.clone().unwrap();
                 let table = model.table_view();
@@ -808,6 +983,23 @@ impl App {
         }
     }
 
+    fn editor(&self, id: u64, height: u16) -> Element<'_, Message> {
+        iced_appkit::text_editor(&self.editors[&id])
+            .height(f32::from(height))
+            .on_change(move |t| Message::EditorChanged(id, t))
+            .on_selection(move |r| Message::EditorSelection(id, r))
+            .on_composition(move |m| Message::EditorComposition(id, m))
+            .into()
+    }
+
+    fn log_for(&self, id: u64) -> String {
+        self.editor_log.iter().rev().filter(|(e, _)| *e == id).take(4).map(|(_, l)| l.clone()).collect::<Vec<_>>().join("\n")
+    }
+
+    fn events_for(&self, id: u64) -> Vec<String> {
+        self.editor_log.iter().filter(|(e, _)| *e == id).map(|(_, l)| l.clone()).collect()
+    }
+
     fn slot(&self, id: u64, w: impl Into<Length>, h: impl Into<Length>) -> NativeSlot {
         let slot = NativeSlot::new(ViewId(id), w, h);
         // Not under buttons: an NSButton is transparent outside its bezel, so
@@ -899,14 +1091,14 @@ impl App {
                 text("Test 8: Tab order").size(22),
                 text_input("Iced input 1", &self.input1).id(INPUT1).on_input(Message::Input1),
                 self.slot(T8_TABLE, Length::Fill, 200).focusable(true),
-                self.slot(T8_TEXT, Length::Fill, 120).focusable(true),
+                self.editor(T8_TEXT, 120),
                 text_input("Iced input 2", &self.input2).id(INPUT2).on_input(Message::Input2),
             ]
             .spacing(12)
             .into(),
             9 => column![
                 text("Test 9: Shortcuts").size(22),
-                self.slot(T9_TEXT, Length::Fill, 120).focusable(true),
+                self.editor(T9_TEXT, 120),
                 self.slot(T9_TABLE, Length::Fill, 240).focusable(true),
             ]
             .spacing(12)
@@ -914,7 +1106,7 @@ impl App {
             13 => column![
                 text("Test 13: Dark Mode (Iced uses iced_appkit::theme::system())").size(22),
                 self.slot(T13_TABLE, Length::Fill, 240),
-                self.slot(T13_TEXT, Length::Fill, 120),
+                self.editor(T13_TEXT, 120),
             ]
             .spacing(12)
             .into(),
@@ -927,6 +1119,28 @@ impl App {
                 }
                 col.into()
             }
+            10 => column![
+                text("Test 10: Japanese input (try typing toukyou with a Japanese input source)").size(22),
+                self.editor(T10_TEXT, 160),
+                text(self.log_for(T10_TEXT)).size(12),
+            ]
+            .spacing(12)
+            .into(),
+            11 => column![
+                text("Test 11: Spell check (right-click a red-underlined word)").size(22),
+                self.editor(T11_TEXT, 160),
+            ]
+            .spacing(12)
+            .into(),
+            16 => column![
+                text("Test 16: Text editor features").size(22),
+                self.editor(T16_A, 140),
+                self.editor(T16_B, 140),
+                text_input("Iced input", &self.t16_input).id(T16_INPUT).on_input(Message::Input2),
+                text(self.log_for(T16_A)).size(12),
+            ]
+            .spacing(12)
+            .into(),
             15 => {
                 let mut col = column![
                     text("Test 15: Table features (sort, select, activate, toggle, columns)").size(22),

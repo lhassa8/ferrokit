@@ -12,6 +12,7 @@ mod keys;
 mod snapshot;
 pub mod sync;
 pub mod table;
+pub mod text;
 pub mod testing;
 
 pub use appearance::{Rgba, SystemColors, generation as appearance_generation, is_dark, system_colors};

@@ -2,7 +2,7 @@
 
 Real AppKit controls inside [Iced](https://iced.rs) 0.14 windows on macOS. Not imitations: an actual `NSTableView` in your Iced layout, so you get native scrolling, keyboard navigation, type-select, Dark Mode and VoiceOver for free.
 
-Status: **0.1.0-alpha.1**. macOS 15 or later, Iced 0.14. The table works; a native text editor (`NSTextView`) is next.
+Status: **0.1.0-alpha.2**. macOS 15 or later, Iced 0.14. Two widgets: a table (`NSTableView`) and a plain-text editor (`NSTextView`).
 
 ## Why
 
@@ -62,6 +62,21 @@ iced_appkit::table(&self.people)
 
 The model owns the native view, so keep it in your state. Create it once and update it in place with `set_rows`, `update_row`, `insert` and `remove`.
 
+## A text editor
+
+```rust
+use iced_appkit::text::TextModel;
+
+let notes = TextModel::new(ViewId(2), "Initial text");
+
+// in view():
+iced_appkit::text_editor(&self.notes)
+    .on_change(Message::NotesChanged)   // the whole text; not sent mid-IME
+    .on_composition(Message::Composing) // Some(marked text) while an IME composes
+```
+
+You get what a Mac text view does: Japanese/Chinese/Korean input with the candidate window at the caret, spell and grammar checking with suggestions, Look Up and Translate, the find bar (⌘F), undo, Dark Mode and VoiceOver. Each editor keeps its own undo history. Tab inserts a tab; Ctrl-Tab moves focus on (`set_accepts_tab(false)` makes plain Tab move on). Offsets in the API are UTF-8 byte ranges.
+
 ## Things to know
 
 - **Iced overlays and modals:**
@@ -74,7 +89,7 @@ The model owns the native view, so keep it in your state. Create it once and upd
 
 ## Examples
 
-- `cargo run --release -p iced-appkit --example csv_browser [file.csv]`: a CSV browser with filtering, sorting, a details modal and a native Open sheet.
+- `cargo run --release -p iced-appkit --example csv_browser [file.csv]`: a CSV browser with filtering, sorting, a details modal, a native Open sheet and a native notes editor.
 - `cargo run --release -p iced-appkit --example checklist`: the regression suite. Run with `CHECK=all` for the unattended checks.
 
 License: MIT OR Apache-2.0.
