@@ -1,0 +1,26 @@
+[package]
+name = "iced-appkit"
+version.workspace = true
+readme = "README.md"
+description = "Real AppKit views (NSTableView, NSTextView) inside Iced windows on macOS"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[package.metadata.docs.rs]
+default-target = "aarch64-apple-darwin"
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
+
+[dependencies]
+appkit-host = { path = "../appkit-host", version = "0.1.0" }
+iced = { version = "0.14", features = ["advanced", "image"] }
+
+[dev-dependencies]
+objc2 = { version = "0.6", features = ["exception"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSGeometry", "NSIndexSet", "NSNotification", "NSRange", "NSSortDescriptor", "NSString", "NSURL"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSButton", "NSClipView", "NSColor", "NSControl", "NSFont", "NSMenu", "NSMenuItem", "NSOpenPanel", "NSPanel", "NSResponder", "NSSavePanel", "NSEvent", "NSGraphicsContext", "NSScrollView", "NSSpellChecker", "NSTableColumn", "NSTableView", "NSText", "NSTextField", "NSTextView", "NSUserInterfaceItemIdentification", "NSView", "NSWindow", "objc2-core-foundation"] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "CFDate", "CFRunLoop"] }
+block2 = "0.6"

@@ -1,0 +1,39 @@
+# Runs on GitHub's macOS runners once the repository is pushed (not yet).
+# The checklist step drives a real window; hosted runners have a logged-in
+# GUI session, but posted-event checks are unverified there, so it doesn't
+# fail the build yet.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        # macos-15 is the supported minimum; macos-latest tracks the current release.
+        os: [macos-15, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Build (workspace and examples)
+        run: cargo build --release --workspace --examples
+      - name: Clippy
+        run: cargo clippy --release --workspace --examples -- -D warnings
+      - name: Unit tests
+        run: cargo test --workspace
+      - name: Docs
+        run: cargo doc --no-deps -p appkit-host -p iced-appkit
+        env:
+          RUSTDOCFLAGS: -D warnings
+      - name: Checklist (unattended)
+        continue-on-error: true
+        run: |
+          scripts/bundle-example.sh checklist
+          CHECK=all target/checklist.app/Contents/MacOS/checklist
+        timeout-minutes: 10
