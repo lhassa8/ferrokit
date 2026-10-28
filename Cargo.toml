@@ -10,7 +10,7 @@ iced = { version = "0.14", features = ["advanced", "image"] }
 raw-window-handle = "0.6"
 objc2 = "0.6"
 block2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSGeometry", "NSNotification", "NSObject", "NSString"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSGeometry", "NSNotification", "NSObject", "NSRange", "NSString"] }
 objc2-app-kit = { version = "0.3", default-features = false, features = [
     "std",
     "block2",
