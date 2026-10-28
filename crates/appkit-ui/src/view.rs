@@ -517,7 +517,7 @@ define_class!(
     #[thread_kind = MainThreadOnly]
     #[name = "AppKitUiAction"]
     #[ivars = Box<dyn Fn()>]
-    struct ActionTarget;
+    pub(crate) struct ActionTarget;
 
     impl ActionTarget {
         #[unsafe(method(fire:))]
@@ -539,6 +539,22 @@ impl ActionTarget {
 pub struct Button {
     title: String,
     action: Box<dyn Fn()>,
+    disabled: Option<Box<dyn Fn() -> bool>>,
+    default_action: bool,
+}
+
+impl Button {
+    /// Disables the button while `f` (reading signals) returns true.
+    pub fn disabled(mut self, f: impl Fn() -> bool + 'static) -> Self {
+        self.disabled = Some(Box::new(f));
+        self
+    }
+
+    /// Makes this the window's default button: blue, and Return presses it.
+    pub fn default_action(mut self) -> Self {
+        self.default_action = true;
+        self
+    }
 }
 
 impl View for Button {
@@ -548,8 +564,14 @@ impl View for Button {
         let button = unsafe {
             NSButton::buttonWithTitle_target_action(&NSString::from_str(&self.title), Some(&target), Some(sel!(fire:)), cx.mtm)
         };
+        if self.default_action {
+            button.setKeyEquivalent(&NSString::from_str("\r"));
+        }
         let (mut node, _) =
-            Node::leaf(cx, Retained::into_super(Retained::into_super(button)), (false, false), Size::default());
+            Node::leaf(cx, Retained::into_super(Retained::into_super(button.clone())), (false, false), Size::default());
+        if let Some(disabled) = self.disabled {
+            node.own(Effect::new(move || button.setEnabled(!disabled())));
+        }
         node.keep(Retained::into_super(target));
         node
     }
@@ -557,7 +579,7 @@ impl View for Button {
 
 /// A push button; `action` runs inside a batch.
 pub fn button(title: &str, action: impl Fn() + 'static) -> Button {
-    Button { title: title.into(), action: Box::new(action) }
+    Button { title: title.into(), action: Box::new(action), disabled: None, default_action: false }
 }
 
 /// A region whose content is rebuilt when the signals `f` reads change. If

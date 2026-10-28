@@ -6,13 +6,15 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use appkit_ui::{
-    Align, App, AppEvent, Effect, Identifiable, Signal, View, ViewExt, Window, batch, button, dynamic, effect_runs, for_each,
-    grid, hstack, label, later, layout_stats, layout_times_us, live_nodes, open, spacer, spawn, text, vstack, windows,
+    Align, App, AppEvent, Effect, Identifiable, Signal, View, ViewExt, Window, batch, button, checkbox, dynamic, effect_runs,
+    for_each, grid, hstack, label, later, layout_stats, layout_times_us, live_nodes, open, secure_field, spacer, spawn, text,
+    text_field, toggle, vstack, windows,
 };
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2_app_kit::{NSApplication, NSEventModifierFlags, NSTextField, NSView};
 use objc2_foundation::NSString;
+
 
 thread_local! {
     static FAILED: Cell<u32> = const { Cell::new(0) };
@@ -82,9 +84,9 @@ fn run_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     // Windows: both open; AppKit lists them in the Window menu.
     let ws = windows();
     let visible = ws.iter().filter(|w| w.isVisible()).count();
-    check("windows", ws.len() == 4 && visible == 4, format!("{} windows, {visible} visible", ws.len()));
+    check("windows", ws.len() == 5 && visible == 5, format!("{} windows, {visible} visible", ws.len()));
     let window_menu = menu_items(2);
-    let listed = ["First", "Second", "Views", "Layout"].iter().all(|t| window_menu.iter().any(|(title, _, _)| title == t));
+    let listed = ["First", "Second", "Views", "Layout", "Controls"].iter().all(|t| window_menu.iter().any(|(title, _, _)| title == t));
     check("window-menu-lists-windows", listed && app.windowsMenu().is_some(), format!("{:?}", window_menu.iter().map(|e| &e.0).collect::<Vec<_>>()));
     check("help-menu", app.helpMenu().is_some(), String::new());
 
@@ -470,6 +472,185 @@ fn layout_bench(events: Rc<RefCell<Vec<AppEvent>>>) {
             p(&resize, 50) / 1000.0, p(&resize, 95) / 1000.0, p(&upd, 50), p(&upd, 95), (p1 - p0) as f64 / 500.0
         ),
     );
+    controls_checks(events);
+}
+
+#[derive(Clone)]
+struct Ctrl {
+    name: Signal<String>,
+    pw: Signal<String>,
+    wifi: Signal<bool>,
+    remember: Signal<bool>,
+    submits: Signal<u32>,
+    saves: Signal<u32>,
+}
+
+thread_local! {
+    static CTRL: Ctrl = Ctrl {
+        name: Signal::new(String::new()),
+        pw: Signal::new(String::new()),
+        wifi: Signal::new(false),
+        remember: Signal::new(false),
+        submits: Signal::new(0),
+        saves: Signal::new(0),
+    };
+}
+
+fn controls_window() -> impl View {
+    let c = CTRL.with(Clone::clone);
+    let (submits, saves, name) = (c.submits.clone(), c.saves.clone(), c.name.clone());
+    let summary = c.clone();
+    vstack((
+        text_field(&c.name).placeholder("Your name").on_submit(move || submits.update(|n| *n += 1)),
+        secure_field(&c.pw).placeholder("Password"),
+        toggle("Wi-Fi", &c.wifi),
+        checkbox("Remember me", &c.remember),
+        button("Save", move || saves.update(|n| *n += 1)).disabled(move || name.with(String::is_empty)).default_action(),
+        label(move || {
+            format!(
+                "{} / {} chars / wifi {} / remember {}",
+                summary.name.get(),
+                summary.pw.with(String::len),
+                summary.wifi.get(),
+                summary.remember.get()
+            )
+        }),
+    ))
+    .padding(16.0)
+}
+
+/// The window's accessibility tree, flattened: (role, subrole, label/title)
+/// for every element under the content view, as VoiceOver sees it. On
+/// macOS 27, AppKit's text fields and checkboxes host SwiftUI internally, so
+/// the AX element is a child of the NSView, not the view itself.
+fn ax_tree(window: &objc2_app_kit::NSWindow) -> Vec<(String, String, String)> {
+    fn s(obj: &objc2::runtime::AnyObject, sel: &str) -> String {
+        let value: Option<Retained<objc2::runtime::AnyObject>> = unsafe {
+            match sel {
+                "role" => objc2::msg_send![obj, accessibilityRole],
+                "subrole" => objc2::msg_send![obj, accessibilitySubrole],
+                "label" => objc2::msg_send![obj, accessibilityLabel],
+                _ => objc2::msg_send![obj, accessibilityTitle],
+            }
+        };
+        value.and_then(|v| v.downcast::<NSString>().ok()).map(|s| s.to_string()).unwrap_or_default()
+    }
+    fn walk(obj: &objc2::runtime::AnyObject, out: &mut Vec<(String, String, String)>, depth: usize) {
+        let label = { let l = s(obj, "label"); if l.is_empty() { s(obj, "title") } else { l } };
+        out.push((s(obj, "role"), s(obj, "subrole"), label));
+        if depth > 12 {
+            return;
+        }
+        let kids: Option<Retained<objc2_foundation::NSArray<objc2::runtime::AnyObject>>> =
+            unsafe { objc2::msg_send![obj, accessibilityChildren] };
+        if let Some(kids) = kids {
+            for k in kids.iter() {
+                walk(&k, out, depth + 1);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(&window.contentView().unwrap(), &mut out, 0);
+    out
+}
+
+fn has_ax(tree: &[(String, String, String)], role: &str, subrole: &str, label: &str) -> bool {
+    tree.iter().any(|(r, s, l)| r == role && (subrole.is_empty() || s == subrole) && (label.is_empty() || l == label))
+}
+
+fn post_edit(field: &NSTextField, text: &str) {
+    field.setStringValue(&NSString::from_str(text));
+    unsafe {
+        objc2_foundation::NSNotificationCenter::defaultCenter()
+            .postNotificationName_object(objc2_app_kit::NSControlTextDidChangeNotification, Some(field))
+    };
+}
+
+fn controls_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use objc2_app_kit::{NSButton, NSSecureTextField, NSSwitch};
+    let c = CTRL.with(Clone::clone);
+    let w = windows().into_iter().find(|w| w.title().to_string() == "Controls").unwrap();
+    let subs: Vec<Retained<NSView>> = w.contentView().unwrap().subviews().to_vec();
+    let secure = subs.iter().find_map(|v| v.clone().downcast::<NSSecureTextField>().ok()).unwrap();
+    let field = subs
+        .iter()
+        .filter_map(|v| v.clone().downcast::<NSTextField>().ok())
+        .find(|f| f.isEditable() && !std::ptr::eq(&**f, &**secure as &NSTextField))
+        .unwrap();
+    let switch = subs.iter().find_map(|v| v.clone().downcast::<NSSwitch>().ok()).unwrap();
+    let buttons: Vec<Retained<NSButton>> = subs.iter().filter_map(|v| v.clone().downcast::<NSButton>().ok()).collect();
+    let check_box = buttons.iter().find(|b| b.title().to_string() == "Remember me").unwrap().clone();
+    let save = buttons.iter().find(|b| b.title().to_string() == "Save").unwrap().clone();
+    let summary = || {
+        subs.iter()
+            .filter_map(|v| v.clone().downcast::<NSTextField>().ok())
+            .map(|f| f.stringValue().to_string())
+            .find(|s| s.contains("chars"))
+            .unwrap_or_default()
+    };
+
+    // AppKit gives a default button its Return key equivalent only while
+    // its window is key (the bench window took key status before this).
+    w.makeKeyAndOrderFront(None);
+    // Text field: placeholder; user edits → signal → label and the Save button.
+    let was_disabled = !save.isEnabled();
+    post_edit(&field, "Ada");
+    check(
+        "text-field-edit",
+        c.name.get_untracked() == "Ada" && summary().starts_with("Ada /") && was_disabled && save.isEnabled()
+            && field.placeholderString().map(|p| p.to_string()) == Some("Your name".into()),
+        format!("signal {:?}; Save enabled {} → {}; summary {:?}", c.name.get_untracked(), !was_disabled, save.isEnabled(), summary()),
+    );
+    batch(|| c.name.set("Grace".into()));
+    check("text-field-signal", field.stringValue().to_string() == "Grace", format!("field shows {:?}", field.stringValue().to_string()));
+    let sent = unsafe { field.sendAction_to(field.action(), field.target().as_deref()) };
+    check("text-field-submit", sent && c.submits.get_untracked() == 1, format!("Return action sent: {sent}, submits {}", c.submits.get_untracked()));
+
+    // Secure field.
+    post_edit(&secure, "hunter2");
+    check(
+        "secure-field",
+        c.pw.get_untracked() == "hunter2" && summary().contains("7 chars") && has_ax(&ax_tree(&w), "AXTextField", "AXSecureTextField", ""),
+        format!("signal len {}, AXSecureTextField in the AX tree: {}", c.pw.get_untracked().len(), has_ax(&ax_tree(&w), "AXTextField", "AXSecureTextField", "")),
+    );
+
+    // Switch and checkbox: clicks → signal; signal → control.
+    unsafe { switch.performClick(None) };
+    let on = c.wifi.get_untracked();
+    batch(|| c.wifi.set(false));
+    check(
+        "toggle",
+        on && switch.state() == objc2_app_kit::NSControlStateValueOff && ax_tree(&w).iter().any(|(_, s, _)| s == "AXSwitch"),
+        format!("click → {on}; signal false → state {}; AXSwitch in the AX tree: {}", switch.state(), ax_tree(&w).iter().any(|(_, s, _)| s == "AXSwitch")),
+    );
+    unsafe { check_box.performClick(None) };
+    let on = c.remember.get_untracked();
+    batch(|| c.remember.set(false));
+    check(
+        "checkbox",
+        on && check_box.state() == objc2_app_kit::NSControlStateValueOff && has_ax(&ax_tree(&w), "AXCheckBox", "", "Remember me"),
+        format!("click → {on}; signal false → state {}; AXCheckBox \"Remember me\" in the AX tree: {}", check_box.state(), has_ax(&ax_tree(&w), "AXCheckBox", "", "Remember me")),
+    );
+
+    // Default button: Return key equivalent; click runs the action; disabled follows the signal.
+    unsafe { save.performClick(None) };
+    let saved = c.saves.get_untracked();
+    batch(|| c.name.set(String::new()));
+    check(
+        "button-default-disabled",
+        save.keyEquivalent().to_string() == "\r" && saved == 1 && !save.isEnabled(),
+        format!("key equivalent {:?}; saves {saved}; enabled after clearing the name: {}", save.keyEquivalent().to_string(), save.isEnabled()),
+    );
+
+    // Tab: from the name field to the password field (key view loop by position).
+    // A Tab key press reaches the field editor as insertTab:, which moves
+    // to the next key view (AppKit's loop, recalculated from positions).
+    w.makeFirstResponder(Some(&field));
+    if let Some(editor) = field.currentEditor() {
+        let _: () = unsafe { objc2::msg_send![&*editor, insertTab: Option::<&objc2::runtime::AnyObject>::None] };
+    }
+    check("tab-order", secure.currentEditor().is_some(), "Tab moves from the name field to the password field".into());
+
     appearance_check(events);
 }
 
@@ -482,6 +663,7 @@ fn main() {
         .window(Window::new("Second").size(360.0, 160.0))
         .window(Window::new("Views").size(320.0, 420.0).view(views_window()))
         .window(Window::new("Layout").size(420.0, 480.0).view(layout_window()))
+        .window(Window::new("Controls").size(360.0, 300.0).view(controls_window()))
         .on_event(move |e| e2.borrow_mut().push(e))
         .on_launch(move || {
             if checks {

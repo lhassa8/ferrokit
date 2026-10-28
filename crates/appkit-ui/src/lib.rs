@@ -2,12 +2,14 @@
 //! Phase 2, unreleased. So far: the app, its windows, the run loop, the
 //! default menu bar and appearance tracking (F1.1); signals, batching and
 //! background work (F1.2); views, identity and teardown (F1.3); layout with
-//! stacks, grids, alignment and subtree-only relayout (F1.4).
+//! stacks, grids, alignment and subtree-only relayout (F1.4); text fields,
+//! secure fields, toggles and checkboxes bound to signals (F1.5).
 //!
 //! Main thread only.
 
 #![warn(missing_docs)]
 
+mod controls;
 mod layout;
 mod menu;
 mod signal;
@@ -31,6 +33,7 @@ use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
 pub use appkit_host::{is_dark, system_colors};
 pub use signal::{Effect, Memo, Signal, after_batch, batch, effect_runs, untrack};
+pub use controls::{Checkbox, TextField, checkbox, secure_field, text_field, toggle};
 pub use layout::layout_stats;
 pub use view::{
     Align, AnyView, Axis, Button, Cx, Dynamic, ForEach, Grid, Identifiable, Label, Modified, Node, Size, Spacer, Stack,
@@ -93,6 +96,8 @@ impl Window {
         // must not release them on close.
         unsafe { window.setReleasedWhenClosed(false) };
         window.setTitle(&NSString::from_str(&self.title));
+        // Tab follows the views' positions (top-left to bottom-right).
+        window.setAutorecalculatesKeyViewLoop(true);
         if let Some(build) = self.content {
             window.setContentView(Some(&build()));
         }
