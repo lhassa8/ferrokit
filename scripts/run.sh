@@ -9,6 +9,8 @@ case " $* " in *" --release "*) profile=release ;; esac
 
 app=target/NativeSpike.app
 mkdir -p "$app/Contents/MacOS"
+# Replace, never overwrite in place: macOS SIGKILLs a binary rewritten under a cached signature.
+rm -f "$app/Contents/MacOS/NativeSpike"
 cp "target/$profile/nativekit-spike" "$app/Contents/MacOS/NativeSpike"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
