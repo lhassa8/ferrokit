@@ -17,7 +17,7 @@ pub mod table;
 pub mod text;
 pub mod testing;
 
-pub use appearance::{Rgba, SystemColors, generation as appearance_generation, is_dark, system_colors};
+pub use appearance::{Rgba, SystemColors, generation as appearance_generation, is_dark, observe_appearance, system_colors};
 pub use events::{Event, request_redraw, set_event_sink};
 pub use geometry::{Frames, Rect, frames};
 pub use host::{

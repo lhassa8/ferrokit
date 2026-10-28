@@ -96,7 +96,10 @@ pub fn generation() -> u64 {
     GENERATION.with(Cell::get)
 }
 
-pub(crate) fn install() {
+/// Starts tracking NSApp's appearance and the system colours, emitting
+/// [`Event::AppearanceChanged`] on changes. Idempotent; [`crate::attach`]
+/// calls it, and a standalone app (no host window) calls it directly.
+pub fn observe_appearance() {
     if OBSERVER.with_borrow(Option::is_some) {
         return;
     }
