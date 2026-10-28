@@ -1,3 +1,4 @@
 /target
 /spike/target
-/prototypes/
+/prototypes/waterui-src/
+/prototypes/*/target/
