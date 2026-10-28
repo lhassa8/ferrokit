@@ -1,48 +1,12 @@
-[package]
-name = "nativekit-spike"
-version = "0.0.0"
+[workspace]
+resolver = "3"
+members = ["crates/appkit-host", "crates/iced-appkit"]
+# The Phase 0 spike lives in spike/ as its own workspace (it patches wgpu-hal;
+# this workspace must build against stock crates).
+exclude = ["spike"]
+
+[workspace.package]
 edition = "2024"
 license = "MIT OR Apache-2.0"
+rust-version = "1.88"
 publish = false
-
-[dependencies]
-iced = { version = "0.14", features = ["advanced", "image"] }
-raw-window-handle = "0.6"
-objc2 = "0.6"
-block2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSGeometry", "NSNotification", "NSObject", "NSRange", "NSString"] }
-objc2-app-kit = { version = "0.3", default-features = false, features = [
-    "std",
-    "block2",
-    "objc2-core-foundation",
-    "NSAccessibilityElement",
-    "NSAppearance",
-    "NSApplication",
-    "NSBitmapImageRep",
-    "NSImageRep",
-    "NSButton",
-    "NSControl",
-    "NSEvent",
-    "NSFont",
-    "NSGraphicsContext",
-    "NSMenu",
-    "NSMenuItem",
-    "NSResponder",
-    "NSClipView",
-    "NSScrollView",
-    "NSTableColumn",
-    "NSTableView",
-    "NSUserInterfaceItemIdentification",
-    "NSScreen",
-    "NSWindow",
-    "NSColor",
-    "NSText",
-    "NSTextField",
-    "NSTextView",
-    "NSView",
-] }
-
-# Spike-only: wgpu-hal with an env-var switch for CAMetalLayer.presentsWithTransaction
-# (see docs/VERDICTS.md, test 6).
-[patch.crates-io]
-wgpu-hal = { path = "vendor/wgpu-hal" }
