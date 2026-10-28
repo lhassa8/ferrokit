@@ -1,0 +1,727 @@
+//! The spike checklist, rebuilt on `iced-appkit`: the regression suite for the
+//! embedding core. Every test is on the native Tests menu (⌘1…⌘9) and in the
+//! sidebar; the automated checks run unattended.
+//!
+//! Env:
+//!   CHECK=all | <n>[,<n>...]   run automated checks, print `[check]` lines, quit
+//!                              (exit code 1 if any failed)
+//!   START=<n>                  open test n at launch
+//!   RED=1                      red Iced background under every opaque native slot
+//!   T2_RESIZE=1                test 2: oscillate the window width continuously
+//!   T6_SCROLL=1                test 6: trackpad-timed auto-scroll continuously
+//!   T4_TOGGLE=<ms>             test 4: click the dropdown open/closed every ms
+//!   T5_TOGGLE=<ms>             test 5: open/close the modal every ms
+//!   FLOAT=1                    keep the window above others (screen recording)
+//!
+//! Content area: window at (160, 30) on screen, 1024 x 800 points.
+mod native;
+
+use std::cell::Cell;
+use std::time::{Duration, Instant};
+
+use iced::widget::{
+    Space, button, center, column, container, opaque, operation, pick_list, row, scrollable, stack, text, text_input,
+    tooltip,
+};
+use iced::{Color, Element, Length, Point, Rectangle, Size, Subscription, Task, Theme, Vector, window};
+use iced_appkit::{Event, NativeSlot, ViewId, host};
+
+const TESTS: &[(u8, &str)] = &[
+    (1, "Embed and click"),
+    (2, "Live resize"),
+    (3, "Pixel scale"),
+    (4, "Dropdown over table"),
+    (5, "Modal over native"),
+    (6, "Scroll clipping"),
+    (8, "Tab order"),
+    (9, "Shortcuts"),
+    (13, "Dark Mode"),
+    (14, "Teardown"),
+];
+const AUTOMATED: &[u8] = &[1, 2, 3, 4, 5, 6, 8, 9, 13, 14];
+
+const T1_BUTTON: u64 = 10;
+const T2_LABELS: &[(u64, &str, (f32, f32, f32))] = &[
+    (20, "top-left (fixed)", (0.0, 0.4, 0.95)),
+    (21, "top-right (fixed)", (0.0, 0.4, 0.95)),
+    (22, "full width", (0.2, 0.7, 0.3)),
+    (23, "1/4", (0.5, 0.2, 0.8)),
+    (24, "2/4", (0.9, 0.5, 0.0)),
+    (25, "1/4", (0.5, 0.2, 0.8)),
+];
+const T3_LABELS: &[(u64, f32)] = &[(30, 120.0), (31, 120.5), (32, 99.25)];
+const T4_TABLE: u64 = 40;
+const T5_TABLE: u64 = 50;
+const T5_BUTTON: u64 = 51;
+const T6_TABLE: u64 = 60;
+const T6_BUTTON: u64 = 61;
+const T8_TABLE: u64 = 80;
+const T8_TEXT: u64 = 81;
+const T9_TEXT: u64 = 90;
+const T9_TABLE: u64 = 91;
+const T13_TABLE: u64 = 130;
+const T13_TEXT: u64 = 131;
+const T9_INITIAL: &str = "Select all of this, type over it, undo.";
+const SCROLLABLE: &str = "t6-scroll";
+const INPUT1: &str = "t8-input-1";
+const INPUT2: &str = "t8-input-2";
+
+#[derive(Debug, Clone)]
+enum Message {
+    Opened(window::Id),
+    Attached(bool),
+    Native(Event),
+    Select(u8),
+    Pick(&'static str),
+    Input1(String),
+    Input2(String),
+    Modal(bool),
+    Scrolled(iced::widget::scrollable::Viewport),
+    Tick(f32),
+    Step(u8, u32),
+    Focus(u8, bool),
+    Toggle,
+}
+
+struct App {
+    test: u8,
+    red: bool,
+    clicks: u32,
+    picked: Option<&'static str>,
+    input1: String,
+    input2: String,
+    modal: bool,
+    scroll_bounds: Option<Rectangle>,
+    scroll_offset: Vector,
+    scroll_dir: f32,
+    auto_scroll: bool,
+    queue: Vec<u8>,
+    results: Vec<(u8, bool, String)>,
+    /// Test 8: where focus was after each step ("in1", "table", ...).
+    focus_log: Vec<String>,
+    focus_probe: [bool; 2],
+    t13_log: Vec<String>,
+    keep: native::Keep,
+}
+
+fn env(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|v| !v.is_empty())
+}
+
+fn after(ms: u64, message: Message) -> Task<Message> {
+    Task::perform(async move { std::thread::sleep(Duration::from_millis(ms)) }, move |_| message.clone())
+}
+
+thread_local! {
+    static RESIZE_T0: Cell<Option<Instant>> = const { Cell::new(None) };
+}
+
+/// Oscillates the window width from a run-loop timer (~120 steps/s) with
+/// `setFrame:display:YES`, the synchronous path a live resize takes.
+fn start_resize(seconds: Option<f64>) {
+    RESIZE_T0.with(|t| t.set(Some(Instant::now())));
+    // SAFETY: a main-run-loop timer whose block only touches main-thread state.
+    unsafe {
+        use objc2_core_foundation::{CFAbsoluteTimeGetCurrent, CFRunLoop, CFRunLoopTimer, kCFRunLoopCommonModes};
+        let block = block2::RcBlock::new(move |_: *mut CFRunLoopTimer| {
+            let Some(t0) = RESIZE_T0.with(Cell::get) else { return };
+            if seconds.is_some_and(|s| t0.elapsed().as_secs_f64() > s) {
+                return;
+            }
+            let Some(window) = host::content_view().and_then(|v| v.window()) else { return };
+            let phase = t0.elapsed().as_secs_f64() / 1.2 * std::f64::consts::TAU;
+            let mut frame = window.frame();
+            frame.size.width = (900.0 + 250.0 * (0.5 - 0.5 * phase.cos())).round();
+            window.setFrame_display(frame, true);
+        });
+        let timer = CFRunLoopTimer::with_handler(None, CFAbsoluteTimeGetCurrent(), 0.008, 0, 0, Some(&block)).unwrap();
+        CFRunLoop::main().unwrap().add_timer(Some(&timer), kCFRunLoopCommonModes);
+        std::mem::forget(timer);
+    }
+}
+
+fn center_of(id: u64) -> Option<(f64, f64)> {
+    host::testing::visible_rect(ViewId(id)).map(|r| (r.x + r.width / 2.0, r.y + r.height / 2.0))
+}
+
+impl App {
+    fn new() -> (Self, Task<Message>) {
+        let queue = match env("CHECK").as_deref() {
+            Some("all") => AUTOMATED.to_vec(),
+            Some(list) => list.split(',').filter_map(|n| n.trim().parse().ok()).collect(),
+            None => Vec::new(),
+        };
+        let app = App {
+            test: env("START").and_then(|s| s.parse().ok()).unwrap_or(0),
+            red: env("RED").is_some(),
+            clicks: 0,
+            picked: None,
+            input1: String::new(),
+            input2: String::new(),
+            modal: false,
+            scroll_bounds: None,
+            scroll_offset: Vector::ZERO,
+            scroll_dir: 1.0,
+            auto_scroll: env("T6_SCROLL").is_some(),
+            queue,
+            results: Vec::new(),
+            focus_log: Vec::new(),
+            focus_probe: [false; 2],
+            t13_log: Vec::new(),
+            keep: native::keep(),
+        };
+        (app, Task::none())
+    }
+
+    fn record(&mut self, test: u8, pass: bool, note: impl Into<String>) {
+        let note = note.into();
+        eprintln!("[check] T{test} {} {note}", if pass { "PASS" } else { "FAIL" });
+        self.results.push((test, pass, note));
+    }
+
+    /// Starts the next queued automated test, or reports and quits.
+    fn next_check(&mut self) -> Task<Message> {
+        if self.queue.is_empty() {
+            let failed = self.results.iter().filter(|r| !r.1).count();
+            eprintln!("[check] done: {} checks, {} failed", self.results.len(), failed);
+            std::process::exit(if failed == 0 { 0 } else { 1 });
+        }
+        let test = self.queue.remove(0);
+        Task::done(Message::Step(test, 0))
+    }
+
+    fn mount_all(&mut self) {
+        native::mount_button(T1_BUTTON, "Native NSButton");
+        for &(id, title, color) in T2_LABELS {
+            native::mount_label(id, title, color);
+        }
+        for &(id, width) in T3_LABELS {
+            native::mount_label(id, &format!("{width} pt"), (0.0, 0.4, 0.95));
+        }
+        native::mount_table(T4_TABLE, 1000, &mut self.keep);
+        native::mount_table(T5_TABLE, 1000, &mut self.keep);
+        native::mount_button(T5_BUTTON, "Native button");
+        native::mount_table(T6_TABLE, 1000, &mut self.keep);
+        native::mount_button(T6_BUTTON, "Native button in scroll");
+        native::mount_table(T8_TABLE, 1000, &mut self.keep);
+        native::mount_text(T8_TEXT, "Native NSTextView (Tab leaves it)");
+        native::mount_text(T9_TEXT, T9_INITIAL);
+        native::mount_table(T9_TABLE, 1000, &mut self.keep);
+        native::mount_table(T13_TABLE, 1000, &mut self.keep);
+        native::mount_text(T13_TEXT, "Native text view follows the appearance.");
+        native::install_tests_menu(TESTS);
+        host::install_edit_menu();
+    }
+
+    fn update(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::Opened(id) => return iced_appkit::attach(id, Message::Attached),
+            Message::Attached(ok) => {
+                assert!(ok, "attach failed");
+                self.mount_all();
+                if env("FLOAT").is_some()
+                    && let Some(w) = host::content_view().and_then(|v| v.window()) {
+                        w.setLevel(3);
+                        w.orderFrontRegardless();
+                    }
+                if env("T2_RESIZE").is_some() {
+                    start_resize(None);
+                }
+                let mut tasks = vec![];
+                if let Some(ms) = env("T4_TOGGLE").or(env("T5_TOGGLE")).and_then(|v| v.parse().ok()) {
+                    tasks.push(after(ms, Message::Toggle));
+                }
+                if !self.queue.is_empty() {
+                    tasks.push(after(500, Message::Step(0, 0)));
+                }
+                return Task::batch(tasks);
+            }
+            Message::Native(event) => {
+                let task = iced_appkit::update(&event);
+                if let Event::Action(ViewId(id)) = event {
+                    match id {
+                        T1_BUTTON => self.clicks += 1,
+                        1000.. => self.test = (id - 1000) as u8,
+                        _ => {}
+                    }
+                }
+                return task;
+            }
+            Message::Select(test) => self.test = test,
+            Message::Pick(item) => self.picked = Some(item),
+            Message::Input1(v) => self.input1 = v,
+            Message::Input2(v) => self.input2 = v,
+            Message::Modal(open) => self.modal = open,
+            Message::Scrolled(viewport) => {
+                self.scroll_bounds = Some(viewport.bounds());
+                let o = viewport.absolute_offset();
+                self.scroll_offset = Vector::new(o.x, o.y);
+            }
+            Message::Tick(step) => {
+                if self.test == 6 && self.auto_scroll {
+                    if self.scroll_offset.y > 700.0 {
+                        self.scroll_dir = -1.0;
+                    } else if self.scroll_offset.y < 5.0 {
+                        self.scroll_dir = 1.0;
+                    }
+                    return operation::scroll_by(
+                        SCROLLABLE,
+                        iced::widget::scrollable::AbsoluteOffset { x: 0.0, y: step * self.scroll_dir },
+                    );
+                }
+            }
+            Message::Toggle => {
+                if let Some(ms) = env("T4_TOGGLE").and_then(|v| v.parse::<u64>().ok()) {
+                    // Click the dropdown; when open, click it again to close.
+                    if let Some((x, y)) = self.t4_picker_center() {
+                        host::testing::post_click(x, y);
+                    }
+                    return after(ms, Message::Toggle);
+                }
+                if let Some(ms) = env("T5_TOGGLE").and_then(|v| v.parse::<u64>().ok()) {
+                    self.modal = !self.modal;
+                    return after(ms, Message::Toggle);
+                }
+            }
+            Message::Focus(slot, focused) => self.focus_probe[slot as usize] = focused,
+            Message::Step(0, 0) => return self.next_check(),
+            Message::Step(test, step) => return self.step(test, step),
+        }
+        Task::none()
+    }
+
+    /// The dropdown sits right above test 4's table (see `test4`).
+    fn t4_picker_center(&self) -> Option<(f64, f64)> {
+        let r = host::testing::visible_rect(ViewId(T4_TABLE))?;
+        Some((r.x + 80.0, r.y - 12.0 - 15.0))
+    }
+
+    fn where_focus(&self) -> String {
+        match host::focused_view() {
+            Some(ViewId(T8_TABLE)) => "table".into(),
+            Some(ViewId(T8_TEXT)) => "text".into(),
+            Some(other) => format!("native {}", other.0),
+            None if self.focus_probe[0] => "in1".into(),
+            None if self.focus_probe[1] => "in2".into(),
+            None => "none".into(),
+        }
+    }
+
+    fn probe_focus(&self, test: u8, next_step: u32) -> Task<Message> {
+        Task::batch([
+            operation::is_focused(INPUT1).map(|f| Message::Focus(0, f)),
+            operation::is_focused(INPUT2).map(|f| Message::Focus(1, f)),
+        ])
+        .chain(after(50, Message::Step(test, next_step)))
+    }
+
+    /// One step of an automated test. Each returns the task that runs the next.
+    fn step(&mut self, test: u8, step: u32) -> Task<Message> {
+        let next = |ms| after(ms, Message::Step(test, step + 1));
+        let done = Task::done(Message::Step(0, 0));
+        if step == 0 {
+            self.test = test;
+            self.modal = false;
+            return next(400);
+        }
+        match (test, step) {
+            (1, 1) => {
+                let Some((x, y)) = center_of(T1_BUTTON) else {
+                    self.record(1, false, "button not placed");
+                    return done;
+                };
+                host::testing::post_click(x, y);
+                next(400)
+            }
+            (1, 2) => {
+                let pass = self.clicks == 1;
+                self.record(1, pass, format!("native click reached Iced: {} click(s)", self.clicks));
+                done
+            }
+            (2, 1) => {
+                start_resize(Some(3.0));
+                next(3500)
+            }
+            (2, 2) => {
+                let shown = T2_LABELS.iter().all(|&(id, ..)| host::testing::is_visible(ViewId(id)));
+                let off = host::testing::off_grid();
+                self.record(2, shown && off.is_empty(), format!("after 3 s of resizing: all labels shown {shown}, off-grid {off:?} (lockstep: video)"));
+                done
+            }
+            (3, 1) => {
+                let off = host::testing::off_grid();
+                let shown = T3_LABELS.iter().all(|&(id, _)| host::testing::is_visible(ViewId(id)));
+                self.record(3, off.is_empty() && shown, format!("scale {}x, off-grid views {off:?}", host::scale()));
+                done
+            }
+            (4, 1) => {
+                let Some((x, y)) = self.t4_picker_center() else {
+                    self.record(4, false, "table not placed");
+                    return done;
+                };
+                host::testing::post_click(x, y);
+                next(400)
+            }
+            (4, 2) => {
+                let hidden = host::is_suppressed(ViewId(T4_TABLE)) && host::testing::click_reaches(ViewId(T4_TABLE)) != Some(true);
+                self.record(4, hidden, format!("dropdown open: table swapped for its picture and hidden: {hidden}"));
+                // Choose the first option (it lies over the table).
+                let r = host::testing::visible_rect(ViewId(T4_TABLE)).unwrap();
+                host::testing::post_click(r.x + 80.0, r.y + 12.0);
+                next(400)
+            }
+            (4, 3) => {
+                let back = !host::is_suppressed(ViewId(T4_TABLE)) && host::testing::is_visible(ViewId(T4_TABLE));
+                self.record(4, back && self.picked.is_some(), format!("picked {:?}; table back after close: {back}", self.picked));
+                // Hover the tooltip button (right of the dropdown).
+                let (x, y) = self.t4_picker_center().unwrap();
+                host::testing::post_mouse_move(x + 80.0 + 12.0 + 60.0, y);
+                next(800)
+            }
+            (4, 4) => {
+                let hidden = host::is_suppressed(ViewId(T4_TABLE));
+                self.record(4, hidden, format!("tooltip shown on hover: table swapped for its picture: {hidden}"));
+                host::testing::post_mouse_move(20.0, 20.0);
+                next(500)
+            }
+            (4, 5) => {
+                let back = !host::is_suppressed(ViewId(T4_TABLE)) && host::testing::is_visible(ViewId(T4_TABLE));
+                self.record(4, back, format!("tooltip gone after the pointer left: table back {back}"));
+                done
+            }
+            (5, 1) => {
+                self.modal = true;
+                next(400)
+            }
+            (5, 2) => {
+                let blocked = [T5_TABLE, T5_BUTTON].map(|id| host::testing::click_reaches(ViewId(id)) != Some(true));
+                self.record(5, blocked == [true, true], format!("modal open: clicks blocked (table, button) {blocked:?}"));
+                self.modal = false;
+                next(400)
+            }
+            (5, 3) => {
+                let reach = [T5_TABLE, T5_BUTTON].map(|id| host::testing::click_reaches(ViewId(id)));
+                self.record(5, reach == [Some(true), Some(true)], format!("modal closed: clicks reach natives {reach:?}"));
+                done
+            }
+            (6, 1) => {
+                self.auto_scroll = true;
+                next(2500)
+            }
+            (6, 2) => {
+                self.auto_scroll = env("T6_SCROLL").is_some();
+                let inside = |id: u64| match (host::testing::visible_rect(ViewId(id)), self.scroll_bounds) {
+                    (Some(v), Some(b)) => {
+                        v.y >= b.y as f64 - 0.5 && v.y + v.height <= (b.y + b.height) as f64 + 0.5
+                    }
+                    (None, _) => true, // scrolled fully out of view: hidden
+                    _ => false,
+                };
+                let ok = inside(T6_TABLE) && inside(T6_BUTTON);
+                self.record(6, ok, format!("after 2.5 s of scrolling, natives clipped to the scrollable: {ok} (lockstep: video)"));
+                done
+            }
+            (8, 1) => {
+                self.focus_log.clear();
+                operation::focus(INPUT1).chain(after(150, Message::Step(8, 2)))
+            }
+            (8, 2..=9) => {
+                if step > 2 || self.focus_log.is_empty() {
+                    // Record where focus is now, then press the next key.
+                }
+                host::testing::post_tab(step > 5);
+                after(150, Message::Step(8, 100 + step))
+            }
+            (8, 102..=109) => {
+                let probe_for = step - 100;
+                self.probe_focus(8, 200 + probe_for)
+            }
+            (8, 202..=209) => {
+                let w = self.where_focus();
+                self.focus_log.push(w);
+                if step < 209 {
+                    after(10, Message::Step(8, step - 200 + 1))
+                } else {
+                    let expected = ["table", "text", "in2", "in1", "in2", "text", "table", "in1"];
+                    let pass = self.focus_log == expected;
+                    self.record(8, pass, format!("Tab ×4 then Shift-Tab ×4 from in1: {:?}", self.focus_log));
+                    // Clicks: into the text view (Iced must let go of in1), then Tab.
+                    // An NSTextView ignores the click that activates a window, so
+                    // when the window isn't key (unattended runs), AppKit's part
+                    // is done directly and the click only drives the monitor.
+                    let (key, _) = host::testing::window_state();
+                    if !key {
+                        host::testing::make_first_responder_raw(ViewId(T8_TEXT));
+                    }
+                    let (x, y) = center_of(T8_TEXT).unwrap_or_default();
+                    host::testing::post_click(x, y);
+                    after(300, Message::Step(8, 300))
+                }
+            }
+            (8, 300) => self.probe_focus(8, 301),
+            (8, 301) => {
+                let w = self.where_focus();
+                let iced_free = !self.focus_probe[0] && !self.focus_probe[1];
+                let how = if host::testing::window_state().0 { "real click" } else { "window not key: AppKit focus set directly, posted click drives the monitor" };
+                self.record(8, w == "text" && iced_free, format!("click into text view: focus {w}, Iced inputs unfocused {iced_free} ({how})"));
+                host::testing::post_tab(false);
+                after(200, Message::Step(8, 302))
+            }
+            (8, 302) => self.probe_focus(8, 303),
+            (8, 303) => {
+                let w = self.where_focus();
+                self.record(8, w == "in2", format!("Tab after the click: {w}"));
+                // Click into the Iced input 1 while a native view has focus.
+                host::focus(ViewId(T8_TABLE));
+                after(150, Message::Step(8, 304))
+            }
+            (8, 304) => {
+                let table = host::testing::visible_rect(ViewId(T8_TABLE)).unwrap();
+                host::testing::post_click(table.x + 40.0, table.y - 12.0 - 15.0);
+                after(300, Message::Step(8, 305))
+            }
+            (8, 305) => self.probe_focus(8, 306),
+            (8, 306) => {
+                let w = self.where_focus();
+                let responder = host::testing::first_responder();
+                self.record(8, w == "in1" && responder == "host", format!("click into Iced input from the table: focus {w}, first responder {responder}"));
+                // Edit shortcuts with Iced focused and the Edit menu installed:
+                // ⌘A must reach the Iced input, not the menu.
+                for (c, code) in [("h", 4), ("e", 14), ("y", 16)] {
+                    host::testing::post_key(c, code, false, false);
+                }
+                after(200, Message::Step(8, 307))
+            }
+            (8, 307) => {
+                host::testing::post_key("a", 0, true, false);
+                host::testing::post_key("q", 12, false, false);
+                after(200, Message::Step(8, 308))
+            }
+            (8, 308) => {
+                self.record(8, self.input1 == "q", format!("typed 'hey', ⌘A, 'q' into Iced input 1 (Edit menu installed): {:?}", self.input1));
+                done
+            }
+            (9, 1) => {
+                host::focus(ViewId(T9_TEXT));
+                host::testing::post_key("a", 0, true, false);
+                next(200)
+            }
+            (9, 2) => {
+                let state = native::text_state(T9_TEXT);
+                let all = state.as_ref().is_some_and(|(t, sel)| *sel == t.encode_utf16().count());
+                self.record(9, all, format!("⌘A in text view selects all: {all}"));
+                host::testing::post_key("x", 7, false, false);
+                next(200)
+            }
+            (9, 3) => {
+                let typed = native::text_state(T9_TEXT).map(|(t, _)| t);
+                host::testing::post_key("z", 6, true, false);
+                self.record(9, typed.as_deref() == Some("x"), format!("typing replaced the selection: {typed:?}"));
+                next(200)
+            }
+            (9, 4) => {
+                let text = native::text_state(T9_TEXT).map(|(t, _)| t);
+                self.record(9, text.as_deref() == Some(T9_INITIAL), "⌘Z restored the text");
+                host::focus(ViewId(T9_TABLE));
+                host::testing::post_key("a", 0, true, false);
+                next(200)
+            }
+            (9, 5) => {
+                let sel = native::table_selected(T9_TABLE);
+                self.record(9, sel.is_some_and(|(s, n)| s == n && n > 0), format!("⌘A in table selects all rows: {sel:?}"));
+                // An app menu shortcut still works with a native view focused.
+                host::testing::post_key("1", 18, true, false);
+                next(400)
+            }
+            (9, 6) => {
+                self.record(9, self.test == 1, format!("⌘1 (Tests menu) still works: now on test {}", self.test));
+                done
+            }
+            (13, 1) => {
+                self.t13_log.clear();
+                host::testing::set_app_appearance(Some(true));
+                next(500)
+            }
+            (13, 2) | (13, 3) => {
+                let want_dark = step == 2;
+                let theme_dark = iced_appkit::theme::system().palette().background.r < 0.5;
+                let views = [T13_TABLE, T13_TEXT].map(|id| host::testing::view_is_dark(ViewId(id)));
+                let ok = theme_dark == want_dark && views == [Some(want_dark); 2];
+                self.record(13, ok, format!("forced {}: Iced system theme dark {theme_dark}, native views dark {views:?}", if want_dark { "dark" } else { "light" }));
+                host::testing::set_app_appearance(if want_dark { Some(false) } else { None });
+                if want_dark { next(500) } else { done }
+            }
+            (14, 1) => {
+                // Lifecycle: views of other tests are hidden (not drawn), not removed.
+                let hidden = [T1_BUTTON, T4_TABLE, T9_TEXT].iter().all(|&id| host::is_mounted(ViewId(id)) && !host::testing::is_visible(ViewId(id)));
+                self.record(14, hidden, format!("views not in the layout are hidden: {hidden}"));
+                let base = host::testing::subview_count();
+                let (kb, after_count) = native::teardown(1000);
+                self.record(14, after_count == base, format!("1,000 mount/unmount cycles: subviews {base} → {after_count}, RSS +{kb} KB ({:.2} KB/view)", kb as f64 / 1000.0));
+                done
+            }
+            _ => {
+                self.record(test, false, format!("no step {step}"));
+                done
+            }
+        }
+    }
+
+    fn slot(&self, id: u64, w: impl Into<Length>, h: impl Into<Length>) -> NativeSlot {
+        let slot = NativeSlot::new(ViewId(id), w, h);
+        // Not under buttons: an NSButton is transparent outside its bezel, so
+        // red would always show there.
+        let opaque = ![T1_BUTTON, T5_BUTTON, T6_BUTTON].contains(&id);
+        if self.red && opaque { slot.background(Color::from_rgb(1.0, 0.0, 0.0)) } else { slot }
+    }
+
+    fn view(&self) -> Element<'_, Message> {
+        let mut sidebar = column![text("Tests").size(18), button("Home").on_press(Message::Select(0))].spacing(6);
+        for &(n, title) in TESTS {
+            sidebar = sidebar.push(button(text(format!("{n}. {title}")).size(13)).on_press(Message::Select(n)));
+        }
+        let content: Element<'_, Message> = match self.test {
+            1 => column![
+                text("Test 1: Embed and click").size(22),
+                self.slot(T1_BUTTON, 180, 32),
+                text(format!("Native button clicks seen by Iced: {}", self.clicks)),
+            ]
+            .spacing(12)
+            .into(),
+            2 => {
+                let l = |i: usize, w: Length, h: Length| -> Element<'_, Message> { self.slot(T2_LABELS[i].0, w, h).into() };
+                column![
+                    text("Test 2: Live resize").size(22),
+                    row![l(0, Length::Fixed(160.0), Length::Fixed(40.0)), Space::new().width(Length::Fill), l(1, Length::Fixed(160.0), Length::Fixed(40.0))],
+                    l(2, Length::Fill, Length::Fixed(40.0)),
+                    row![l(3, Length::FillPortion(1), Length::Fill), l(4, Length::FillPortion(2), Length::Fill), l(5, Length::FillPortion(1), Length::Fill)].spacing(12.5),
+                ]
+                .spacing(12.5)
+                .into()
+            }
+            3 => {
+                let mut labels = row![].spacing(12.5);
+                for &(id, w) in T3_LABELS {
+                    labels = labels.push(self.slot(id, w, 40));
+                }
+                column![text("Test 3: Pixel scale").size(22), text(format!("Backing scale {}x", host::scale())), labels].spacing(12).into()
+            }
+            4 => column![
+                text("Test 4: Dropdown and tooltip over a native table").size(22),
+                row![
+                    pick_list(["Apple", "Banana", "Cherry", "Damson", "Elderberry"], self.picked, Message::Pick).width(160),
+                    tooltip(button("Hover for a tooltip"), container(text("An Iced tooltip, above the native table")).padding(8).style(container::rounded_box), tooltip::Position::Bottom),
+                ]
+                .spacing(12),
+                self.slot(T4_TABLE, Length::Fill, 400),
+            ]
+            .spacing(12)
+            .into(),
+            5 => {
+                let base = column![
+                    text("Test 5: Modal over native views").size(22),
+                    button("Open modal").on_press(Message::Modal(true)),
+                    self.slot(T5_TABLE, Length::Fill, 300),
+                    self.slot(T5_BUTTON, 160, 32),
+                ]
+                .spacing(12);
+                if self.modal {
+                    let dialog = container(column![text("An Iced modal").size(20), button("Close").on_press(Message::Modal(false))].spacing(12))
+                        .padding(24)
+                        .style(container::rounded_box);
+                    let dim = container(center(dialog)).width(Length::Fill).height(Length::Fill).style(|_: &Theme| {
+                        container::Style { background: Some(Color { a: 0.55, ..Color::BLACK }.into()), ..Default::default() }
+                    });
+                    stack![base, iced_appkit::cover(opaque(dim))].into()
+                } else {
+                    base.into()
+                }
+            }
+            6 => {
+                let items = column![
+                    text("Iced content above the native views").size(14),
+                    Space::new().height(200),
+                    self.slot(T6_TABLE, Length::Fill, 300).in_scrollable(self.scroll_bounds, self.scroll_offset),
+                    text("Iced content between").size(14),
+                    self.slot(T6_BUTTON, 200, 32).in_scrollable(self.scroll_bounds, self.scroll_offset),
+                    Space::new().height(600),
+                ]
+                .spacing(12);
+                column![
+                    text("Test 6: Scroll clipping").size(22),
+                    scrollable(items).id(SCROLLABLE).on_scroll(Message::Scrolled).height(420),
+                ]
+                .spacing(12)
+                .into()
+            }
+            8 => column![
+                text("Test 8: Tab order").size(22),
+                text_input("Iced input 1", &self.input1).id(INPUT1).on_input(Message::Input1),
+                self.slot(T8_TABLE, Length::Fill, 200).focusable(true),
+                self.slot(T8_TEXT, Length::Fill, 120).focusable(true),
+                text_input("Iced input 2", &self.input2).id(INPUT2).on_input(Message::Input2),
+            ]
+            .spacing(12)
+            .into(),
+            9 => column![
+                text("Test 9: Shortcuts").size(22),
+                self.slot(T9_TEXT, Length::Fill, 120).focusable(true),
+                self.slot(T9_TABLE, Length::Fill, 240).focusable(true),
+            ]
+            .spacing(12)
+            .into(),
+            13 => column![
+                text("Test 13: Dark Mode (Iced uses iced_appkit::theme::system())").size(22),
+                self.slot(T13_TABLE, Length::Fill, 240),
+                self.slot(T13_TEXT, Length::Fill, 120),
+            ]
+            .spacing(12)
+            .into(),
+            14 => column![text("Test 14: Teardown").size(22), text("Run with CHECK=14.")].spacing(12).into(),
+            _ => column![text("iced-appkit checklist").size(22), text("Pick a test from the sidebar or the Tests menu.")].spacing(12).into(),
+        };
+        let results = text(
+            self.results.iter().rev().take(6).map(|(t, p, n)| format!("T{t} {} {n}", if *p { "PASS" } else { "FAIL" })).collect::<Vec<_>>().join("\n"),
+        )
+        .size(11);
+        iced_appkit::root(row![
+            container(sidebar).width(200).padding(16),
+            column![container(content).height(Length::Fill), results].padding(20).spacing(8),
+        ])
+        .into()
+    }
+
+    fn subscription(&self) -> Subscription<Message> {
+        Subscription::batch([
+            window::open_events().map(Message::Opened),
+            iced_appkit::events().map(Message::Native),
+            Subscription::run(ticks).map(Message::Tick),
+        ])
+    }
+}
+
+/// Trackpad-like timing: steps of 2–14 pt every 5–11 ms, off the frame clock.
+fn ticks() -> impl iced::futures::Stream<Item = f32> {
+    let (tx, rx) = iced::futures::channel::mpsc::unbounded();
+    std::thread::spawn(move || {
+        let mut seed: u64 = 0x9E37_79B9_7F4A_7C15;
+        loop {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let r = (seed >> 33) as u32;
+            std::thread::sleep(Duration::from_micros(5_000 + (r % 6_000) as u64));
+            if tx.unbounded_send(2.0 + ((r >> 8) % 13) as f32).is_err() {
+                break;
+            }
+        }
+    });
+    rx
+}
+
+fn main() -> iced::Result {
+    iced::application(App::new, App::update, App::view)
+        .title("iced-appkit checklist")
+        .theme(|_: &App| iced_appkit::theme::system())
+        .subscription(App::subscription)
+        .window(window::Settings { size: Size::new(1024.0, 800.0), position: window::Position::Specific(Point::new(160.0, 30.0)), ..Default::default() })
+        .run()
+}

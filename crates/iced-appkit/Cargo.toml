@@ -9,11 +9,11 @@ publish.workspace = true
 
 [dependencies]
 appkit-host = { path = "../appkit-host" }
-iced = { version = "0.14", features = ["advanced"] }
+iced = { version = "0.14", features = ["advanced", "image"] }
 
 [dev-dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString"] }
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSColor", "NSControl", "NSResponder", "NSText", "NSTextField", "NSView", "NSWindow", "objc2-core-foundation"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSNotification", "NSRange", "NSString"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSButton", "NSColor", "NSControl", "NSFont", "NSMenu", "NSMenuItem", "NSResponder", "NSScrollView", "NSTableColumn", "NSTableView", "NSText", "NSTextField", "NSTextView", "NSUserInterfaceItemIdentification", "NSView", "NSWindow", "objc2-core-foundation"] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "CFDate", "CFRunLoop"] }
 block2 = "0.6"

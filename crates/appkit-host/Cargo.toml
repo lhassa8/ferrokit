@@ -10,7 +10,7 @@ publish.workspace = true
 [dependencies]
 raw-window-handle = "0.6"
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSGeometry", "NSObject"] }
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "objc2-core-foundation", "objc2-quartz-core", "NSResponder", "NSView", "NSWindow"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSArray", "NSDictionary", "NSGeometry", "NSKeyValueObserving", "NSNotification", "NSObject", "NSOperation", "NSString"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-core-foundation", "objc2-quartz-core", "NSAppearance", "NSApplication", "NSBitmapImageRep", "NSColor", "NSColorSpace", "NSControl", "NSEvent", "NSGraphics", "NSGraphicsContext", "NSImageRep", "NSMenu", "NSMenuItem", "NSResponder", "NSScrollView", "NSText", "NSView", "NSWindow"] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "CFRunLoop", "CFDate"] }
 block2 = "0.6"
