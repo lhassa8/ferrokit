@@ -715,8 +715,13 @@ impl App {
                 let p95 = f.get(f.len() * 95 / 100).copied().unwrap_or(f32::MAX);
                 let rss = native::rss_mb();
                 let cells = self.big.as_ref().unwrap().cells_created();
-                let pass = f.len() > 300 && avg < 17.5 && p95 < 25.0 && rss - self.t7_rss < 10.0;
-                self.record(7, pass, format!("{summary}; RSS during 10 s of scrolling {:.0} → {rss:.0} MB; {cells} cell views ever created", self.t7_rss));
+                // Hosted CI runners are VMs without GPU acceleration: frame timing
+                // there says nothing about real Macs, so it's reported, not judged.
+                let ci = std::env::var_os("CI").is_some();
+                let timing = f.len() > 300 && avg < 17.5 && p95 < 25.0;
+                let pass = (timing || ci) && f.len() > 100 && rss - self.t7_rss < 10.0 && cells < 300;
+                let label = if ci { " (timing informational on CI)" } else { "" };
+                self.record(7, pass, format!("{summary}{label}; RSS during 10 s of scrolling {:.0} → {rss:.0} MB; {cells} cell views ever created", self.t7_rss));
                 done
             }
             (10, 1) => {
