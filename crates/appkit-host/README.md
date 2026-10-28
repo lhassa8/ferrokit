@@ -1,6 +1,6 @@
 # appkit-host
 
-The host-agnostic layer under [`iced-appkit`](../iced-appkit): it places real AppKit views inside a window whose content a GPU framework draws, and keeps them in step with that framework's layout. It needs only the window's `raw-window-handle` and layout rectangles in logical points.
+The host-agnostic layer under [`iced-appkit`](https://crates.io/crates/iced-appkit): it places real AppKit views inside a window whose content a GPU framework draws, and keeps them in step with that framework's layout. It needs only the window's `raw-window-handle` and layout rectangles in logical points.
 
 - **Placement:** `attach`, `mount`/`place`/`unmount`, clip containers for scroll areas, pixel snapping, per-frame lifecycle (`begin_frame`/`end_frame`).
 - **Events:** one sink for Tab focus steps, focus changes, control actions, appearance changes and redraw requests.

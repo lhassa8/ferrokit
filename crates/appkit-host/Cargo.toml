@@ -5,10 +5,14 @@ readme = "README.md"
 description = "Host-agnostic layer for placing real AppKit views inside a GPU-rendered window"
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 rust-version.workspace = true
-publish.workspace = true
-keywords.workspace = true
+keywords = ["appkit", "macos", "gui", "native", "objc2"]
 categories.workspace = true
+
+[package.metadata.docs.rs]
+default-target = "aarch64-apple-darwin"
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
 
 [dependencies]
 raw-window-handle = "0.6"

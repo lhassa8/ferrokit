@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 (2026-10-28, not published)
+## 0.1.0 (2026-10-28)
 
 First release of `iced-appkit` and `appkit-host`: real AppKit controls inside Iced 0.14 windows on macOS 15+.
 

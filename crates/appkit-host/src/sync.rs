@@ -1,6 +1,6 @@
 //! Keeping native frame changes and the host's GPU frame in step (risk 2).
 //!
-//! Background (spike, `docs/VERDICTS.md` tests 2 and 6): winit redraws from a
+//! Background (measured on 60 fps video in the prototype): winit redraws from a
 //! run-loop observer that runs *after* Core Animation's commit observer. Native
 //! frames set during the host's draw therefore wait for the next run-loop pass
 //! to commit, while the GPU frame presents on its own schedule.
