@@ -5,7 +5,10 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use appkit_ui::{App, AppEvent, Effect, Signal, Window, batch, effect_runs, later, spawn, windows};
+use appkit_ui::{
+    App, AppEvent, Effect, Identifiable, Signal, View, ViewExt, Window, batch, dynamic, effect_runs, for_each, label, later,
+    live_nodes, spacer, spawn, text, vstack, windows,
+};
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2_app_kit::{NSApplication, NSEventModifierFlags, NSTextField, NSView};
@@ -79,9 +82,9 @@ fn run_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     // Windows: both open; AppKit lists them in the Window menu.
     let ws = windows();
     let visible = ws.iter().filter(|w| w.isVisible()).count();
-    check("windows", ws.len() == 2 && visible == 2, format!("{} windows, {visible} visible", ws.len()));
+    check("windows", ws.len() == 3 && visible == 3, format!("{} windows, {visible} visible", ws.len()));
     let window_menu = menu_items(2);
-    let listed = ["First", "Second"].iter().all(|t| window_menu.iter().any(|(title, _, _)| title == t));
+    let listed = ["First", "Second", "Views"].iter().all(|t| window_menu.iter().any(|(title, _, _)| title == t));
     check("window-menu-lists-windows", listed && app.windowsMenu().is_some(), format!("{:?}", window_menu.iter().map(|e| &e.0).collect::<Vec<_>>()));
     check("help-menu", app.helpMenu().is_some(), String::new());
 
@@ -139,7 +142,7 @@ fn run_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                     worker != main_thread && on_main && result.get_untracked() == "sum 500500" && runs_seen.get() == 2,
                     format!("worker off main: {}, continuation on main: {on_main}, value {:?}, watcher runs {}", worker != main_thread, result.get_untracked(), runs_seen.get()),
                 );
-                appearance_check(events.clone());
+                view_checks(events.clone());
             });
         },
     );
@@ -160,6 +163,174 @@ fn appearance_check(events: Rc<RefCell<Vec<AppEvent>>>) {
     });
 }
 
+#[derive(Clone)]
+struct Item {
+    id: u32,
+    name: String,
+}
+
+impl Identifiable for Item {
+    type Id = u32;
+    fn id(&self) -> u32 {
+        self.id
+    }
+}
+
+fn item(id: u32) -> Item {
+    Item { id, name: format!("item{id}") }
+}
+
+#[derive(Clone)]
+struct ViewState {
+    items: Signal<Vec<Item>>,
+    flag: Signal<bool>,
+    inner: Signal<u32>,
+    tab: Signal<u32>,
+}
+
+thread_local! {
+    static STATE: ViewState = ViewState {
+        items: Signal::new(vec![item(1), item(2), item(3)]),
+        flag: Signal::new(true),
+        inner: Signal::new(0),
+        tab: Signal::new(0),
+    };
+}
+
+fn state() -> ViewState {
+    STATE.with(Clone::clone)
+}
+
+fn views_window() -> impl View {
+    let st = state();
+    let (items, flag, inner, tab) = (st.items.clone(), st.flag.clone(), st.inner.clone(), st.tab.clone());
+    vstack((
+        label(move || format!("{} items", st.items.with(Vec::len))),
+        for_each(move || items.get(), |it: Item| label(move || it.name.clone())),
+        dynamic(move || {
+            if flag.get() {
+                let inner = inner.clone();
+                vstack((text("on"), label(move || format!("inner {}", inner.get())))).id("on")
+            } else {
+                text("off").id("off")
+            }
+        }),
+        dynamic(move || {
+            let t = tab.get();
+            // Tabs 0 and 1 share an id: switching between them keeps the node.
+            text(format!("tab {t}")).id(t / 2)
+        }),
+        spacer(),
+    ))
+    .padding(12.0)
+}
+
+/// The window's labels: (text, view).
+fn labels() -> Vec<(String, Retained<NSTextField>)> {
+    let w = windows().into_iter().find(|w| w.title().to_string() == "Views").unwrap();
+    w.contentView()
+        .unwrap()
+        .subviews()
+        .iter()
+        .filter_map(|v| v.downcast::<NSTextField>().ok())
+        .map(|f| (f.stringValue().to_string(), f))
+        .collect()
+}
+
+fn find_label(text: &str) -> Option<Retained<NSTextField>> {
+    labels().into_iter().find(|(t, _)| t == text).map(|(_, v)| v)
+}
+
+/// Physical footprint in MB (what Activity Monitor shows; RSS keeps freed
+/// heap pages and overstates growth), via vmmap.
+fn footprint_mb() -> f64 {
+    let out = std::process::Command::new("vmmap").args(["--summary", &std::process::id().to_string()]).output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    let line = text.lines().find(|l| l.starts_with("Physical footprint:")).unwrap_or("");
+    let v = line.split_whitespace().last().unwrap_or("0M");
+    let (num, unit) = v.split_at(v.len() - 1);
+    num.parse::<f64>().unwrap_or(0.0) * if unit == "G" { 1024.0 } else if unit == "K" { 1.0 / 1024.0 } else { 1.0 }
+}
+
+fn view_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let st = state();
+    // Build: the tree's leaves are subviews of the window's root view.
+    let names: Vec<String> = labels().into_iter().map(|(t, _)| t).collect();
+    check(
+        "views-build",
+        ["3 items", "item1", "item2", "item3", "on", "inner 0", "tab 0"].iter().all(|t| names.iter().any(|n| n == t)),
+        format!("{names:?}"),
+    );
+
+    // for_each: reorder + insert + remove keeps the surviving items' native views.
+    let (v1, v2, v3) = (find_label("item1").unwrap(), find_label("item2").unwrap(), find_label("item3").unwrap());
+    let weak2 = objc2::rc::Weak::from_retained(&v2);
+    drop(v2);
+    batch(|| st.items.set(vec![item(3), item(1), item(4)]));
+    let (n1, n3, n4) = (find_label("item1").unwrap(), find_label("item3").unwrap(), find_label("item4").unwrap());
+    let same = std::ptr::eq(&*v1, &*n1) && std::ptr::eq(&*v3, &*n3);
+    let order = n3.frame().origin.y < n1.frame().origin.y && n1.frame().origin.y < n4.frame().origin.y;
+    check(
+        "for-each-identity",
+        same && order && find_label("item2").is_none() && find_label("3 items").is_some(),
+        format!("kept item1/item3 views: {same}; laid out 3,1,4: {order}"),
+    );
+
+    // dynamic: switching tears the old subtree down and stops its effects.
+    let nodes_on = live_nodes();
+    batch(|| st.flag.set(false));
+    let runs = effect_runs();
+    batch(|| st.inner.set(5));
+    let stopped = effect_runs() == runs;
+    check(
+        "dynamic-teardown",
+        find_label("off").is_some() && find_label("on").is_none() && find_label("inner 0").is_none() && stopped,
+        format!("nodes {nodes_on} → {}; removed subtree's effect ran after removal: {}", live_nodes(), !stopped),
+    );
+    batch(|| st.flag.set(true));
+    check("dynamic-rebuild", find_label("inner 5").is_some(), "rebuilt subtree reads the current value".into());
+
+    // .id: same id keeps the node (and its text); a new id rebuilds.
+    let t0 = find_label("tab 0").unwrap();
+    batch(|| st.tab.set(1));
+    let kept = find_label("tab 0").is_some_and(|v| std::ptr::eq(&*v, &*t0));
+    batch(|| st.tab.set(2));
+    let rebuilt = find_label("tab 2").is_some_and(|v| !std::ptr::eq(&*v, &*t0));
+    check("id-identity", kept && rebuilt, format!("tab 0→1 kept the node: {kept}; 1→2 rebuilt: {rebuilt}"));
+
+    // Teardown: churn 1,000 × 10 items; nodes and subviews return to baseline.
+    let base_nodes = live_nodes();
+    let base_views = labels().len();
+    // Warm-up: one full churn (first-time AppKit and allocator growth), then
+    // measure a second one. A leak shows as growth; a one-off peak doesn't.
+    for round in 0..1000u32 {
+        batch(|| st.items.set((0..10).map(|i| item(50_000 + round * 10 + i)).collect()));
+        batch(|| st.items.set(vec![]));
+    }
+    let rss0 = footprint_mb();
+    let t = std::time::Instant::now();
+    for round in 0..1000u32 {
+        batch(|| st.items.set((0..10).map(|i| item(10_000 + round * 10 + i)).collect()));
+        batch(|| st.items.set(vec![]));
+    }
+    let ms = t.elapsed().as_secs_f64() * 1e3;
+    batch(|| st.items.set(vec![item(3), item(1), item(4)]));
+    later(move || {
+        let removed_gone = weak2.load().is_none();
+        let rss1 = footprint_mb();
+        check(
+            "teardown-churn",
+            live_nodes() == base_nodes && labels().len() == base_views && removed_gone && rss1 - rss0 < 15.0,
+            format!(
+                "10,000 rows built and removed in {ms:.0} ms; nodes {base_nodes} → {}; views {base_views} → {}; removed view deallocated: {removed_gone}; footprint {rss0:.0} → {rss1:.0} MB",
+                live_nodes(),
+                labels().len()
+            ),
+        );
+        appearance_check(events.clone());
+    });
+}
+
 fn main() {
     let events: Rc<RefCell<Vec<AppEvent>>> = Rc::default();
     let checks = std::env::var("CHECK").is_ok_and(|v| v == "all");
@@ -167,6 +338,7 @@ fn main() {
     App::new("Checklist")
         .window(Window::new("First").size(480.0, 200.0).content(|| field("hello world")))
         .window(Window::new("Second").size(360.0, 160.0))
+        .window(Window::new("Views").size(320.0, 420.0).view(views_window()))
         .on_event(move |e| e2.borrow_mut().push(e))
         .on_launch(move || {
             if checks {

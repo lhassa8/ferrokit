@@ -1,15 +1,17 @@
 //! A native macOS UI framework for Rust: every view is a real AppKit view.
 //! Phase 2, unreleased. So far: the app, its windows, the run loop, the
 //! default menu bar and appearance tracking (F1.1); signals, batching and
-//! background work (F1.2). Views and layout follow (F1.3–F1.4); until then a
-//! window's content is a plain `NSView`.
+//! background work (F1.2); views, identity and teardown (F1.3). The layout
+//! pass is a first version; F1.4 completes it.
 //!
 //! Main thread only.
 
 #![warn(missing_docs)]
 
+mod layout;
 mod menu;
 mod signal;
+mod view;
 
 use std::any::Any;
 use std::cell::{Cell, RefCell};
@@ -19,15 +21,20 @@ use std::sync::{Arc, Mutex};
 
 use block2::RcBlock;
 use objc2::rc::Retained;
-use objc2::{MainThreadMarker, MainThreadOnly};
+use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSView, NSWindow, NSWindowStyleMask,
+    NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSResponder, NSView, NSWindow, NSWindowStyleMask,
 };
+use objc2_foundation::NSObject;
 use objc2_core_foundation::{CFRunLoop, kCFRunLoopCommonModes};
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
 pub use appkit_host::{is_dark, system_colors};
 pub use signal::{Effect, Memo, Signal, after_batch, batch, effect_runs, untrack};
+pub use view::{
+    AnyView, Axis, Button, Cx, Dynamic, ForEach, Identifiable, Label, Modified, Node, Size, Spacer, Stack, Text, View,
+    ViewExt, Views, button, dynamic, for_each, hstack, label, live_nodes, spacer, text, vstack,
+};
 
 fn mtm() -> MainThreadMarker {
     MainThreadMarker::new().expect("appkit-ui must be used on the main thread")
@@ -38,12 +45,13 @@ pub struct Window {
     title: String,
     size: (f64, f64),
     content: Option<Box<dyn FnOnce() -> Retained<NSView>>>,
+    view: Option<AnyView>,
 }
 
 impl Window {
     /// A titled, resizable window of 800 × 600 points.
     pub fn new(title: &str) -> Self {
-        Window { title: title.into(), size: (800.0, 600.0), content: None }
+        Window { title: title.into(), size: (800.0, 600.0), content: None, view: None }
     }
 
     /// The content size in points.
@@ -52,7 +60,13 @@ impl Window {
         self
     }
 
-    /// The window's content view, built when the window opens.
+    /// The window's content: `view`, laid out to fill the window.
+    pub fn view(mut self, view: impl View) -> Self {
+        self.view = Some(AnyView::new(view));
+        self
+    }
+
+    /// A plain `NSView` as the window's content (escape hatch; no layout).
     pub fn content(mut self, build: impl FnOnce() -> Retained<NSView> + 'static) -> Self {
         self.content = Some(Box::new(build));
         self
@@ -81,6 +95,14 @@ impl Window {
         if let Some(build) = self.content {
             window.setContentView(Some(&build()));
         }
+        if let Some(view) = self.view {
+            // SAFETY: NSView's designated initialiser.
+            let root: Retained<RootView> = unsafe { msg_send![RootView::alloc(mtm), initWithFrame: rect] };
+            let node = batch(|| view.build(&mut Cx::new(Retained::into_super(root.clone()))));
+            ROOTS.with_borrow_mut(|r| r.push((root.clone(), node)));
+            window.setContentView(Some(&root));
+            relayout_all();
+        }
         window.center();
         window
     }
@@ -96,6 +118,65 @@ pub enum AppEvent {
 }
 
 type Handler = Rc<dyn Fn(AppEvent)>;
+
+define_class!(
+    // A window's content view: flipped (top-left origin), lays its node out
+    // whenever its size changes (same transaction as the window resize).
+    #[unsafe(super(NSView, NSResponder, NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "AppKitUiRootView"]
+    struct RootView;
+
+    impl RootView {
+        #[unsafe(method(isFlipped))]
+        fn is_flipped(&self) -> bool {
+            true
+        }
+
+        #[unsafe(method(setFrameSize:))]
+        fn set_frame_size(&self, size: NSSize) {
+            let _: () = unsafe { msg_send![super(self), setFrameSize: size] };
+            relayout(self);
+        }
+    }
+);
+
+thread_local! {
+    static ROOTS: RefCell<Vec<(Retained<RootView>, Node)>> = const { RefCell::new(Vec::new()) };
+    static IN_LAYOUT: Cell<bool> = const { Cell::new(false) };
+    static LAYOUT_US: RefCell<Vec<f64>> = const { RefCell::new(Vec::new()) };
+}
+
+fn relayout(root: &RootView) {
+    if IN_LAYOUT.with(|l| l.replace(true)) {
+        return;
+    }
+    let t = std::time::Instant::now();
+    ROOTS.with_borrow(|roots| {
+        for (view, node) in roots {
+            if std::ptr::eq(&**view, root) {
+                let b = view.bounds().size;
+                let scale = view.window().map_or(2.0, |w| w.backingScaleFactor());
+                layout::place(node, 0.0, 0.0, b.width, b.height, &layout::Snap(scale));
+            }
+        }
+    });
+    LAYOUT_US.with_borrow_mut(|v| v.push(t.elapsed().as_secs_f64() * 1e6));
+    IN_LAYOUT.with(|l| l.set(false));
+}
+
+fn relayout_all() {
+    view::LAYOUT_DIRTY.with(|d| d.set(false));
+    let roots: Vec<Retained<RootView>> = ROOTS.with_borrow(|r| r.iter().map(|(v, _)| v.clone()).collect());
+    for r in roots {
+        relayout(&r);
+    }
+}
+
+/// Microseconds of each layout pass so far (diagnostic).
+pub fn layout_times_us() -> Vec<f64> {
+    LAYOUT_US.with_borrow(Clone::clone)
+}
 
 thread_local! {
     static HANDLERS: RefCell<Vec<Handler>> = const { RefCell::new(Vec::new()) };
@@ -140,6 +221,11 @@ impl App {
         let app = NSApplication::sharedApplication(mtm);
         app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
         menu::install(mtm, &self.name);
+        after_batch(|| {
+            if view::LAYOUT_DIRTY.with(Cell::get) {
+                relayout_all();
+            }
+        });
 
         appkit_host::observe_appearance();
         appkit_host::set_event_sink(|event| {
@@ -148,11 +234,15 @@ impl App {
             }
         });
 
-        for window in self.windows {
-            let w = window.open(mtm);
-            w.makeKeyAndOrderFront(None);
-            WINDOWS.with_borrow_mut(|ws| ws.push(w));
-        }
+        // Startup runs before the run loop exists, so it needs its own
+        // autorelease pool (see `later`).
+        objc2::rc::autoreleasepool(|_| {
+            for window in self.windows {
+                let w = window.open(mtm);
+                w.makeKeyAndOrderFront(None);
+                WINDOWS.with_borrow_mut(|ws| ws.push(w));
+            }
+        });
         #[allow(deprecated)]
         app.activateIgnoringOtherApps(true);
         if let Some(f) = self.on_launch {
@@ -182,7 +272,10 @@ pub fn windows() -> Vec<Retained<NSWindow>> {
 /// Runs `f` on a later pass of the main run loop.
 pub fn later(f: impl Fn() + 'static) {
     let main = CFRunLoop::main().expect("main run loop");
-    let block = RcBlock::new(f);
+    // Blocks run outside NSApplication's per-event autorelease pool, so give
+    // each its own: without it, everything AppKit autoreleases inside (e.g.
+    // new controls) is never released.
+    let block = RcBlock::new(move || objc2::rc::autoreleasepool(|_| f()));
     // SAFETY: runs on the main run loop; touches main-thread state only.
     unsafe { main.perform_block(kCFRunLoopCommonModes.map(|m| m.as_ref()), Some(&block)) };
     main.wake_up();
@@ -220,7 +313,8 @@ pub fn spawn<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static, then:
             let result = result.lock().expect("task result").take();
             let then = CONTINUATIONS.with_borrow_mut(|c| c.remove(&id));
             if let (Some(result), Some(then)) = (result, then) {
-                batch(|| then(result));
+                // Own pool: see `later`.
+                objc2::rc::autoreleasepool(|_| batch(|| then(result)));
             }
         });
         // SAFETY: CFRunLoopPerformBlock and CFRunLoopWakeUp may be called from

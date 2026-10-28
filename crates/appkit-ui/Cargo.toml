@@ -16,5 +16,5 @@ appkit-host = { path = "../appkit-host", version = "0.1.0" }
 objc2 = "0.6"
 block2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSGeometry", "NSObject", "NSNotification", "NSArray"] }
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSWindow", "NSView", "NSMenu", "NSMenuItem", "NSEvent", "NSGraphics", "NSRunningApplication"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSWindow", "NSView", "NSMenu", "NSMenuItem", "NSEvent", "NSGraphics", "NSRunningApplication", "NSControl", "NSButton", "NSTextField", "NSLayoutConstraint"] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "CFRunLoop"] }

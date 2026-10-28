@@ -77,7 +77,18 @@ pub fn effect_runs() -> u64 {
 }
 
 /// Runs `f`; effects triggered inside run once, when the outermost batch ends.
+///
+/// The outermost batch also drains its own autorelease pool, so a burst of
+/// updates (each creating and removing native views) doesn't pile up
+/// autoreleased AppKit objects until the run loop's next pass.
 pub fn batch<R>(f: impl FnOnce() -> R) -> R {
+    if DEPTH.with(Cell::get) > 0 {
+        return nested(f);
+    }
+    objc2::rc::autoreleasepool(|_| nested(f))
+}
+
+fn nested<R>(f: impl FnOnce() -> R) -> R {
     DEPTH.with(|d| d.set(d.get() + 1));
     let r = f();
     if DEPTH.with(Cell::get) == 1 {
