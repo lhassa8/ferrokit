@@ -3,7 +3,8 @@
 //! default menu bar and appearance tracking (F1.1); signals, batching and
 //! background work (F1.2); views, identity and teardown (F1.3); layout with
 //! stacks, grids, alignment and subtree-only relayout (F1.4); text fields,
-//! secure fields, toggles and checkboxes bound to signals (F1.5).
+//! secure fields, toggles and checkboxes bound to signals (F1.5); pickers,
+//! sliders, steppers, progress, SF Symbols, dividers and scroll views (F1.6).
 //!
 //! Main thread only.
 
@@ -33,11 +34,15 @@ use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
 pub use appkit_host::{is_dark, system_colors};
 pub use signal::{Effect, Memo, Signal, after_batch, batch, effect_runs, untrack};
-pub use controls::{Checkbox, TextField, checkbox, secure_field, text_field, toggle};
+pub use controls::{
+    Checkbox, Image, Picker, Progress, Slider, Stepper, TextField, checkbox, image, picker, progress, secure_field, slider,
+    stepper, text_field, toggle,
+};
 pub use layout::layout_stats;
 pub use view::{
-    Align, AnyView, Axis, Button, Cx, Dynamic, ForEach, Grid, Identifiable, Label, Modified, Node, Size, Spacer, Stack,
-    Text, View, ViewExt, Views, button, dynamic, for_each, grid, hstack, label, live_nodes, spacer, text, vstack,
+    Align, AnyView, Axis, Button, Cx, Divider, Dynamic, ForEach, Grid, Identifiable, Label, Modified, Node, Scroll, Size,
+    Spacer, Stack, Text, View, ViewExt, Views, button, divider, dynamic, for_each, grid, hstack, label, live_nodes, scroll,
+    spacer, text, vstack,
 };
 
 fn mtm() -> MainThreadMarker {

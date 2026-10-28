@@ -91,6 +91,11 @@ pub(crate) fn ideal(node: &Node) -> Size {
         Kind::Spacer => Size::default(),
         Kind::Group(g) => stack_ideal(&g.borrow(), Axis::Vertical, 0.0),
         Kind::Stack { axis, spacing, children, .. } => stack_ideal(children, *axis, *spacing),
+        Kind::Scroll { content, .. } => {
+            // Room for the content's width plus a scroller; a modest height.
+            let c = ideal(content);
+            Size { w: c.w + 16.0, h: c.h.min(200.0) }
+        }
         Kind::Grid { spacing, rows } => {
             let (cols, rws) = grid_tracks(rows);
             Size {
@@ -151,6 +156,7 @@ pub(crate) fn flexible(node: &Node, axis: Axis, parent: Option<Axis>) -> bool {
         return true;
     }
     match &node.kind {
+        Kind::Leaf(l) if l.cross_only => parent.map_or(axis == Axis::Horizontal, |p| p != axis),
         Kind::Leaf(l) => {
             if axis == Axis::Horizontal {
                 l.flex.0
@@ -159,6 +165,7 @@ pub(crate) fn flexible(node: &Node, axis: Axis, parent: Option<Axis>) -> bool {
             }
         }
         Kind::Spacer => parent == Some(axis),
+        Kind::Scroll { .. } => true,
         Kind::Group(g) => g.borrow().iter().any(|c| flexible(c, axis, parent)),
         Kind::Stack { axis: own, children, .. } => {
             let mut any = false;
@@ -197,6 +204,19 @@ pub(crate) fn place(node: &Node, x: f64, y: f64, w: f64, h: f64, snap: &Snap) {
             }
         }
         Kind::Spacer => {}
+        Kind::Scroll { scroll, doc, content } => {
+            let (x0, y0) = (snap.r(ix), snap.r(iy));
+            let r = NSRect::new(NSPoint::new(x0, y0), NSSize::new(snap.r(ix + iw) - x0, snap.r(iy + ih) - y0));
+            if scroll.frame() != r {
+                scroll.setFrame(r);
+            }
+            let visible = scroll.contentSize();
+            let (w, h) = (visible.width, ideal(content).h.max(visible.height));
+            if doc.frame().size != NSSize::new(w, h) {
+                doc.setFrameSize(NSSize::new(w, h));
+            }
+            place(content, 0.0, 0.0, w, h, snap);
+        }
         Kind::Group(g) => place_stack(&g.borrow(), Axis::Vertical, 0.0, None, [ix, iy, iw, ih], snap),
         Kind::Stack { axis, spacing, align, children } => {
             place_stack(children, *axis, *spacing, *align, [ix, iy, iw, ih], snap)

@@ -8,7 +8,7 @@ use std::rc::Rc;
 use appkit_ui::{
     Align, App, AppEvent, Effect, Identifiable, Signal, View, ViewExt, Window, batch, button, checkbox, dynamic, effect_runs,
     for_each, grid, hstack, label, later, layout_stats, layout_times_us, live_nodes, open, secure_field, spacer, spawn, text,
-    text_field, toggle, vstack, windows,
+    text_field, toggle, vstack, windows, divider, image, picker, progress, scroll, slider, stepper,
 };
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
@@ -84,9 +84,9 @@ fn run_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     // Windows: both open; AppKit lists them in the Window menu.
     let ws = windows();
     let visible = ws.iter().filter(|w| w.isVisible()).count();
-    check("windows", ws.len() == 5 && visible == 5, format!("{} windows, {visible} visible", ws.len()));
+    check("windows", ws.len() == 6 && visible == 6, format!("{} windows, {visible} visible", ws.len()));
     let window_menu = menu_items(2);
-    let listed = ["First", "Second", "Views", "Layout", "Controls"].iter().all(|t| window_menu.iter().any(|(title, _, _)| title == t));
+    let listed = ["First", "Second", "Views", "Layout", "Controls", "Controls B"].iter().all(|t| window_menu.iter().any(|(title, _, _)| title == t));
     check("window-menu-lists-windows", listed && app.windowsMenu().is_some(), format!("{:?}", window_menu.iter().map(|e| &e.0).collect::<Vec<_>>()));
     check("help-menu", app.helpMenu().is_some(), String::new());
 
@@ -651,6 +651,150 @@ fn controls_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     }
     check("tab-order", secure.currentEditor().is_some(), "Tab moves from the name field to the password field".into());
 
+    controls_b_checks(events);
+}
+
+#[derive(Clone)]
+struct CtrlB {
+    size: Signal<u32>,
+    volume: Signal<f64>,
+    count: Signal<f64>,
+    progress: Signal<Option<f64>>,
+    lines: Signal<Vec<Item>>,
+}
+
+thread_local! {
+    static CTRL_B: CtrlB = CtrlB {
+        size: Signal::new(2),
+        volume: Signal::new(0.5),
+        count: Signal::new(3.0),
+        progress: Signal::new(Some(0.4)),
+        lines: Signal::new((1..=60).map(item).collect()),
+    };
+}
+
+fn controls_b_window() -> impl View {
+    let c = CTRL_B.with(Clone::clone);
+    let (count, prog, lines) = (c.count.clone(), c.progress.clone(), c.lines.clone());
+    vstack((
+        picker(&c.size, vec![("Small", 1), ("Medium", 2), ("Large", 3)]),
+        hstack((slider(&c.volume, 0.0, 1.0), stepper(&c.count, 0.0, 10.0, 1.0), label(move || format!("count {}", count.get())))),
+        progress(move || prog.get()),
+        hstack((image("star.fill").description("Favourite"), text("starred"))),
+        divider(),
+        scroll(vstack((for_each(move || lines.get(), |it: Item| label(move || it.name.clone())),))),
+    ))
+    .padding(16.0)
+}
+
+fn send_action(control: &objc2_app_kit::NSControl) -> bool {
+    unsafe { control.sendAction_to(control.action(), control.target().as_deref()) }
+}
+
+/// With `SNAP=<dir>`, renders every window to `<dir>/<title>.png` (AppKit's
+/// own drawing, no screen-recording permission needed).
+fn snapshot_windows() {
+    let Ok(dir) = std::env::var("SNAP") else { return };
+    for w in windows() {
+        let view = w.contentView().unwrap();
+        let bounds = view.bounds();
+        let Some(rep) = view.bitmapImageRepForCachingDisplayInRect(bounds) else { continue };
+        view.cacheDisplayInRect_toBitmapImageRep(bounds, &rep);
+        let png = unsafe {
+            rep.representationUsingType_properties(objc2_app_kit::NSBitmapImageFileType::PNG, &objc2_foundation::NSDictionary::new())
+        };
+        if let Some(png) = png {
+            let path = format!("{dir}/{}.png", w.title());
+            png.writeToFile_atomically(&NSString::from_str(&path), true);
+        }
+    }
+}
+
+fn controls_b_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use objc2_app_kit::{NSBox, NSImageView, NSPopUpButton, NSProgressIndicator, NSScrollView, NSSlider, NSStepper};
+    let c = CTRL_B.with(Clone::clone);
+    let w = windows().into_iter().find(|w| w.title().to_string() == "Controls B").unwrap();
+    w.makeKeyAndOrderFront(None);
+    let subs: Vec<Retained<NSView>> = w.contentView().unwrap().subviews().to_vec();
+    let find = |f: &dyn Fn(&Retained<NSView>) -> bool| subs.iter().find(|v| f(v)).cloned().unwrap();
+    let popup = find(&|v| v.clone().downcast::<NSPopUpButton>().is_ok()).downcast::<NSPopUpButton>().unwrap();
+    let slider_v = find(&|v| v.clone().downcast::<NSSlider>().is_ok()).downcast::<NSSlider>().unwrap();
+    let stepper_v = find(&|v| v.clone().downcast::<NSStepper>().is_ok()).downcast::<NSStepper>().unwrap();
+    let bar = find(&|v| v.clone().downcast::<NSProgressIndicator>().is_ok()).downcast::<NSProgressIndicator>().unwrap();
+    let img = find(&|v| v.clone().downcast::<NSImageView>().is_ok()).downcast::<NSImageView>().unwrap();
+    let line = find(&|v| v.clone().downcast::<NSBox>().is_ok());
+    let sv = find(&|v| v.clone().downcast::<NSScrollView>().is_ok()).downcast::<NSScrollView>().unwrap();
+    let content_w = w.contentView().unwrap().bounds().size.width;
+
+    // Picker: starts on the signal's value; user choice → signal; signal → menu.
+    let initial = popup.indexOfSelectedItem();
+    popup.selectItemAtIndex(2);
+    send_action(&popup);
+    let chosen = c.size.get_untracked();
+    batch(|| c.size.set(1));
+    check(
+        "picker",
+        initial == 1 && chosen == 3 && popup.indexOfSelectedItem() == 0 && has_ax(&ax_tree(&w), "AXPopUpButton", "", ""),
+        format!("initial index {initial}; chose Large → {chosen}; signal 1 → index {}", popup.indexOfSelectedItem()),
+    );
+
+    // Slider and stepper.
+    slider_v.setDoubleValue(0.75);
+    send_action(&slider_v);
+    let from_user = c.volume.get_untracked();
+    batch(|| c.volume.set(0.25));
+    check("slider", from_user == 0.75 && slider_v.doubleValue() == 0.25, format!("user 0.75 → {from_user}; signal 0.25 → {}", slider_v.doubleValue()));
+    stepper_v.setDoubleValue(4.0);
+    send_action(&stepper_v);
+    let stepped = c.count.get_untracked();
+    batch(|| c.count.set(9.0));
+    let shown = stepper_v.doubleValue();
+    check(
+        "stepper",
+        stepped == 4.0 && shown == 9.0 && stepper_v.maxValue() == 10.0 && stepper_v.increment() == 1.0,
+        format!("user 4 → {stepped}; signal 9 → {shown}; range 0–{} step {}", stepper_v.maxValue(), stepper_v.increment()),
+    );
+
+    // Progress: determinate value, then indeterminate.
+    let det = !bar.isIndeterminate() && (bar.doubleValue() - 0.4).abs() < 1e-9;
+    batch(|| c.progress.set(None));
+    let indet = bar.isIndeterminate();
+    batch(|| c.progress.set(Some(1.0)));
+    check("progress", det && indet && bar.doubleValue() == 1.0, format!("0.4 shown: {det}; None → indeterminate: {indet}; then {}", bar.doubleValue()));
+
+    // SF Symbol with an accessibility description.
+    check(
+        "image-symbol",
+        img.image().is_some() && has_ax(&ax_tree(&w), "AXImage", "", "Favourite"),
+        format!("image set: {}; AXImage \"Favourite\" in the AX tree: {}", img.image().is_some(), has_ax(&ax_tree(&w), "AXImage", "", "Favourite")),
+    );
+
+    // Divider: spans the stack's width, one point tall.
+    let d = line.frame();
+    check("divider", (d.size.width - (content_w - 32.0)).abs() <= 0.5 && d.size.height <= 1.5, format!("{:.1} × {:.1} (inner width {:.1})", d.size.width, d.size.height, content_w - 32.0));
+
+    // Scroll view: content at the visible width, taller than the viewport; scrolls to the end; grows with new rows.
+    let doc = sv.documentView().unwrap();
+    let visible = sv.contentSize();
+    let tall = doc.frame().size.height > visible.height && (doc.frame().size.width - visible.width).abs() < 0.5;
+    let last = doc.subviews().iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string() == "item60").unwrap();
+    doc.scrollRectToVisible(last.frame());
+    let shown = sv.documentVisibleRect();
+    let lf = last.frame();
+    let at_end = lf.origin.y >= shown.origin.y && lf.origin.y + lf.size.height <= shown.origin.y + shown.size.height + 0.5;
+    let h0 = doc.frame().size.height;
+    batch(|| c.lines.update(|l| l.extend((61..=80).map(item))));
+    let grew = doc.frame().size.height > h0;
+    check(
+        "scroll-view",
+        tall && at_end && grew,
+        format!(
+            "content {:.0}×{:.0} in a {:.0}×{:.0} viewport; item60 visible after scrolling: {at_end}; 20 more rows grew it {h0:.0} → {:.0}",
+            doc.frame().size.width, h0, visible.width, visible.height, doc.frame().size.height
+        ),
+    );
+
+    snapshot_windows();
     appearance_check(events);
 }
 
@@ -664,6 +808,7 @@ fn main() {
         .window(Window::new("Views").size(320.0, 420.0).view(views_window()))
         .window(Window::new("Layout").size(420.0, 480.0).view(layout_window()))
         .window(Window::new("Controls").size(360.0, 300.0).view(controls_window()))
+        .window(Window::new("Controls B").size(380.0, 460.0).view(controls_b_window()))
         .on_event(move |e| e2.borrow_mut().push(e))
         .on_launch(move || {
             if checks {

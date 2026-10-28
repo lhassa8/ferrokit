@@ -200,3 +200,189 @@ impl View for SwitchView {
 pub fn toggle(title: &str, value: &Signal<bool>) -> impl View {
     hstack((text(title), SwitchView(value.clone())))
 }
+
+/// Wires `control` to call `f` (in a batch) when the user changes it.
+fn on_action(cx: &Cx, control: &objc2_app_kit::NSControl, f: impl Fn() + 'static) -> Retained<NSObject> {
+    let target = ActionTarget::new(cx.mtm, f);
+    // SAFETY: the target responds to `fire:`; the caller's node keeps it alive.
+    unsafe {
+        control.setTarget(Some(&target));
+        control.setAction(Some(sel!(fire:)));
+    }
+    Retained::into_super(target)
+}
+
+/// A pop-up menu choosing one of several values.
+pub struct Picker<T> {
+    value: Signal<T>,
+    options: Vec<(String, T)>,
+}
+
+impl<T: PartialEq + Clone + 'static> View for Picker<T> {
+    fn build(self, cx: &mut Cx) -> Node {
+        let popup = objc2_app_kit::NSPopUpButton::new(cx.mtm);
+        for (title, _) in &self.options {
+            popup.addItemWithTitle(&NSString::from_str(title));
+        }
+        let options = std::rc::Rc::new(self.options);
+        let (value, opts, p) = (self.value.clone(), options.clone(), popup.clone());
+        let target = on_action(cx, &popup, move || {
+            if let Some((_, v)) = usize::try_from(p.indexOfSelectedItem()).ok().and_then(|i| opts.get(i)) {
+                value.set(v.clone());
+            }
+        });
+        let (mut node, _) =
+            Node::leaf(cx, Retained::into_super(Retained::into_super(Retained::into_super(popup.clone()))), (false, false), Size::default());
+        let value = self.value;
+        node.own(Effect::new(move || {
+            let current = value.get();
+            if let Some(i) = options.iter().position(|(_, v)| *v == current)
+                && popup.indexOfSelectedItem() != i as isize
+            {
+                popup.selectItemAtIndex(i as isize);
+            }
+        }));
+        node.keep(target);
+        node
+    }
+}
+
+/// A pop-up menu bound two ways to `value`, offering `options` (title, value).
+pub fn picker<T: PartialEq + Clone + 'static>(value: &Signal<T>, options: Vec<(&str, T)>) -> Picker<T> {
+    Picker { value: value.clone(), options: options.into_iter().map(|(t, v)| (t.to_string(), v)).collect() }
+}
+
+/// A continuous slider bound two ways to `value`.
+pub struct Slider {
+    value: Signal<f64>,
+    range: (f64, f64),
+}
+
+impl View for Slider {
+    fn build(self, cx: &mut Cx) -> Node {
+        let slider = objc2_app_kit::NSSlider::new(cx.mtm);
+        slider.setMinValue(self.range.0);
+        slider.setMaxValue(self.range.1);
+        slider.setContinuous(true);
+        let (value, s) = (self.value.clone(), slider.clone());
+        let target = on_action(cx, &slider, move || value.set(s.doubleValue()));
+        let (mut node, _) =
+            Node::leaf(cx, Retained::into_super(Retained::into_super(slider.clone())), (true, false), Size { w: 100.0, h: 0.0 });
+        let value = self.value;
+        node.own(Effect::new(move || {
+            let v = value.get();
+            if slider.doubleValue() != v {
+                slider.setDoubleValue(v);
+            }
+        }));
+        node.keep(target);
+        node
+    }
+}
+
+/// A slider over `min..=max`, bound two ways to `value`.
+pub fn slider(value: &Signal<f64>, min: f64, max: f64) -> Slider {
+    Slider { value: value.clone(), range: (min, max) }
+}
+
+/// Up/down arrows stepping `value` within a range.
+pub struct Stepper {
+    value: Signal<f64>,
+    range: (f64, f64),
+    step: f64,
+}
+
+impl View for Stepper {
+    fn build(self, cx: &mut Cx) -> Node {
+        let stepper = objc2_app_kit::NSStepper::new(cx.mtm);
+        stepper.setMinValue(self.range.0);
+        stepper.setMaxValue(self.range.1);
+        stepper.setIncrement(self.step);
+        stepper.setValueWraps(false);
+        let (value, s) = (self.value.clone(), stepper.clone());
+        let target = on_action(cx, &stepper, move || value.set(s.doubleValue()));
+        let (mut node, _) =
+            Node::leaf(cx, Retained::into_super(Retained::into_super(stepper.clone())), (false, false), Size::default());
+        let value = self.value;
+        node.own(Effect::new(move || {
+            let v = value.get();
+            if stepper.doubleValue() != v {
+                stepper.setDoubleValue(v);
+            }
+        }));
+        node.keep(target);
+        node
+    }
+}
+
+/// A stepper over `min..=max` in steps of `step`, bound two ways to `value`.
+pub fn stepper(value: &Signal<f64>, min: f64, max: f64, step: f64) -> Stepper {
+    Stepper { value: value.clone(), range: (min, max), step }
+}
+
+/// A progress bar: `Some(fraction)` (0–1) or `None` for indeterminate.
+pub struct Progress(Box<dyn Fn() -> Option<f64>>);
+
+impl View for Progress {
+    fn build(self, cx: &mut Cx) -> Node {
+        let bar = objc2_app_kit::NSProgressIndicator::new(cx.mtm);
+        bar.setStyle(objc2_app_kit::NSProgressIndicatorStyle::Bar);
+        bar.setMinValue(0.0);
+        bar.setMaxValue(1.0);
+        let (mut node, _) =
+            Node::leaf(cx, Retained::into_super(bar.clone()), (true, false), Size { w: 100.0, h: 0.0 });
+        let f = self.0;
+        node.own(Effect::new(move || match f() {
+            Some(v) => {
+                // SAFETY: nil sender.
+                unsafe { bar.stopAnimation(None) };
+                bar.setIndeterminate(false);
+                bar.setDoubleValue(v.clamp(0.0, 1.0));
+            }
+            None => {
+                bar.setIndeterminate(true);
+                // SAFETY: nil sender.
+                unsafe { bar.startAnimation(None) };
+            }
+        }));
+        node
+    }
+}
+
+/// A progress bar driven by `f` (reading signals): `Some(0.0..=1.0)` or
+/// `None` while the amount is unknown.
+pub fn progress(f: impl Fn() -> Option<f64> + 'static) -> Progress {
+    Progress(Box::new(f))
+}
+
+/// An SF Symbol.
+pub struct Image {
+    symbol: String,
+    description: Option<String>,
+}
+
+impl Image {
+    /// What VoiceOver says (defaults to the symbol name).
+    pub fn description(mut self, text: &str) -> Self {
+        self.description = Some(text.into());
+        self
+    }
+}
+
+impl View for Image {
+    fn build(self, cx: &mut Cx) -> Node {
+        let description = self.description.unwrap_or_else(|| self.symbol.clone());
+        let image = objc2_app_kit::NSImage::imageWithSystemSymbolName_accessibilityDescription(
+            &NSString::from_str(&self.symbol),
+            Some(&NSString::from_str(&description)),
+        )
+        .unwrap_or_else(|| panic!("no SF Symbol named {:?}", self.symbol));
+        let view = objc2_app_kit::NSImageView::imageViewWithImage(&image, cx.mtm);
+        Node::leaf(cx, Retained::into_super(Retained::into_super(view)), (false, false), Size::default()).0
+    }
+}
+
+/// An SF Symbol by name (e.g. `"star.fill"`). Panics if the name is unknown.
+pub fn image(symbol: &str) -> Image {
+    Image { symbol: symbol.into(), description: None }
+}

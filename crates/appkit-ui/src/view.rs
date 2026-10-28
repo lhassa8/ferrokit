@@ -17,7 +17,7 @@ use std::rc::{Rc, Weak};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
-use objc2_app_kit::{NSButton, NSTextField, NSView};
+use objc2_app_kit::{NSBox, NSBoxType, NSButton, NSResponder, NSScrollView, NSTextField, NSView};
 use objc2_foundation::NSString;
 
 use crate::signal::{Effect, batch, untrack};
@@ -163,6 +163,8 @@ pub(crate) struct Leaf {
     pub(crate) min: Size,
     /// Cached `fittingSize`.
     pub(crate) content: Rc<Cell<Option<Size>>>,
+    /// Flexible only across its parent stack's axis (dividers).
+    pub(crate) cross_only: bool,
 }
 
 /// What an effect needs to report that a leaf's content changed.
@@ -178,6 +180,8 @@ pub(crate) enum Kind {
     Spacer,
     /// Children that change over time; laid out inline in the parent stack.
     Group(Rc<RefCell<Vec<Node>>>),
+    /// Content inside an `NSScrollView`'s (flipped) document view.
+    Scroll { scroll: Retained<NSScrollView>, doc: Retained<NSView>, content: Box<Node> },
 }
 
 /// A built view: native views, effects and helper objects it owns.
@@ -219,6 +223,7 @@ impl Node {
         match &self.kind {
             Kind::Stack { children, .. } => children.iter().collect(),
             Kind::Grid { rows, .. } => rows.iter().flatten().collect(),
+            Kind::Scroll { content, .. } => vec![&**content],
             _ => Vec::new(),
         }
     }
@@ -227,7 +232,7 @@ impl Node {
         cx.container.addSubview(&view);
         let content = Rc::new(Cell::new(None));
         invalidate_layout();
-        let node = Node::new(Kind::Leaf(Leaf { view, flex, min, content: content.clone() }));
+        let node = Node::new(Kind::Leaf(Leaf { view, flex, min, content: content.clone(), cross_only: false }));
         let handle = LeafHandle { content, meta: node.meta.clone() };
         (node, handle)
     }
@@ -246,6 +251,9 @@ impl Drop for Node {
         LIVE_NODES.with(|n| n.set(n.get() - 1));
         // Effects stop first (dropping them), then the native view leaves.
         self.effects.clear();
+        if let Kind::Scroll { scroll, .. } = &self.kind {
+            scroll.removeFromSuperview();
+        }
         if let Kind::Leaf(l) = &self.kind {
             l.view.removeFromSuperview();
             if let Some(parent) = self.meta.parent.borrow().upgrade() {
@@ -448,6 +456,69 @@ impl View for Grid {
 /// A grid from rows of views (rows may be shorter than others).
 pub fn grid(rows: impl IntoIterator<Item = impl Views>) -> Grid {
     Grid { spacing: (8.0, 8.0), rows: rows.into_iter().map(Views::into_views).collect() }
+}
+
+/// A thin separator line across its stack: horizontal in a vertical stack,
+/// vertical in a horizontal one.
+pub struct Divider;
+
+impl View for Divider {
+    fn build(self, cx: &mut Cx) -> Node {
+        let line = NSBox::new(cx.mtm);
+        line.setBoxType(NSBoxType::Separator);
+        let (mut node, _) = Node::leaf(cx, Retained::into_super(line), (false, false), Size { w: 1.0, h: 1.0 });
+        if let Kind::Leaf(l) = &mut node.kind {
+            l.cross_only = true;
+            l.content.set(Some(Size { w: 1.0, h: 1.0 }));
+        }
+        node
+    }
+}
+
+/// A separator line across its stack.
+pub fn divider() -> Divider {
+    Divider
+}
+
+define_class!(
+    // A scroll view's document view: flipped, so content starts at the top.
+    #[unsafe(super(NSView, NSResponder, NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "AppKitUiFlippedView"]
+    struct FlippedView;
+
+    impl FlippedView {
+        #[unsafe(method(isFlipped))]
+        fn is_flipped(&self) -> bool {
+            true
+        }
+    }
+);
+
+/// Vertically scrolling content (`NSScrollView`). The content is laid out at
+/// the visible width and at least the visible height.
+pub struct Scroll(AnyView);
+
+impl View for Scroll {
+    fn build(self, cx: &mut Cx) -> Node {
+        let scroll = NSScrollView::new(cx.mtm);
+        scroll.setHasVerticalScroller(true);
+        scroll.setAutohidesScrollers(true);
+        scroll.setDrawsBackground(false);
+        // SAFETY: NSView's designated initialiser.
+        let doc: Retained<FlippedView> = unsafe { msg_send![FlippedView::alloc(cx.mtm), init] };
+        let doc: Retained<NSView> = Retained::into_super(doc);
+        scroll.setDocumentView(Some(&doc));
+        cx.container.addSubview(&scroll);
+        let content = self.0.build_node(&mut Cx::new(doc.clone()));
+        invalidate_layout();
+        Node::new(Kind::Scroll { scroll, doc, content: Box::new(content) })
+    }
+}
+
+/// Vertically scrolling `content`.
+pub fn scroll(content: impl View) -> Scroll {
+    Scroll(AnyView::new(content))
 }
 
 /// Flexible empty space along its stack's axis.
