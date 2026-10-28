@@ -1,17 +1,21 @@
 //! A native macOS UI framework for Rust: every view is a real AppKit view.
-//! Phase 2, unreleased. This is milestone F1.1: the app, its windows, the run
-//! loop, the default menu bar and appearance tracking. Views, signals and
-//! layout follow (F1.2–F1.4); until then a window's content is a plain
-//! `NSView`.
+//! Phase 2, unreleased. So far: the app, its windows, the run loop, the
+//! default menu bar and appearance tracking (F1.1); signals, batching and
+//! background work (F1.2). Views and layout follow (F1.3–F1.4); until then a
+//! window's content is a plain `NSView`.
 //!
 //! Main thread only.
 
 #![warn(missing_docs)]
 
 mod menu;
+mod signal;
 
-use std::cell::RefCell;
+use std::any::Any;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use block2::RcBlock;
 use objc2::rc::Retained;
@@ -23,6 +27,7 @@ use objc2_core_foundation::{CFRunLoop, kCFRunLoopCommonModes};
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
 pub use appkit_host::{is_dark, system_colors};
+pub use signal::{Effect, Memo, Signal, after_batch, batch, effect_runs, untrack};
 
 fn mtm() -> MainThreadMarker {
     MainThreadMarker::new().expect("appkit-ui must be used on the main thread")
@@ -186,4 +191,42 @@ pub fn later(f: impl Fn() + 'static) {
 /// Ends the app (as ⌘Q does).
 pub fn quit() {
     NSApplication::sharedApplication(mtm()).terminate(None);
+}
+
+type Continuation = Box<dyn FnOnce(Box<dyn Any + Send>)>;
+
+thread_local! {
+    static CONTINUATIONS: RefCell<HashMap<u64, Continuation>> = RefCell::new(HashMap::new());
+    static NEXT_TASK: Cell<u64> = const { Cell::new(0) };
+}
+
+/// Runs `work` on a background thread, then `then` with its result on the
+/// main thread, inside a [`batch`]. Call from the main thread.
+pub fn spawn<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static, then: impl FnOnce(T) + 'static) {
+    let _ = mtm();
+    let id = NEXT_TASK.with(|n| n.replace(n.get() + 1));
+    CONTINUATIONS.with_borrow_mut(|c| {
+        c.insert(
+            id,
+            Box::new(move |result: Box<dyn Any + Send>| {
+                then(*result.downcast::<T>().expect("spawned task result type"));
+            }),
+        )
+    });
+    std::thread::spawn(move || {
+        let result: Arc<Mutex<Option<Box<dyn Any + Send>>>> = Arc::new(Mutex::new(Some(Box::new(work()))));
+        let main = CFRunLoop::main().expect("main run loop");
+        let block = RcBlock::new(move || {
+            let result = result.lock().expect("task result").take();
+            let then = CONTINUATIONS.with_borrow_mut(|c| c.remove(&id));
+            if let (Some(result), Some(then)) = (result, then) {
+                batch(|| then(result));
+            }
+        });
+        // SAFETY: CFRunLoopPerformBlock and CFRunLoopWakeUp may be called from
+        // any thread; the block runs on the main run loop, where the
+        // continuation (a main-thread value) is looked up by id.
+        unsafe { main.perform_block(kCFRunLoopCommonModes.map(|m| m.as_ref()), Some(&block)) };
+        main.wake_up();
+    });
 }

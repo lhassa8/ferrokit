@@ -5,7 +5,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use appkit_ui::{App, AppEvent, Window, later, windows};
+use appkit_ui::{App, AppEvent, Effect, Signal, Window, batch, effect_runs, later, spawn, windows};
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2_app_kit::{NSApplication, NSEventModifierFlags, NSTextField, NSView};
@@ -95,6 +95,57 @@ fn run_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let selected = field.currentEditor().map(|e| e.selectedRange().length).unwrap_or(0);
     check("edit-select-all", selected == 11, format!("{selected} characters selected in \"hello world\""));
 
+    // Signals: cost of one update (one subscribed effect), and batching.
+    let n = Signal::new(0u64);
+    let n2 = n.clone();
+    let seen = Rc::new(Cell::new(0u64));
+    let s2 = seen.clone();
+    let effect = Effect::new(move || s2.set(n2.get()));
+    let t = std::time::Instant::now();
+    for i in 1..=100_000u64 {
+        n.set(i);
+    }
+    let per = t.elapsed().as_secs_f64() * 1e9 / 100_000.0;
+    check("signal-update-cost", seen.get() == 100_000, format!("{per:.0} ns per set + effect run"));
+    let runs = effect_runs();
+    batch(|| (0..1000).for_each(|i| n.set(i)));
+    check("signal-batch", effect_runs() - runs == 1, format!("{} effect run(s) for 1,000 sets in one batch", effect_runs() - runs));
+    drop(effect);
+
+    // spawn: work on a background thread, continuation on the main thread in one batch.
+    let main_thread = std::thread::current().id();
+    let result = Signal::new(String::new());
+    let r2 = result.clone();
+    let runs_seen = Rc::new(Cell::new(0u32));
+    let rs = runs_seen.clone();
+    let watcher = Effect::new(move || {
+        let _ = r2.get();
+        rs.set(rs.get() + 1);
+    });
+    let r3 = result.clone();
+    spawn(
+        move || {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            (std::thread::current().id(), (1..=1000u64).sum::<u64>())
+        },
+        move |(worker, sum)| {
+            r3.set("partial".into());
+            r3.set(format!("sum {sum}"));
+            let on_main = std::thread::current().id() == main_thread;
+            later(move || {
+                let _ = &watcher;
+                check(
+                    "spawn",
+                    worker != main_thread && on_main && result.get_untracked() == "sum 500500" && runs_seen.get() == 2,
+                    format!("worker off main: {}, continuation on main: {on_main}, value {:?}, watcher runs {}", worker != main_thread, result.get_untracked(), runs_seen.get()),
+                );
+                appearance_check(events.clone());
+            });
+        },
+    );
+}
+
+fn appearance_check(events: Rc<RefCell<Vec<AppEvent>>>) {
     // Appearance: switching NSApp's appearance reaches the app as an event.
     let before = appkit_ui::is_dark();
     appkit_host::testing::set_app_appearance(Some(!before));
