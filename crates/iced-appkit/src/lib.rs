@@ -9,6 +9,7 @@
 
 mod root;
 mod slot;
+pub mod table;
 pub mod theme;
 
 use std::sync::Mutex;
@@ -21,6 +22,7 @@ use iced::{Rectangle, Subscription, Task};
 pub use appkit_host::{self as host, Event, Rect, ViewId};
 pub use root::{Cover, Root, cover, root};
 pub use slot::NativeSlot;
+pub use table::{Table, table};
 
 static SENDER: Mutex<Option<mpsc::UnboundedSender<Event>>> = Mutex::new(None);
 

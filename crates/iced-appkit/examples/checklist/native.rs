@@ -173,3 +173,132 @@ fn rss_kb() -> i64 {
     let out = std::process::Command::new("ps").args(["-o", "rss=", "-p", &std::process::id().to_string()]).output().unwrap();
     String::from_utf8_lossy(&out.stdout).trim().parse().unwrap_or(0)
 }
+
+/// Scrolls a native table's scroll view by `dy` points (clamped). Returns
+/// false at the end.
+pub fn scroll_table(table: &NSTableView, dy: f64) -> bool {
+    let Some(clip) = table.enclosingScrollView().map(|s| s.contentView()) else { return false };
+    let mut origin = clip.bounds().origin;
+    let max = (table.frame().size.height - clip.bounds().size.height).max(0.0);
+    let y = (origin.y + dy).clamp(0.0, max);
+    let moved = y != origin.y;
+    origin.y = y;
+    clip.scrollToPoint(origin);
+    if let Some(scroll) = table.enclosingScrollView() {
+        scroll.reflectScrolledClipView(&clip);
+    }
+    moved
+}
+
+/// What VoiceOver gets from a table, through the accessibility attribute API
+/// it uses: (role, row count, column count, has header, values of row 0's
+/// cells, label of row 0's checkbox).
+pub fn table_accessibility(table: &NSTableView) -> (String, usize, usize, bool, Vec<String>, Option<String>) {
+    use objc2::runtime::AnyObject;
+    use objc2_foundation::NSArray;
+    fn attr(o: &AnyObject, name: &str) -> Option<Retained<AnyObject>> {
+        objc2::exception::catch(std::panic::AssertUnwindSafe(|| unsafe {
+            msg_send![o, accessibilityAttributeValue: &*NSString::from_str(name)]
+        }))
+        .ok()
+        .flatten()
+    }
+    fn text(o: Option<Retained<AnyObject>>) -> Option<String> {
+        let d: Option<Retained<NSString>> = o.and_then(|v| unsafe { msg_send![&*v, description] });
+        d.map(|d| d.to_string())
+    }
+    fn list(o: Option<Retained<AnyObject>>) -> Vec<Retained<AnyObject>> {
+        o.and_then(|o| o.downcast::<NSArray<AnyObject>>().ok()).map(|a| a.to_vec()).unwrap_or_default()
+    }
+    let t: &AnyObject = table.as_ref();
+    let role = text(attr(t, "AXRole")).unwrap_or_default();
+    let rows = list(attr(t, "AXRows"));
+    let columns = list(attr(t, "AXColumns")).len();
+    let header = attr(t, "AXHeader").is_some();
+    let mut values = Vec::new();
+    let mut check_label = None;
+    if let Some(row) = rows.first() {
+        for cell in list(attr(row, "AXChildren")) {
+            for child in list(attr(&cell, "AXChildren")) {
+                match text(attr(&child, "AXRole")).as_deref() {
+                    // VoiceOver reads the cell's description with the checkbox.
+                    Some("AXCheckBox") => {
+                        check_label = [attr(&child, "AXDescription"), attr(&cell, "AXDescription")]
+                            .into_iter()
+                            .filter_map(text)
+                            .find(|t| !t.is_empty())
+                    }
+                    _ => values.extend(text(attr(&child, "AXValue"))),
+                }
+            }
+        }
+    }
+    (role, rows.len(), columns, header, values, check_label)
+}
+
+/// Clicks the checkbox cell at (view row, column) the way a mouse click would.
+pub fn click_check(table: &NSTableView, column: isize, view_row: isize) -> bool {
+    let Some(cell) = table.viewAtColumn_row_makeIfNecessary(column, view_row, false) else { return false };
+    let Ok(button) = cell.downcast::<NSButton>() else { return false };
+    // SAFETY: nil sender, as a click sends.
+    unsafe { button.performClick(None) };
+    true
+}
+
+/// Selects a view row through AppKit itself (as a click would), so the
+/// delegate's selection notification fires.
+pub fn select_view_row(table: &NSTableView, view_row: usize) {
+    table.selectRowIndexes_byExtendingSelection(&objc2_foundation::NSIndexSet::indexSetWithIndex(view_row), false);
+}
+
+/// Sets the table's sort descriptors directly: what a header click does.
+pub fn click_header_sort(table: &NSTableView, column: &str, ascending: bool) {
+    use objc2_foundation::{NSArray, NSSortDescriptor};
+    let d = NSSortDescriptor::sortDescriptorWithKey_ascending(Some(&NSString::from_str(column)), ascending);
+    table.setSortDescriptors(&NSArray::from_retained_slice(&[d]));
+}
+
+/// Text shown in the cell at (view row, column).
+pub fn cell_text(table: &NSTableView, column: isize, view_row: isize) -> Option<String> {
+    let cell = table.viewAtColumn_row_makeIfNecessary(column, view_row, true)?;
+    cell.downcast::<NSTextField>().ok().map(|f| f.stringValue().to_string())
+}
+
+pub fn rss_mb() -> f64 {
+    rss_kb() as f64 / 1024.0
+}
+
+/// Debug: prints the accessibility subtree of `object` (role, title/value, children).
+pub fn ax_dump(object: &objc2::runtime::AnyObject, depth: usize, max_depth: usize, max_children: usize) {
+    use objc2::runtime::AnyObject;
+    use objc2_foundation::NSArray;
+    // SAFETY: NSAccessibility protocol methods; guarded with respondsToSelector.
+    unsafe {
+        let s = |sel: objc2::runtime::Sel| -> Option<String> {
+            objc2::exception::catch(std::panic::AssertUnwindSafe(|| {
+                let v: Option<Retained<AnyObject>> = msg_send![object, accessibilityAttributeValue: &*NSString::from_str(sel.name().to_str().unwrap())];
+                let d: Option<Retained<NSString>> = v.and_then(|v| msg_send![&*v, description]);
+                d.map(|d| d.to_string().chars().take(40).collect::<String>())
+            }))
+            .unwrap_or_else(|_| Some("<exception>".into()))
+        };
+        eprintln!(
+            "[ax] {}{} title={:?} value={:?} label={:?}",
+            "  ".repeat(depth),
+            s(objc2::sel!(AXRole)).unwrap_or_default(),
+            s(objc2::sel!(AXTitle)),
+            s(objc2::sel!(AXValue)),
+            s(objc2::sel!(AXDescription)),
+        );
+        if depth >= max_depth {
+            return;
+        }
+        let children: Option<Retained<NSArray<AnyObject>>> =
+            objc2::exception::catch(std::panic::AssertUnwindSafe(|| msg_send![object, accessibilityAttributeValue: &*NSString::from_str("AXChildren")])).ok().flatten();
+        if let Some(children) = children {
+            for c in children.iter().take(max_children) {
+                ax_dump(&c, depth + 1, max_depth, max_children);
+            }
+        }
+    }
+}

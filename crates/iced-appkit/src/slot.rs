@@ -33,6 +33,16 @@ impl NativeSlot {
         Self { id, width: width.into(), height: height.into(), background: None, scroll: None, focusable: false }
     }
 
+    pub fn width(mut self, width: impl Into<Length>) -> Self {
+        self.width = width.into();
+        self
+    }
+
+    pub fn height(mut self, height: impl Into<Length>) -> Self {
+        self.height = height.into();
+        self
+    }
+
     /// Declares that the slot is inside an Iced scrollable with these window
     /// bounds; the view is then clipped to what the scrollable shows.
     pub fn in_scrollable(mut self, bounds: Option<Rectangle>, reported_offset: Vector) -> Self {

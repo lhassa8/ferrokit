@@ -24,6 +24,7 @@ use iced::widget::{
     tooltip,
 };
 use iced::{Color, Element, Length, Point, Rectangle, Size, Subscription, Task, Theme, Vector, window};
+use iced_appkit::table::{Column, Sort, TableModel};
 use iced_appkit::{Event, NativeSlot, ViewId, host};
 
 const TESTS: &[(u8, &str)] = &[
@@ -33,12 +34,14 @@ const TESTS: &[(u8, &str)] = &[
     (4, "Dropdown over table"),
     (5, "Modal over native"),
     (6, "Scroll clipping"),
+    (7, "Large data"),
     (8, "Tab order"),
     (9, "Shortcuts"),
     (13, "Dark Mode"),
     (14, "Teardown"),
+    (15, "Table features"),
 ];
-const AUTOMATED: &[u8] = &[1, 2, 3, 4, 5, 6, 8, 9, 13, 14];
+const AUTOMATED: &[u8] = &[1, 2, 3, 4, 5, 6, 7, 8, 9, 13, 14, 15];
 
 const T1_BUTTON: u64 = 10;
 const T2_LABELS: &[(u64, &str, (f32, f32, f32))] = &[
@@ -61,6 +64,37 @@ const T9_TEXT: u64 = 90;
 const T9_TABLE: u64 = 91;
 const T13_TABLE: u64 = 130;
 const T13_TEXT: u64 = 131;
+const T7_TABLE: u64 = 70;
+const T7_ROWS: u32 = 1_000_000;
+const T15_TABLE: u64 = 150;
+const T15_ROWS: usize = 100_000;
+
+/// A row for the table-features test.
+#[derive(Debug, Clone)]
+struct Person {
+    id: u32,
+    name: String,
+    age: u32,
+    active: bool,
+}
+
+fn people(n: usize) -> Vec<Person> {
+    const A: &[&str] = &["Ka", "Lo", "Mi", "Zo", "Be", "Ar", "Ti", "Sa", "No", "Ve", "Ru", "Ji"];
+    const B: &[&str] = &["ren", "la", "mon", "sie", "dra", "vik", "na", "tor", "lin", "bel"];
+    let mut seed: u64 = 42;
+    (0..n)
+        .map(|i| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let r = (seed >> 33) as usize;
+            Person {
+                id: i as u32,
+                name: format!("{}{} {}{}", A[r % A.len()], B[(r >> 4) % B.len()], A[(r >> 8) % A.len()], B[(r >> 12) % B.len()]),
+                age: 18 + (r >> 16) as u32 % 70,
+                active: (r >> 24).is_multiple_of(3),
+            }
+        })
+        .collect()
+}
 const T9_INITIAL: &str = "Select all of this, type over it, undo.";
 const SCROLLABLE: &str = "t6-scroll";
 const INPUT1: &str = "t8-input-1";
@@ -81,6 +115,11 @@ enum Message {
     Step(u8, u32),
     Focus(u8, bool),
     Toggle,
+    Frame(Instant),
+    TableSelect(Vec<usize>),
+    TableActivate(usize),
+    TableSort(Sort),
+    TableToggle(usize, String, bool),
 }
 
 struct App {
@@ -102,6 +141,18 @@ struct App {
     focus_probe: [bool; 2],
     t13_log: Vec<String>,
     keep: native::Keep,
+    big: Option<TableModel<u32>>,
+    people: Option<TableModel<Person>>,
+    /// Test 7: frame intervals while auto-scrolling (ms), start RSS.
+    t7_frames: Vec<f32>,
+    t7_last: Option<Instant>,
+    t7_running: bool,
+    t7_rss: f64,
+    last_select: Option<Vec<usize>>,
+    last_activate: Option<usize>,
+    last_sort: Option<Sort>,
+    last_toggle: Option<(usize, String, bool)>,
+    t15_saved_selection: Vec<usize>,
 }
 
 fn env(name: &str) -> Option<String> {
@@ -169,6 +220,17 @@ impl App {
             focus_probe: [false; 2],
             t13_log: Vec::new(),
             keep: native::keep(),
+            big: None,
+            people: None,
+            t7_frames: Vec::new(),
+            t7_last: None,
+            t7_running: false,
+            t7_rss: 0.0,
+            last_select: None,
+            last_activate: None,
+            last_sort: None,
+            last_toggle: None,
+            t15_saved_selection: Vec::new(),
         };
         (app, Task::none())
     }
@@ -209,6 +271,31 @@ impl App {
         native::mount_table(T9_TABLE, 1000, &mut self.keep);
         native::mount_table(T13_TABLE, 1000, &mut self.keep);
         native::mount_text(T13_TEXT, "Native text view follows the appearance.");
+        let rss = native::rss_mb();
+        let big = TableModel::new(
+            ViewId(T7_TABLE),
+            vec![
+                Column::number("row", "#", |i: &u32| *i as f64).width(90.0),
+                Column::text("name", "Name", |i: &u32| format!("Item {i:07}")).width(160.0),
+                Column::number("value", "Value", |i: &u32| (*i as u64 * 2654435761 % 100_000) as f64 / 100.0).decimals(2),
+                Column::check("even", "Even", |i: &u32| i.is_multiple_of(2)),
+            ],
+        );
+        big.set_rows((0..T7_ROWS).collect());
+        self.t7_rss = rss;
+        eprintln!("[checklist] 1M-row model: RSS {rss:.0} → {:.0} MB", native::rss_mb());
+        self.big = Some(big);
+        let people_model = TableModel::new(
+            ViewId(T15_TABLE),
+            vec![
+                Column::text("name", "Name", |p: &Person| p.name.clone()).width(200.0),
+                Column::number("age", "Age", |p: &Person| p.age as f64).width(60.0),
+                Column::check("active", "Active", |p: &Person| p.active),
+                Column::number("id", "ID", |p: &Person| p.id as f64).width(80.0),
+            ],
+        );
+        people_model.set_rows(people(T15_ROWS));
+        self.people = Some(people_model);
         native::install_tests_menu(TESTS);
         host::install_edit_menu();
     }
@@ -281,6 +368,30 @@ impl App {
                 if let Some(ms) = env("T5_TOGGLE").and_then(|v| v.parse::<u64>().ok()) {
                     self.modal = !self.modal;
                     return after(ms, Message::Toggle);
+                }
+            }
+            Message::Frame(now) => {
+                if self.t7_running {
+                    if let Some(last) = self.t7_last {
+                        self.t7_frames.push((now - last).as_secs_f32() * 1000.0);
+                    }
+                    self.t7_last = Some(now);
+                    if let Some(big) = &self.big {
+                        objc2::rc::autoreleasepool(|_| native::scroll_table(&big.table_view(), 800.0));
+                    }
+                }
+            }
+            Message::TableSelect(rows) => self.last_select = Some(rows),
+            Message::TableActivate(row) => self.last_activate = Some(row),
+            Message::TableSort(sort) => self.last_sort = Some(sort),
+            Message::TableToggle(row, column, value) => {
+                self.last_toggle = Some((row, column.clone(), value));
+                if let Some(model) = &self.people {
+                    let mut person = model.rows()[row].clone();
+                    if column == "active" {
+                        person.active = value;
+                    }
+                    model.update_row(row, person);
                 }
             }
             Message::Focus(slot, focused) => self.focus_probe[slot as usize] = focused,
@@ -551,6 +662,136 @@ impl App {
                 host::testing::set_app_appearance(if want_dark { Some(false) } else { None });
                 if want_dark { next(500) } else { done }
             }
+            (7, 1) => {
+                self.t7_frames.clear();
+                self.t7_last = None;
+                self.t7_running = true;
+                next(1_500)
+            }
+            (7, 2) => {
+                // After a warm-up (the screen's first frames), memory must stay flat.
+                self.t7_rss = native::rss_mb();
+                self.t7_frames.clear();
+                next(10_000)
+            }
+            (7, 3) => {
+                self.t7_running = false;
+                let summary = t7_summary(&self.t7_frames);
+                let mut f = self.t7_frames.clone();
+                f.sort_by(|a, b| a.total_cmp(b));
+                let avg = f.iter().sum::<f32>() / f.len().max(1) as f32;
+                let p95 = f.get(f.len() * 95 / 100).copied().unwrap_or(f32::MAX);
+                let rss = native::rss_mb();
+                let cells = self.big.as_ref().unwrap().cells_created();
+                let pass = f.len() > 300 && avg < 17.5 && p95 < 25.0 && rss - self.t7_rss < 10.0;
+                self.record(7, pass, format!("{summary}; RSS during 10 s of scrolling {:.0} → {rss:.0} MB; {cells} cell views ever created", self.t7_rss));
+                done
+            }
+            (15, 1) => {
+                let model = self.people.clone().unwrap();
+                let table = model.table_view();
+                // Sorting 100k rows (keys cached, stable), then by another column.
+                let t = Instant::now();
+                model.set_sort(Some(Sort { column: "name".into(), ascending: true }));
+                let by_name = t.elapsed();
+                let t = Instant::now();
+                model.set_sort(Some(Sort { column: "age".into(), ascending: false }));
+                let by_age = t.elapsed();
+                let first_ages: Vec<String> = (0..3).filter_map(|r| native::cell_text(&table, 1, r)).collect();
+                self.record(15, by_name.as_millis() < 100 && by_age.as_millis() < 100, format!("sort {T15_ROWS} rows + reload: by name {by_name:.1?}, by age {by_age:.1?}; top ages {first_ages:?}"));
+                // Selection through AppKit, as a click would.
+                self.last_select = None;
+                native::select_view_row(&table, 5);
+                next(300)
+            }
+            (15, 2) => {
+                let model = self.people.clone().unwrap();
+                let sel = model.selection();
+                self.record(15, self.last_select.as_ref() == Some(&sel) && sel.len() == 1, format!("selection event {:?} = model selection {sel:?}", self.last_select));
+                self.t15_saved_selection = sel;
+                // Return on the selected row activates it.
+                host::focus(model.id());
+                host::testing::post_key("\r", 36, false, false);
+                next(300)
+            }
+            (15, 3) => {
+                let ok = self.last_activate == self.t15_saved_selection.first().copied();
+                self.record(15, ok, format!("Return activates the selected row: {:?}", self.last_activate));
+                // A header click (sort descriptors set by AppKit): event + selection kept.
+                self.last_sort = None;
+                native::click_header_sort(&self.people.as_ref().unwrap().table_view(), "name", true);
+                next(300)
+            }
+            (15, 4) => {
+                let model = self.people.clone().unwrap();
+                let table = model.table_view();
+                let names: Vec<String> = (0..3).filter_map(|r| native::cell_text(&table, 0, r)).collect();
+                let sorted = names.windows(2).all(|w| w[0].to_lowercase() <= w[1].to_lowercase());
+                let kept = model.selection() == self.t15_saved_selection;
+                self.record(
+                    15,
+                    self.last_sort == Some(Sort { column: "name".into(), ascending: true }) && sorted && kept,
+                    format!("header click: event {:?}, first names {names:?}, selection kept {kept}", self.last_sort),
+                );
+                // Type-select: typing a prefix jumps to the first match.
+                host::focus(model.id());
+                for (c, code) in [("z", 6), ("o", 31)] {
+                    host::testing::post_key(c, code, false, false);
+                }
+                next(400)
+            }
+            (15, 5) => {
+                let model = self.people.clone().unwrap();
+                let sel = model.selection();
+                let name = sel.first().map(|&r| model.rows()[r].name.clone());
+                self.record(15, name.as_deref().is_some_and(|n| n.to_lowercase().starts_with("zo")), format!("type-select 'zo' selected {name:?}"));
+                // Checkbox toggle in the first visible row.
+                self.last_toggle = None;
+                let table = model.table_view();
+                table.scrollRowToVisible(0);
+                native::click_check(&table, 2, 0);
+                next(300)
+            }
+            (15, 6) => {
+                let model = self.people.clone().unwrap();
+                let ok = match &self.last_toggle {
+                    Some((row, col, value)) => col == "active" && model.rows()[*row].active == *value,
+                    None => false,
+                };
+                self.record(15, ok, format!("checkbox click → toggle event {:?}, row updated: {ok}", self.last_toggle));
+                // Insert and remove keep the selection on the same rows.
+                let before = model.selection();
+                let picked = before.first().map(|&r| model.rows()[r].id);
+                model.insert(0, Person { id: 999_999, name: "Inserted".into(), age: 1, active: false });
+                let after_insert = model.selection().first().map(|&r| model.rows()[r].id);
+                model.remove(0);
+                let after_remove = model.selection().first().map(|&r| model.rows()[r].id);
+                self.record(15, picked.is_some() && picked == after_insert && picked == after_remove, format!("insert/remove keep the selected row: {picked:?} → {after_insert:?} → {after_remove:?}"));
+                // Column state: move Age first, widen it; read it back.
+                let mut state = model.column_state();
+                let age = state.iter().position(|c| c.id == "age").unwrap();
+                let mut col = state.remove(age);
+                col.width = 90.0;
+                state.insert(0, col);
+                model.set_column_state(&state);
+                let read = model.column_state();
+                let ok = read.first().is_some_and(|c| c.id == "age" && (c.width - 90.0).abs() < 0.5) && model.drain_events().is_empty();
+                self.record(15, ok, format!("column state restored: {:?}", read.iter().map(|c| format!("{}:{:.0}", c.id, c.width)).collect::<Vec<_>>()));
+                // VoiceOver's view of the table (Name is column 1 after the move).
+                let table = model.table_view();
+                if env("AX_DUMP").is_some()
+                    && let Some(scroll) = table.enclosingScrollView() {
+                        native::ax_dump(&scroll, 0, 4, 4);
+                    }
+                let (role, rows, columns, header, values, check) = native::table_accessibility(&table);
+                let expected = native::cell_text(&table, 1, 0);
+                self.record(
+                    15,
+                    role == "AXTable" && rows > 10 && columns == 4 && header && expected.is_some_and(|e| values.contains(&e)) && check.as_deref() == Some("Active"),
+                    format!("accessibility: {role}, {rows} rows, {columns} columns, header {header}, row 0 values {values:?}, checkbox label {check:?}"),
+                );
+                done
+            }
             (14, 1) => {
                 // Lifecycle: views of other tests are hidden (not drawn), not removed.
                 let hidden = [T1_BUTTON, T4_TABLE, T9_TEXT].iter().all(|&id| host::is_mounted(ViewId(id)) && !host::testing::is_visible(ViewId(id)));
@@ -678,6 +919,39 @@ impl App {
             .spacing(12)
             .into(),
             14 => column![text("Test 14: Teardown").size(22), text("Run with CHECK=14.")].spacing(12).into(),
+            7 => {
+                let stats = if self.t7_frames.is_empty() { "Run with CHECK=7 to auto-scroll.".to_string() } else { t7_summary(&self.t7_frames) };
+                let mut col = column![text(format!("Test 7: {} rows in a native table", T7_ROWS)).size(22), text(stats)].spacing(12);
+                if let Some(big) = &self.big {
+                    col = col.push(iced_appkit::table(big).height(Length::Fill));
+                }
+                col.into()
+            }
+            15 => {
+                let mut col = column![
+                    text("Test 15: Table features (sort, select, activate, toggle, columns)").size(22),
+                    text(format!(
+                        "select {:?}  activate {:?}  sort {:?}  toggle {:?}",
+                        self.last_select.as_ref().map(|s| s.len()),
+                        self.last_activate,
+                        self.last_sort,
+                        self.last_toggle
+                    ))
+                    .size(12),
+                ]
+                .spacing(12);
+                if let Some(model) = &self.people {
+                    col = col.push(
+                        iced_appkit::table(model)
+                            .height(Length::Fill)
+                            .on_select(Message::TableSelect)
+                            .on_activate(Message::TableActivate)
+                            .on_sort(Message::TableSort)
+                            .on_toggle(Message::TableToggle),
+                    );
+                }
+                col.into()
+            }
             _ => column![text("iced-appkit checklist").size(22), text("Pick a test from the sidebar or the Tests menu.")].spacing(12).into(),
         };
         let results = text(
@@ -696,8 +970,25 @@ impl App {
             window::open_events().map(Message::Opened),
             iced_appkit::events().map(Message::Native),
             Subscription::run(ticks).map(Message::Tick),
+            if self.t7_running { window::frames().map(Message::Frame) } else { Subscription::none() },
         ])
     }
+}
+
+fn t7_summary(frames: &[f32]) -> String {
+    let mut f = frames.to_vec();
+    f.sort_by(|a, b| a.total_cmp(b));
+    if f.is_empty() {
+        return "no frames".into();
+    }
+    let avg = f.iter().sum::<f32>() / f.len() as f32;
+    let over = f.iter().filter(|&&x| x > 25.0).count();
+    format!(
+        "{} frames at 800 pt/frame: avg {avg:.1} ms, p95 {:.1} ms, max {:.1} ms, {over} > 25 ms",
+        f.len(),
+        f[f.len() * 95 / 100],
+        f[f.len() - 1]
+    )
 }
 
 /// Trackpad-like timing: steps of 2–14 pt every 5–11 ms, off the frame clock.
