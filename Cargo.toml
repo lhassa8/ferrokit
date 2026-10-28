@@ -31,3 +31,8 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
     "NSTextField",
     "NSView",
 ] }
+
+# Spike-only: wgpu-hal with an env-var switch for CAMetalLayer.presentsWithTransaction
+# (see docs/VERDICTS.md, test 6).
+[patch.crates-io]
+wgpu-hal = { path = "vendor/wgpu-hal" }
