@@ -25,6 +25,7 @@ pub fn table<'a, T: 'static, Message>(model: &TableModel<T>) -> Table<'a, T, Mes
 
 type Callback<'a, A, Message> = Option<Box<dyn Fn(A) -> Message + 'a>>;
 
+/// The table widget; see [`table`].
 pub struct Table<'a, T: 'static, Message> {
     model: TableModel<T>,
     slot: NativeSlot,
@@ -36,11 +37,13 @@ pub struct Table<'a, T: 'static, Message> {
 }
 
 impl<'a, T: 'static, Message> Table<'a, T, Message> {
+    /// Width in the Iced layout (default: fill).
     pub fn width(mut self, width: impl Into<Length>) -> Self {
         self.slot = self.slot.width(width);
         self
     }
 
+    /// Height in the Iced layout (default: fill).
     pub fn height(mut self, height: impl Into<Length>) -> Self {
         self.slot = self.slot.height(height);
         self

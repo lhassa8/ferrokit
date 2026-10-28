@@ -16,8 +16,11 @@ use crate::geometry::{self, Rect};
 pub struct ViewId(pub u64);
 
 #[derive(Debug)]
+/// Why [`attach`] failed.
 pub enum AttachError {
+    /// The window has no handle (yet).
     NoHandle,
+    /// The window isn't an AppKit window.
     NotAppKit,
 }
 
@@ -108,6 +111,7 @@ pub fn attach(window: &impl HasWindowHandle) -> Result<(), AttachError> {
     Ok(())
 }
 
+/// Whether [`attach`] has succeeded.
 pub fn is_attached() -> bool {
     HOST.with_borrow(Option::is_some)
 }
@@ -117,6 +121,7 @@ pub fn scale() -> f64 {
     with_host(|h| h.content.window().map(|w| w.backingScaleFactor())).flatten().unwrap_or(1.0)
 }
 
+/// The host's content view (whose layer is the GPU surface).
 pub fn content_view() -> Option<Retained<NSView>> {
     with_host(|h| h.content.clone())
 }
@@ -126,6 +131,7 @@ pub fn view(id: ViewId) -> Option<Retained<NSView>> {
     with_host(|h| h.views.get(&id).map(|m| m.view.clone())).flatten()
 }
 
+/// Whether a view with this id is mounted.
 pub fn is_mounted(id: ViewId) -> bool {
     with_host(|h| h.views.contains_key(&id)).unwrap_or(false)
 }
@@ -143,6 +149,7 @@ pub fn mount(id: ViewId, view: Retained<NSView>) {
     });
 }
 
+/// Removes a view from the window (the view is released).
 pub fn unmount(id: ViewId) {
     with_host_mut(|host| {
         host.suppressed.remove(&id);
@@ -152,6 +159,7 @@ pub fn unmount(id: ViewId) {
     });
 }
 
+/// Hides a view until its next [`place`].
 pub fn hide(id: ViewId) {
     with_host(|host| {
         if let Some(m) = host.views.get(&id) {
@@ -173,6 +181,7 @@ pub fn set_suppressed(id: ViewId, suppressed: bool) {
     });
 }
 
+/// Whether [`set_suppressed`] is keeping the view hidden.
 pub fn is_suppressed(id: ViewId) -> bool {
     with_host(|h| h.suppressed.contains(&id)).unwrap_or(false)
 }

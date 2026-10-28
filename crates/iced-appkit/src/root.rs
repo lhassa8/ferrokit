@@ -90,6 +90,7 @@ pub fn root<'a, Message, Theme, Renderer>(content: impl Into<Element<'a, Message
     Root { content: content.into() }
 }
 
+/// The root wrapper widget; see [`root`].
 pub struct Root<'a, Message, Theme, Renderer> {
     content: Element<'a, Message, Theme, Renderer>,
 }
@@ -264,6 +265,7 @@ pub fn cover<'a, Message, Theme, Renderer>(content: impl Into<Element<'a, Messag
     Cover { content: content.into() }
 }
 
+/// A modal-layer marker; see [`cover`].
 pub struct Cover<'a, Message, Theme, Renderer> {
     content: Element<'a, Message, Theme, Renderer>,
 }

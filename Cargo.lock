@@ -106,7 +106,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "appkit-host"
-version = "0.1.0-alpha.2"
+version = "0.1.0"
 dependencies = [
  "block2 0.6.2",
  "objc2 0.6.5",
@@ -1419,7 +1419,7 @@ dependencies = [
 
 [[package]]
 name = "iced-appkit"
-version = "0.1.0-alpha.2"
+version = "0.1.0"
 dependencies = [
  "appkit-host",
  "block2 0.6.2",

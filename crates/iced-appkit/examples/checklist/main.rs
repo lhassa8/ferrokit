@@ -44,8 +44,9 @@ const TESTS: &[(u8, &str)] = &[
     (10, "Japanese input"),
     (11, "Spell check"),
     (16, "Text editor features"),
+    (17, "Lifecycle and edge cases"),
 ];
-const AUTOMATED: &[u8] = &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16];
+const AUTOMATED: &[u8] = &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17];
 
 const T1_BUTTON: u64 = 10;
 const T2_LABELS: &[(u64, &str, (f32, f32, f32))] = &[
@@ -170,6 +171,7 @@ struct App {
     /// Editor events seen by the app: (editor, "changed: …" / "selection …" / "composition …").
     editor_log: Vec<(u64, String)>,
     t16_input: String,
+    t17_baseline: (usize, usize, usize, f64),
 }
 
 fn env(name: &str) -> Option<String> {
@@ -251,6 +253,7 @@ impl App {
             editors: std::collections::HashMap::new(),
             editor_log: Vec::new(),
             t16_input: String::new(),
+            t17_baseline: (0, 0, 0, 0.0),
         };
         (app, Task::none())
     }
@@ -862,6 +865,73 @@ impl App {
                 self.record(16, role == "AXTextArea" && value == a.text(), format!("accessibility: {role} with value {value:?}"));
                 done
             }
+            (17, 1) => {
+                // Churn: create, mount, place, drop 200 tables and 200 editors.
+                let (models, objc) = host::testing::live_objects();
+                self.t17_baseline = (models, objc, host::testing::subview_count(), native::rss_mb());
+                for i in 0..200u32 {
+                    objc2::rc::autoreleasepool(|_| {
+                        let t = TableModel::new(ViewId(9000), vec![Column::text("v", "Value", |r: &u32| r.to_string())]);
+                        t.set_rows((0..1000).map(|r| r + i).collect());
+                        t.ensure_mounted();
+                        host::place(t.id(), iced_appkit::Rect::new(220.0, 100.0, 300.0, 200.0), iced_appkit::Rect::new(220.0, 100.0, 300.0, 200.0));
+                        t.select(&[3, 5]);
+                        let e = TextModel::new(ViewId(9001), "churn");
+                        e.ensure_mounted();
+                        host::place(e.id(), iced_appkit::Rect::new(220.0, 320.0, 300.0, 100.0), iced_appkit::Rect::new(220.0, 320.0, 300.0, 100.0));
+                        e.replace_selection("x");
+                        drop(t);
+                        drop(e);
+                    });
+                }
+                // AppKit may still hold the last views for a moment (deferred
+                // work such as spell checking runs on later run-loop passes).
+                next(3000)
+            }
+            (17, 2) => {
+                let (m0, o0, v0, r0) = self.t17_baseline;
+                let (m1, o1) = host::testing::live_objects();
+                let v1 = host::testing::subview_count();
+                let r1 = native::rss_mb();
+                self.record(17, m1 == m0 && o1 == o0 && v1 == v0, format!(
+                    "200 tables + 200 editors created and dropped: models {m0} → {m1}, ObjC objects {o0} → {o1}, subviews {v0} → {v1}, RSS {r0:.0} → {r1:.0} MB"
+                ));
+                // Table edge cases.
+                let t = TableModel::new(ViewId(9002), vec![
+                    Column::text("name", "Name", |p: &Person| p.name.clone()),
+                    Column::number("age", "Age", |p: &Person| p.age as f64),
+                ]);
+                t.set_rows(Vec::new());
+                let empty_ok = t.is_empty() && t.selection().is_empty() && t.row_at(0).is_none();
+                t.update_row(5, people(1).remove(0)); // out of range: ignored
+                let removed = t.remove(0);
+                t.set_rows(people(50));
+                t.select(&[2, 999]); // 999 ignored
+                let sel = t.selection();
+                t.set_sort(Some(Sort { column: "nope".into(), ascending: true })); // unknown column: unsorted
+                let unsorted = t.row_at(0) == Some(0);
+                t.set_sort(Some(Sort { column: "age".into(), ascending: true }));
+                t.set_rows(people(50)); // new rows keep the sort
+                let ages: Vec<u32> = (0..50).filter_map(|i| t.row_at(i)).map(|r| t.rows()[r].age).collect();
+                let sorted = ages.windows(2).all(|w| w[0] <= w[1]);
+                t.set_column_state(&[iced_appkit::table::ColumnState { id: "ghost".into(), width: 10.0 }]);
+                let cols = t.column_state().len();
+                let ok = empty_ok && removed.is_none() && sel == vec![2] && unsorted && sorted && cols == 2;
+                self.record(17, ok, format!("table edges: empty {empty_ok}, remove(0) on empty {:?}, select [2, 999] → {sel:?}, unknown sort column leaves order {unsorted}, set_rows keeps the sort {sorted}, unknown column state ignored ({cols} columns)", removed.map(|p| p.id)));
+                // Text edge cases.
+                let e = TextModel::new(ViewId(9003), "");
+                let empty = e.text().is_empty() && e.selection() == (0..0);
+                e.set_text("😀 ok");
+                e.set_selection(2..999); // inside 😀 and past the end
+                let clamped = e.selection();
+                e.set_editable(false);
+                e.set_selection(0..0);
+                e.replace_selection("nope");
+                let read_only_kept = e.text() == "😀 ok";
+                let ok = empty && clamped == (0..e.text().len()) && read_only_kept;
+                self.record(17, ok, format!("text edges: empty {empty}, set_selection(2..999) on \"😀 ok\" → {clamped:?}, replace_selection on read-only leaves {:?}", e.text()));
+                done
+            }
             (15, 1) => {
                 let model = self.people.clone().unwrap();
                 let table = model.table_view();
@@ -1111,6 +1181,7 @@ impl App {
             .spacing(12)
             .into(),
             14 => column![text("Test 14: Teardown").size(22), text("Run with CHECK=14.")].spacing(12).into(),
+            17 => column![text("Test 17: Lifecycle and edge cases").size(22), text("Run with CHECK=17.")].spacing(12).into(),
             7 => {
                 let stats = if self.t7_frames.is_empty() { "Run with CHECK=7 to auto-scroll.".to_string() } else { t7_summary(&self.t7_frames) };
                 let mut col = column![text(format!("Test 7: {} rows in a native table", T7_ROWS)).size(22), text(stats)].spacing(12);

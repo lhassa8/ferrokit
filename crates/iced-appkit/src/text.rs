@@ -25,6 +25,7 @@ pub fn text_editor<'a, Message>(model: &TextModel) -> TextEditor<'a, Message> {
     }
 }
 
+/// The text editor widget; see [`text_editor`].
 pub struct TextEditor<'a, Message> {
     model: TextModel,
     slot: NativeSlot,
@@ -34,11 +35,13 @@ pub struct TextEditor<'a, Message> {
 }
 
 impl<'a, Message> TextEditor<'a, Message> {
+    /// Width in the Iced layout (default: fill).
     pub fn width(mut self, width: impl Into<Length>) -> Self {
         self.slot = self.slot.width(width);
         self
     }
 
+    /// Height in the Iced layout (default: fill).
     pub fn height(mut self, height: impl Into<Length>) -> Self {
         self.slot = self.slot.height(height);
         self

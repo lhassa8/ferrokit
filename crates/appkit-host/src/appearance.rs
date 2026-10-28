@@ -19,25 +19,40 @@ use crate::host::mtm;
 /// An sRGB colour, components in 0..=1.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Rgba {
+    /// Red, 0..=1.
     pub r: f32,
+    /// Green, 0..=1.
     pub g: f32,
+    /// Blue, 0..=1.
     pub b: f32,
+    /// Alpha, 0..=1.
     pub a: f32,
 }
 
 /// The system's semantic colours, resolved for the window's current appearance.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SystemColors {
+    /// Whether the app resolves to a dark appearance.
     pub dark: bool,
+    /// `windowBackgroundColor`.
     pub window_background: Rgba,
+    /// `controlBackgroundColor` (e.g. behind table rows).
     pub control_background: Rgba,
+    /// `labelColor`.
     pub text: Rgba,
+    /// `secondaryLabelColor`.
     pub secondary_text: Rgba,
+    /// `separatorColor`.
     pub separator: Rgba,
+    /// `controlAccentColor` (the user's accent colour).
     pub accent: Rgba,
+    /// `selectedContentBackgroundColor`.
     pub selected_content_background: Rgba,
+    /// `systemGreenColor`.
     pub green: Rgba,
+    /// `systemRedColor`.
     pub red: Rgba,
+    /// `systemOrangeColor`.
     pub orange: Rgba,
 }
 

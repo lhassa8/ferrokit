@@ -20,11 +20,23 @@ use iced_appkit::{Event, ViewId, host};
 const FILTER: &str = "filter";
 const SAMPLE_ROWS: usize = 200_000;
 
-/// One CSV record. `id` is its position in the full data set.
+/// One CSV record. `id` is its position in the full data set. For filtering,
+/// `lower` holds the fields lowercased once and `all` all of them joined
+/// (one substring search per row instead of one per field).
 #[derive(Debug, Clone)]
 struct Record {
     id: usize,
     fields: Rc<[String]>,
+    lower: Rc<[String]>,
+    all: Rc<str>,
+}
+
+impl Record {
+    fn new(id: usize, fields: Vec<String>) -> Self {
+        let lower: Vec<String> = fields.iter().map(|f| f.to_lowercase()).collect();
+        let all = lower.join("\u{1f}");
+        Record { id, fields: fields.into(), lower: lower.into(), all: all.into() }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -176,7 +188,7 @@ impl App {
         }
         let headers = rows.remove(0);
         let kinds = infer_kinds(&headers, &rows);
-        let records: Vec<Record> = rows.into_iter().enumerate().map(|(id, f)| Record { id, fields: f.into() }).collect();
+        let records: Vec<Record> = rows.into_iter().enumerate().map(|(id, f)| Record::new(id, f)).collect();
         let columns = headers
             .iter()
             .zip(&kinds)
@@ -232,14 +244,18 @@ impl App {
             if needle.is_empty() {
                 return true;
             }
-            let hit = |v: &String| v.to_lowercase().contains(&needle);
+            let hit = |v: &String| v.contains(needle.as_str());
             match &self.search_in {
-                SearchIn::All => r.fields.iter().any(hit),
-                SearchIn::Column(i, _) => r.fields.get(*i).is_some_and(hit),
+                SearchIn::All => r.all.contains(needle.as_str()),
+                SearchIn::Column(i, _) => r.lower.get(*i).is_some_and(hit),
             }
         };
         let rows: Vec<Record> = data.records.iter().filter(|r| matches(r)).cloned().collect();
+        let matched = t.elapsed();
         model.set_rows(rows);
+        if std::env::var_os("DEMO_AUTO").is_some() {
+            eprintln!("[demo] match {matched:?}, set_rows {:?}", t.elapsed() - matched);
+        }
         self.show_notes(None);
         self.filter_time = t.elapsed();
     }
@@ -247,10 +263,10 @@ impl App {
     fn toggle(&mut self, row: usize, column: &str, value: bool) {
         let (Some(data), Some(model)) = (&mut self.data, &self.model) else { return };
         let Some(i) = column.strip_prefix('c').and_then(|i| i.parse::<usize>().ok()) else { return };
-        let mut record = model.rows()[row].clone();
-        let mut fields = record.fields.to_vec();
+        let old = model.rows()[row].clone();
+        let mut fields = old.fields.to_vec();
         fields[i] = if value { "true".into() } else { "false".into() };
-        record.fields = fields.into();
+        let record = Record::new(old.id, fields);
         data.records[record.id] = record.clone();
         model.update_row(row, record);
     }

@@ -44,7 +44,7 @@ trait Data {
     fn undo_manager(&self) -> Retained<NSUndoManager>;
 }
 
-pub struct ViewIvars {
+struct ViewIvars {
     data: RefCell<Option<Weak<dyn Data>>>,
     composing: Cell<bool>,
 }
@@ -99,7 +99,7 @@ impl HostTextView {
     }
 }
 
-pub struct DelegateIvars {
+struct DelegateIvars {
     data: RefCell<Option<Weak<dyn Data>>>,
 }
 
@@ -213,8 +213,23 @@ impl Data for Inner {
     }
 }
 
+impl Drop for ViewIvars {
+    fn drop(&mut self) {
+        crate::testing::LIVE_OBJC.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+impl Drop for DelegateIvars {
+    fn drop(&mut self) {
+        crate::testing::LIVE_OBJC.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 impl Drop for Inner {
     fn drop(&mut self) {
+        // The text view holds its delegate weakly: detach it first.
+        self.view.setDelegate(None);
+        crate::testing::LIVE_MODELS.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         crate::keys::set_accepts_tab(self.id, false);
         if self.mounted.get() {
             crate::unmount(self.id);
@@ -248,6 +263,8 @@ impl TextModel {
 
         // The standard recipe for a text view in a scroll view: width tracks
         // the scroll view, height grows with the text.
+        crate::testing::LIVE_OBJC.fetch_add(2, std::sync::atomic::Ordering::Relaxed);
+        crate::testing::LIVE_MODELS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let view = HostTextView::alloc(mtm).set_ivars(ViewIvars { data: RefCell::new(None), composing: Cell::new(false) });
         let view: Retained<HostTextView> = unsafe { msg_send![super(view), initWithFrame: NSRect::new(NSPoint::ZERO, size)] };
         view.setMinSize(NSSize::new(0.0, size.height));
@@ -292,6 +309,7 @@ impl TextModel {
         Self { inner }
     }
 
+    /// The view id the editor was created with.
     pub fn id(&self) -> ViewId {
         self.inner.id
     }
@@ -305,6 +323,7 @@ impl TextModel {
         }
     }
 
+    /// The whole text.
     pub fn text(&self) -> String {
         self.inner.view.string().to_string()
     }
@@ -353,10 +372,12 @@ impl TextModel {
         })
     }
 
+    /// Read-only (`false`) or editable. Read-only text can still be selected and copied.
     pub fn set_editable(&self, editable: bool) {
         self.inner.view.setEditable(editable);
     }
 
+    /// Whether the user can edit the text.
     pub fn is_editable(&self) -> bool {
         self.inner.view.isEditable()
     }
@@ -372,6 +393,7 @@ impl TextModel {
         }
     }
 
+    /// The current font size in points.
     pub fn font_size(&self) -> Option<f64> {
         self.inner.view.font().map(|f| f.pointSize())
     }
@@ -381,10 +403,12 @@ impl TextModel {
         self.inner.view.setTextContainerInset(NSSize::new(horizontal, vertical));
     }
 
+    /// Continuous spell checking (on by default).
     pub fn set_spell_checking(&self, on: bool) {
         self.inner.view.setContinuousSpellCheckingEnabled(on);
     }
 
+    /// Grammar checking (off by default).
     pub fn set_grammar_checking(&self, on: bool) {
         self.inner.view.setGrammarCheckingEnabled(on);
     }
@@ -402,14 +426,17 @@ impl TextModel {
         let () = unsafe { msg_send![&*self.inner.view, performTextFinderAction: &*item] };
     }
 
+    /// Whether the find bar is showing.
     pub fn is_find_visible(&self) -> bool {
         unsafe { msg_send![&*self.inner.scroll, isFindBarVisible] }
     }
 
+    /// Whether there is something to undo.
     pub fn can_undo(&self) -> bool {
         self.inner.undo.canUndo()
     }
 
+    /// Undoes the last edit (as ⌘Z does).
     pub fn undo(&self) {
         if self.inner.undo.canUndo() {
             self.inner.undo.undo();

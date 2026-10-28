@@ -4,6 +4,8 @@
 //!
 //! Main thread only. Every function panics off the main thread.
 
+#![warn(missing_docs)]
+
 mod appearance;
 mod events;
 mod geometry;

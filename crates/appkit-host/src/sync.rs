@@ -30,6 +30,7 @@ use objc2_core_foundation::{CFRunLoop, kCFRunLoopCommonModes};
 /// in the spike (the window kept a stale frame until the next redraw).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum StartGate {
+    /// Flush from the first frame.
     Immediately,
     /// Once the window reports itself visible (occlusion state).
     WindowVisible,
@@ -38,12 +39,14 @@ pub enum StartGate {
 }
 
 #[derive(Debug, Clone, Copy, Default)]
+/// Counters for the flush switch (diagnostics).
 pub struct SyncStats {
     /// Flush blocks that ran (at most one per drawn frame).
     pub passes_after_draw: u64,
     /// Of those, blocks that ran within 4 ms of the last `place` (i.e. right
     /// after the host's redraw, as intended).
     pub passes_right_after_draw: u64,
+    /// Flushes done.
     pub flushes: u64,
     /// Passes held back by the start gate.
     pub gated: u64,
@@ -91,6 +94,7 @@ pub fn gap_percentiles() -> Option<(u32, u32, u32)> {
     })
 }
 
+/// Counters so far.
 pub fn stats() -> SyncStats {
     STATS.with(Cell::get)
 }

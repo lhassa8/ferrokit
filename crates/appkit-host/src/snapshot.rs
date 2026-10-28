@@ -7,8 +7,11 @@ use crate::host::with_host;
 /// RGBA8 pixels, unpremultiplied as AppKit returns them, at backing resolution.
 #[derive(Clone)]
 pub struct Snapshot {
+    /// Width in pixels.
     pub width: u32,
+    /// Height in pixels.
     pub height: u32,
+    /// Pixels, row by row from the top.
     pub rgba: Vec<u8>,
 }
 

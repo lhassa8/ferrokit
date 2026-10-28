@@ -4,21 +4,28 @@
 /// top-left of the window's content area, y growing downwards.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Rect {
+    /// Left edge.
     pub x: f64,
+    /// Top edge.
     pub y: f64,
+    /// Width.
     pub width: f64,
+    /// Height.
     pub height: f64,
 }
 
 impl Rect {
+    /// A rectangle from its top-left corner and size.
     pub const fn new(x: f64, y: f64, width: f64, height: f64) -> Self {
         Self { x, y, width, height }
     }
 
+    /// True when it has no area.
     pub fn is_empty(&self) -> bool {
         self.width <= 0.0 || self.height <= 0.0
     }
 
+    /// The overlapping part of two rectangles, if any.
     pub fn intersection(&self, other: &Rect) -> Option<Rect> {
         let x0 = self.x.max(other.x);
         let y0 = self.y.max(other.y);
@@ -42,7 +49,9 @@ impl Rect {
 /// for the view inside it (in the container's flipped coordinates).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Frames {
+    /// The clip container's frame, in the content view's coordinates.
     pub clip: Rect,
+    /// The view's frame inside the clip container.
     pub view: Rect,
 }
 

@@ -6,8 +6,10 @@ members = ["crates/appkit-host", "crates/iced-appkit"]
 exclude = ["spike"]
 
 [workspace.package]
-version = "0.1.0-alpha.2"
+version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.88"
 publish = false
+keywords = ["iced", "appkit", "macos", "gui", "native"]
+categories = ["gui", "os::macos-apis"]

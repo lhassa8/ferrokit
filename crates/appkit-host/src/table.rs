@@ -30,8 +30,11 @@ use crate::host::mtm;
 /// A cell's value.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
+    /// Text, shown as is and sorted in natural order.
     Text(String),
+    /// A number, right-aligned and sorted numerically.
     Number(f64),
+    /// A checkbox.
     Bool(bool),
 }
 
@@ -75,11 +78,13 @@ impl<T> Column<T> {
         Self::new(id, title, Kind::Check, Box::new(move |row| Value::Bool(value(row)))).width(60.0)
     }
 
+    /// Initial width in points (default 120).
     pub fn width(mut self, width: f64) -> Self {
         self.width = width;
         self
     }
 
+    /// Smallest width the user can drag the column to.
     pub fn min_width(mut self, min_width: f64) -> Self {
         self.min_width = min_width;
         self
@@ -93,6 +98,7 @@ impl<T> Column<T> {
         self
     }
 
+    /// Whether a header click sorts by this column (default true).
     pub fn sortable(mut self, sortable: bool) -> Self {
         self.sortable = sortable;
         self
@@ -111,14 +117,18 @@ fn display(kind: Kind, value: &Value) -> String {
 /// The table's sort: a column id and a direction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sort {
+    /// The column id.
     pub column: String,
+    /// Ascending (A→Z, 0→9) or descending.
     pub ascending: bool,
 }
 
 /// A column's place and width, as the user arranged them (for saving).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ColumnState {
+    /// The column id.
     pub id: String,
+    /// Width in points.
     pub width: f64,
 }
 
@@ -126,13 +136,23 @@ pub struct ColumnState {
 /// (positions in the rows given to [`TableModel::set_rows`]), whatever the sort.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TableEvent {
+    /// The selected rows changed.
     Selection(Vec<usize>),
     /// Double-click or Return on a row.
     Activate(usize),
     /// The user clicked a column header. With built-in sorting on (the
     /// default) the rows are already shown in the new order.
     Sort(Sort),
-    Toggle { row: usize, column: String, value: bool },
+    /// A checkbox cell was clicked. The model doesn't change the row: apply
+    /// it with [`TableModel::update_row`].
+    Toggle {
+        /// The row (model index).
+        row: usize,
+        /// The column id.
+        column: String,
+        /// The checkbox's new state.
+        value: bool,
+    },
     /// Columns were moved or resized; read [`TableModel::column_state`].
     ColumnsChanged,
 }
@@ -148,7 +168,7 @@ trait Data {
     fn quiet(&self) -> bool;
 }
 
-pub struct SourceIvars {
+struct SourceIvars {
     data: RefCell<Option<Weak<dyn Data>>>,
     /// Cell views created (not reused), for diagnostics.
     created: Cell<usize>,
@@ -495,9 +515,25 @@ impl<T: 'static> Inner<T> {
 
 impl<T: 'static> Drop for Inner<T> {
     fn drop(&mut self) {
+        // AppKit holds these weakly: detach them before the source goes, in
+        // case the table outlives the model (e.g. in an autorelease pool).
+        // SAFETY: clearing to nil is always valid.
+        unsafe {
+            self.table.setDataSource(None);
+            self.table.setDelegate(None);
+            self.table.setTarget(None);
+            self.table.setDoubleAction(None);
+        }
         if self.mounted.get() {
             crate::unmount(self.id);
         }
+        crate::testing::LIVE_MODELS.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+impl Drop for SourceIvars {
+    fn drop(&mut self) {
+        crate::testing::LIVE_OBJC.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -587,6 +623,7 @@ impl<T: 'static> TableModel<T> {
     /// time the host draws it, see [`TableModel::ensure_mounted`]).
     pub fn new(id: ViewId, columns: Vec<Column<T>>) -> Self {
         let mtm = mtm();
+        crate::testing::LIVE_OBJC.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let source = Source::alloc(mtm).set_ivars(SourceIvars { data: RefCell::new(None), created: Cell::new(0) });
         // SAFETY: plain NSObject init.
         let source: Retained<Source> = unsafe { msg_send![super(source), init] };
@@ -629,6 +666,7 @@ impl<T: 'static> TableModel<T> {
             table: table.clone(),
             _source: source.clone(),
         });
+        crate::testing::LIVE_MODELS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let weak: Weak<dyn Data> = Rc::downgrade(&inner) as Weak<dyn Data>;
         *source.ivars().data.borrow_mut() = Some(weak);
         // SAFETY: the source is kept alive by the model (`_source`), and the
@@ -642,6 +680,7 @@ impl<T: 'static> TableModel<T> {
         Self { inner }
     }
 
+    /// The view id the table was created with.
     pub fn id(&self) -> ViewId {
         self.inner.id
     }
@@ -666,14 +705,17 @@ impl<T: 'static> TableModel<T> {
         self.inner.quiet.set(false);
     }
 
+    /// The rows, in model order (unsorted).
     pub fn rows(&self) -> Ref<'_, Vec<T>> {
         self.inner.rows.borrow()
     }
 
+    /// Number of rows.
     pub fn len(&self) -> usize {
         self.inner.rows.borrow().len()
     }
 
+    /// Whether there are no rows.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -705,6 +747,7 @@ impl<T: 'static> TableModel<T> {
         self.inner.select_model_rows(&selected);
     }
 
+    /// Appends a row.
     pub fn push(&self, row: T) {
         let len = self.len();
         self.insert(len, row);
@@ -746,6 +789,7 @@ impl<T: 'static> TableModel<T> {
         }
     }
 
+    /// The current sort, if any.
     pub fn sort(&self) -> Option<Sort> {
         self.inner.sort.borrow().clone()
     }

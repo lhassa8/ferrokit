@@ -5,10 +5,14 @@ use std::cell::RefCell;
 use crate::ViewId;
 
 #[derive(Debug, Clone, PartialEq)]
+/// A callback from AppKit for the host framework (see [`set_event_sink`]).
 pub enum Event {
     /// Tab (`forward`) or Shift-Tab was pressed and belongs to the host's
     /// focus order (which spans host widgets and native views).
-    FocusStep { forward: bool },
+    FocusStep {
+        /// Tab (true) or Shift-Tab (false).
+        forward: bool,
+    },
     /// Keyboard focus moved into a mounted native view (`Some`) or out of all
     /// of them (`None`), e.g. after a click.
     FocusChanged(Option<ViewId>),

@@ -10,6 +10,7 @@ use iced::{Color, Element, Length, Rectangle, Size, Vector, mouse};
 
 use appkit_host::{Rect, ViewId};
 
+/// An Iced widget that holds a mounted native view in the layout.
 pub struct NativeSlot {
     id: ViewId,
     width: Length,
@@ -29,15 +30,18 @@ struct ScrollContext {
 }
 
 impl NativeSlot {
+    /// A slot for the view mounted as `id`.
     pub fn new(id: ViewId, width: impl Into<Length>, height: impl Into<Length>) -> Self {
         Self { id, width: width.into(), height: height.into(), background: None, scroll: None, focusable: false }
     }
 
+    /// Width in the Iced layout.
     pub fn width(mut self, width: impl Into<Length>) -> Self {
         self.width = width.into();
         self
     }
 
+    /// Height in the Iced layout.
     pub fn height(mut self, height: impl Into<Length>) -> Self {
         self.height = height.into();
         self

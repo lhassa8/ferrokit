@@ -7,9 +7,11 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
-appkit-host = { path = "../appkit-host" }
+appkit-host = { path = "../appkit-host", version = "0.1.0" }
 iced = { version = "0.14", features = ["advanced", "image"] }
 
 [dev-dependencies]

@@ -4,7 +4,20 @@
 use objc2_app_kit::{NSApplication, NSEvent, NSEventModifierFlags, NSEventType};
 use objc2_foundation::NSPoint;
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use crate::ViewId;
+
+/// Table and text models alive (Rust side).
+pub(crate) static LIVE_MODELS: AtomicUsize = AtomicUsize::new(0);
+/// Library-defined Objective-C objects alive (data sources, delegates, text
+/// views): decremented when AppKit actually deallocates them.
+pub(crate) static LIVE_OBJC: AtomicUsize = AtomicUsize::new(0);
+
+/// (models alive, library Objective-C objects alive), for leak checks.
+pub fn live_objects() -> (usize, usize) {
+    (LIVE_MODELS.load(Ordering::Relaxed), LIVE_OBJC.load(Ordering::Relaxed))
+}
 use crate::host::{mtm, with_host};
 
 /// Posts a key-down (optionally with ⌘ / ⇧).
@@ -12,6 +25,7 @@ pub fn post_key(chars: &str, key_code: u16, command: bool, shift: bool) {
     crate::keys::post_key_down(chars, key_code, command, shift);
 }
 
+/// Posts Tab (or Shift-Tab) to the window.
 pub fn post_tab(shift: bool) {
     post_key("\t", 48, false, shift);
 }

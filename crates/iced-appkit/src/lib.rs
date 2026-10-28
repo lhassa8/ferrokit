@@ -7,6 +7,8 @@
 //! - subscribe to [`events`] and pass each event to [`update`] (focus order,
 //!   redraws); the event is also yours to act on (e.g. `Event::Action`).
 
+#![warn(missing_docs)]
+
 mod root;
 mod slot;
 pub mod table;
