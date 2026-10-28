@@ -1,8 +1,8 @@
 //! A native macOS UI framework for Rust: every view is a real AppKit view.
 //! Phase 2, unreleased. So far: the app, its windows, the run loop, the
 //! default menu bar and appearance tracking (F1.1); signals, batching and
-//! background work (F1.2); views, identity and teardown (F1.3). The layout
-//! pass is a first version; F1.4 completes it.
+//! background work (F1.2); views, identity and teardown (F1.3); layout with
+//! stacks, grids, alignment and subtree-only relayout (F1.4).
 //!
 //! Main thread only.
 
@@ -31,9 +31,10 @@ use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
 pub use appkit_host::{is_dark, system_colors};
 pub use signal::{Effect, Memo, Signal, after_batch, batch, effect_runs, untrack};
+pub use layout::layout_stats;
 pub use view::{
-    AnyView, Axis, Button, Cx, Dynamic, ForEach, Identifiable, Label, Modified, Node, Size, Spacer, Stack, Text, View,
-    ViewExt, Views, button, dynamic, for_each, hstack, label, live_nodes, spacer, text, vstack,
+    Align, AnyView, Axis, Button, Cx, Dynamic, ForEach, Grid, Identifiable, Label, Modified, Node, Size, Spacer, Stack,
+    Text, View, ViewExt, Views, button, dynamic, for_each, grid, hstack, label, live_nodes, spacer, text, vstack,
 };
 
 fn mtm() -> MainThreadMarker {
@@ -262,6 +263,17 @@ fn emit(event: AppEvent) {
     for h in handlers {
         h(event.clone());
     }
+}
+
+/// Opens `window` now (while the app runs) and returns it.
+pub fn open(window: Window) -> Retained<NSWindow> {
+    let mtm = mtm();
+    objc2::rc::autoreleasepool(|_| {
+        let w = window.open(mtm);
+        w.makeKeyAndOrderFront(None);
+        WINDOWS.with_borrow_mut(|ws| ws.push(w.clone()));
+        w
+    })
 }
 
 /// The app's windows, in the order they were opened.

@@ -12,7 +12,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject};
@@ -91,6 +91,49 @@ pub(crate) fn invalidate_layout() {
     LAYOUT_DIRTY.with(|d| d.set(true));
 }
 
+/// Per-node layout state, shared with the effects that change the node.
+#[derive(Default)]
+pub(crate) struct Meta {
+    parent: RefCell<Weak<Meta>>,
+    /// Cached ideal size (padding and fixed sizes included).
+    pub(crate) ideal: Cell<Option<Size>>,
+    /// The rectangle the node was last placed in.
+    pub(crate) rect: Cell<Option<[f64; 4]>>,
+    /// Something in this subtree changed since the last layout.
+    pub(crate) dirty: Cell<bool>,
+}
+
+impl Meta {
+    pub(crate) fn set_parent(&self, parent: &Rc<Meta>) {
+        *self.parent.borrow_mut() = Rc::downgrade(parent);
+    }
+
+    /// Marks this node and its ancestors for layout (their cached ideal
+    /// sizes are dropped); the layout runs after the current batch.
+    pub(crate) fn mark(self: &Rc<Self>) {
+        let mut cur = Some(self.clone());
+        while let Some(m) = cur {
+            m.ideal.set(None);
+            if m.dirty.replace(true) {
+                break; // ancestors are already marked
+            }
+            cur = m.parent.borrow().upgrade();
+        }
+        invalidate_layout();
+    }
+}
+
+/// Alignment across a stack's axis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Align {
+    /// Leading (vertical stacks) or top (horizontal stacks).
+    Start,
+    /// Centred.
+    Center,
+    /// Trailing or bottom.
+    End,
+}
+
 /// Number of live nodes (diagnostic, for teardown checks).
 pub fn live_nodes() -> usize {
     LIVE_NODES.with(Cell::get)
@@ -118,13 +161,20 @@ pub(crate) struct Leaf {
     pub(crate) view: Retained<NSView>,
     pub(crate) flex: (bool, bool),
     pub(crate) min: Size,
-    /// Cached `fittingSize`, cleared when the content changes.
-    pub(crate) ideal: Rc<Cell<Option<Size>>>,
+    /// Cached `fittingSize`.
+    pub(crate) content: Rc<Cell<Option<Size>>>,
+}
+
+/// What an effect needs to report that a leaf's content changed.
+pub(crate) struct LeafHandle {
+    content: Rc<Cell<Option<Size>>>,
+    meta: Rc<Meta>,
 }
 
 pub(crate) enum Kind {
     Leaf(Leaf),
-    Stack { axis: Axis, spacing: f64, children: Vec<Node> },
+    Stack { axis: Axis, spacing: f64, align: Option<Align>, children: Vec<Node> },
+    Grid { spacing: (f64, f64), rows: Vec<Vec<Node>> },
     Spacer,
     /// Children that change over time; laid out inline in the parent stack.
     Group(Rc<RefCell<Vec<Node>>>),
@@ -136,6 +186,9 @@ pub struct Node {
     pub(crate) id: Option<u64>,
     pub(crate) padding: f64,
     pub(crate) fixed: (Option<f64>, Option<f64>),
+    /// Forced flexibility (`fill_width` / `fill_height`).
+    pub(crate) fill: (bool, bool),
+    pub(crate) meta: Rc<Meta>,
     effects: Vec<Effect>,
     keep: Vec<Retained<NSObject>>,
 }
@@ -143,14 +196,40 @@ pub struct Node {
 impl Node {
     pub(crate) fn new(kind: Kind) -> Node {
         LIVE_NODES.with(|n| n.set(n.get() + 1));
-        Node { kind, id: None, padding: 0.0, fixed: (None, None), effects: Vec::new(), keep: Vec::new() }
+        let meta = Rc::new(Meta::default());
+        meta.dirty.set(true);
+        let node = Node {
+            kind,
+            id: None,
+            padding: 0.0,
+            fixed: (None, None),
+            fill: (false, false),
+            meta,
+            effects: Vec::new(),
+            keep: Vec::new(),
+        };
+        for c in node.children_static() {
+            c.meta.set_parent(&node.meta);
+        }
+        node
     }
 
-    pub(crate) fn leaf(cx: &Cx, view: Retained<NSView>, flex: (bool, bool), min: Size) -> (Node, Rc<Cell<Option<Size>>>) {
+    /// Children owned directly (not through a group).
+    fn children_static(&self) -> Vec<&Node> {
+        match &self.kind {
+            Kind::Stack { children, .. } => children.iter().collect(),
+            Kind::Grid { rows, .. } => rows.iter().flatten().collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    pub(crate) fn leaf(cx: &Cx, view: Retained<NSView>, flex: (bool, bool), min: Size) -> (Node, LeafHandle) {
         cx.container.addSubview(&view);
-        let ideal = Rc::new(Cell::new(None));
+        let content = Rc::new(Cell::new(None));
         invalidate_layout();
-        (Node::new(Kind::Leaf(Leaf { view, flex, min, ideal: ideal.clone() })), ideal)
+        let node = Node::new(Kind::Leaf(Leaf { view, flex, min, content: content.clone() }));
+        let handle = LeafHandle { content, meta: node.meta.clone() };
+        (node, handle)
     }
 
     pub(crate) fn own(&mut self, effect: Effect) {
@@ -169,6 +248,9 @@ impl Drop for Node {
         self.effects.clear();
         if let Kind::Leaf(l) = &self.kind {
             l.view.removeFromSuperview();
+            if let Some(parent) = self.meta.parent.borrow().upgrade() {
+                parent.mark();
+            }
             invalidate_layout();
         }
     }
@@ -178,17 +260,32 @@ impl Drop for Node {
 pub trait ViewExt: View + Sized {
     /// Inset on all sides, in points.
     fn padding(self, points: f64) -> Modified<Self> {
-        Modified { view: self, padding: Some(points), width: None, height: None }
+        Modified::new(self).padding(points)
     }
 
     /// A fixed width.
     fn width(self, points: f64) -> Modified<Self> {
-        Modified { view: self, padding: None, width: Some(points), height: None }
+        Modified::new(self).width(points)
     }
 
     /// A fixed height.
     fn height(self, points: f64) -> Modified<Self> {
-        Modified { view: self, padding: None, width: None, height: Some(points) }
+        Modified::new(self).height(points)
+    }
+
+    /// A fixed size.
+    fn frame(self, width: f64, height: f64) -> Modified<Self> {
+        Modified::new(self).width(width).height(height)
+    }
+
+    /// Takes all the width its container offers.
+    fn fill_width(self) -> Modified<Self> {
+        Modified::new(self).fill_width()
+    }
+
+    /// Takes all the height its container offers.
+    fn fill_height(self) -> Modified<Self> {
+        Modified::new(self).fill_height()
     }
 }
 
@@ -200,9 +297,26 @@ pub struct Modified<V> {
     padding: Option<f64>,
     width: Option<f64>,
     height: Option<f64>,
+    fill: (bool, bool),
 }
 
 impl<V: View> Modified<V> {
+    fn new(view: V) -> Self {
+        Modified { view, padding: None, width: None, height: None, fill: (false, false) }
+    }
+
+    /// Takes all the width its container offers.
+    pub fn fill_width(mut self) -> Self {
+        self.fill.0 = true;
+        self
+    }
+
+    /// Takes all the height its container offers.
+    pub fn fill_height(mut self) -> Self {
+        self.fill.1 = true;
+        self
+    }
+
     /// Inset on all sides, in points.
     pub fn padding(mut self, points: f64) -> Self {
         self.padding = Some(points);
@@ -229,6 +343,7 @@ impl<V: View> View for Modified<V> {
             node.padding = p;
         }
         node.fixed = (self.width.or(node.fixed.0), self.height.or(node.fixed.1));
+        node.fill = (node.fill.0 || self.fill.0, node.fill.1 || self.fill.1);
         node
     }
 }
@@ -271,10 +386,18 @@ tuple_views!(A, B, C, D, E, F, G, H, I, J);
 pub struct Stack {
     axis: Axis,
     spacing: f64,
+    align: Option<Align>,
     children: Vec<AnyView>,
 }
 
 impl Stack {
+    /// Alignment across the axis (default: leading for vertical stacks,
+    /// centred for horizontal ones).
+    pub fn alignment(mut self, align: Align) -> Self {
+        self.align = Some(align);
+        self
+    }
+
     /// Space between children, in points (default 8).
     pub fn spacing(mut self, points: f64) -> Self {
         self.spacing = points;
@@ -285,18 +408,46 @@ impl Stack {
 impl View for Stack {
     fn build(self, cx: &mut Cx) -> Node {
         let children = self.children.into_iter().map(|c| c.build_node(&mut cx.child())).collect();
-        Node::new(Kind::Stack { axis: self.axis, spacing: self.spacing, children })
+        Node::new(Kind::Stack { axis: self.axis, spacing: self.spacing, align: self.align, children })
     }
 }
 
 /// Children top to bottom.
 pub fn vstack(children: impl Views) -> Stack {
-    Stack { axis: Axis::Vertical, spacing: 8.0, children: children.into_views() }
+    Stack { axis: Axis::Vertical, spacing: 8.0, align: None, children: children.into_views() }
 }
 
 /// Children left to right.
 pub fn hstack(children: impl Views) -> Stack {
-    Stack { axis: Axis::Horizontal, spacing: 8.0, children: children.into_views() }
+    Stack { axis: Axis::Horizontal, spacing: 8.0, align: None, children: children.into_views() }
+}
+
+/// Rows of cells in aligned columns: each column is as wide as its widest
+/// cell, each row as tall as its tallest. Columns (rows) with a flexible cell
+/// share the extra space.
+pub struct Grid {
+    spacing: (f64, f64),
+    rows: Vec<Vec<AnyView>>,
+}
+
+impl Grid {
+    /// Space between columns and between rows (default 8, 8).
+    pub fn spacing(mut self, columns: f64, rows: f64) -> Self {
+        self.spacing = (columns, rows);
+        self
+    }
+}
+
+impl View for Grid {
+    fn build(self, cx: &mut Cx) -> Node {
+        let rows = self.rows.into_iter().map(|r| r.into_iter().map(|c| c.build_node(&mut cx.child())).collect()).collect();
+        Node::new(Kind::Grid { spacing: self.spacing, rows })
+    }
+}
+
+/// A grid from rows of views (rows may be shorter than others).
+pub fn grid(rows: impl IntoIterator<Item = impl Views>) -> Grid {
+    Grid { spacing: (8.0, 8.0), rows: rows.into_iter().map(Views::into_views).collect() }
 }
 
 /// Flexible empty space along its stack's axis.
@@ -313,14 +464,14 @@ pub fn spacer() -> Spacer {
     Spacer
 }
 
-/// After a content change: re-measure, and mark the layout stale only if the
-/// size changed.
-pub(crate) fn remeasure(view: &NSView, ideal: &Cell<Option<Size>>) {
+/// After a content change: re-measure, and mark the leaf (and its
+/// ancestors) for layout only if its size changed.
+pub(crate) fn remeasure(view: &NSView, leaf: &LeafHandle) {
     let s = view.fittingSize();
     let new = Size { w: s.width, h: s.height };
-    if ideal.get() != Some(new) {
-        ideal.set(Some(new));
-        invalidate_layout();
+    if leaf.content.get() != Some(new) {
+        leaf.content.set(Some(new));
+        leaf.meta.mark();
     }
 }
 
@@ -346,11 +497,11 @@ impl View for Label {
     fn build(self, cx: &mut Cx) -> Node {
         let field = NSTextField::labelWithString(&NSString::from_str(""), cx.mtm);
         let view: Retained<NSView> = Retained::into_super(Retained::into_super(field.clone()));
-        let (mut node, ideal) = Node::leaf(cx, view.clone(), (false, false), Size::default());
+        let (mut node, handle) = Node::leaf(cx, view.clone(), (false, false), Size::default());
         let f = self.0;
         node.own(Effect::new(move || {
             field.setStringValue(&NSString::from_str(&f()));
-            remeasure(&view, &ideal);
+            remeasure(&view, &handle);
         }));
         node
     }
@@ -418,6 +569,7 @@ impl View for Dynamic {
     fn build(self, cx: &mut Cx) -> Node {
         let children: Rc<RefCell<Vec<Node>>> = Rc::default();
         let mut node = Node::new(Kind::Group(children.clone()));
+        let meta = node.meta.clone();
         let container = cx.container.clone();
         let f = self.0;
         node.own(Effect::new(move || {
@@ -428,9 +580,10 @@ impl View for Dynamic {
                     return;
                 }
                 let new = view.build_node(&mut Cx::new(container.clone()));
+                new.meta.set_parent(&meta);
                 // The old node (and its subtree) is dropped here: teardown.
                 *children.borrow_mut() = vec![new];
-                invalidate_layout();
+                meta.mark();
             });
         }));
         node
@@ -479,6 +632,7 @@ where
         let children: Rc<RefCell<Vec<Node>>> = Rc::default();
         let keys: Rc<RefCell<Vec<T::Id>>> = Rc::default();
         let mut node = Node::new(Kind::Group(children.clone()));
+        let meta = node.meta.clone();
         let container = cx.container.clone();
         node.own(Effect::new(move || {
             let items = items();
@@ -491,7 +645,11 @@ where
                     let key = item.id();
                     let n = match old.remove(&key) {
                         Some(n) => n,
-                        None => AnyView::new(row(item)).build_node(&mut Cx::new(container.clone())),
+                        None => {
+                            let n = AnyView::new(row(item)).build_node(&mut Cx::new(container.clone()));
+                            n.meta.set_parent(&meta);
+                            n
+                        }
                     };
                     new_keys.push(key);
                     new_nodes.push(n);
@@ -499,7 +657,7 @@ where
                 drop(old); // teardown of removed items
                 *keys.borrow_mut() = new_keys;
                 *children.borrow_mut() = new_nodes;
-                invalidate_layout();
+                meta.mark();
             });
         }));
         node

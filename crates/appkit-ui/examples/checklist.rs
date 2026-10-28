@@ -6,8 +6,8 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use appkit_ui::{
-    App, AppEvent, Effect, Identifiable, Signal, View, ViewExt, Window, batch, dynamic, effect_runs, for_each, label, later,
-    live_nodes, spacer, spawn, text, vstack, windows,
+    Align, App, AppEvent, Effect, Identifiable, Signal, View, ViewExt, Window, batch, button, dynamic, effect_runs, for_each,
+    grid, hstack, label, later, layout_stats, layout_times_us, live_nodes, open, spacer, spawn, text, vstack, windows,
 };
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
@@ -82,9 +82,9 @@ fn run_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     // Windows: both open; AppKit lists them in the Window menu.
     let ws = windows();
     let visible = ws.iter().filter(|w| w.isVisible()).count();
-    check("windows", ws.len() == 3 && visible == 3, format!("{} windows, {visible} visible", ws.len()));
+    check("windows", ws.len() == 4 && visible == 4, format!("{} windows, {visible} visible", ws.len()));
     let window_menu = menu_items(2);
-    let listed = ["First", "Second", "Views"].iter().all(|t| window_menu.iter().any(|(title, _, _)| title == t));
+    let listed = ["First", "Second", "Views", "Layout"].iter().all(|t| window_menu.iter().any(|(title, _, _)| title == t));
     check("window-menu-lists-windows", listed && app.windowsMenu().is_some(), format!("{:?}", window_menu.iter().map(|e| &e.0).collect::<Vec<_>>()));
     check("help-menu", app.helpMenu().is_some(), String::new());
 
@@ -327,8 +327,150 @@ fn view_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                 labels().len()
             ),
         );
-        appearance_check(events.clone());
+        layout_checks(events.clone());
     });
+}
+
+thread_local! {
+    static WIDE: Signal<String> = Signal::new("short".into());
+}
+
+fn layout_window() -> impl View {
+    let wide = WIDE.with(Clone::clone);
+    vstack((
+        vstack((text("A wide label for alignment"), text("mid"))).alignment(Align::Center),
+        vstack((text("A wide label for alignment"), text("end"))).alignment(Align::End),
+        hstack((text("tall\nlabel\nhere"), text("bottom"))).alignment(Align::End),
+        grid([
+            (text("Name"), text("Alice"), text("x")),
+            (text("A much longer key"), text("Bob"), text("y")),
+        ]),
+        hstack((text("left"), spacer(), text("right"))),
+        text("filled").fill_width(),
+        text("framed").frame(121.0, 41.0),
+        hstack((label(move || wide.get()), text("after"))),
+    ))
+    .padding(13.0)
+}
+
+fn frame_of(window: &str, text: &str) -> objc2_foundation::NSRect {
+    let w = windows().into_iter().find(|w| w.title().to_string() == window).unwrap();
+    w.contentView()
+        .unwrap()
+        .subviews()
+        .iter()
+        .filter_map(|v| v.downcast::<NSTextField>().ok())
+        .filter(|f| f.stringValue().to_string() == text)
+        .map(|f| f.frame())
+        .last()
+        .unwrap()
+}
+
+fn layout_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let f = |t: &str| frame_of("Layout", t);
+    let mid_x = |r: objc2_foundation::NSRect| r.origin.x + r.size.width / 2.0;
+    let max_x = |r: objc2_foundation::NSRect| r.origin.x + r.size.width;
+    let max_y = |r: objc2_foundation::NSRect| r.origin.y + r.size.height;
+    let wides: Vec<_> = {
+        let w = windows().into_iter().find(|w| w.title().to_string() == "Layout").unwrap();
+        w.contentView().unwrap().subviews().iter().filter_map(|v| v.downcast::<NSTextField>().ok()).filter(|t| t.stringValue().to_string() == "A wide label for alignment").map(|t| t.frame()).collect()
+    };
+    let (mid, end) = (f("mid"), f("end"));
+    check(
+        "align-center-end",
+        (mid_x(mid) - mid_x(wides[0])).abs() <= 0.5 && (max_x(end) - max_x(wides[1])).abs() <= 0.5,
+        format!("centre {:.1} vs {:.1}; trailing {:.1} vs {:.1}", mid_x(mid), mid_x(wides[0]), max_x(end), max_x(wides[1])),
+    );
+    let (tall, bottom) = (f("tall\nlabel\nhere"), f("bottom"));
+    check("align-bottom", (max_y(tall) - max_y(bottom)).abs() <= 0.5, format!("bottoms {:.1} / {:.1}", max_y(tall), max_y(bottom)));
+    let (alice, bob, key) = (f("Alice"), f("Bob"), f("A much longer key"));
+    check(
+        "grid-columns",
+        alice.origin.x == bob.origin.x && bob.origin.x >= max_x(key) + 8.0 - 0.5 && f("x").origin.x == f("y").origin.x,
+        format!("column 2 at {:.1} / {:.1}; longest key ends at {:.1}", alice.origin.x, bob.origin.x, max_x(key)),
+    );
+    let content_w = windows().into_iter().find(|w| w.title().to_string() == "Layout").unwrap().contentView().unwrap().bounds().size.width;
+    let (left, right) = (f("left"), f("right"));
+    check(
+        "spacer",
+        left.origin.x == 13.0 && (max_x(right) - (content_w - 13.0)).abs() <= 0.5,
+        format!("left at {:.1}, right ends at {:.1} of {:.1}", left.origin.x, max_x(right), content_w - 13.0),
+    );
+    let (filled, framed) = (f("filled"), f("framed"));
+    check(
+        "fill-and-frame",
+        (filled.size.width - (content_w - 26.0)).abs() <= 0.5 && framed.size.width == 121.0 && framed.size.height == 41.0,
+        format!("filled {:.1} wide (of {:.1}); framed {:.1}×{:.1}", filled.size.width, content_w - 26.0, framed.size.width, framed.size.height),
+    );
+    let all: Vec<_> = {
+        let w = windows().into_iter().find(|w| w.title().to_string() == "Layout").unwrap();
+        w.contentView().unwrap().subviews().iter().map(|v| v.frame()).collect()
+    };
+    let snapped = all.iter().all(|r| [r.origin.x, r.origin.y, r.size.width, r.size.height].iter().all(|v| (v * 2.0).fract() == 0.0));
+    check("pixel-snapping", snapped, format!("{} frames on the 0.5 pt grid (2x)", all.len()));
+
+    // A label that changes width moves its sibling; the rest of the window is skipped.
+    let wide = WIDE.with(Clone::clone);
+    let before = f("after").origin.x;
+    let (p0, s0, _) = layout_stats();
+    batch(|| wide.set("a considerably longer text".into()));
+    let (p1, s1, _) = layout_stats();
+    let after = f("after").origin.x;
+    check(
+        "subtree-relayout",
+        after > before && p1 - p0 <= 6,
+        format!("sibling moved {before:.1} → {after:.1}; {} nodes placed, {} subtrees skipped", p1 - p0, s1 - s0),
+    );
+    layout_bench(events);
+}
+
+/// 1,000 native views (250 stretching rows × label, label, button, label): resize layout
+/// and the cost of a label update.
+fn layout_bench(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let counter = Signal::new(0u64);
+    let c = counter.clone();
+    let rows: Vec<_> = (0..250)
+        .map(|i| {
+            let c = c.clone();
+            hstack((
+                if i == 0 { appkit_ui::AnyView::new(label(move || format!("Counter {}", c.get()))) } else { appkit_ui::AnyView::new(text(format!("Row {i}"))) },
+                text("Some label"),
+                spacer(), // rows stretch: every row re-lays out on resize
+                button("Go", || {}),
+                text("tail"),
+            ))
+        })
+        .map(appkit_ui::AnyView::new)
+        .collect();
+    let t = std::time::Instant::now();
+    let w = open(Window::new("Bench").size(700.0, 700.0).view(vstack(rows).padding(12.0)));
+    let build_ms = t.elapsed().as_secs_f64() * 1e3;
+    let views = w.contentView().unwrap().subviews().len();
+    let n0 = layout_times_us().len();
+    for k in 0..200 {
+        w.setContentSize(objc2_foundation::NSSize::new(600.0 + (k % 40) as f64 * 10.0, 700.0));
+    }
+    let mut resize: Vec<f64> = layout_times_us()[n0..].to_vec();
+    resize.sort_by(|a, b| a.total_cmp(b));
+    let mut upd = Vec::new();
+    let (p0, _, _) = layout_stats();
+    for _ in 0..500 {
+        let t = std::time::Instant::now();
+        batch(|| counter.update(|v| *v += 1));
+        upd.push(t.elapsed().as_secs_f64() * 1e6);
+    }
+    let (p1, _, _) = layout_stats();
+    upd.sort_by(|a, b| a.total_cmp(b));
+    let p = |v: &[f64], q: usize| v[(v.len() - 1) * q / 100];
+    check(
+        "layout-bench",
+        views == 1000 && p(&resize, 50) < 2000.0 && p(&upd, 50) < 72.0,
+        format!(
+            "{views} views built in {build_ms:.0} ms; resize layout p50 {:.2} ms, p95 {:.2} ms; label update p50 {:.1} µs, p95 {:.1} µs, {:.1} nodes placed per update (P0: 0.75 ms, 72 µs)",
+            p(&resize, 50) / 1000.0, p(&resize, 95) / 1000.0, p(&upd, 50), p(&upd, 95), (p1 - p0) as f64 / 500.0
+        ),
+    );
+    appearance_check(events);
 }
 
 fn main() {
@@ -339,6 +481,7 @@ fn main() {
         .window(Window::new("First").size(480.0, 200.0).content(|| field("hello world")))
         .window(Window::new("Second").size(360.0, 160.0))
         .window(Window::new("Views").size(320.0, 420.0).view(views_window()))
+        .window(Window::new("Layout").size(420.0, 480.0).view(layout_window()))
         .on_event(move |e| e2.borrow_mut().push(e))
         .on_launch(move || {
             if checks {
