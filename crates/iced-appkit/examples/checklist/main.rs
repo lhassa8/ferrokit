@@ -948,7 +948,14 @@ impl App {
                 model.set_sort(Some(Sort { column: "age".into(), ascending: false }));
                 let by_age = t.elapsed();
                 let first_ages: Vec<String> = (0..3).filter_map(|r| native::cell_text(&table, 1, r)).collect();
-                self.record(15, by_name.as_millis() < 100 && by_age.as_millis() < 100, format!("sort {T15_ROWS} rows + reload: by name {by_name:.1?}, by age {by_age:.1?}; top ages {first_ages:?}"));
+                // Timing is informational on CI (shared VMs), as for T7; the order is checked always.
+                let ci = std::env::var_os("CI").is_some();
+                let fast = by_name.as_millis() < 100 && by_age.as_millis() < 100;
+                self.record(
+                    15,
+                    (fast || ci) && first_ages.iter().all(|a| *a == "87"),
+                    format!("sort {T15_ROWS} rows + reload: by name {by_name:.1?}, by age {by_age:.1?}; top ages {first_ages:?}{}", if ci { " (timing informational on CI)" } else { "" }),
+                );
                 // Selection through AppKit, as a click would.
                 self.last_select = None;
                 native::select_view_row(&table, 5);

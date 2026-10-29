@@ -635,9 +635,68 @@ impl View for Scroll {
         cx.container.addSubview(&scroll);
         let content = self.0.build_node(&mut Cx::new(doc.clone()));
         invalidate_layout();
-        Node::new(Kind::Scroll { scroll, doc, content: Box::new(content) })
+        let clip = scroll.contentView();
+        let mut node = Node::new(Kind::Scroll { scroll, doc: doc.clone(), content: Box::new(content) });
+        // Classic scroll bars appear and go when AppKit tiles the view (also
+        // while drawing, after our layout): re-fit the content when the
+        // visible width no longer matches it.
+        let observer = ClipObserver::alloc(cx.mtm).set_ivars(ClipWatch { meta: Rc::downgrade(&node.meta), doc: objc2::rc::Weak::from_retained(&doc) });
+        // SAFETY: NSObject's designated initialiser.
+        let observer: Retained<ClipObserver> = unsafe { msg_send![super(observer), init] };
+        clip.setPostsFrameChangedNotifications(true);
+        // SAFETY: the observer answers clipChanged:; the node keeps it, and
+        // the notification centre doesn't retain selector observers.
+        unsafe {
+            objc2_foundation::NSNotificationCenter::defaultCenter().addObserver_selector_name_object(
+                &observer,
+                objc2::sel!(clipChanged:),
+                Some(objc2_app_kit::NSViewFrameDidChangeNotification),
+                Some(&clip),
+            )
+        };
+        node.hold(Rc::new(Observing(observer)));
+        node
     }
 }
+
+/// Unregisters a notification observer when its node goes (the centre
+/// would otherwise keep its record of it).
+struct Observing(Retained<ClipObserver>);
+
+impl Drop for Observing {
+    fn drop(&mut self) {
+        // SAFETY: removing an observer this module registered.
+        unsafe { objc2_foundation::NSNotificationCenter::defaultCenter().removeObserver(&self.0) };
+    }
+}
+
+struct ClipWatch {
+    meta: Weak<Meta>,
+    doc: objc2::rc::Weak<NSView>,
+}
+
+define_class!(
+    // Watches a scroll view's visible area for size changes.
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "AppKitUiClipObserver"]
+    #[ivars = ClipWatch]
+    struct ClipObserver;
+
+    impl ClipObserver {
+        #[unsafe(method(clipChanged:))]
+        fn clip_changed(&self, note: &objc2_foundation::NSNotification) {
+            let (Some(clip), Some(doc)) = (note.object().and_then(|o| o.downcast::<NSView>().ok()), self.ivars().doc.load()) else { return };
+            if (clip.frame().size.width - doc.frame().size.width).abs() < 0.25 || crate::in_layout() {
+                return;
+            }
+            if let Some(meta) = self.ivars().meta.upgrade() {
+                meta.mark();
+                crate::later(crate::relayout_now);
+            }
+        }
+    }
+);
 
 /// Vertically scrolling `content`.
 pub fn scroll(content: impl View) -> Scroll {

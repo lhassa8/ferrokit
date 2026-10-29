@@ -147,6 +147,20 @@ fn content_types(extensions: &[String]) -> Option<Retained<NSArray<objc2_uniform
 /// Shows the Open panel as a sheet on `window`; `on_done` gets the chosen
 /// paths, or `None` if cancelled.
 pub fn open_panel(window: &NSWindow, options: OpenOptions, on_done: impl FnOnce(Option<Vec<PathBuf>>) + 'static) {
+    let (panel, block) = open_panel_parts(options, on_done);
+    panel.beginSheetModalForWindow_completionHandler(window, &block);
+}
+
+/// The Open panel as a window of its own (when there's no window to attach
+/// it to, e.g. a document app with no documents open).
+pub(crate) fn open_panel_alone(options: OpenOptions, on_done: impl FnOnce(Option<Vec<PathBuf>>) + 'static) {
+    let (panel, block) = open_panel_parts(options, on_done);
+    panel.beginWithCompletionHandler(&block);
+}
+
+type PanelDone = RcBlock<dyn Fn(NSModalResponse)>;
+
+fn open_panel_parts(options: OpenOptions, on_done: impl FnOnce(Option<Vec<PathBuf>>) + 'static) -> (Retained<NSOpenPanel>, PanelDone) {
     let panel = NSOpenPanel::openPanel(mtm());
     panel.setAllowsMultipleSelection(options.multiple);
     panel.setCanChooseDirectories(options.directories);
@@ -161,7 +175,7 @@ pub fn open_panel(window: &NSWindow, options: OpenOptions, on_done: impl FnOnce(
             .then(|| p.URLs().iter().filter_map(|u| u.path()).map(|s| PathBuf::from(s.to_string())).collect());
         done(paths);
     });
-    panel.beginSheetModalForWindow_completionHandler(window, &block);
+    (panel, block)
 }
 
 /// Shows the Save panel as a sheet on `window`, proposing `name` (in

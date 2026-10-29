@@ -32,6 +32,11 @@ define_class!(
             Some(self.ivars().clone())
         }
 
+        #[unsafe(method(windowShouldClose:))]
+        fn should_close(&self, window: &NSWindow) -> bool {
+            crate::documents::window_should_close(window)
+        }
+
         #[unsafe(method(windowWillClose:))]
         fn will_close(&self, notification: &NSNotification) {
             if let Some(window) = notification.object().and_then(|o| o.downcast::<NSWindow>().ok()) {

@@ -8,7 +8,7 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSControlStateValueOff, NSControlStateValueOn, NSEventModifierFlags, NSImage, NSMenu, NSMenuItem, NSResponder, NSSearchToolbarItem, NSSplitView, NSSplitViewDelegate, NSSplitViewDividerStyle, NSToolbar,
+    NSControlStateValueOff, NSControlStateValueOn, NSEventModifierFlags, NSImage, NSMenu, NSMenuDelegate, NSMenuItem, NSResponder, NSSearchToolbarItem, NSSplitView, NSSplitViewDelegate, NSSplitViewDividerStyle, NSToolbar,
     NSToolbarDelegate, NSToolbarItem, NSView, NSWindow, NSWindowToolbarStyle,
 };
 use objc2_foundation::{NSArray, NSNotification, NSSize, NSString, NSUserDefaults};
@@ -211,6 +211,7 @@ enum Entry {
     },
     Separator,
     Submenu { title: String, items: Vec<MenuItem> },
+    Dynamic { title: String, items: Rc<dyn Fn() -> Vec<MenuItem>> },
 }
 
 impl MenuItem {
@@ -268,6 +269,50 @@ pub fn submenu(title: &str, items: Vec<MenuItem>) -> MenuItem {
     MenuItem(Entry::Submenu { title: title.into(), items })
 }
 
+/// A submenu whose items `items` builds each time it opens (Open Recent, a
+/// list of servers…), so it always shows the current state.
+pub fn dynamic_submenu(title: &str, items: impl Fn() -> Vec<MenuItem> + 'static) -> MenuItem {
+    MenuItem(Entry::Dynamic { title: title.into(), items: Rc::new(items) })
+}
+
+pub(crate) struct DynamicItems {
+    items: Rc<dyn Fn() -> Vec<MenuItem>>,
+    /// The current items' targets.
+    targets: RefCell<Vec<Retained<NSObject>>>,
+}
+
+define_class!(
+    // Rebuilds a dynamic submenu before it's shown (and before its items'
+    // key equivalents are matched).
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "AppKitUiDynamicMenu"]
+    #[ivars = DynamicItems]
+    pub(crate) struct DynamicMenu;
+
+    unsafe impl NSObjectProtocol for DynamicMenu {}
+
+    unsafe impl NSMenuDelegate for DynamicMenu {
+        #[unsafe(method(menuNeedsUpdate:))]
+        fn menu_needs_update(&self, menu: &NSMenu) {
+            self.refill(menu);
+        }
+    }
+);
+
+impl DynamicMenu {
+    pub(crate) fn refill(&self, menu: &NSMenu) {
+        let mtm = MainThreadMarker::new().expect("main thread");
+        let (built, targets) = build_menu(mtm, (self.ivars().items)());
+        menu.removeAllItems();
+        for item in built.itemArray().iter() {
+            built.removeItem(&item);
+            menu.addItem(&item);
+        }
+        *self.ivars().targets.borrow_mut() = targets;
+    }
+}
+
 /// Builds an `NSMenu`; the returned targets must be kept alive with it.
 pub(crate) fn build_menu(mtm: MainThreadMarker, items: Vec<MenuItem>) -> (Retained<NSMenu>, Vec<Retained<NSObject>>) {
     build_titled_menu(mtm, "", items)
@@ -286,6 +331,19 @@ pub(crate) fn build_titled_menu(mtm: MainThreadMarker, title: &str, items: Vec<M
                 holder.setSubmenu(Some(&sub));
                 menu.addItem(&holder);
                 keep.extend(targets);
+            }
+            Entry::Dynamic { title, items } => {
+                let sub = NSMenu::initWithTitle(NSMenu::alloc(mtm), &NSString::from_str(&title));
+                let delegate = DynamicMenu::alloc(mtm).set_ivars(DynamicItems { items, targets: RefCell::default() });
+                // SAFETY: NSObject's designated initialiser.
+                let delegate: Retained<DynamicMenu> = unsafe { msg_send![super(delegate), init] };
+                delegate.refill(&sub);
+                // Weak in AppKit; the caller keeps the delegate.
+                sub.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+                let holder = plain_item(mtm, &title, None, "");
+                holder.setSubmenu(Some(&sub));
+                menu.addItem(&holder);
+                keep.push(Retained::into_super(delegate));
             }
             Entry::Action { title, action, enabled, checked, key } => {
                 let target = MenuTarget::alloc(mtm).set_ivars(MenuAction { action, enabled, checked });

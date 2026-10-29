@@ -342,7 +342,14 @@ mod self_checks {
         static FAILED: Cell<u32> = const { Cell::new(0) };
     }
 
+    /// On a CI runner (GitHub sets `CI`): shared virtual machines, so frame
+    /// budgets are reported but don't fail; correctness still does.
+    fn on_ci() -> bool {
+        std::env::var_os("CI").is_some()
+    }
+
     fn check(name: &str, pass: bool, note: String) {
+        let note = if on_ci() && note.contains("budget") { format!("{note} (timing informational on CI)") } else { note };
         eprintln!("[check] {name} {} {note}", if pass { "PASS" } else { "FAIL" });
         if !pass {
             FAILED.with(|f| f.set(f.get() + 1));
@@ -516,7 +523,7 @@ mod self_checks {
                         let cmax = costs.iter().copied().fold(0.0, f64::max);
                         check(
                             "follow",
-                            v1.total.get_untracked() >= want && want > 0 && misparsed == 0 && v1.table.is_at_end() && cmax < 8.3,
+                            v1.total.get_untracked() >= want && want > 0 && misparsed == 0 && v1.table.is_at_end() && (on_ci() || cmax < 8.3),
                             format!(
                                 "{} of {want} lines in the file shown after 10 s ({timed} with a time; {} errors, {} warnings, {} debug); \
                                  {misparsed} misparsed; frames: {display} display, {fallback} stand-in; per-frame cost max {cmax:.2} ms; following the end: {}",
@@ -602,7 +609,7 @@ mod self_checks {
                 let last_shown = v.table.is_at_end() && v.table.row_at(v.table.len() - 1) == Some(1_049_999);
                 check(
                     "tail",
-                    v.total.get_untracked() == 1_050_000 && c95 < 4.0 && cmax < period.min(8.3) && l95 < 3.0 * period + 10.0 && last_shown,
+                    v.total.get_untracked() == 1_050_000 && (on_ci() || (c95 < 4.0 && cmax < period.min(8.3) && l95 < 3.0 * period + 10.0)) && last_shown,
                     format!("1,050,000 lines; frame cost p95 {c95:.2} ms, max {cmax:.2} ms (budget {:.1}: the frame period, at most a 120 Hz frame); latency p95 {l95:.1} ms; {missed} late frames; last line on screen: {last_shown}", period.min(8.3)),
                 );
                 storm_phase(v, path, ticks, probe, base);
@@ -626,7 +633,7 @@ mod self_checks {
                 let period = pct(p.frames.clone(), 0.5);
                 check(
                     "storm",
-                    v.total.get_untracked() == 1_250_000 && cmax < period.min(8.3) && v.table.is_at_end(),
+                    v.total.get_untracked() == 1_250_000 && (on_ci() || cmax < period.min(8.3)) && v.table.is_at_end(),
                     format!("100,000 lines/s: frame cost p95 {c95:.2} ms, max {cmax:.2} ms (budget {:.1}); latency p95 {l95:.1} ms; {missed} late frames", period.min(8.3)),
                 );
                 scrolled_up_phase(v, path, probe, base);

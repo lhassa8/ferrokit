@@ -42,6 +42,7 @@
 mod chrome;
 mod controls;
 mod dialogs;
+mod documents;
 mod frame;
 mod layout;
 mod menu;
@@ -77,8 +78,11 @@ pub use controls::{
     Checkbox, Image, Picker, Progress, Slider, Stepper, TextField, checkbox, image, picker, progress, secure_field, slider,
     stepper, text_field, toggle,
 };
-pub use chrome::{MenuItem, Modifier, Split, submenu, ToolbarItem, menu_item, menu_separator, split, toolbar_button, toolbar_search, toolbar_space};
+pub use chrome::{MenuItem, Modifier, Split, dynamic_submenu, submenu, ToolbarItem, menu_item, menu_separator, split, toolbar_button, toolbar_search, toolbar_space};
 pub use dialogs::{Alert, OpenOptions, SheetHandle, alert, open_panel, save_panel, sheet};
+pub use documents::{
+    Document, DocumentType, document_edited, new_document, open_document, recent_documents, revert_document, save_document, save_document_as,
+};
 pub use layout::layout_stats;
 pub use models::{Table, TextEditor, table, text_editor};
 pub use outline::{Outline, TreeNode, outline, sidebar};
@@ -333,12 +337,13 @@ pub struct App {
     on_launch: Option<Box<dyn FnOnce()>>,
     menus: Vec<(String, Vec<MenuItem>)>,
     settings: Option<Window>,
+    documents: Option<Box<dyn FnOnce()>>,
 }
 
 impl App {
     /// An app called `name` (shown in the menu bar).
     pub fn new(name: &str) -> Self {
-        App { name: name.into(), windows: Vec::new(), on_launch: None, menus: Vec::new(), settings: None }
+        App { name: name.into(), windows: Vec::new(), on_launch: None, menus: Vec::new(), settings: None, documents: None }
     }
 
     /// Opens `window` at launch. Call more than once for several windows.
@@ -361,6 +366,16 @@ impl App {
     /// or listed in the Window menu, and it remembers its position.
     pub fn settings(mut self, window: Window) -> Self {
         self.settings = Some(window);
+        self
+    }
+
+    /// Makes this a document app for `kind` (see [`DocumentType`]): the File
+    /// menu gets New, Open…, Open Recent, Save, Save As… and Revert to
+    /// Saved; closing an edited document asks to save it, and quitting
+    /// reviews the unsaved ones. With no windows given, the app starts with
+    /// an untitled document.
+    pub fn documents<T: Clone + PartialEq + 'static>(mut self, kind: DocumentType<T>) -> Self {
+        self.documents = Some(Box::new(move || documents::install(kind)));
         self
     }
 
@@ -388,7 +403,23 @@ impl App {
                 open_settings();
             }))
         });
-        let targets = menu::install(mtm, &self.name, self.menus, settings);
+        let is_documents = self.documents.is_some();
+        let mut menus = self.menus;
+        let mut file_after = Vec::new();
+        if let Some(install) = self.documents {
+            install();
+            let (above, after) = documents::file_items();
+            file_after = after;
+            match menus.iter_mut().find(|(t, _)| t == "File") {
+                Some((_, items)) => {
+                    let own = std::mem::take(items);
+                    *items = above.into_iter().chain(own).collect();
+                }
+                None => menus.insert(0, ("File".into(), above)),
+            }
+        }
+        let start_untitled = is_documents && self.windows.is_empty();
+        let targets = menu::install(mtm, &self.name, menus, settings, file_after);
         EXTRAS.with_borrow_mut(|e| e.extend(targets));
         after_batch(|| {
             if view::LAYOUT_DIRTY.with(Cell::get) {
@@ -414,6 +445,9 @@ impl App {
                 WINDOWS.with_borrow_mut(|ws| ws.push(w));
             }
         });
+        if start_untitled {
+            objc2::rc::autoreleasepool(|_| documents::new_document());
+        }
         #[allow(deprecated)]
         app.activateIgnoringOtherApps(true);
         if let Some(f) = self.on_launch {
@@ -513,6 +547,7 @@ pub(crate) fn teardown(window: &NSWindow) {
         undo.removeAllActions();
     }
     drop_root(window);
+    documents::forget(window);
     WINDOWS.with_borrow_mut(|ws| ws.retain(|w| !std::ptr::eq(&**w, window)));
     let extras: Vec<Retained<NSObject>> = WINDOW_EXTRAS.with_borrow_mut(|e| {
         let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(e).into_iter().partition(|(w, _)| std::ptr::eq(&**w, window));
@@ -563,9 +598,12 @@ pub fn set_appearance(appearance: Appearance) {
     NSApplication::sharedApplication(mtm()).setAppearance(appearance.as_deref());
 }
 
-/// Ends the app (as ⌘Q does).
+/// Ends the app (as ⌘Q does), on the next pass of the run loop. Quitting
+/// can wait for answers (a document app asks about unsaved changes) inside
+/// a nested run loop; starting it outside the caller's batch keeps the UI
+/// updating meanwhile.
 pub fn quit() {
-    NSApplication::sharedApplication(mtm()).terminate(None);
+    later(|| NSApplication::sharedApplication(mtm()).terminate(None));
 }
 
 type Continuation = Box<dyn FnOnce(Box<dyn Any + Send>)>;

@@ -4,6 +4,14 @@
 
 ### appkit-ui
 
+- **Document apps:** `App::documents(DocumentType)`.
+  - The File menu gets New, Open…, Open Recent, Save, Save As… and Revert to Saved.
+  - Each window is a `Document<T>`: a content signal and a file. The title bar shows the edited dot and the file's proxy icon.
+  - Closing or quitting with changes asks to save.
+  - `new_document`, `open_document`, `save_document(_as)`, `revert_document`, `document_edited`, `recent_documents`.
+- `dynamic_submenu(title, items)`: a submenu rebuilt each time it opens.
+- `quit()` now starts on the next run-loop pass, so prompts shown while quitting don't run inside the caller's batch.
+- Fix: a scroll view re-fits its content whenever AppKit changes the visible width (classic scroll bars appearing while drawing).
 - Fix: with classic (always-shown) scroll bars, as on a Mac with a mouse, a `scroll` view's content stayed wider than the view once the vertical bar appeared (a stray horizontal scroll bar, clipped content). The content now re-fits.
 - `testing::heap_in_use_mb()`: live allocations, for leak checks (footprint lags while the allocator returns freed pages).
 - `testing::capture_window` returns `None` for a capture without the window's content (no screen-recording permission).
