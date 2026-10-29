@@ -213,9 +213,16 @@ pub(crate) fn place(node: &Node, x: f64, y: f64, w: f64, h: f64, snap: &Snap) {
         Kind::Spacer => {}
         Kind::Scroll { scroll, doc, content } => {
             let visible = Native::place_scroll(scroll, snapped(ix, iy, iw, ih, snap));
-            let (w, h) = (visible.w, ideal(content).h.max(visible.h));
-            Native::set_size(doc, Size { w, h });
-            place(content, 0.0, 0.0, w, h, snap);
+            let mut size = Size { w: visible.w, h: ideal(content).h.max(visible.h) };
+            Native::set_size(doc, size);
+            // Classic (always-shown) scroll bars appear once the document is
+            // taller than the view and take its width: size it again to fit.
+            let after = Native::visible_size(scroll);
+            if (after.w - size.w).abs() > 0.25 {
+                size = Size { w: after.w, h: ideal(content).h.max(after.h) };
+                Native::set_size(doc, size);
+            }
+            place(content, 0.0, 0.0, size.w, size.h, snap);
         }
         Kind::Split { split, panes, position } => {
             Native::place_split(split, snapped(ix, iy, iw, ih, snap));

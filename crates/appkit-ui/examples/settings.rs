@@ -272,7 +272,7 @@ mod self_checks {
         let bar = views().into_iter().find(|v| v.class().name().to_string_lossy() == "NSProgressIndicator").unwrap();
         let w = bar.window().unwrap();
         let Some(rep) = appkit_ui::testing::capture_window(&w) else {
-            return check("progress-on-screen", true, "skipped: no screen-recording permission".into());
+            return check("progress-on-screen", true, "skipped: no capture of the window's content (screen recording not allowed here)".into());
         };
         let rows = appkit_ui::testing::captured_pixels(&rep, &bar, 1);
         // A column is filled when any pixel in it is coloured or mid-grey

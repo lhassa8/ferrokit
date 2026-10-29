@@ -35,3 +35,12 @@ jobs:
         continue-on-error: true
         run: scripts/check-all.sh --no-lint
         timeout-minutes: 25
+        env:
+          CHECK_ALL_LOGS: ${{ runner.temp }}/check-all
+      - name: Upload suite logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: suite-logs-${{ matrix.os }}
+          path: ${{ runner.temp }}/check-all
+          if-no-files-found: ignore
