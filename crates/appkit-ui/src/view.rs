@@ -176,7 +176,7 @@ pub(crate) struct LeafHandle {
 pub(crate) enum Kind {
     Leaf(Leaf),
     Stack { axis: Axis, spacing: f64, align: Option<Align>, children: Vec<Node> },
-    Grid { spacing: (f64, f64), rows: Vec<Vec<Node>> },
+    Grid { spacing: (f64, f64), rows: Vec<Vec<Node>>, align: Vec<Align> },
     Spacer,
     /// Children that change over time; laid out inline in the parent stack.
     Group(Rc<RefCell<Vec<Node>>>),
@@ -436,9 +436,20 @@ pub fn hstack(children: impl Views) -> Stack {
 pub struct Grid {
     spacing: (f64, f64),
     rows: Vec<Vec<AnyView>>,
+    align: Vec<Align>,
 }
 
 impl Grid {
+    /// Horizontal alignment of the cells in `column` (default leading).
+    /// Mac forms right-align their label column: `.align_column(0, Align::End)`.
+    pub fn align_column(mut self, column: usize, align: Align) -> Self {
+        if self.align.len() <= column {
+            self.align.resize(column + 1, Align::Start);
+        }
+        self.align[column] = align;
+        self
+    }
+
     /// Space between columns and between rows (default 8, 8).
     pub fn spacing(mut self, columns: f64, rows: f64) -> Self {
         self.spacing = (columns, rows);
@@ -449,13 +460,13 @@ impl Grid {
 impl View for Grid {
     fn build(self, cx: &mut Cx) -> Node {
         let rows = self.rows.into_iter().map(|r| r.into_iter().map(|c| c.build_node(&mut cx.child())).collect()).collect();
-        Node::new(Kind::Grid { spacing: self.spacing, rows })
+        Node::new(Kind::Grid { spacing: self.spacing, rows, align: self.align })
     }
 }
 
 /// A grid from rows of views (rows may be shorter than others).
 pub fn grid(rows: impl IntoIterator<Item = impl Views>) -> Grid {
-    Grid { spacing: (8.0, 8.0), rows: rows.into_iter().map(Views::into_views).collect() }
+    Grid { spacing: (8.0, 8.0), rows: rows.into_iter().map(Views::into_views).collect(), align: Vec::new() }
 }
 
 /// A thin separator line across its stack: horizontal in a vertical stack,
@@ -519,6 +530,24 @@ impl View for Scroll {
 /// Vertically scrolling `content`.
 pub fn scroll(content: impl View) -> Scroll {
     Scroll(AnyView::new(content))
+}
+
+/// Runs a side effect for as long as this place in the tree exists; takes
+/// no space. For work that follows signals but shows nothing (applying a
+/// setting, saving a value).
+pub struct Watch(Box<dyn FnMut()>);
+
+impl View for Watch {
+    fn build(self, _cx: &mut Cx) -> Node {
+        let mut node = Node::new(Kind::Group(Rc::default()));
+        node.own(Effect::new(self.0));
+        node
+    }
+}
+
+/// A side effect owned by the view tree (see [`Watch`]).
+pub fn watch(f: impl FnMut() + 'static) -> Watch {
+    Watch(Box::new(f))
 }
 
 /// Flexible empty space along its stack's axis.

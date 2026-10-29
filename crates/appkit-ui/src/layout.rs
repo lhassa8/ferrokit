@@ -96,7 +96,7 @@ pub(crate) fn ideal(node: &Node) -> Size {
             let c = ideal(content);
             Size { w: c.w + 16.0, h: c.h.min(200.0) }
         }
-        Kind::Grid { spacing, rows } => {
+        Kind::Grid { spacing, rows, .. } => {
             let (cols, rws) = grid_tracks(rows);
             Size {
                 w: cols.iter().sum::<f64>() + spacing.0 * cols.len().saturating_sub(1) as f64,
@@ -221,7 +221,7 @@ pub(crate) fn place(node: &Node, x: f64, y: f64, w: f64, h: f64, snap: &Snap) {
         Kind::Stack { axis, spacing, align, children } => {
             place_stack(children, *axis, *spacing, *align, [ix, iy, iw, ih], snap)
         }
-        Kind::Grid { spacing, rows } => place_grid(rows, *spacing, [ix, iy, iw, ih], snap),
+        Kind::Grid { spacing, rows, align } => place_grid(rows, *spacing, align, [ix, iy, iw, ih], snap),
     }
     finish(&node.meta, rect);
 }
@@ -273,7 +273,7 @@ fn place_stack(children: &[Node], axis: Axis, spacing: f64, align: Option<Align>
     }
 }
 
-fn place_grid(rows: &[Vec<Node>], spacing: (f64, f64), r: [f64; 4], snap: &Snap) {
+fn place_grid(rows: &[Vec<Node>], spacing: (f64, f64), align: &[Align], r: [f64; 4], snap: &Snap) {
     let [x, y, w, h] = r;
     let (mut cols, mut rws) = grid_tracks(rows);
     let n_cols = cols.len();
@@ -287,12 +287,17 @@ fn place_grid(rows: &[Vec<Node>], spacing: (f64, f64), r: [f64; 4], snap: &Snap)
     let mut cy = y;
     for (row, rh) in rows.iter().zip(&rws) {
         let mut cx = x;
-        for (cell, cw) in row.iter().zip(&cols) {
+        for (i, (cell, cw)) in row.iter().zip(&cols).enumerate() {
             let s = ideal(cell);
             let cell_w = if flexible(cell, Axis::Horizontal, None) { *cw } else { s.w.min(*cw) };
             let cell_h = if flexible(cell, Axis::Vertical, None) { *rh } else { s.h.min(*rh) };
-            // Cells align leading, centred vertically in their row.
-            place(cell, cx, cy + (rh - cell_h) / 2.0, cell_w, cell_h, snap);
+            // Cells align per column (leading by default), centred vertically.
+            let dx = match align.get(i).copied().unwrap_or(Align::Start) {
+                Align::Start => 0.0,
+                Align::Center => (cw - cell_w) / 2.0,
+                Align::End => cw - cell_w,
+            };
+            place(cell, cx + dx, cy + (rh - cell_h) / 2.0, cell_w, cell_h, snap);
             cx += cw + spacing.0;
         }
         cy += rh + spacing.1;

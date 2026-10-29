@@ -14,6 +14,7 @@ mod controls;
 mod layout;
 mod menu;
 mod signal;
+pub mod testing;
 mod view;
 
 use std::any::Any;
@@ -42,7 +43,7 @@ pub use layout::layout_stats;
 pub use view::{
     Align, AnyView, Axis, Button, Cx, Divider, Dynamic, ForEach, Grid, Identifiable, Label, Modified, Node, Scroll, Size,
     Spacer, Stack, Text, View, ViewExt, Views, button, divider, dynamic, for_each, grid, hstack, label, live_nodes, scroll,
-    spacer, text, vstack,
+    spacer, text, vstack, watch, Watch,
 };
 
 fn mtm() -> MainThreadMarker {
@@ -301,6 +302,30 @@ pub fn later(f: impl Fn() + 'static) {
     // SAFETY: runs on the main run loop; touches main-thread state only.
     unsafe { main.perform_block(kCFRunLoopCommonModes.map(|m| m.as_ref()), Some(&block)) };
     main.wake_up();
+}
+
+/// The app's appearance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Appearance {
+    /// Follow the system setting.
+    System,
+    /// Always light.
+    Light,
+    /// Always dark.
+    Dark,
+}
+
+/// Sets the app's appearance; every native view follows, and an
+/// [`AppEvent::AppearanceChanged`] is delivered.
+pub fn set_appearance(appearance: Appearance) {
+    let name = match appearance {
+        Appearance::System => None,
+        // SAFETY: AppKit's appearance name constants.
+        Appearance::Light => Some(unsafe { objc2_app_kit::NSAppearanceNameAqua }),
+        Appearance::Dark => Some(unsafe { objc2_app_kit::NSAppearanceNameDarkAqua }),
+    };
+    let appearance = name.and_then(objc2_app_kit::NSAppearance::appearanceNamed);
+    NSApplication::sharedApplication(mtm()).setAppearance(appearance.as_deref());
 }
 
 /// Ends the app (as ⌘Q does).
