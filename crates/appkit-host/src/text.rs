@@ -16,7 +16,7 @@ use std::rc::{Rc, Weak};
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
-use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send};
+use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send};
 use objc2_app_kit::{
     NSFont, NSResponder, NSScrollView, NSText, NSTextDelegate, NSTextInputClient, NSTextStorage, NSTextStorageDelegate,
     NSTextStorageEditActions, NSTextView, NSTextViewDelegate, NSAutoresizingMaskOptions, NSView,
@@ -200,7 +200,9 @@ struct Inner {
     events: RefCell<VecDeque<TextEvent>>,
     quiet: Cell<bool>,
     mounted: Cell<bool>,
-    undo: Retained<NSUndoManager>,
+    undo: RefCell<Retained<NSUndoManager>>,
+    /// Whether `undo` is someone else's (shared with other views).
+    shared: Cell<bool>,
     scroll: Retained<NSScrollView>,
     view: Retained<HostTextView>,
     _delegate: Retained<Delegate>,
@@ -232,7 +234,7 @@ impl Data for Inner {
     }
 
     fn undo_manager(&self) -> Retained<NSUndoManager> {
-        self.undo.clone()
+        self.undo.borrow().clone()
     }
 }
 
@@ -321,7 +323,8 @@ impl TextModel {
             events: RefCell::new(VecDeque::new()),
             quiet: Cell::new(false),
             mounted: Cell::new(false),
-            undo: NSUndoManager::new(mtm),
+            undo: RefCell::new(NSUndoManager::new(mtm)),
+            shared: Cell::new(false),
             scroll,
             view: view.clone(),
             _delegate: delegate.clone(),
@@ -364,7 +367,44 @@ impl TextModel {
         self.inner.quiet.set(true);
         self.inner.view.setString(&NSString::from_str(text));
         self.inner.quiet.set(false);
-        self.inner.undo.removeAllActions();
+        self.clear_undo();
+    }
+
+    /// Removes this editor's edits from its undo history (only this
+    /// editor's, when the history is shared).
+    fn clear_undo(&self) {
+        let undo = self.inner.undo.borrow();
+        if self.inner.shared.get() {
+            // AppKit registers typing with the text storage as the target.
+            unsafe {
+                undo.removeAllActionsWithTarget(&self.inner.view);
+                if let Some(storage) = self.inner.view.textStorage() {
+                    undo.removeAllActionsWithTarget(&storage);
+                }
+            }
+        } else {
+            undo.removeAllActions();
+        }
+    }
+
+    /// Records edits in `manager` (e.g. the window's, shared with other
+    /// views and app-level changes) instead of the editor's own history, or
+    /// in a fresh history of its own again with `None`. Edits recorded so
+    /// far are dropped.
+    pub fn share_undo(&self, manager: Option<&NSUndoManager>) {
+        self.clear_undo();
+        let mtm = MainThreadMarker::from(&*self.inner.view);
+        let next = match manager {
+            Some(m) => m.retain(),
+            None => NSUndoManager::new(mtm),
+        };
+        *self.inner.undo.borrow_mut() = next;
+        self.inner.shared.set(manager.is_some());
+    }
+
+    /// The undo history the editor records in.
+    pub fn undo_manager(&self) -> Retained<NSUndoManager> {
+        self.inner.undo.borrow().clone()
     }
 
     /// Replaces the selection as if typed: undoable, emits `Changed`.
@@ -463,13 +503,14 @@ impl TextModel {
 
     /// Whether there is something to undo.
     pub fn can_undo(&self) -> bool {
-        self.inner.undo.canUndo()
+        self.inner.undo.borrow().canUndo()
     }
 
     /// Undoes the last edit (as ⌘Z does).
     pub fn undo(&self) {
-        if self.inner.undo.canUndo() {
-            self.inner.undo.undo();
+        let undo = self.undo_manager();
+        if undo.canUndo() {
+            undo.undo();
         }
     }
 

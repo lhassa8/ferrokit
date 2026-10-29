@@ -9,6 +9,7 @@
 - `TableModel::scroll_view()` returns the table's scroll view, for hosts that place it themselves.
 - `observe_appearance()` is public, for apps without an attached host window.
 - `TextModel::scroll_view()`.
+- `TextModel::share_undo(Some(&manager))` records the editor's edits in another undo manager (a window's, shared with other views); `None` returns to a history of its own, still the default. `TextModel::undo_manager()` returns the one in use. `set_text` drops only this editor's steps from a shared history.
 - Fix: `TextEvent::Changed` is now sent for undo and redo too. AppKit sends no `textDidChange:` for them, so the model also listens to its text storage; a queued `Changed` isn't repeated.
 
 ### iced-appkit

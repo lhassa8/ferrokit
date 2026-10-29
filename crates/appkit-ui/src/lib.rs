@@ -8,7 +8,8 @@
 //! the native table (F2.1); outlines and the source-list sidebar (F2.2); the
 //! text editor (F2.3); split views, toolbars and context menus (F2.4); sheets,
 //! alerts and file panels (F2.5); the app's menus, its Settings window,
-//! stored settings and window restoration (F3.1).
+//! stored settings and window restoration (F3.1); undo, one history per
+//! window (F3.2).
 //!
 //! Main thread only.
 
@@ -23,6 +24,7 @@ mod models;
 mod outline;
 mod signal;
 mod store;
+mod undo;
 pub mod testing;
 mod view;
 
@@ -44,6 +46,7 @@ use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
 pub use appkit_host::{is_dark, system_colors};
 pub use store::{Stored, stored};
+pub use undo::{set_undoable, undoable, undoable_in};
 pub use signal::{Effect, Memo, Signal, after_batch, batch, effect_runs, untrack};
 pub use controls::{
     Checkbox, Image, Picker, Progress, Slider, Stepper, TextField, checkbox, image, picker, progress, secure_field, slider,
@@ -149,6 +152,8 @@ impl Window {
             let delegate = chrome::install_toolbar(&window, self.toolbar);
             EXTRAS.with_borrow_mut(|e| e.push(delegate));
         }
+        let (delegate, undo) = undo::install(mtm, &window);
+        EXTRAS.with_borrow_mut(|e| e.push(delegate));
         // Tab follows the views' positions (top-left to bottom-right).
         window.setAutorecalculatesKeyViewLoop(true);
         if let Some(build) = self.content {
@@ -157,7 +162,7 @@ impl Window {
         if let Some(view) = self.view {
             // SAFETY: NSView's designated initialiser.
             let root: Retained<RootView> = unsafe { msg_send![RootView::alloc(mtm), initWithFrame: rect] };
-            let node = batch(|| view.build(&mut Cx::new(Retained::into_super(root.clone()))));
+            let node = undo::building(&undo, || batch(|| view.build(&mut Cx::new(Retained::into_super(root.clone())))));
             ROOTS.with_borrow_mut(|r| r.push((root.clone(), node)));
             window.setContentView(Some(&root));
             relayout_all();
@@ -425,6 +430,9 @@ pub fn open_settings() -> Option<Retained<NSWindow>> {
 /// stop, native views go). The app no longer lists it in [`windows`].
 pub fn close_window(window: &NSWindow) {
     window.close();
+    if let Some(undo) = window.undoManager() {
+        undo.removeAllActions();
+    }
     drop_root(window);
     WINDOWS.with_borrow_mut(|ws| ws.retain(|w| !std::ptr::eq(&**w, window)));
 }

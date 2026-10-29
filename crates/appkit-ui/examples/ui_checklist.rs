@@ -10,7 +10,7 @@ use appkit_ui::{
     for_each, grid, hstack, label, later, layout_stats, layout_times_us, live_nodes, open, secure_field, spacer, spawn, text,
     text_field, toggle, vstack, windows, divider, image, picker, progress, scroll, slider, stepper, table, Column, Sort,
     TableModel, ViewId, TreeNode, outline, sidebar, TextModel, text_editor, split, toolbar_button, toolbar_space,
-    toolbar_search, menu_item, menu_separator, MenuItem, Modifier, submenu, stored, Alert, OpenOptions, SheetHandle, alert, open_panel, save_panel, sheet,
+    toolbar_search, menu_item, menu_separator, MenuItem, Modifier, submenu, stored, set_undoable, Alert, OpenOptions, SheetHandle, alert, open_panel, save_panel, sheet,
 };
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
@@ -342,6 +342,145 @@ fn menu_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     );
     defaults.removeObjectForKey(&split_key);
 
+    after_events(move || undo_checks(events.clone()));
+}
+
+#[derive(Clone)]
+struct UndoState {
+    name: Signal<String>,
+    own: TextModel,
+    shared: TextModel,
+    window: Retained<objc2_app_kit::NSWindow>,
+}
+
+fn undo_title(w: &objc2_app_kit::NSWindow) -> (String, String) {
+    let m = w.undoManager().unwrap();
+    (m.undoMenuItemTitle().to_string(), m.redoMenuItemTitle().to_string())
+}
+
+/// Runs `f` after the run loop has gone idle once: that's when AppKit closes
+/// the undo group of the current event (a `later` block can run in the same
+/// loop iteration, inside the same group).
+fn after_idle(f: impl Fn() + 'static) {
+    spawn(|| std::thread::sleep(std::time::Duration::from_millis(30)), move |()| f());
+}
+
+/// Undo checks run one step per idle run loop, as user events would: AppKit
+/// groups everything registered in one event into a single undo step.
+fn undo_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let name = Signal::new("A".to_string());
+    let own = TextModel::new(ViewId(950), "");
+    let shared = TextModel::new(ViewId(951), "");
+    let window = open(
+        Window::new("Undo").size(420.0, 320.0).view(
+            vstack((text_field(&name), text_editor(&own), text_editor(&shared).shared_undo())).padding(12.0),
+        ),
+    );
+    let u = UndoState { name, own, shared, window };
+    let w = &u.window;
+    let m = w.undoManager();
+    let editor_w = windows().into_iter().find(|w| w.title().to_string() == "Editor").unwrap();
+    let distinct = m.as_ref().zip(editor_w.undoManager()).is_some_and(|(a, b)| !std::ptr::eq(&**a, &*b));
+    let stable = m.as_ref().zip(w.undoManager()).is_some_and(|(a, b)| std::ptr::eq(&**a, &*b));
+    let field = all_views(&w.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<NSTextField>().ok()).unwrap();
+    w.makeFirstResponder(Some(&field));
+    // While a field is being edited its field editor has AppKit's private
+    // NSCellUndoManager (field typing is undone there, then dropped when
+    // editing ends); the field itself answers with the window's.
+    let editor = field.currentEditor();
+    let cell_undo = editor.as_ref().and_then(|e| e.undoManager()).map(|u| u.class().name().to_string_lossy().to_string());
+    let field_undo = field.undoManager();
+    let field_shares = m.as_ref().zip(field_undo.as_ref()).is_some_and(|(a, b)| std::ptr::eq(&**a, &**b)) && cell_undo.is_some();
+    let own_apart = m.as_ref().is_some_and(|m| !std::ptr::eq(&**m, &*u.own.undo_manager()));
+    let shared_in = m.as_ref().is_some_and(|m| std::ptr::eq(&**m, &*u.shared.undo_manager()));
+    check(
+        "undo-manager-per-window",
+        distinct && stable && field_shares && own_apart && shared_in,
+        format!("own manager per window: {distinct}, stable: {stable}; text field uses it: {field_shares} (while editing: {cell_undo:?}); default editor apart: {own_apart}; shared_undo editor in it: {shared_in}"),
+    );
+    w.makeFirstResponder(None);
+
+    // An app-level change: ⌘Z / ⇧⌘Z with the action's name.
+    set_undoable("Rename", &u.name, "B".to_string());
+    after_idle(move || {
+        let w = &u.window;
+        let t0 = undo_title(w);
+        let undone = shortcut(w, "z", false);
+        let after_undo = (u.name.get_untracked(), undo_title(w));
+        let redone = shortcut(w, "z", true);
+        let after_redo = u.name.get_untracked();
+        check(
+            "undoable-signal",
+            t0.0 == "Undo Rename" && undone && after_undo.0 == "A" && after_undo.1 .1 == "Redo Rename" && redone && after_redo == "B",
+            format!("{t0:?}; ⌘Z → {:?} {:?}; ⇧⌘Z → {after_redo:?}", after_undo.0, after_undo.1),
+        );
+        // The default editor keeps its own history: typing there leaves the window's alone.
+        u.own.replace_selection("x");
+        let own_ok = u.own.can_undo() && undo_title(w).0 == "Undo Rename";
+        check("editor-own-undo", own_ok, format!("editor can undo: {}; window's top: {:?}", u.own.can_undo(), undo_title(w).0));
+        let u = u.clone();
+        let events = events.clone();
+        after_idle(move || undo_stack_checks(u.clone(), events.clone()));
+    });
+}
+
+/// The shared stack, one explicit undo group per simulated event. (AppKit
+/// closes its per-event group when the app handles an event; an unattended
+/// run gets none, so its groups stay open across passes.)
+fn undo_stack_checks(u: UndoState, events: Rc<RefCell<Vec<AppEvent>>>) {
+    let w = &u.window;
+    let m = w.undoManager().unwrap();
+    m.removeAllActions();
+    while m.groupingLevel() > 0 {
+        m.endUndoGrouping();
+    }
+    m.setGroupsByEvent(false);
+    let event = |f: &dyn Fn()| {
+        m.beginUndoGrouping();
+        f();
+        m.endUndoGrouping();
+    };
+    batch(|| u.name.set("B".into()));
+    // Typing (as the keyboard does: insertText, named "Typing"), an
+    // app-level change, more typing: three steps, undone newest first.
+    let tv = u.shared.text_view();
+    let typed = |t: &str| unsafe { tv.insertText_replacementRange(&NSString::from_str(t), objc2_foundation::NSRange::new(usize::MAX >> 1, 0)) };
+    event(&|| typed("typed"));
+    let typing_title = undo_title(w).0;
+    event(&|| set_undoable("Rename", &u.name, "C".to_string()));
+    event(&|| typed("!"));
+    let mut seen = vec![(u.name.get_untracked(), u.shared.text())];
+    for _ in 0..3 {
+        shortcut(w, "z", false);
+        seen.push((u.name.get_untracked(), u.shared.text()));
+    }
+    let want: Vec<(String, String)> =
+        [("C", "typed!"), ("C", "typed"), ("B", "typed"), ("B", "")].iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+    check(
+        "editor-shared-undo",
+        typing_title == "Undo Typing" && seen == want,
+        format!("top after typing: {typing_title:?}; then ⌘Z ×3: {seen:?}"),
+    );
+
+    // set_text drops only that editor's steps from the shared stack.
+    event(&|| set_undoable("Rename", &u.name, "D".to_string()));
+    event(&|| u.shared.replace_selection("more"));
+    event(&|| set_undoable("Rename", &u.name, "E".to_string()));
+    u.shared.set_text("fresh");
+    let top = undo_title(w).0;
+    shortcut(w, "z", false);
+    let first = (u.name.get_untracked(), u.shared.text());
+    shortcut(w, "z", false);
+    let second = (u.name.get_untracked(), u.shared.text());
+    check(
+        "editor-set-text-undo",
+        top == "Undo Rename" && first == ("D".into(), "fresh".into()) && second == ("B".into(), "fresh".into()),
+        format!("after set_text the top is {top:?}; ⌘Z → {first:?}; ⌘Z → {second:?} (the dropped typing is skipped)"),
+    );
+
+    event(&|| set_undoable("Rename", &u.name, "F".to_string()));
+    appkit_ui::close_window(w);
+    check("undo-close", !m.canUndo() && !m.canRedo(), format!("after close: can undo {}, redo {}", m.canUndo(), m.canRedo()));
     after_events(move || appearance_check(events.clone()));
 }
 

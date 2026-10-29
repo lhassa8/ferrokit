@@ -168,9 +168,19 @@ pub struct TextEditor {
     on_change: Callback<String>,
     on_selection: Callback<std::ops::Range<usize>>,
     on_composition: Callback<Option<String>>,
+    shared_undo: bool,
 }
 
 impl TextEditor {
+    /// Records edits in the window's undo history, with its text fields and
+    /// app-level changes ([`undoable`](crate::undoable)), instead of the
+    /// editor's own. Then ⌘Z anywhere in the window undoes the latest
+    /// change, wherever it was made.
+    pub fn shared_undo(mut self) -> Self {
+        self.shared_undo = true;
+        self
+    }
+
     /// Binds the text two ways to `text`: edits set it (not while an input
     /// method is composing); setting it replaces the editor's text (clearing
     /// undo, like [`TextModel::set_text`]) unless it already matches.
@@ -204,6 +214,9 @@ impl View for TextEditor {
         let (mut node, _) = Node::leaf(cx, Retained::into_super(scroll), (true, true), Size { w: 200.0, h: 80.0 });
         if let crate::view::Kind::Leaf(l) = &node.kind {
             l.content.set(Some(Size { w: 200.0, h: 80.0 }));
+        }
+        if self.shared_undo {
+            self.model.share_undo(crate::undo::manager_for(&cx.container).as_deref());
         }
         if let Some(bound) = &self.bound {
             // Signal → editor (skipped when equal: the editor is the source).
@@ -242,5 +255,5 @@ impl View for TextEditor {
 
 /// A native text editor showing `model` (see [`TextEditor`]).
 pub fn text_editor(model: &TextModel) -> TextEditor {
-    TextEditor { model: model.clone(), bound: None, on_change: None, on_selection: None, on_composition: None }
+    TextEditor { model: model.clone(), bound: None, on_change: None, on_selection: None, on_composition: None, shared_undo: false }
 }
