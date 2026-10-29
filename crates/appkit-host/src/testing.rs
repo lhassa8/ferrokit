@@ -179,3 +179,132 @@ pub fn post_key_with(chars: &str, key_code: u16, flags: NSEventModifierFlags) {
         NSApplication::sharedApplication(mtm()).postEvent_atStart(&event, false);
     }
 }
+
+// ---- drag and drop, without a mouse ----
+
+use objc2::rc::Retained;
+use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
+use objc2::{DefinedClass, MainThreadOnly, Message, define_class, msg_send};
+use objc2_app_kit::{
+    NSDragOperation, NSDraggingInfo, NSPasteboard, NSPasteboardItem, NSPasteboardTypeFileURL, NSPasteboardTypeString,
+    NSPasteboardWriting, NSTableView, NSTableViewDropOperation,
+};
+use objc2_foundation::{NSArray, NSInteger, NSString, NSURL};
+
+struct DragIvars {
+    pasteboard: Retained<NSPasteboard>,
+    source: Option<Retained<AnyObject>>,
+}
+
+define_class!(
+    // The parts of a drag a table's data source reads: its pasteboard and
+    // its source.
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "AppKitHostTestDrag"]
+    #[ivars = DragIvars]
+    struct TestDrag;
+
+    unsafe impl NSObjectProtocol for TestDrag {}
+
+    unsafe impl NSDraggingInfo for TestDrag {
+        #[unsafe(method_id(draggingPasteboard))]
+        fn dragging_pasteboard(&self) -> Retained<NSPasteboard> {
+            self.ivars().pasteboard.clone()
+        }
+
+        #[unsafe(method_id(draggingSource))]
+        fn dragging_source(&self) -> Option<Retained<AnyObject>> {
+            self.ivars().source.clone()
+        }
+    }
+);
+
+/// A fresh private pasteboard (never the general one); release it with
+/// [`release_pasteboard`].
+pub fn private_pasteboard() -> Retained<NSPasteboard> {
+    NSPasteboard::pasteboardWithUniqueName()
+}
+
+/// Releases a pasteboard made by [`private_pasteboard`].
+pub fn release_pasteboard(pasteboard: &NSPasteboard) {
+    // SAFETY: frees a uniquely named pasteboard's resources.
+    let () = unsafe { msg_send![pasteboard, releaseGlobally] };
+}
+
+/// Drops whatever is on `pasteboard` onto `table` above view row `row`, as
+/// AppKit does at the end of a drag: the data source validates the drop,
+/// then accepts it. `from_table` makes the table itself the drag's source.
+/// Returns whether the drop was accepted.
+pub fn drop_on_table(table: &NSTableView, pasteboard: &NSPasteboard, row: usize, from_table: bool) -> bool {
+    let source: Option<Retained<AnyObject>> = from_table.then(|| {
+        let any: &AnyObject = table.as_ref();
+        any.retain()
+    });
+    let drag = TestDrag::alloc(mtm()).set_ivars(DragIvars { pasteboard: pasteboard.retain(), source });
+    // SAFETY: NSObject's designated initialiser.
+    let drag: Retained<TestDrag> = unsafe { msg_send![super(drag), init] };
+    let info: &ProtocolObject<dyn NSDraggingInfo> = ProtocolObject::from_ref(&*drag);
+    let Some(ds) = (unsafe { table.dataSource() }) else { return false };
+    let row = row as NSInteger;
+    // SAFETY: the table's own data-source methods, with a drag stand-in that
+    // answers what they read.
+    unsafe {
+        let op: NSDragOperation = msg_send![&*ds, tableView: table, validateDrop: info, proposedRow: row, proposedDropOperation: NSTableViewDropOperation::Above];
+        if op == NSDragOperation::None {
+            return false;
+        }
+        msg_send![&*ds, tableView: table, acceptDrop: info, row: row, dropOperation: NSTableViewDropOperation::Above]
+    }
+}
+
+/// Starts a drag of `table`'s view rows `rows` the way AppKit does (asking
+/// the data source for each row's pasteboard writer) and puts them on a
+/// private pasteboard. `None` if the table doesn't let rows be dragged.
+pub fn drag_rows(table: &NSTableView, rows: &[usize]) -> Option<Retained<NSPasteboard>> {
+    let ds = unsafe { table.dataSource() }?;
+    let mut writers: Vec<Retained<ProtocolObject<dyn NSPasteboardWriting>>> = Vec::new();
+    for &r in rows {
+        // SAFETY: the data source's tableView:pasteboardWriterForRow:.
+        let w: Option<Retained<ProtocolObject<dyn NSPasteboardWriting>>> =
+            unsafe { msg_send![&*ds, tableView: table, pasteboardWriterForRow: r as NSInteger] };
+        writers.push(w?);
+    }
+    let pasteboard = private_pasteboard();
+    pasteboard.clearContents();
+    pasteboard.writeObjects(&NSArray::from_retained_slice(&writers));
+    Some(pasteboard)
+}
+
+/// A private pasteboard holding file URLs, as a Finder drag carries them.
+pub fn files_pasteboard(paths: &[&std::path::Path]) -> Retained<NSPasteboard> {
+    let pasteboard = private_pasteboard();
+    pasteboard.clearContents();
+    let items: Vec<Retained<ProtocolObject<dyn NSPasteboardWriting>>> = paths
+        .iter()
+        .map(|p| {
+            let item = NSPasteboardItem::new();
+            let url = NSURL::fileURLWithPath(&NSString::from_str(&p.to_string_lossy()));
+            if let Some(s) = url.absoluteString() {
+                // SAFETY: AppKit's pasteboard type constant.
+                item.setString_forType(&s, unsafe { NSPasteboardTypeFileURL });
+            }
+            ProtocolObject::from_retained(item)
+        })
+        .collect();
+    pasteboard.writeObjects(&NSArray::from_retained_slice(&items));
+    pasteboard
+}
+
+/// The plain text on `pasteboard`.
+pub fn pasteboard_text(pasteboard: &NSPasteboard) -> Option<String> {
+    // SAFETY: AppKit's pasteboard type constant.
+    pasteboard.stringForType(unsafe { NSPasteboardTypeString }).map(|s| s.to_string())
+}
+
+/// Puts `text` on `pasteboard`.
+pub fn set_pasteboard_text(pasteboard: &NSPasteboard, text: &str) {
+    pasteboard.clearContents();
+    // SAFETY: AppKit's pasteboard type constant.
+    pasteboard.setString_forType(&NSString::from_str(text), unsafe { NSPasteboardTypeString });
+}

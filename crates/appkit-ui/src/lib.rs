@@ -9,7 +9,7 @@
 //! text editor (F2.3); split views, toolbars and context menus (F2.4); sheets,
 //! alerts and file panels (F2.5); the app's menus, its Settings window,
 //! stored settings and window restoration (F3.1); undo, one history per
-//! window (F3.2).
+//! window (F3.2); drag and drop, copy and paste of table rows (F3.3).
 //!
 //! Main thread only.
 

@@ -2,6 +2,7 @@
 //! it and turns the model's events into callbacks.
 
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 
 use appkit_host::table::{ColumnState, Sort, TableEvent, TableModel};
@@ -47,6 +48,11 @@ pub struct Table<T: 'static> {
     on_toggle: Callback<(usize, String, bool)>,
     on_edit: Callback<(usize, String, String)>,
     on_columns: Callback<Vec<ColumnState>>,
+    on_move: Callback<(Vec<usize>, Option<usize>)>,
+    on_files: Callback<(Vec<PathBuf>, Option<usize>)>,
+    file_types: Vec<String>,
+    on_paste: Callback<String>,
+    row_drag: bool,
     row_menu: Vec<RowAction>,
 }
 
@@ -89,6 +95,36 @@ impl<T: 'static> Table<T> {
         self
     }
 
+    /// Rows can be dragged to other apps (as tab-separated text). ⌘C copies
+    /// the selected rows the same way, always.
+    pub fn row_drag(mut self) -> Self {
+        self.row_drag = true;
+        self
+    }
+
+    /// The user can drag rows to a new place: `f` gets the dragged rows and
+    /// the row they were dropped above (`None`: the end), as model indices.
+    /// Apply it with [`TableModel::move_rows`]. Not while the table is sorted.
+    pub fn reorderable(mut self, f: impl Fn(Vec<usize>, Option<usize>) + 'static) -> Self {
+        self.on_move = Some(Box::new(move |(rows, before)| f(rows, before)));
+        self
+    }
+
+    /// Files with these extensions (any file if empty) can be dropped on the
+    /// table: `f` gets their paths and the row they were dropped above.
+    pub fn on_files_dropped(mut self, extensions: &[&str], f: impl Fn(Vec<PathBuf>, Option<usize>) + 'static) -> Self {
+        self.file_types = extensions.iter().map(|e| e.to_string()).collect();
+        self.on_files = Some(Box::new(move |(paths, before)| f(paths, before)));
+        self
+    }
+
+    /// ⌘V on the table: `f` gets the pasted text (rows copied from a table
+    /// arrive as tab-separated lines).
+    pub fn on_paste(mut self, f: impl Fn(String) + 'static) -> Self {
+        self.on_paste = Some(Box::new(f));
+        self
+    }
+
     /// Columns were moved or resized (save them to restore later).
     pub fn on_columns_changed(mut self, f: impl Fn(Vec<ColumnState>) + 'static) -> Self {
         self.on_columns = Some(Box::new(f));
@@ -124,8 +160,21 @@ impl<T: 'static> View for Table<T> {
             unsafe { tv.setMenu(Some(&menu)) };
             targets.into_iter().for_each(|t| node.keep(t));
         }
+        if self.row_drag {
+            self.model.set_row_drag(true);
+        }
+        if self.on_move.is_some() {
+            self.model.set_reorderable(true);
+        }
+        if self.on_files.is_some() {
+            let types: Vec<&str> = self.file_types.iter().map(String::as_str).collect();
+            self.model.set_file_drop(Some(&types));
+        }
+        if self.on_paste.is_some() {
+            self.model.set_pastes(true);
+        }
         let model = self.model.clone();
-        let Table { on_select, on_activate, on_sort, on_toggle, on_edit, on_columns, .. } = self;
+        let Table { on_select, on_activate, on_sort, on_toggle, on_edit, on_columns, on_move, on_files, on_paste, .. } = self;
         let drain: Drain = Rc::new(move || {
             for event in model.drain_events() {
                 match event {
@@ -135,6 +184,9 @@ impl<T: 'static> View for Table<T> {
                     TableEvent::Toggle { row, column, value } => on_toggle.iter().for_each(|f| f((row, column.clone(), value))),
                     TableEvent::Edit { row, column, value } => on_edit.iter().for_each(|f| f((row, column.clone(), value.clone()))),
                     TableEvent::ColumnsChanged => on_columns.iter().for_each(|f| f(model.column_state())),
+                    TableEvent::RowsMoved { rows, before } => on_move.iter().for_each(|f| f((rows.clone(), before))),
+                    TableEvent::FilesDropped { paths, before } => on_files.iter().for_each(|f| f((paths.clone(), before))),
+                    TableEvent::Paste(text) => on_paste.iter().for_each(|f| f(text.clone())),
                     _ => {}
                 }
             }
@@ -155,6 +207,11 @@ pub fn table<T: 'static>(model: &Rc<TableModel<T>>) -> Table<T> {
         on_toggle: None,
         on_edit: None,
         on_columns: None,
+        on_move: None,
+        on_files: None,
+        file_types: Vec::new(),
+        on_paste: None,
+        row_drag: false,
         row_menu: Vec::new(),
     }
 }

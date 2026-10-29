@@ -481,7 +481,182 @@ fn undo_stack_checks(u: UndoState, events: Rc<RefCell<Vec<AppEvent>>>) {
     event(&|| set_undoable("Rename", &u.name, "F".to_string()));
     appkit_ui::close_window(w);
     check("undo-close", !m.canUndo() && !m.canRedo(), format!("after close: can undo {}, redo {}", m.canUndo(), m.canRedo()));
-    after_events(move || appearance_check(events.clone()));
+    after_events(move || transfer_checks(events.clone()));
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct Item2 {
+    name: String,
+    n: f64,
+}
+
+#[derive(Clone)]
+struct TransferState {
+    model: Rc<TableModel<Item2>>,
+    moves: Signal<Vec<(Vec<usize>, Option<usize>)>>,
+    files: Signal<Vec<(Vec<std::path::PathBuf>, Option<usize>)>>,
+    pastes: Signal<u32>,
+}
+
+fn names(m: &TableModel<Item2>) -> Vec<String> {
+    m.rows().iter().map(|r| r.name.clone()).collect()
+}
+
+/// Drag and drop, copy and paste on a small table. Only private pasteboards
+/// are used (never the clipboard), and drops go through the table's own
+/// data-source methods (no mouse).
+fn transfer_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use appkit_host::testing::{drag_rows, drop_on_table, files_pasteboard, pasteboard_text, private_pasteboard, release_pasteboard, set_pasteboard_text};
+    let model = Rc::new(TableModel::new(
+        ViewId(960),
+        vec![Column::text("name", "Name", |r: &Item2| r.name.clone()), Column::number("n", "N", |r: &Item2| r.n), Column::check("big", "Big", |r: &Item2| r.n >= 5.0)],
+    ));
+    model.set_rows((0..10).map(|i| Item2 { name: format!("Item {i}"), n: i as f64 }).collect());
+    let s = TransferState { model: model.clone(), moves: Signal::new(vec![]), files: Signal::new(vec![]), pastes: Signal::new(0) };
+    let (m1, m2, m3) = (s.clone(), s.clone(), s.clone());
+    let _ = open(
+        Window::new("Transfer").size(420.0, 360.0).view(
+            vstack((table(&model)
+                .reorderable(move |rows, before| {
+                    m1.moves.update(|v| v.push((rows.clone(), before)));
+                    m1.model.move_rows(&rows, before);
+                })
+                .on_files_dropped(&["csv"], move |paths, before| m2.files.update(|v| v.push((paths, before))))
+                .on_paste(move |text| {
+                    m3.pastes.update(|n| *n += 1);
+                    for line in text.lines() {
+                        let mut cells = line.split('\t');
+                        let name = cells.next().unwrap_or_default().to_string();
+                        let n = cells.next().and_then(|c| c.parse().ok()).unwrap_or(0.0);
+                        m3.model.push(Item2 { name, n });
+                    }
+                }),))
+            .padding(12.0),
+        ),
+    );
+    let tv = model.table_view();
+    let main_table = TABLE.with(|t| t.model.clone());
+
+    // ⌘C: the selected rows as tab-separated text, columns in their shown order.
+    model.select(&[1, 3]);
+    let pb = private_pasteboard();
+    let copied = model.copy_to(&pb);
+    let text = pasteboard_text(&pb);
+    let tsv = text.as_deref() == Some("Item 1\t1\tNo\nItem 3\t3\tNo") && model.selected_text() == text.clone().unwrap_or_default();
+    use objc2::runtime::NSObjectProtocol as _;
+    let responds = tv.respondsToSelector(objc2::sel!(copy:)) && tv.respondsToSelector(objc2::sel!(paste:));
+    check("table-copy", copied && tsv && responds, format!("copied: {copied}; text {text:?}; responds to copy:/paste: {responds}"));
+
+    // ⌘V: the app gets the text; here it parses lines into rows.
+    set_pasteboard_text(&pb, "New A\t7\nNew B\t8");
+    let pasted = model.paste_from(&pb);
+    let refused = !main_table.paste_from(&pb);
+    release_pasteboard(&pb);
+    let s2 = s.clone();
+    after_events(move || {
+        let s = &s2;
+        let m = &s.model;
+        let tail: Vec<Item2> = m.rows()[10..].to_vec();
+        check(
+            "table-paste",
+            pasted && refused && s.pastes.get_untracked() == 1 && tail == [Item2 { name: "New A".into(), n: 7.0 }, Item2 { name: "New B".into(), n: 8.0 }],
+            format!("pasted: {pasted}; a table without on_paste refuses: {refused}; rows added {tail:?}"),
+        );
+
+        // Dragging rows out: each carries its cells as text.
+        let out = drag_rows(&m.table_view(), &[2]);
+        let out_text = out.as_ref().and_then(|p| pasteboard_text(p));
+        let main_off = drag_rows(&TABLE.with(|t| t.model.table_view()), &[0]).is_none();
+        check(
+            "table-drag-out",
+            out_text.as_deref() == Some("Item 2\t2\tNo") && main_off,
+            format!("row 2 drags as {out_text:?}; a table without row drag gives none: {main_off}"),
+        );
+        if let Some(p) = &out {
+            release_pasteboard(p);
+        }
+
+        // Reorder: rows 0 and 1 dropped above row 5.
+        let pb = drag_rows(&m.table_view(), &[0, 1]).unwrap();
+        let accepted = drop_on_table(&m.table_view(), &pb, 5, true);
+        let s3 = s.clone();
+        let events = events.clone();
+        after_events(move || {
+            let s = &s3;
+            let m = &s.model;
+            let order = names(m);
+            let moves = s.moves.get_untracked();
+            let selected = m.selection();
+            // Sorted, the same drop is refused.
+            m.set_sort(Some(Sort { column: "n".into(), ascending: false }));
+            let sorted_refused = !drop_on_table(&m.table_view(), &pb, 2, true);
+            m.set_sort(None);
+            release_pasteboard(&pb);
+            // move_rows against a plain reference, for awkward cases.
+            let reference = |v: &[String], rows: &[usize], before: Option<usize>| -> Vec<String> {
+                let mut rows = rows.to_vec();
+                rows.sort_unstable();
+                let moved: Vec<String> = rows.iter().map(|&r| v[r].clone()).collect();
+                let end = before.unwrap_or(v.len());
+                let mut out: Vec<String> = Vec::new();
+                for (i, x) in v.iter().enumerate() {
+                    if i == end {
+                        out.extend(moved.iter().cloned());
+                    }
+                    if !rows.contains(&i) {
+                        out.push(x.clone());
+                    }
+                }
+                if end >= v.len() {
+                    out.extend(moved.iter().cloned());
+                }
+                out
+            };
+            let cases: [(&[usize], Option<usize>); 4] = [(&[9, 2, 7], Some(4)), (&[0], None), (&[3, 4], Some(4)), (&[11], Some(0))];
+            let mut move_ok = true;
+            for (rows, before) in cases {
+                let want = reference(&names(m), rows, before);
+                m.move_rows(rows, before);
+                move_ok &= names(m) == want;
+            }
+            check(
+                "table-reorder",
+                accepted
+                    && moves == [(vec![0, 1], Some(5))]
+                    && order[..6] == ["Item 2", "Item 3", "Item 4", "Item 0", "Item 1", "Item 5"]
+                    && selected == [3, 4]
+                    && sorted_refused
+                    && move_ok,
+                format!("accepted: {accepted}; event {moves:?}; order {:?}; selected {selected:?}; refused while sorted: {sorted_refused}; move_rows matches a reference in 4 more cases: {move_ok}", &order[..6]),
+            );
+
+            // Files from the Finder: .csv accepted above the shown row; .txt refused.
+            let dir = std::env::temp_dir();
+            let (a, b, t) = (dir.join("a.csv"), dir.join("b.csv"), dir.join("notes.txt"));
+            let csvs = files_pasteboard(&[&a, &b]);
+            let dropped = drop_on_table(&m.table_view(), &csvs, 1, false);
+            let txt = files_pasteboard(&[&t]);
+            let txt_refused = !drop_on_table(&m.table_view(), &txt, 1, false);
+            // Rows from another table aren't a reorder here.
+            let foreign = !drop_on_table(&m.table_view(), &drag_rows(&m.table_view(), &[0]).unwrap(), 1, false);
+            [csvs, txt].iter().for_each(|p| release_pasteboard(p));
+            let s4 = s.clone();
+            let events = events.clone();
+            after_events(move || {
+                let files = s4.files.get_untracked();
+                let want = vec![(vec![a.clone(), b.clone()], s4.model.row_at(1))];
+                check(
+                    "table-file-drop",
+                    dropped && txt_refused && foreign && files == want,
+                    format!("csv drop: {dropped} → {files:?}; .txt refused: {txt_refused}; rows without the table as source refused: {foreign}"),
+                );
+                let w = windows().into_iter().find(|w| w.title().to_string() == "Transfer").unwrap();
+                appkit_ui::close_window(&w);
+                let events = events.clone();
+                after_events(move || appearance_check(events.clone()));
+            });
+        });
+    });
 }
 
 fn all_views(v: &NSView) -> Vec<Retained<NSView>> {

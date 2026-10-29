@@ -9,6 +9,13 @@
 - `TableModel::scroll_view()` returns the table's scroll view, for hosts that place it themselves.
 - `observe_appearance()` is public, for apps without an attached host window.
 - `TextModel::scroll_view()`.
+- Tables copy: ⌘C copies the selected rows as tab-separated text (columns in their shown order). `TableModel::selected_text()`, `copy_to(&pasteboard)`.
+- Opt-in table transfers, each reported as a new `TableEvent` that the app applies:
+  - `set_row_drag(true)`: rows drag out as text.
+  - `set_reorderable(true)`: `RowsMoved { rows, before }`; apply with the new `move_rows`. Refused while sorted.
+  - `set_file_drop(Some(&["csv"]))`: `FilesDropped { paths, before }`.
+  - `set_pastes(true)`: ⌘V gives `Paste(text)`; `paste_from(&pasteboard)`.
+- `testing`: `drag_rows`, `drop_on_table`, `files_pasteboard`, and private-pasteboard helpers, for checking drags without a mouse or the clipboard.
 - `TextModel::share_undo(Some(&manager))` records the editor's edits in another undo manager (a window's, shared with other views); `None` returns to a history of its own, still the default. `TextModel::undo_manager()` returns the one in use. `set_text` drops only this editor's steps from a shared history.
 - Fix: `TextEvent::Changed` is now sent for undo and redo too. AppKit sends no `textDidChange:` for them, so the model also listens to its text storage; a queued `Changed` isn't repeated.
 
