@@ -1,6 +1,6 @@
 # Changelog
 
-## appkit-host 0.2.1, iced-appkit 0.2.1, appkit-ui 0.2.0 (unreleased: versions set, not yet published)
+## appkit-host 0.2.1, iced-appkit 0.2.1, appkit-ui 0.2.0 (2026-10-29)
 
 `appkit-host` and `iced-appkit` only gain API (patch releases); `iced-appkit` re-exports the new `CellImage`, so it needs `appkit-host` 0.2.1. `appkit-ui` moves to 0.2.0: besides new features, some behaviour changed (see below).
 
