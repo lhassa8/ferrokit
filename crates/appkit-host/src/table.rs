@@ -54,12 +54,13 @@ pub struct Column<T> {
     min_width: f64,
     kind: Kind,
     sortable: bool,
+    editable: bool,
     value: Box<dyn Fn(&T) -> Value>,
 }
 
 impl<T> Column<T> {
     fn new(id: &str, title: &str, kind: Kind, value: Box<dyn Fn(&T) -> Value>) -> Self {
-        Self { id: id.into(), title: title.into(), width: 120.0, min_width: 40.0, kind, sortable: true, value }
+        Self { id: id.into(), title: title.into(), width: 120.0, min_width: 40.0, kind, sortable: true, editable: false, value }
     }
 
     /// A text column.
@@ -95,6 +96,15 @@ impl<T> Column<T> {
         if let Kind::Number { .. } = self.kind {
             self.kind = Kind::Number { decimals };
         }
+        self
+    }
+
+    /// Lets the user edit this column's text or number cells (double-click,
+    /// or Return on the selected row's cell). Finishing an edit emits
+    /// [`TableEvent::Edit`]; the model doesn't change the row: apply it with
+    /// [`TableModel::update_row`]. No effect on checkbox columns.
+    pub fn editable(mut self, editable: bool) -> Self {
+        self.editable = editable;
         self
     }
 
@@ -135,6 +145,7 @@ pub struct ColumnState {
 /// Something the user did in the table. Row indices are model indices
 /// (positions in the rows given to [`TableModel::set_rows`]), whatever the sort.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum TableEvent {
     /// The selected rows changed.
     Selection(Vec<usize>),
@@ -155,12 +166,24 @@ pub enum TableEvent {
     },
     /// Columns were moved or resized; read [`TableModel::column_state`].
     ColumnsChanged,
+    /// The user finished editing a cell of an [`Column::editable`] column.
+    /// The model doesn't change the row: apply it with
+    /// [`TableModel::update_row`].
+    Edit {
+        /// The row (model index).
+        row: usize,
+        /// The column id.
+        column: String,
+        /// The text the user entered.
+        value: String,
+    },
 }
 
 /// Type-erased view of a model for the Objective-C data source.
 trait Data {
     fn count(&self) -> usize;
     fn cell(&self, view_row: usize, column: &str) -> Option<(Kind, Value)>;
+    fn editable(&self, column: &str) -> bool;
     fn title(&self, column: &str) -> Option<String>;
     fn model_row(&self, view_row: usize) -> Option<usize>;
     fn sort_changed(&self, sort: Option<Sort>);
@@ -246,6 +269,17 @@ define_class!(
             let row = sender.clickedRow();
             if let Some(row) = (row >= 0).then_some(row as usize).and_then(|r| data.model_row(r)) {
                 data.push(TableEvent::Activate(row));
+            }
+        }
+
+        #[unsafe(method(edit:))]
+        fn edit(&self, sender: &NSTextField) {
+            let Some(data) = self.data() else { return };
+            let Some(table) = table_of(sender) else { return };
+            let row = table.rowForView(sender);
+            let Some(column) = sender.identifier().map(|i| i.to_string()) else { return };
+            if let Some(row) = (row >= 0).then_some(row as usize).and_then(|r| data.model_row(r)) {
+                data.push(TableEvent::Edit { row, column, value: sender.stringValue().to_string() });
             }
         }
 
@@ -375,6 +409,18 @@ impl Source {
                 if let Kind::Number { .. } = kind {
                     f.setAlignment(NSTextAlignment::Right);
                 }
+                if self.data().is_some_and(|d| d.editable(&ident.to_string())) {
+                    // A borderless editable label: NSTableView starts editing
+                    // on double-click (or a click on the selected row), and
+                    // the action fires when editing ends.
+                    f.setEditable(true);
+                    f.setSelectable(true);
+                    // SAFETY: target is this source, which outlives the table's cells.
+                    unsafe {
+                        f.setTarget(Some(self));
+                        f.setAction(Some(sel!(edit:)));
+                    }
+                }
                 f
             }
         };
@@ -414,6 +460,10 @@ impl<T: 'static> Data for Inner<T> {
 
     fn model_row(&self, view_row: usize) -> Option<usize> {
         self.order.borrow().get(view_row).copied()
+    }
+
+    fn editable(&self, column: &str) -> bool {
+        self.columns.iter().any(|c| c.id == column && c.editable && c.kind != Kind::Check)
     }
 
     fn title(&self, column: &str) -> Option<String> {
@@ -858,6 +908,12 @@ impl<T: 'static> TableModel<T> {
     /// number of visible cells).
     pub fn cells_created(&self) -> usize {
         self.inner._source.ivars().created.get()
+    }
+
+    /// The `NSScrollView` holding the table, for hosts that place it
+    /// themselves (no [`crate::attach`]ed window).
+    pub fn scroll_view(&self) -> Retained<NSScrollView> {
+        self.inner.scroll.clone()
     }
 
     /// The underlying `NSTableView` (escape hatch).

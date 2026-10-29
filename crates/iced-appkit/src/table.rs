@@ -19,6 +19,7 @@ pub fn table<'a, T: 'static, Message>(model: &TableModel<T>) -> Table<'a, T, Mes
         on_activate: None,
         on_sort: None,
         on_toggle: None,
+        on_edit: None,
         on_columns: None,
     }
 }
@@ -33,6 +34,7 @@ pub struct Table<'a, T: 'static, Message> {
     on_activate: Callback<'a, usize, Message>,
     on_sort: Callback<'a, Sort, Message>,
     on_toggle: Callback<'a, (usize, String, bool), Message>,
+    on_edit: Callback<'a, (usize, String, String), Message>,
     on_columns: Callback<'a, Vec<ColumnState>, Message>,
 }
 
@@ -76,6 +78,13 @@ impl<'a, T: 'static, Message> Table<'a, T, Message> {
     /// A checkbox cell was clicked: (row, column id, new value).
     pub fn on_toggle(mut self, f: impl Fn(usize, String, bool) -> Message + 'a) -> Self {
         self.on_toggle = Some(Box::new(move |(row, column, value)| f(row, column, value)));
+        self
+    }
+
+    /// The user finished editing a cell of an editable column (row, column
+    /// id, new text). The model doesn't change: apply it with `update_row`.
+    pub fn on_edit(mut self, f: impl Fn(usize, String, String) -> Message + 'a) -> Self {
+        self.on_edit = Some(Box::new(move |(row, column, value)| f(row, column, value)));
         self
     }
 
@@ -136,6 +145,8 @@ where
                 TableEvent::Sort(sort) => self.on_sort.as_ref().map(|f| f(sort)),
                 TableEvent::Toggle { row, column, value } => self.on_toggle.as_ref().map(|f| f((row, column, value))),
                 TableEvent::ColumnsChanged => self.on_columns.as_ref().map(|f| f(self.model.column_state())),
+                TableEvent::Edit { row, column, value } => self.on_edit.as_ref().map(|f| f((row, column, value))),
+                _ => None,
             };
             if let Some(message) = message {
                 shell.publish(message);

@@ -8,7 +8,8 @@ use std::rc::Rc;
 use appkit_ui::{
     Align, App, AppEvent, Effect, Identifiable, Signal, View, ViewExt, Window, batch, button, checkbox, dynamic, effect_runs,
     for_each, grid, hstack, label, later, layout_stats, layout_times_us, live_nodes, open, secure_field, spacer, spawn, text,
-    text_field, toggle, vstack, windows, divider, image, picker, progress, scroll, slider, stepper,
+    text_field, toggle, vstack, windows, divider, image, picker, progress, scroll, slider, stepper, table, Column, Sort,
+    TableModel, ViewId,
 };
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
@@ -86,9 +87,9 @@ fn run_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     // Windows: both open; AppKit lists them in the Window menu.
     let ws = windows();
     let visible = ws.iter().filter(|w| w.isVisible()).count();
-    check("windows", ws.len() == 7 && visible == 7, format!("{} windows, {visible} visible", ws.len()));
+    check("windows", ws.len() == 8 && visible == 8, format!("{} windows, {visible} visible", ws.len()));
     let window_menu = menu_items(2);
-    let listed = ["First", "Second", "Views", "Layout", "Controls", "Controls B", "Teardown"].iter().all(|t| window_menu.iter().any(|(title, _, _)| title == t));
+    let listed = ["First", "Second", "Views", "Layout", "Controls", "Controls B", "Teardown", "Table"].iter().all(|t| window_menu.iter().any(|(title, _, _)| title == t));
     check("window-menu-lists-windows", listed && app.windowsMenu().is_some(), format!("{:?}", window_menu.iter().map(|e| &e.0).collect::<Vec<_>>()));
     check("help-menu", app.helpMenu().is_some(), String::new());
 
@@ -813,8 +814,225 @@ fn teardown_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
             n1 == n0 && v1 == v0 && gone && f1 - f0 < 10.0,
             format!("300 × a 15-control form in {ms:.0} ms; nodes {n0} → {n1}; subviews {v0} → {v1}; first switch deallocated: {gone}; footprint {f0:.0} → {f1:.0} MB"),
         );
-        appearance_check(events.clone());
+        table_checks(events.clone());
     });
+}
+
+#[derive(Clone)]
+struct Order {
+    name: String,
+    qty: f64,
+    done: bool,
+}
+
+#[derive(Clone)]
+struct TableState {
+    model: Rc<TableModel<Order>>,
+    selected: Signal<Vec<usize>>,
+    activated: Signal<Option<usize>>,
+    sorted: Signal<Option<Sort>>,
+    edits: Signal<u32>,
+    show: Signal<bool>,
+}
+
+thread_local! {
+    static TABLE: TableState = {
+        let model = Rc::new(TableModel::new(
+            ViewId(500),
+            vec![
+                Column::text("name", "Name", |o: &Order| o.name.clone()).width(180.0).editable(true),
+                Column::number("qty", "Qty", |o: &Order| o.qty).editable(true),
+                Column::check("done", "Done", |o: &Order| o.done),
+            ],
+        ));
+        let t = std::time::Instant::now();
+        model.set_rows((0..200_000).map(|i| Order { name: format!("Order {i:06}"), qty: (i % 50) as f64, done: i % 3 == 0 }).collect());
+        eprintln!("[time] 200k rows into the model: {:.0} ms", t.elapsed().as_secs_f64() * 1e3);
+        TableState {
+            model,
+            selected: Signal::new(vec![]),
+            activated: Signal::new(None),
+            sorted: Signal::new(None),
+            edits: Signal::new(0),
+            show: Signal::new(true),
+        }
+    };
+}
+
+fn table_window() -> impl View {
+    let t = TABLE.with(Clone::clone);
+    let (t1, t2, t3, t4, t5, t6) = (t.clone(), t.clone(), t.clone(), t.clone(), t.clone(), t.clone());
+    vstack((
+        label(move || format!("{} selected", t1.selected.with(Vec::len))),
+        dynamic(move || {
+            if t2.show.get() {
+                let (t3, t4, t5, t6) = (t3.clone(), t4.clone(), t5.clone(), t6.clone());
+                appkit_ui::AnyView::new(
+                    table(&t3.model.clone())
+                        .on_select(move |rows| t3.selected.set(rows))
+                        .on_activate(move |row| t4.activated.set(Some(row)))
+                        .on_sort(move |sort| t5.sorted.set(Some(sort)))
+                        .on_toggle({
+                            let t = t6.clone();
+                            move |row, _, value| {
+                                let mut o = t.model.rows()[row].clone();
+                                o.done = value;
+                                t.model.update_row(row, o);
+                            }
+                        })
+                        .on_edit(move |row, column, value| {
+                            let mut o = t6.model.rows()[row].clone();
+                            match column.as_str() {
+                                "name" => o.name = value,
+                                _ => o.qty = value.parse().unwrap_or(o.qty),
+                            }
+                            t6.model.update_row(row, o);
+                            t6.edits.update(|n| *n += 1);
+                        }),
+                )
+                .id(1)
+            } else {
+                appkit_ui::AnyView::new(text("no table")).id(0)
+            }
+        }),
+    ))
+    .padding(12.0)
+}
+
+/// Runs `f` after two run-loop passes (model events are delivered on the
+/// pass after AppKit's callback).
+fn after_events(f: impl Fn() + 'static) {
+    let f = Rc::new(f);
+    later(move || {
+        let f = f.clone();
+        later(move || f())
+    });
+}
+
+fn table_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use objc2_app_kit::{NSButton, NSTableView};
+    let t = TABLE.with(Clone::clone);
+    let w = windows().into_iter().find(|w| w.title().to_string() == "Table").unwrap();
+    w.makeKeyAndOrderFront(None);
+    let tv: Retained<NSTableView> = t.model.table_view();
+    let sv = t.model.scroll_view();
+    let fills = sv.frame().size.height > 300.0 && sv.frame().size.width > 500.0;
+    check(
+        "table-placed",
+        tv.numberOfRows() == 200_000 && fills,
+        format!("{} rows; scroll view {:.0}×{:.0} in a 560×420 window", tv.numberOfRows(), sv.frame().size.width, sv.frame().size.height),
+    );
+
+    // Selection through NSTableView → on_select (after the event pass).
+    tv.selectRowIndexes_byExtendingSelection(&objc2_foundation::NSIndexSet::indexSetWithIndex(5), false);
+    let t2 = t.clone();
+    let events2 = events.clone();
+    after_events(move || {
+        let t = t2.clone();
+        let tv = t.model.table_view();
+        let w = windows().into_iter().find(|w| w.title().to_string() == "Table").unwrap();
+        check("table-select", t.selected.get_untracked() == vec![5], format!("on_select got {:?}", t.selected.get_untracked()));
+
+        // Return on the selected row → on_activate.
+        let ev = objc2_app_kit::NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+            objc2_app_kit::NSEventType::KeyDown, objc2_foundation::NSPoint::new(0.0, 0.0), objc2_app_kit::NSEventModifierFlags::empty(), 0.0,
+            w.windowNumber(), None, &NSString::from_str("\r"), &NSString::from_str("\r"), false, 36,
+        ).unwrap();
+        tv.keyDown(&ev);
+
+        // Sort by quantity, descending, as a header click does.
+        let desc = objc2_foundation::NSSortDescriptor::sortDescriptorWithKey_ascending(Some(&NSString::from_str("qty")), false);
+        tv.setSortDescriptors(&objc2_foundation::NSArray::from_retained_slice(&[desc]));
+
+        // Toggle a checkbox cell (row 1 shows a not-done order before sorting… use the visible row 0).
+        let check_col = tv.columnWithIdentifier(&NSString::from_str("done"));
+        let cell = tv.viewAtColumn_row_makeIfNecessary(check_col, 0, true).and_then(|v| v.downcast::<NSButton>().ok()).unwrap();
+        let model_row = t.model.row_at(0).unwrap();
+        let before = t.model.rows()[model_row].done;
+        unsafe { cell.performClick(None) };
+
+        // Edit the name of visible row 1 the way a user does: start editing, type, Return.
+        let name_col = tv.columnWithIdentifier(&NSString::from_str("name"));
+        let edit_row = t.model.row_at(1).unwrap();
+        tv.editColumn_row_withEvent_select(name_col, 1, None, true);
+        // View-based tables edit in the cell's own text field (its field
+        // editor), not in the table.
+        let name_cell = tv.viewAtColumn_row_makeIfNecessary(name_col, 1, true).and_then(|v| v.downcast::<NSTextField>().ok()).unwrap();
+        let editing = name_cell.currentEditor().is_some();
+        if let Some(ed) = name_cell.currentEditor().and_then(|e| e.downcast::<objc2_app_kit::NSTextView>().ok()) {
+            unsafe { ed.selectAll(None) };
+            unsafe { ed.insertText_replacementRange(&NSString::from_str("Renamed"), objc2_foundation::NSRange::new(usize::MAX >> 1, 0)) };
+            let _: () = unsafe { objc2::msg_send![&*ed, insertNewline: Option::<&objc2::runtime::AnyObject>::None] };
+        }
+        let t3 = t.clone();
+        let events3 = events2.clone();
+        after_events(move || {
+            let t = t3.clone();
+            check("table-activate", t.activated.get_untracked() == Some(5), format!("Return activated {:?}", t.activated.get_untracked()));
+            let first = t.model.row_at(0).map(|r| t.model.rows()[r].qty);
+            check(
+                "table-sort",
+                t.sorted.get_untracked() == Some(Sort { column: "qty".into(), ascending: false }) && first == Some(49.0),
+                format!("on_sort {:?}; first row qty {first:?}", t.sorted.get_untracked()),
+            );
+            let after = t.model.rows()[model_row].done;
+            check("table-toggle", after != before, format!("row {model_row} done {before} → {after} (on_toggle → update_row)"));
+            let name = t.model.rows()[edit_row].name.clone();
+            let shown = t
+                .model
+                .table_view()
+                .viewAtColumn_row_makeIfNecessary(t.model.table_view().columnWithIdentifier(&NSString::from_str("name")), 1, true)
+                .and_then(|v| v.downcast::<NSTextField>().ok())
+                .map(|f| f.stringValue().to_string());
+            check(
+                "table-edit",
+                editing && name == "Renamed" && shown.as_deref() == Some("Renamed") && t.edits.get_untracked() == 1,
+                format!("editor opened: {editing}; row {edit_row} name {name:?}; cell shows {shown:?}"),
+            );
+            table_teardown(events3.clone());
+        });
+    });
+}
+
+fn table_teardown(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let t = TABLE.with(Clone::clone);
+    let sv = t.model.scroll_view();
+    batch(|| t.show.set(false));
+    let removed = unsafe { sv.superview() }.is_none();
+    // Events from a table that's no longer in the tree aren't delivered.
+    let before = t.selected.get_untracked();
+    t.model.table_view().selectRowIndexes_byExtendingSelection(&objc2_foundation::NSIndexSet::indexSetWithIndex(9), false);
+    let t2 = t.clone();
+    after_events(move || {
+        let t = t2.clone();
+        let quiet = t.selected.get_untracked() == before;
+        batch(|| t.show.set(true));
+        let back = unsafe { t.model.scroll_view().superview() }.is_some();
+        check("table-teardown", removed && quiet && back, format!("removed from window: {removed}; no callback after removal: {quiet}; re-added: {back}"));
+        table_bench(events.clone());
+    });
+}
+
+fn table_bench(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let t = TABLE.with(Clone::clone);
+    let tv = t.model.table_view();
+    let cells0 = t.model.cells_created();
+    let start = std::time::Instant::now();
+    let mut worst = 0.0f64;
+    for row in (0..200_000).step_by(2_000) {
+        let s = std::time::Instant::now();
+        tv.scrollRowToVisible(row);
+        tv.displayIfNeeded();
+        worst = worst.max(s.elapsed().as_secs_f64() * 1e3);
+    }
+    let total = start.elapsed().as_secs_f64() * 1e3;
+    let created = t.model.cells_created() - cells0;
+    check(
+        "table-bench",
+        worst < 16.7 && created < 200,
+        format!("100 jumps across 200k rows (scroll + display): total {total:.0} ms, worst {worst:.1} ms; {created} new cell views (reuse)"),
+    );
+    appearance_check(events);
 }
 
 fn controls_b_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
@@ -919,6 +1137,7 @@ fn main() {
         .window(Window::new("Controls").size(360.0, 300.0).view(controls_window()))
         .window(Window::new("Controls B").size(380.0, 460.0).view(controls_b_window()))
         .window(Window::new("Teardown").size(380.0, 520.0).view(teardown_window()))
+        .window(Window::new("Table").size(560.0, 420.0).view(table_window()))
         .on_event(move |e| e2.borrow_mut().push(e))
         .on_launch(move || {
             if checks {

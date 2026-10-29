@@ -4,7 +4,8 @@
 //! background work (F1.2); views, identity and teardown (F1.3); layout with
 //! stacks, grids, alignment and subtree-only relayout (F1.4); text fields,
 //! secure fields, toggles and checkboxes bound to signals (F1.5); pickers,
-//! sliders, steppers, progress, SF Symbols, dividers and scroll views (F1.6).
+//! sliders, steppers, progress, SF Symbols, dividers and scroll views (F1.6);
+//! the native table (F2.1).
 //!
 //! Main thread only.
 
@@ -13,6 +14,7 @@
 mod controls;
 mod layout;
 mod menu;
+mod models;
 mod signal;
 pub mod testing;
 mod view;
@@ -40,6 +42,9 @@ pub use controls::{
     stepper, text_field, toggle,
 };
 pub use layout::layout_stats;
+pub use models::{Table, table};
+pub use appkit_host::table::{Column, ColumnState, Sort, TableModel};
+pub use appkit_host::ViewId;
 pub use view::{
     Align, AnyView, Axis, Button, Cx, Divider, Dynamic, ForEach, Grid, Identifiable, Label, Modified, Node, Scroll, Size,
     Spacer, Stack, Text, View, ViewExt, Views, button, divider, dynamic, for_each, grid, hstack, label, live_nodes, scroll,
@@ -240,10 +245,12 @@ impl App {
         });
 
         appkit_host::observe_appearance();
-        appkit_host::set_event_sink(|event| {
-            if event == appkit_host::Event::AppearanceChanged {
-                emit(AppEvent::AppearanceChanged);
-            }
+        appkit_host::set_event_sink(|event| match event {
+            appkit_host::Event::AppearanceChanged => emit(AppEvent::AppearanceChanged),
+            // A model queued events: deliver them on the next pass (they
+            // arrive inside AppKit callbacks).
+            appkit_host::Event::Redraw => later(models::drain_all),
+            _ => {}
         });
 
         // Startup runs before the run loop exists, so it needs its own

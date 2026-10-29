@@ -195,6 +195,7 @@ pub struct Node {
     pub(crate) meta: Rc<Meta>,
     effects: Vec<Effect>,
     keep: Vec<Retained<NSObject>>,
+    held: Vec<Rc<dyn std::any::Any>>,
 }
 
 impl Node {
@@ -211,6 +212,7 @@ impl Node {
             meta,
             effects: Vec::new(),
             keep: Vec::new(),
+            held: Vec::new(),
         };
         for c in node.children_static() {
             c.meta.set_parent(&node.meta);
@@ -243,6 +245,11 @@ impl Node {
 
     pub(crate) fn keep(&mut self, object: Retained<NSObject>) {
         self.keep.push(object);
+    }
+
+    /// Keeps a Rust value alive for as long as the node.
+    pub(crate) fn hold<V: ?Sized + 'static>(&mut self, value: Rc<V>) {
+        self.held.push(Rc::new(value));
     }
 }
 

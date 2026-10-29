@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### appkit-host (breaking: release as 0.2.0)
+
+- `TableEvent` is now `#[non_exhaustive]` and has a new `Edit { row, column, value }` variant.
+- `Column::editable(true)` makes a text or number column's cells editable. Finishing an edit emits `TableEvent::Edit`; apply it with `update_row`.
+- `TableModel::scroll_view()` returns the table's scroll view, for hosts that place it themselves.
+- `observe_appearance()` is public, for apps without an attached host window.
+
+### iced-appkit
+
+- `table(..).on_edit(..)` for editable columns.
+
 ## 0.1.0 (2026-10-28)
 
 First release of `iced-appkit` and `appkit-host`: real AppKit controls inside Iced 0.14 windows on macOS 15+.
