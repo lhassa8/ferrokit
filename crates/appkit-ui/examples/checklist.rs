@@ -13,6 +13,7 @@ use appkit_ui::{
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2_app_kit::{NSApplication, NSEventModifierFlags, NSTextField, NSView};
+use objc2_app_kit::{NSAppearanceCustomization, NSTextInputClient};
 use objc2_foundation::NSString;
 
 
@@ -74,7 +75,7 @@ fn run_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         format!("{} items", app_menu.len()),
     );
     let edit = menu_items(1);
-    let redo_shift = edit.iter().any(|(t, k, s)| t == "Redo" && k == "z" && *s);
+    let redo_shift = edit.iter().any(|(t, k, _)| t == "Redo" && k == "Z");
     check(
         "edit-menu",
         ["Undo", "Cut", "Copy", "Paste", "Select All"].iter().zip(["z", "x", "c", "v", "a"]).all(|(t, k)| has(&edit, t, k)) && redo_shift,
@@ -84,9 +85,9 @@ fn run_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     // Windows: both open; AppKit lists them in the Window menu.
     let ws = windows();
     let visible = ws.iter().filter(|w| w.isVisible()).count();
-    check("windows", ws.len() == 6 && visible == 6, format!("{} windows, {visible} visible", ws.len()));
+    check("windows", ws.len() == 7 && visible == 7, format!("{} windows, {visible} visible", ws.len()));
     let window_menu = menu_items(2);
-    let listed = ["First", "Second", "Views", "Layout", "Controls", "Controls B"].iter().all(|t| window_menu.iter().any(|(title, _, _)| title == t));
+    let listed = ["First", "Second", "Views", "Layout", "Controls", "Controls B", "Teardown"].iter().all(|t| window_menu.iter().any(|(title, _, _)| title == t));
     check("window-menu-lists-windows", listed && app.windowsMenu().is_some(), format!("{:?}", window_menu.iter().map(|e| &e.0).collect::<Vec<_>>()));
     check("help-menu", app.helpMenu().is_some(), String::new());
 
@@ -158,6 +159,18 @@ fn appearance_check(events: Rc<RefCell<Vec<AppEvent>>>) {
         let after = appkit_ui::is_dark();
         let got = events.borrow().iter().filter(|e| **e == AppEvent::AppearanceChanged).count();
         check("appearance", after != before && got >= 1, format!("dark {before} → {after}, {got} event(s)"));
+        // The native views themselves follow (they inherit NSApp's appearance).
+        let controls = windows().into_iter().find(|w| w.title().to_string() == "Controls").unwrap();
+        let views = controls.contentView().unwrap().subviews().to_vec();
+        let names = unsafe {
+            objc2_foundation::NSArray::from_slice(&[objc2_app_kit::NSAppearanceNameAqua, objc2_app_kit::NSAppearanceNameDarkAqua])
+        };
+        let dark_views = views
+            .iter()
+            .filter(|v| v.effectiveAppearance().bestMatchFromAppearancesWithNames(&names).is_some_and(|n: Retained<NSString>| n.to_string().contains("Dark")))
+            .count();
+        let want = if after { views.len() } else { 0 };
+        check("dark-mode-views", dark_views == want, format!("{dark_views} of {} native views resolve to {}", views.len(), if after { "Dark Aqua" } else { "Aqua" }));
         appkit_host::testing::set_app_appearance(None);
         let failed = FAILED.with(Cell::get);
         eprintln!("[check] done, {failed} failed");
@@ -710,6 +723,200 @@ fn snapshot_windows() {
     }
 }
 
+/// Sends a ⌘-key equivalent through the main menu, as a key press would.
+fn key_equiv(w: &objc2_app_kit::NSWindow, chars: &str, shift: bool) -> bool {
+    use objc2_app_kit::{NSEvent, NSEventModifierFlags, NSEventType};
+    let mut flags = NSEventModifierFlags::Command;
+    // As a real key press: Shift shows in the characters (⇧⌘Z sends "Z").
+    let typed = if shift { chars.to_uppercase() } else { chars.to_string() };
+    if shift {
+        flags |= NSEventModifierFlags::Shift;
+    }
+    let event = {
+        NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+            NSEventType::KeyDown,
+            objc2_foundation::NSPoint::new(0.0, 0.0),
+            flags,
+            0.0,
+            w.windowNumber(),
+            None,
+            &NSString::from_str(&typed),
+            &NSString::from_str(&typed),
+            false,
+            0,
+        )
+    }
+    .unwrap();
+    NSApplication::sharedApplication(mtm()).mainMenu().unwrap().performKeyEquivalent(&event)
+}
+
+fn controls_field() -> (Retained<objc2_app_kit::NSWindow>, Retained<NSTextField>, Retained<objc2_app_kit::NSSecureTextField>) {
+    let w = windows().into_iter().find(|w| w.title().to_string() == "Controls").unwrap();
+    let subs: Vec<Retained<NSView>> = w.contentView().unwrap().subviews().to_vec();
+    let secure = subs.iter().find_map(|v| v.clone().downcast::<objc2_app_kit::NSSecureTextField>().ok()).unwrap();
+    let field = subs
+        .iter()
+        .filter_map(|v| v.clone().downcast::<NSTextField>().ok())
+        .find(|f| f.isEditable() && !std::ptr::eq(&**f, &**secure as &NSTextField))
+        .unwrap();
+    (w, field, secure)
+}
+
+fn editor_of(field: &NSTextField) -> Retained<objc2_app_kit::NSTextView> {
+    field.currentEditor().unwrap().downcast::<objc2_app_kit::NSTextView>().unwrap()
+}
+
+/// Ported Phase 1 checks: Shift-Tab, edit shortcuts through the menu,
+/// Japanese input composition and the candidate window position.
+fn keyboard_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let c = CTRL.with(Clone::clone);
+    let (w, field, secure) = controls_field();
+    w.makeKeyAndOrderFront(None);
+
+    // Shift-Tab: from the password field back to the name field.
+    w.makeFirstResponder(Some(&secure));
+    if let Some(editor) = secure.currentEditor() {
+        let _: () = unsafe { objc2::msg_send![&*editor, insertBacktab: Option::<&objc2::runtime::AnyObject>::None] };
+    }
+    check("shift-tab", field.currentEditor().is_some(), "Shift-Tab moves from the password field to the name field".into());
+
+    // Shortcuts: type, ⌘A selects all, ⌘Z undoes the typing, ⇧⌘Z redoes it;
+    // each goes through the menu bar's key equivalents to the focused field.
+    batch(|| c.name.set(String::new()));
+    w.makeFirstResponder(Some(&field));
+    let ed = editor_of(&field);
+    unsafe { ed.insertText_replacementRange(&NSString::from_str("Hello"), objc2_foundation::NSRange::new(usize::MAX >> 1, 0)) };
+    let typed = c.name.get_untracked();
+    let w2 = w.clone();
+    later(move || {
+        let (w, field, _) = controls_field();
+        let ed = editor_of(&field);
+        let sel_all = key_equiv(&w, "a", false) && ed.selectedRange().length == 5;
+        let undo_sent = key_equiv(&w, "z", false);
+        let after_undo = c.name.get_untracked();
+        let redo_sent = key_equiv(&w, "z", true);
+        let after_redo = c.name.get_untracked();
+        check(
+            "shortcuts",
+            typed == "Hello" && sel_all && undo_sent && after_undo.is_empty() && redo_sent && after_redo == "Hello",
+            format!("typed {typed:?}; ⌘A selected all: {sel_all}; ⌘Z → {after_undo:?}; ⇧⌘Z → {after_redo:?}"),
+        );
+        let _ = &w2;
+        ime_checks(events.clone());
+    });
+}
+
+fn has_input_context(ed: &objc2_app_kit::NSTextView) -> bool {
+    let ctx: Option<Retained<objc2::runtime::AnyObject>> = unsafe { objc2::msg_send![ed, inputContext] };
+    ctx.is_some()
+}
+
+fn ime_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use objc2_app_kit::NSTextInputClient;
+    let c = CTRL.with(Clone::clone);
+    let (w, field, _) = controls_field();
+    batch(|| c.name.set(String::new()));
+    w.makeFirstResponder(Some(&field));
+    let ed = editor_of(&field);
+    let not_found = objc2_foundation::NSRange::new(usize::MAX >> 1, 0);
+    // Composition: "toukyou" as marked text, then commit 東京.
+    unsafe {
+        ed.setMarkedText_selectedRange_replacementRange(
+            &NSString::from_str("とうきょう"),
+            objc2_foundation::NSRange::new(5, 0),
+            not_found,
+        )
+    };
+    let marked = ed.hasMarkedText();
+    let during = c.name.get_untracked();
+    // The candidate window goes where the input method asks: the caret's
+    // screen rectangle, which must lie on the field.
+    let rect = unsafe { ed.firstRectForCharacterRange_actualRange(objc2_foundation::NSRange::new(0, 5), std::ptr::null_mut()) };
+    let field_screen = w.convertRectToScreen(field.convertRect_toView(field.bounds(), None));
+    let on_field = rect.origin.x >= field_screen.origin.x - 1.0
+        && rect.origin.x < field_screen.origin.x + field_screen.size.width
+        && rect.origin.y >= field_screen.origin.y - 1.0
+        && rect.origin.y + rect.size.height <= field_screen.origin.y + field_screen.size.height + 1.0;
+    unsafe { ed.insertText_replacementRange(&NSString::from_str("東京"), not_found) };
+    let committed = c.name.get_untracked();
+    check(
+        "ime-composition",
+        marked && !ed.hasMarkedText() && committed == "東京" && has_input_context(&ed),
+        format!("marked while composing: {marked} (signal meanwhile {during:?}); committed → {committed:?}"),
+    );
+    check(
+        "ime-candidate-rect",
+        on_field && rect.size.height > 0.0,
+        format!(
+            "marked-text rect ({:.0}, {:.0}, {:.0}×{:.0}) on the field at ({:.0}, {:.0}, {:.0}×{:.0})",
+            rect.origin.x, rect.origin.y, rect.size.width, rect.size.height,
+            field_screen.origin.x, field_screen.origin.y, field_screen.size.width, field_screen.size.height
+        ),
+    );
+    teardown_checks(events);
+}
+
+thread_local! {
+    static FORM: Signal<bool> = Signal::new(true);
+}
+
+fn teardown_window() -> impl View {
+    let show = FORM.with(Clone::clone);
+    dynamic(move || {
+        if show.get() {
+            let (t, b, n, f) = (Signal::new(String::new()), Signal::new(false), Signal::new(0.5), Signal::new(1u32));
+            appkit_ui::AnyView::new(
+                vstack((
+                    text_field(&t).placeholder("name"),
+                    secure_field(&t),
+                    toggle("switch", &b),
+                    checkbox("check", &b),
+                    picker(&f, vec![("one", 1), ("two", 2)]),
+                    hstack((slider(&n, 0.0, 1.0), stepper(&n, 0.0, 1.0, 0.1))),
+                    progress(move || Some(n.get())),
+                    vstack((image("star"), button("go", || {}), divider(), scroll(vstack((text("a"), text("b")))))),
+                ))
+                .padding(12.0),
+            )
+            .id(1)
+        } else {
+            appkit_ui::AnyView::new(text("off")).id(0)
+        }
+    })
+}
+
+/// Every control type built and torn down 300 times (after a warm-up):
+/// nodes, subviews and footprint return to baseline; controls deallocate.
+fn teardown_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let show = FORM.with(Clone::clone);
+    let w = windows().into_iter().find(|w| w.title().to_string() == "Teardown").unwrap();
+    let switch = w.contentView().unwrap().subviews().iter().find_map(|v| v.downcast::<objc2_app_kit::NSSwitch>().ok()).unwrap();
+    let weak = objc2::rc::Weak::from_retained(&switch);
+    drop(switch);
+    for _ in 0..100 {
+        batch(|| show.set(false));
+        batch(|| show.set(true));
+    }
+    let (n0, v0, f0) = (live_nodes(), w.contentView().unwrap().subviews().len(), footprint_mb());
+    let t = std::time::Instant::now();
+    for _ in 0..300 {
+        batch(|| show.set(false));
+        batch(|| show.set(true));
+    }
+    let ms = t.elapsed().as_secs_f64() * 1e3;
+    later(move || {
+        let w = windows().into_iter().find(|w| w.title().to_string() == "Teardown").unwrap();
+        let (n1, v1, f1) = (live_nodes(), w.contentView().unwrap().subviews().len(), footprint_mb());
+        let gone = weak.load().is_none();
+        check(
+            "controls-teardown",
+            n1 == n0 && v1 == v0 && gone && f1 - f0 < 10.0,
+            format!("300 × a 15-control form in {ms:.0} ms; nodes {n0} → {n1}; subviews {v0} → {v1}; first switch deallocated: {gone}; footprint {f0:.0} → {f1:.0} MB"),
+        );
+        appearance_check(events.clone());
+    });
+}
+
 fn controls_b_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     use objc2_app_kit::{NSBox, NSImageView, NSPopUpButton, NSProgressIndicator, NSScrollView, NSSlider, NSStepper};
     let c = CTRL_B.with(Clone::clone);
@@ -795,7 +1002,7 @@ fn controls_b_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     );
 
     snapshot_windows();
-    appearance_check(events);
+    keyboard_checks(events);
 }
 
 fn main() {
@@ -809,6 +1016,7 @@ fn main() {
         .window(Window::new("Layout").size(420.0, 480.0).view(layout_window()))
         .window(Window::new("Controls").size(360.0, 300.0).view(controls_window()))
         .window(Window::new("Controls B").size(380.0, 460.0).view(controls_b_window()))
+        .window(Window::new("Teardown").size(380.0, 520.0).view(teardown_window()))
         .on_event(move |e| e2.borrow_mut().push(e))
         .on_launch(move || {
             if checks {

@@ -42,7 +42,6 @@ pub(crate) fn install(mtm: MainThreadMarker, name: &str) {
     let app = NSApplication::sharedApplication(mtm);
     let bar = NSMenu::new(mtm);
     let opt_cmd = NSEventModifierFlags::Option | NSEventModifierFlags::Command;
-    let shift_cmd = NSEventModifierFlags::Shift | NSEventModifierFlags::Command;
 
     let (app_item, _) = submenu(
         mtm,
@@ -64,7 +63,9 @@ pub(crate) fn install(mtm: MainThreadMarker, name: &str) {
         "Edit",
         vec![
             Some(item(mtm, "Undo", Some(sel!(undo:)), "z")),
-            Some(with_modifiers(item(mtm, "Redo", Some(sel!(redo:)), "z"), shift_cmd)),
+            // Shift is implied by the uppercase key (AppKit's convention); a
+            // lowercase "z" with an explicit Shift mask doesn't match ⇧⌘Z.
+            Some(item(mtm, "Redo", Some(sel!(redo:)), "Z")),
             None,
             Some(item(mtm, "Cut", Some(sel!(cut:)), "x")),
             Some(item(mtm, "Copy", Some(sel!(copy:)), "c")),
