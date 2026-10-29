@@ -281,6 +281,14 @@ mod self_checks {
         let columns = rows.first().map_or(0, Vec::len);
         let full = (0..columns).filter(|&x| rows.iter().any(|row| filled(row[x]))).count();
         let share = full as f64 / columns.max(1) as f64;
+        // On a failure under check-all (CI uploads its log folder), keep the
+        // capture to look at.
+        if let (true, Ok(dir)) = (share <= 0.9, std::env::var("CHECK_ALL_LOGS")) {
+            let png = unsafe { rep.representationUsingType_properties(objc2_app_kit::NSBitmapImageFileType::PNG, &objc2_foundation::NSDictionary::new()) };
+            if let Some(png) = png {
+                png.writeToFile_atomically(&NSString::from_str(&format!("{dir}/settings-progress.png")), true);
+            }
+        }
         check("progress-on-screen", share > 0.9, format!("{:.0}% of the bar's width filled on screen, 2.5 s after the sync ({columns} px)", share * 100.0));
     }
 

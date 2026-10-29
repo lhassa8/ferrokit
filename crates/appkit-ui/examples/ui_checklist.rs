@@ -657,12 +657,16 @@ fn posted_split_drag(events: Rc<RefCell<Vec<AppEvent>>>) {
         post(NSEventType::LeftMouseDragged, x + 8.0 * i as f64);
     }
     post(NSEventType::LeftMouseUp, x + 80.0);
+    let app_active = NSApplication::sharedApplication(mtm()).isActive();
     spawn(|| std::thread::sleep(std::time::Duration::from_millis(300)), move |()| {
         let after = (pane(0), pane(1), label_width("Left"), label_width("Right"));
+        // On macOS 26 posted mouse input reaches only the active app (as
+        // posted ⌘ shortcuts need a key window): skip when it isn't.
+        let skip = (!app_active && after == before).then_some("skipped: the app wasn't active, so the posted drag wasn't delivered; ");
         check(
             "posted-split-drag",
-            (after.0 - before.0 - 80.0).abs() < 1.0 && (before.1 - after.1 - 80.0).abs() < 1.0 && (after.2 - before.2 - 80.0).abs() < 1.0 && (before.3 - after.3 - 80.0).abs() < 1.0,
-            format!("divider dragged 80 pt: panes {:.0}/{:.0} → {:.0}/{:.0}; labels {:.0}/{:.0} → {:.0}/{:.0}", before.0, before.1, after.0, after.1, before.2, before.3, after.2, after.3),
+            skip.is_some() || (after.0 - before.0 - 80.0).abs() < 1.0 && (before.1 - after.1 - 80.0).abs() < 1.0 && (after.2 - before.2 - 80.0).abs() < 1.0 && (before.3 - after.3 - 80.0).abs() < 1.0,
+            format!("{}divider dragged 80 pt: panes {:.0}/{:.0} → {:.0}/{:.0}; labels {:.0}/{:.0} → {:.0}/{:.0}", skip.unwrap_or(""), before.0, before.1, after.0, after.1, before.2, before.3, after.2, after.3),
         );
         appkit_ui::close_window(&w);
         let events = events.clone();
@@ -846,19 +850,55 @@ fn sheet_cycles(events: Rc<RefCell<Vec<AppEvent>>>) {
         f.borrow_mut().push(objc2::rc::Weak::from_retained(&h.window()));
         h.close();
     });
+    let p2 = parent.clone();
     let done: Rc<dyn Fn(f64)> = Rc::new(move |per| {
         let left = live_nodes() - n0;
         let alive = freed.borrow().iter().filter(|w| w.load().is_some()).count();
-        check(
-            "sheet-cycles-memory",
-            left == 0 && alive == 0 && per < 8.0,
-            format!("70 form sheets opened and closed: heap in use {per:+.1} KB per cycle after warm-up (budget 8); nodes left {left}; sheet windows still alive {alive}"),
-        );
-        appkit_ui::close_window(&parent);
-        let events = events.clone();
-        after_events(move || deep_widget_cycles(events.clone()));
+        // The floor: plain AppKit sheets with the same controls, same counts.
+        let (events, parent) = (events.clone(), p2.clone());
+        let pp = parent.clone();
+        let plain: Rc<dyn Fn()> = Rc::new(move || plain_sheet_cycle(&pp));
+        let report: Rc<dyn Fn(f64)> = Rc::new(move |floor| {
+            check(
+                "sheet-cycles-memory",
+                left == 0 && alive == 0 && per < floor.max(0.0) + 8.0,
+                format!("70 form sheets opened and closed: heap in use {per:+.1} KB per cycle after warm-up; plain AppKit sheets {floor:+.1} KB (budget: plain + 8); nodes left {left}; sheet windows still alive {alive}"),
+            );
+            appkit_ui::close_window(&parent);
+            let events = events.clone();
+            after_events(move || deep_widget_cycles(events.clone()));
+        });
+        cycles(0, 0.0, plain, report);
     });
     cycles(0, 0.0, cycle, done);
+}
+
+/// One plain AppKit sheet with a field, a checkbox and a button, shown and
+/// ended on `parent`.
+fn plain_sheet_cycle(parent: &objc2_app_kit::NSWindow) {
+    use objc2::MainThreadOnly;
+    use objc2_app_kit::{NSBackingStoreType, NSButton, NSWindow, NSWindowStyleMask};
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+    let mtm = MainThreadMarker::new().unwrap();
+    objc2::rc::autoreleasepool(|_| {
+        let rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(320.0, 140.0));
+        let sheet = unsafe { NSWindow::initWithContentRect_styleMask_backing_defer(NSWindow::alloc(mtm), rect, NSWindowStyleMask::Titled, NSBackingStoreType::Buffered, false) };
+        unsafe { sheet.setReleasedWhenClosed(false) };
+        let content = sheet.contentView().unwrap();
+        let field = NSTextField::new(mtm);
+        field.setStringValue(&NSString::from_str("draft"));
+        field.setFrame(NSRect::new(NSPoint::new(16.0, 90.0), NSSize::new(280.0, 24.0)));
+        content.addSubview(&field);
+        let check_box = unsafe { NSButton::checkboxWithTitle_target_action(&NSString::from_str("Remember"), None, None, mtm) };
+        check_box.setFrame(NSRect::new(NSPoint::new(16.0, 56.0), NSSize::new(200.0, 20.0)));
+        content.addSubview(&check_box);
+        let done = unsafe { NSButton::buttonWithTitle_target_action(&NSString::from_str("Done"), None, None, mtm) };
+        done.setFrame(NSRect::new(NSPoint::new(220.0, 16.0), NSSize::new(80.0, 28.0)));
+        content.addSubview(&done);
+        parent.beginSheet_completionHandler(&sheet, None);
+        parent.endSheet(&sheet);
+        sheet.orderOut(None);
+    });
 }
 
 /// Windows holding the deep widgets (a 10,000-row table, an outline, a text

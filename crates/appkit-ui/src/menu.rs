@@ -42,12 +42,14 @@ fn submenu(mtm: MainThreadMarker, title: &str, items: Vec<Option<Retained<NSMenu
 
 /// Builds and installs the menu bar for an app called `name`. `menus` are
 /// the app's own (a "File" one is merged with the standard File menu);
-/// `settings` adds Settings… (⌘,). Returns the targets to keep alive.
+/// `settings` adds Settings… (⌘,); `file_after_close` goes below Close (a
+/// document app's Save items). Returns the targets to keep alive.
 pub(crate) fn install(
     mtm: MainThreadMarker,
     name: &str,
     menus: Vec<(String, Vec<MenuItem>)>,
     settings: Option<Retained<NSObject>>,
+    file_after_close: Vec<MenuItem>,
 ) -> Vec<Retained<NSObject>> {
     let app = NSApplication::sharedApplication(mtm);
     let bar = NSMenu::new(mtm);
@@ -89,6 +91,15 @@ pub(crate) fn install(
         file_menu.addItem(&NSMenuItem::separatorItem(mtm));
     }
     file_menu.addItem(&item(mtm, "Close", Some(sel!(performClose:)), "w"));
+    // A document app's Save, Save As… and Revert to Saved.
+    if !file_after_close.is_empty() {
+        let (after, targets) = build_titled_menu(mtm, "", file_after_close);
+        keep.extend(targets);
+        for i in after.itemArray().iter() {
+            after.removeItem(&i);
+            file_menu.addItem(&i);
+        }
+    }
     let file_item = item(mtm, "File", None, "");
     file_item.setSubmenu(Some(&file_menu));
     bar.addItem(&file_item);

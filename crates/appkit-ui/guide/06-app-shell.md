@@ -31,7 +31,43 @@ App::new("Notes")
 ```
 
 `enabled_when` and `checked_when` are evaluated when the menu opens or a
-shortcut is pressed.
+shortcut is pressed. `dynamic_submenu(title, || items)` rebuilds its items
+each time it opens, for menus that list current things (servers, recent
+files).
+
+## Document apps
+
+`App::documents` makes an app document-based, like TextEdit or Numbers.
+Each window is one file.
+
+- **The File menu:** New (⌘N), Open… (⌘O), Open Recent, Save (⌘S), Save As… (⇧⌘S) and Revert to Saved.
+- **The title bar:** shows the file's name and proxy icon, and the dot in the close button while there are unsaved changes.
+- **Closing or quitting with changes:** asks whether to save.
+
+```rust,no_run
+use appkit_ui::*;
+
+let text_files = DocumentType::new(&["txt", "md"], String::new, |doc: &Document<String>| {
+    let model = TextModel::new(ViewId(1), &doc.content().get_untracked());
+    text_editor(&model).bind(doc.content()).accessibility_label("Text")
+})
+.read(|path| std::fs::read_to_string(path))
+.write(|text, path| std::fs::write(path, text));
+
+App::new("Notes").documents(text_files).run(); // starts with an untitled document
+```
+
+- A `Document<T>`'s content is a signal: bind views to `doc.content()` or
+  change it. The document is **edited** while the content differs from the
+  file (so `T: PartialEq`): undoing back to the saved text clears the dot.
+- Without `.write`, documents are read-only (a viewer: Save is disabled).
+- Undo is per document, since each window has its own history.
+- `new_document()`, `open_document(path)`, `save_document(window)`,
+  `save_document_as(window, path)`, `revert_document(window)`,
+  `document_edited(window)` and `recent_documents()` do the same from code,
+  without panels.
+
+The `notes` example is a complete text editor built this way.
 
 ## Toolbar and split view
 
@@ -125,4 +161,5 @@ window). Closing a window clears its history.
   tear it down.
 - `set_appearance(Appearance::Dark)` pins the app's look; `System` follows
   the system setting. `App::on_event` delivers `AppEvent::AppearanceChanged`.
-- `quit()` ends the app, as ⌘Q does.
+- `quit()` ends the app, as ⌘Q does (starting on the next run-loop pass, so
+  a document app's save prompts don't block the UI).

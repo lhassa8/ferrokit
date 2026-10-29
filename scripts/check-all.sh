@@ -98,6 +98,7 @@ suite settings CHECK=all "$ex/settings"
 suite native_csv CHECK=all "$ex/native_csv"
 suite log_viewer CHECK=all "$ex/log_viewer"
 suite hands_on CHECK=drop "$ex/hands_on"
+suite notes CHECK=all "$ex/notes"
 if [ -n "$iced" ]; then
   step iced_bundle scripts/bundle-example.sh checklist
   suite iced_checklist CHECK=all target/checklist.app/Contents/MacOS/checklist
