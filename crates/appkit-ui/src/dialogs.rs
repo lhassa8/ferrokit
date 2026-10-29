@@ -112,7 +112,8 @@ pub fn sheet(parent: &NSWindow, content: Window, on_close: impl FnOnce() + 'stat
     let s = sheet.clone();
     let block = RcBlock::new(move |_r: NSModalResponse| {
         s.orderOut(None);
-        crate::drop_root(&s);
+        // Views, undo history, delegates: as for a closed window.
+        crate::teardown(&s);
         closed(());
     });
     parent.beginSheet_completionHandler(&sheet, Some(&block));

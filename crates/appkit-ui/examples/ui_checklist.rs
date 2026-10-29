@@ -755,7 +755,7 @@ fn close_cycles(value: Signal<u32>, events: Rc<RefCell<Vec<AppEvent>>>, round: u
             per < floor * 1.5 + 32.0,
             format!("{} cycles through the close button: {per:.0} KB per cycle; a plain AppKit window with the same views {floor:.0} KB (budget 1.5× + 32)", ROUNDS - WARM),
         );
-        after_events(move || transfer_checks(events.clone()));
+        after_events(move || sheet_cycles(events.clone()));
         return;
     }
     let w = open(closable_window("Cycle", &value));
@@ -767,6 +767,81 @@ fn close_cycles(value: Signal<u32>, events: Rc<RefCell<Vec<AppEvent>>>, round: u
 
 thread_local! {
     static PLAIN_FLOOR_KB: Cell<f64> = const { Cell::new(0.0) };
+}
+
+/// Repeats `cycle` (one per idle pass): `WARM` warm-up rounds, then
+/// `MEASURED` measured ones; calls `done` with KB per measured cycle.
+fn cycles(round: u32, base: f64, cycle: Rc<dyn Fn()>, done: Rc<dyn Fn(f64)>) {
+    const WARM: u32 = 40;
+    const MEASURED: u32 = 30;
+    let base = if round == WARM { footprint_mb() } else { base };
+    if round == WARM + MEASURED {
+        return done((footprint_mb() - base) * 1024.0 / MEASURED as f64);
+    }
+    cycle();
+    after_idle(move || cycles(round + 1, base, cycle.clone(), done.clone()));
+}
+
+/// Sheets with a form, opened and closed on one window: views go, the sheet
+/// window is freed, and memory stays flat.
+fn sheet_cycles(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let parent = open(Window::new("Sheets").size(480.0, 320.0).view(text("Sheet parent")));
+    let n0 = live_nodes();
+    let freed: Rc<RefCell<Vec<objc2::rc::Weak<objc2_app_kit::NSWindow>>>> = Rc::default();
+    let (p, f) = (parent.clone(), freed.clone());
+    let cycle: Rc<dyn Fn()> = Rc::new(move || {
+        let name = Signal::new("draft".to_string());
+        let form = Window::new("Form").size(320.0, 140.0).view(vstack((text_field(&name), checkbox("Remember", &Signal::new(true)), button("Done", || {}))).padding(16.0));
+        let h = sheet(&p, form, || {});
+        f.borrow_mut().push(objc2::rc::Weak::from_retained(&h.window()));
+        h.close();
+    });
+    let done: Rc<dyn Fn(f64)> = Rc::new(move |per| {
+        let left = live_nodes() - n0;
+        let alive = freed.borrow().iter().filter(|w| w.load().is_some()).count();
+        check(
+            "sheet-cycles-memory",
+            left == 0 && alive == 0 && per < 32.0,
+            format!("70 form sheets opened and closed: {per:.1} KB per cycle after warm-up (budget 32); nodes left {left}; sheet windows still alive {alive}"),
+        );
+        appkit_ui::close_window(&parent);
+        let events = events.clone();
+        after_events(move || deep_widget_cycles(events.clone()));
+    });
+    cycles(0, 0.0, cycle, done);
+}
+
+/// Windows holding the deep widgets (a 10,000-row table, an outline, a text
+/// editor), opened and closed through the close button.
+fn deep_widget_cycles(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let n0 = live_nodes();
+    let freed: Rc<RefCell<Vec<objc2::rc::Weak<objc2_app_kit::NSWindow>>>> = Rc::default();
+    let f = freed.clone();
+    let cycle: Rc<dyn Fn()> = Rc::new(move || {
+        let model = Rc::new(TableModel::new(ViewId(980), vec![Column::text("n", "N", |n: &u32| n.to_string())]));
+        model.set_rows((0..10_000).collect());
+        let notes = TextModel::new(ViewId(981), "Some notes\nover two lines");
+        let tree = || (0..20u32).map(|i| TreeNode { value: place(i, &format!("Group {i}"), None), children: (0..5).map(|j| TreeNode { value: place(1000 + i * 10 + j, "Leaf", None), children: vec![] }).collect() }).collect();
+        let w = open(
+            Window::new("Deep")
+                .size(640.0, 480.0)
+                .view(split((outline(tree, |p: &Place| p.name.clone()), vstack((table(&model), text_editor(&notes)))))),
+        );
+        f.borrow_mut().push(objc2::rc::Weak::from_retained(&w));
+        w.performClose(None);
+    });
+    let done: Rc<dyn Fn(f64)> = Rc::new(move |per| {
+        let left = live_nodes() - n0;
+        let alive = freed.borrow().iter().filter(|w| w.load().is_some()).count();
+        check(
+            "deep-widget-cycles-memory",
+            left == 0 && alive == 0 && per < 64.0,
+            format!("70 windows with a 10,000-row table, an outline and an editor, closed by the close button: {per:.1} KB per cycle after warm-up (budget 64); nodes left {left}; windows still alive {alive}"),
+        );
+        let events = events.clone();
+        after_events(move || transfer_checks(events.clone()));
+    });
+    cycles(0, 0.0, cycle, done);
 }
 
 /// The custom menus' shortcuts and Settings (⌘,) from posted key presses,
@@ -1230,11 +1305,13 @@ fn view_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         let rss1 = footprint_mb();
         check(
             "teardown-churn",
-            live_nodes() == base_nodes && labels().len() == base_views && removed_gone && rss1 - rss0 < 15.0,
+            // AppKit keeps about 0.64 KB per view ever shown; budget 0.9 KB.
+            live_nodes() == base_nodes && labels().len() == base_views && removed_gone && rss1 - rss0 < 9.0,
             format!(
-                "10,000 rows built and removed in {ms:.0} ms; nodes {base_nodes} → {}; views {base_views} → {}; removed view deallocated: {removed_gone}; footprint {rss0:.0} → {rss1:.0} MB",
+                "10,000 rows built and removed in {ms:.0} ms; nodes {base_nodes} → {}; views {base_views} → {}; removed view deallocated: {removed_gone}; footprint {rss0:.0} → {rss1:.0} MB = {:.2} KB per view (AppKit's floor ≈ 0.64; budget 0.9)",
                 live_nodes(),
-                labels().len()
+                labels().len(),
+                (rss1 - rss0) * 1024.0 / 10_000.0
             ),
         );
         layout_checks(events.clone());

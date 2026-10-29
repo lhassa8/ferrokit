@@ -482,7 +482,7 @@ fn is_settings(window: &NSWindow) -> bool {
 
 /// Drops a closed window's undo history, view tree, delegates and entry in
 /// [`windows`]. Running it again does nothing.
-fn teardown(window: &NSWindow) {
+pub(crate) fn teardown(window: &NSWindow) {
     if let Some(undo) = window.undoManager() {
         undo.removeAllActions();
     }
