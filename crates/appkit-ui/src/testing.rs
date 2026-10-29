@@ -366,15 +366,28 @@ pub fn ax_elements(window: &objc2_app_kit::NSWindow) -> Vec<AxElement> {
 /// when every control can be told apart by ear.
 pub fn ax_audit(window: &objc2_app_kit::NSWindow) -> Vec<String> {
     const NEEDS_NAME: &[&str] =
-        &["AXTextField", "AXTextArea", "AXSlider", "AXPopUpButton", "AXCheckBox", "AXRadioButton", "AXButton", "AXIncrementor", "AXComboBox", "AXMenuButton"];
+        &["AXTextField", "AXTextArea", "AXSlider", "AXPopUpButton", "AXCheckBox", "AXRadioButton", "AXButton", "AXIncrementor", "AXComboBox", "AXMenuButton", "AXDateTimeArea", "AXColorWell"];
     let symbol_like = |s: &str| s.contains('.') && !s.contains(' ') && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.');
-    ax_elements(window)
+    let elements = ax_elements(window);
+    // Whether element `i` lies inside a named date picker: its stepper and
+    // calendar buttons are AppKit's own parts of that control.
+    let in_named_date = |i: usize| {
+        let mut depth = elements[i].depth;
+        elements[..i].iter().rev().any(|a| {
+            if a.depth < depth {
+                depth = a.depth;
+                return a.role == "AXDateTimeArea" && !a.name.trim().is_empty();
+            }
+            false
+        })
+    };
+    elements
         .iter()
         .enumerate()
         .filter_map(|(i, e)| {
-            // A stepper's or scroll bar's arrows and pages are parts VoiceOver
-            // names itself.
-            let part = ["AXIncrementArrow", "AXDecrementArrow", "AXIncrementPage", "AXDecrementPage"].contains(&e.subrole.as_str());
+            // A stepper's or scroll bar's arrows and pages, and the parts of a
+            // named date picker, are parts VoiceOver names itself.
+            let part = ["AXIncrementArrow", "AXDecrementArrow", "AXIncrementPage", "AXDecrementPage"].contains(&e.subrole.as_str()) || in_named_date(i);
             let unnamed = NEEDS_NAME.contains(&e.role.as_str()) && !part && e.name.trim().is_empty();
             let symbol = e.role == "AXImage" && (e.name.is_empty() || symbol_like(&e.name));
             (unnamed || symbol).then(|| {

@@ -10,6 +10,8 @@
   - Closing or quitting with changes asks to save.
   - `new_document`, `open_document`, `save_document(_as)`, `revert_document`, `document_edited`, `recent_documents`.
 - `dynamic_submenu(title, items)`: a submenu rebuilt each time it opens.
+- More controls, each bound two ways to a signal: `date_picker` (`SystemTime`; with time, calendar style, range), `color_well` (`Color`), `segmented`, `combo_box` (text plus suggestions), `search_field` (placeholder, submit, clear).
+- `testing::ax_audit` also requires names on date pickers and colour wells, and skips the parts AppKit draws inside a named date picker.
 - `quit()` now starts on the next run-loop pass, so prompts shown while quitting don't run inside the caller's batch.
 - Fix: a scroll view re-fits its content whenever AppKit changes the visible width (classic scroll bars appearing while drawing).
 - Fix: with classic (always-shown) scroll bars, as on a Mac with a mouse, a `scroll` view's content stayed wider than the view once the vertical bar appeared (a stray horizontal scroll bar, clipped content). The content now re-fits.
