@@ -205,7 +205,7 @@ define_class!(
             // Its parts are hidden (on their cells too: macOS 27 reads
             // cell-based controls through the cell).
             for v in [&**p.image as &NSView, &p.title, &p.subtitle, &p.swatch, &p.highlight] {
-                crate::view::set_accessibility_element(v, false);
+                <crate::platform::Native as crate::platform::Platform>::set_accessibility_element(v, false);
             }
             self.setView(&view);
         }

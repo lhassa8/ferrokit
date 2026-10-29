@@ -15,7 +15,8 @@ use objc2_foundation::{NSArray, NSNotification, NSSize, NSString, NSUserDefaults
 
 use crate::controls::FieldDelegate;
 use crate::signal::{Effect, Signal, batch};
-use crate::view::{ActionTarget, AnyView, Cx, Kind, Meta, Node, View};
+use crate::appkit_views::ActionTarget;
+use crate::view::{AnyView, Cx, Kind, Meta, Node, View};
 
 // ---- split view ----
 
@@ -125,14 +126,15 @@ impl View for Split {
         // Weak in AppKit; the node keeps the delegate.
         split.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
         cx.container.addSubview(&split);
-        let mut panes = Vec::new();
+        let (mut panes, mut typed) = (Vec::new(), Vec::new());
         for child in self.panes {
             let pane = SplitPane::alloc(mtm).set_ivars(RefCell::new(Weak::new()));
             // SAFETY: NSView's designated initialiser.
             let pane: Retained<SplitPane> = unsafe { msg_send![super(pane), init] };
             split.addArrangedSubview(&pane);
             let node = child.build_node(&mut Cx::new(Retained::into_super(pane.clone())));
-            panes.push((pane, node));
+            panes.push((Retained::into_super(pane.clone()), node));
+            typed.push(pane);
         }
         let mut node = Node::new(Kind::Split {
             split,
@@ -140,10 +142,9 @@ impl View for Split {
             position: std::cell::Cell::new(saved.or(self.position)),
         });
         node.keep(Retained::into_super(delegate));
-        if let Kind::Split { panes, .. } = &node.kind {
-            for (pane, _) in panes {
-                *pane.ivars().borrow_mut() = Rc::downgrade(&node.meta);
-            }
+        // Each pane re-lays out its subtree when AppKit resizes it.
+        for pane in typed {
+            *pane.ivars().borrow_mut() = Rc::downgrade(&node.meta);
         }
         node
     }
