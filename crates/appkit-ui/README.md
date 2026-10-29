@@ -51,6 +51,6 @@ cargo run --release -p appkit-ui --example native_csv
 macOS 15 or later. Main thread only. Built on
 [`appkit-host`](https://crates.io/crates/appkit-host) and objc2.
 
-**Status:** unreleased (Phase 2 of the Ferrokit project).
+**Status:** 0.1.0, an alpha: the API will change. Part of [Ferrokit](https://github.com/lhassa8/ferrokit).
 
 License: MIT OR Apache-2.0.

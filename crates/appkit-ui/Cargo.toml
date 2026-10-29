@@ -6,7 +6,6 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-publish = false
 readme = "README.md"
 keywords = ["macos", "appkit", "gui", "native", "ui"]
 categories = ["gui", "os::macos-apis"]

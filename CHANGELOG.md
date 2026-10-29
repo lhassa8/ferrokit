@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 (unreleased: versions set, not yet published)
+## 0.2.0 (2026-10-29)
 
 `appkit-host` 0.2.0 has breaking changes, and `iced-appkit` re-exports its types (`host`, `TableEvent`, `Column`…), so both move to 0.2.0. `appkit-ui` 0.1.0 is new.
 
