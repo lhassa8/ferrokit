@@ -1,7 +1,7 @@
 # Runs on GitHub's macOS runners once the repository is pushed (not yet).
-# The checklist step drives a real window; hosted runners have a logged-in
-# GUI session, but posted-event checks are unverified there, so it doesn't
-# fail the build yet.
+# The suites drive real windows; hosted runners have a logged-in GUI
+# session, but posted-event and timing checks are unverified there, so they
+# don't fail the build yet.
 name: CI
 
 on:
@@ -28,12 +28,10 @@ jobs:
       - name: Unit tests
         run: cargo test --workspace
       - name: Docs
-        run: cargo doc --no-deps -p appkit-host -p iced-appkit
+        run: cargo doc --no-deps -p appkit-host -p iced-appkit -p appkit-ui
         env:
           RUSTDOCFLAGS: -D warnings
-      - name: Checklist (unattended)
+      - name: Suites (unattended, every app's CHECK=all)
         continue-on-error: true
-        run: |
-          scripts/bundle-example.sh checklist
-          CHECK=all target/checklist.app/Contents/MacOS/checklist
-        timeout-minutes: 10
+        run: scripts/check-all.sh --no-lint
+        timeout-minutes: 25

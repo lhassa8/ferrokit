@@ -6,8 +6,13 @@
 //! once and updated in place, and removed when the last handle is dropped.
 //!
 //! User actions (selection, activation, sorting, checkbox toggles, column
-//! moves and resizes) are queued on the model and announced with
-//! [`crate::request_redraw`]; the host's table widget drains them.
+//! moves and resizes, drops, pastes) are queued on the model and announced
+//! with [`crate::request_redraw`]; the host's table widget drains them.
+//!
+//! ⌘C copies the selected rows as tab-separated text. Dragging rows out,
+//! reordering by drag, file drops and pasting are opt-in
+//! ([`TableModel::set_row_drag`], [`TableModel::set_reorderable`],
+//! [`TableModel::set_file_drop`], [`TableModel::set_pastes`]).
 
 use std::cell::{Cell, Ref, RefCell};
 use std::collections::VecDeque;
@@ -17,12 +22,15 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSButton, NSControl, NSControlStateValueOff, NSControlStateValueOn, NSControlTextEditingDelegate, NSEvent,
-    NSLineBreakMode, NSResponder, NSScrollView, NSTableColumn, NSTableColumnResizingOptions, NSTableView,
-    NSTableViewDataSource, NSTableViewDelegate, NSTableViewStyle, NSTextAlignment, NSTextField,
-    NSUserInterfaceItemIdentification, NSView,
+    NSButton, NSControl, NSControlStateValueOff, NSControlStateValueOn, NSControlTextEditingDelegate, NSDragOperation,
+    NSDraggingInfo, NSEvent, NSLineBreakMode, NSMenuItem, NSPasteboard, NSPasteboardItem, NSPasteboardTypeFileURL,
+    NSPasteboardTypeString, NSPasteboardTypeTabularText, NSPasteboardWriting, NSResponder, NSScrollView, NSTableColumn,
+    NSTableColumnResizingOptions, NSTableView, NSTableViewDataSource, NSTableViewDelegate, NSTableViewDropOperation,
+    NSTableViewStyle, NSTextAlignment, NSTextField, NSUserInterfaceItemIdentification, NSView,
 };
-use objc2_foundation::{NSArray, NSIndexSet, NSInteger, NSMutableIndexSet, NSNotification, NSSortDescriptor, NSString};
+use objc2_foundation::{
+    NSArray, NSIndexSet, NSInteger, NSMutableIndexSet, NSNotification, NSSortDescriptor, NSString, NSURL,
+};
 
 use crate::ViewId;
 use crate::host::mtm;
@@ -54,12 +62,13 @@ pub struct Column<T> {
     min_width: f64,
     kind: Kind,
     sortable: bool,
+    editable: bool,
     value: Box<dyn Fn(&T) -> Value>,
 }
 
 impl<T> Column<T> {
     fn new(id: &str, title: &str, kind: Kind, value: Box<dyn Fn(&T) -> Value>) -> Self {
-        Self { id: id.into(), title: title.into(), width: 120.0, min_width: 40.0, kind, sortable: true, value }
+        Self { id: id.into(), title: title.into(), width: 120.0, min_width: 40.0, kind, sortable: true, editable: false, value }
     }
 
     /// A text column.
@@ -95,6 +104,15 @@ impl<T> Column<T> {
         if let Kind::Number { .. } = self.kind {
             self.kind = Kind::Number { decimals };
         }
+        self
+    }
+
+    /// Lets the user edit this column's text or number cells (double-click,
+    /// or Return on the selected row's cell). Finishing an edit emits
+    /// [`TableEvent::Edit`]; the model doesn't change the row: apply it with
+    /// [`TableModel::update_row`]. No effect on checkbox columns.
+    pub fn editable(mut self, editable: bool) -> Self {
+        self.editable = editable;
         self
     }
 
@@ -135,6 +153,7 @@ pub struct ColumnState {
 /// Something the user did in the table. Row indices are model indices
 /// (positions in the rows given to [`TableModel::set_rows`]), whatever the sort.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum TableEvent {
     /// The selected rows changed.
     Selection(Vec<usize>),
@@ -155,17 +174,69 @@ pub enum TableEvent {
     },
     /// Columns were moved or resized; read [`TableModel::column_state`].
     ColumnsChanged,
+    /// The user finished editing a cell of an [`Column::editable`] column.
+    /// The model doesn't change the row: apply it with
+    /// [`TableModel::update_row`].
+    Edit {
+        /// The row (model index).
+        row: usize,
+        /// The column id.
+        column: String,
+        /// The text the user entered.
+        value: String,
+    },
+    /// The user dragged rows to a new place (see
+    /// [`TableModel::set_reorderable`]). The model doesn't move them: apply
+    /// it with [`TableModel::move_rows`].
+    RowsMoved {
+        /// The dragged rows (model indices).
+        rows: Vec<usize>,
+        /// The row they were dropped above (model index), or `None` for the end.
+        before: Option<usize>,
+    },
+    /// Files were dropped on the table (see [`TableModel::set_file_drop`]).
+    FilesDropped {
+        /// The files' paths.
+        paths: Vec<std::path::PathBuf>,
+        /// The row they were dropped above (model index), or `None` for the end.
+        before: Option<usize>,
+    },
+    /// The user pasted (⌘V) text (see [`TableModel::set_pastes`]); rows
+    /// copied from a table arrive as tab-separated lines.
+    Paste(String),
+}
+
+/// Which transfers a table takes part in (see the `set_…` methods on
+/// [`TableModel`]).
+#[derive(Debug, Clone, Default)]
+struct Transfer {
+    drag: bool,
+    reorder: bool,
+    /// File drops: `None` off; `Some(extensions)`, any file if empty.
+    files: Option<Vec<String>>,
+    pastes: bool,
+}
+
+/// The pasteboard type carrying a dragged row's model index (only read back
+/// by the table it came from).
+fn row_type() -> Retained<NSString> {
+    NSString::from_str("dev.ferrokit.table-row")
 }
 
 /// Type-erased view of a model for the Objective-C data source.
 trait Data {
     fn count(&self) -> usize;
     fn cell(&self, view_row: usize, column: &str) -> Option<(Kind, Value)>;
+    fn editable(&self, column: &str) -> bool;
     fn title(&self, column: &str) -> Option<String>;
     fn model_row(&self, view_row: usize) -> Option<usize>;
     fn sort_changed(&self, sort: Option<Sort>);
     fn push(&self, event: TableEvent);
     fn quiet(&self) -> bool;
+    fn transfer(&self) -> Transfer;
+    fn sorted(&self) -> bool;
+    /// Tab-separated text of rows (view positions), columns in `columns` order.
+    fn rows_text(&self, view_rows: &[usize], columns: &[String]) -> String;
 }
 
 struct SourceIvars {
@@ -199,6 +270,40 @@ define_class!(
             if let Some(data) = self.data() {
                 data.sort_changed(sort);
             }
+        }
+
+        #[unsafe(method_id(tableView:pasteboardWriterForRow:))]
+        fn writer_for_row(&self, table: &NSTableView, row: NSInteger) -> Option<Retained<ProtocolObject<dyn NSPasteboardWriting>>> {
+            self.row_writer(table, row)
+        }
+
+        #[unsafe(method(tableView:validateDrop:proposedRow:proposedDropOperation:))]
+        fn validate_drop(
+            &self,
+            table: &NSTableView,
+            info: &ProtocolObject<dyn NSDraggingInfo>,
+            row: NSInteger,
+            _operation: NSTableViewDropOperation,
+        ) -> NSDragOperation {
+            let operation = match self.dropped(table, info) {
+                Some(Dropped::Rows(_)) => NSDragOperation::Move,
+                Some(Dropped::Files(_)) => NSDragOperation::Copy,
+                None => return NSDragOperation::None,
+            };
+            // Between rows, never onto one.
+            table.setDropRow_dropOperation(row, NSTableViewDropOperation::Above);
+            operation
+        }
+
+        #[unsafe(method(tableView:acceptDrop:row:dropOperation:))]
+        fn accept_drop(
+            &self,
+            table: &NSTableView,
+            info: &ProtocolObject<dyn NSDraggingInfo>,
+            row: NSInteger,
+            _operation: NSTableViewDropOperation,
+        ) -> bool {
+            self.accept(table, info, row)
         }
     }
 
@@ -249,6 +354,17 @@ define_class!(
             }
         }
 
+        #[unsafe(method(edit:))]
+        fn edit(&self, sender: &NSTextField) {
+            let Some(data) = self.data() else { return };
+            let Some(table) = table_of(sender) else { return };
+            let row = table.rowForView(sender);
+            let Some(column) = sender.identifier().map(|i| i.to_string()) else { return };
+            if let Some(row) = (row >= 0).then_some(row as usize).and_then(|r| data.model_row(r)) {
+                data.push(TableEvent::Edit { row, column, value: sender.stringValue().to_string() });
+            }
+        }
+
         #[unsafe(method(toggle:))]
         fn toggle(&self, sender: &NSButton) {
             let Some(data) = self.data() else { return };
@@ -262,8 +378,15 @@ define_class!(
     }
 );
 
+/// What a drag carries that this table accepts.
+enum Dropped {
+    Rows(Vec<usize>),
+    Files(Vec<std::path::PathBuf>),
+}
+
 define_class!(
-    // NSTableView that also activates the selected row on Return / Enter.
+    // NSTableView that also activates the selected row on Return / Enter, and
+    // copies and pastes rows.
     #[unsafe(super(NSTableView, NSControl, NSView, NSResponder, NSObject))]
     #[thread_kind = MainThreadOnly]
     #[name = "AppKitHostTableView"]
@@ -291,8 +414,76 @@ define_class!(
             }
             let () = unsafe { msg_send![super(self), keyDown: event] };
         }
+
+        #[unsafe(method(copy:))]
+        fn copy(&self, _sender: Option<&AnyObject>) {
+            self.copy_rows(&NSPasteboard::generalPasteboard());
+        }
+
+        #[unsafe(method(paste:))]
+        fn paste(&self, _sender: Option<&AnyObject>) {
+            self.paste_text(&NSPasteboard::generalPasteboard());
+        }
+
+        #[unsafe(method(validateMenuItem:))]
+        fn validate_menu_item(&self, item: &NSMenuItem) -> bool {
+            let action = item.action();
+            if action == Some(sel!(copy:)) {
+                self.selectedRow() >= 0
+            } else if action == Some(sel!(paste:)) {
+                let pastes = self.source().and_then(|s| s.data()).is_some_and(|d| d.transfer().pastes);
+                // SAFETY: AppKit's pasteboard type constant.
+                pastes && NSPasteboard::generalPasteboard().stringForType(unsafe { NSPasteboardTypeString }).is_some()
+            } else {
+                true
+            }
+        }
     }
 );
+
+impl HostTableView {
+    fn source(&self) -> Option<Retained<Source>> {
+        let source = unsafe { self.dataSource() }?;
+        let any: &AnyObject = source.as_ref();
+        any.downcast_ref::<Source>().map(|s| s.retain())
+    }
+
+    /// Writes the selected rows to `pasteboard` as tab-separated text.
+    fn copy_rows(&self, pasteboard: &NSPasteboard) -> bool {
+        let Some(data) = self.source().and_then(|s| s.data()) else { return false };
+        let rows = indexes(&self.selectedRowIndexes());
+        if rows.is_empty() {
+            return false;
+        }
+        let text = NSString::from_str(&data.rows_text(&rows, &column_ids(self)));
+        pasteboard.clearContents();
+        // SAFETY: AppKit's pasteboard type constants.
+        unsafe {
+            pasteboard.setString_forType(&text, NSPasteboardTypeString);
+            pasteboard.setString_forType(&text, NSPasteboardTypeTabularText);
+        }
+        true
+    }
+
+    /// Reports `pasteboard`'s text as a paste, if the table takes pastes.
+    fn paste_text(&self, pasteboard: &NSPasteboard) -> bool {
+        let Some(data) = self.source().and_then(|s| s.data()) else { return false };
+        // SAFETY: AppKit's pasteboard type constant.
+        let text = pasteboard.stringForType(unsafe { NSPasteboardTypeString });
+        match (data.transfer().pastes, text) {
+            (true, Some(text)) => {
+                data.push(TableEvent::Paste(text.to_string()));
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
+/// The table's column ids, in their current (user-arranged) order.
+fn column_ids(table: &NSTableView) -> Vec<String> {
+    table.tableColumns().iter().map(|c| c.identifier().to_string()).collect()
+}
 
 use objc2::Message as _;
 
@@ -326,6 +517,60 @@ impl Source {
 
     fn data(&self) -> Option<Rc<dyn Data>> {
         self.ivars().data.borrow().as_ref().and_then(Weak::upgrade)
+    }
+
+    fn row_writer(&self, table: &NSTableView, row: NSInteger) -> Option<Retained<ProtocolObject<dyn NSPasteboardWriting>>> {
+        let data = self.data()?;
+        if !data.transfer().drag {
+            return None;
+        }
+        let model = data.model_row(usize::try_from(row).ok()?)?;
+        let item = NSPasteboardItem::new();
+        item.setString_forType(&NSString::from_str(&model.to_string()), &row_type());
+        let text = data.rows_text(&[row as usize], &column_ids(table));
+        // SAFETY: AppKit's pasteboard type constant.
+        item.setString_forType(&NSString::from_str(&text), unsafe { NSPasteboardTypeString });
+        Some(ProtocolObject::from_retained(item))
+    }
+
+    fn accept(&self, table: &NSTableView, info: &ProtocolObject<dyn NSDraggingInfo>, row: NSInteger) -> bool {
+        let Some(data) = self.data() else { return false };
+        let before = usize::try_from(row).ok().and_then(|r| data.model_row(r));
+        match self.dropped(table, info) {
+            Some(Dropped::Rows(rows)) => data.push(TableEvent::RowsMoved { rows, before }),
+            Some(Dropped::Files(paths)) => data.push(TableEvent::FilesDropped { paths, before }),
+            None => return false,
+        }
+        true
+    }
+
+    /// What a drag over `table` carries that the table takes: its own rows
+    /// (when reorderable and unsorted), or files (when it takes them).
+    fn dropped(&self, table: &NSTableView, info: &ProtocolObject<dyn NSDraggingInfo>) -> Option<Dropped> {
+        let data = self.data()?;
+        let transfer = data.transfer();
+        let items = info.draggingPasteboard().pasteboardItems()?;
+        let own = info.draggingSource().is_some_and(|s| std::ptr::eq(&*s as *const AnyObject, table as *const NSTableView as *const AnyObject));
+        if own {
+            // Reordering a sorted table has no meaning: the sort decides.
+            if !transfer.reorder || data.sorted() {
+                return None;
+            }
+            let rows: Vec<usize> = items.iter().filter_map(|i| i.stringForType(&row_type())?.to_string().parse().ok()).collect();
+            return (!rows.is_empty()).then_some(Dropped::Rows(rows));
+        }
+        let extensions = transfer.files?;
+        let paths: Vec<std::path::PathBuf> = items
+            .iter()
+            // SAFETY: AppKit's pasteboard type constant.
+            .filter_map(|i| i.stringForType(unsafe { NSPasteboardTypeFileURL }))
+            .filter_map(|u| NSURL::URLWithString(&u)?.path().map(|p| std::path::PathBuf::from(p.to_string())))
+            .collect();
+        let accepted = |p: &std::path::PathBuf| {
+            extensions.is_empty()
+                || p.extension().and_then(|e| e.to_str()).is_some_and(|e| extensions.iter().any(|x| x.eq_ignore_ascii_case(e)))
+        };
+        (!paths.is_empty() && paths.iter().all(accepted)).then_some(Dropped::Files(paths))
     }
 
     fn cell_view(&self, table: &NSTableView, column: &NSTableColumn, row: NSInteger) -> Option<Retained<NSView>> {
@@ -375,6 +620,18 @@ impl Source {
                 if let Kind::Number { .. } = kind {
                     f.setAlignment(NSTextAlignment::Right);
                 }
+                if self.data().is_some_and(|d| d.editable(&ident.to_string())) {
+                    // A borderless editable label: NSTableView starts editing
+                    // on double-click (or a click on the selected row), and
+                    // the action fires when editing ends.
+                    f.setEditable(true);
+                    f.setSelectable(true);
+                    // SAFETY: target is this source, which outlives the table's cells.
+                    unsafe {
+                        f.setTarget(Some(self));
+                        f.setAction(Some(sel!(edit:)));
+                    }
+                }
                 f
             }
         };
@@ -395,6 +652,7 @@ struct Inner<T: 'static> {
     /// Set while the model changes the selection itself (no event).
     quiet: Cell<bool>,
     mounted: Cell<bool>,
+    transfer: RefCell<Transfer>,
     scroll: Retained<NSScrollView>,
     table: Retained<HostTableView>,
     _source: Retained<Source>,
@@ -414,6 +672,10 @@ impl<T: 'static> Data for Inner<T> {
 
     fn model_row(&self, view_row: usize) -> Option<usize> {
         self.order.borrow().get(view_row).copied()
+    }
+
+    fn editable(&self, column: &str) -> bool {
+        self.columns.iter().any(|c| c.id == column && c.editable && c.kind != Kind::Check)
     }
 
     fn title(&self, column: &str) -> Option<String> {
@@ -443,6 +705,27 @@ impl<T: 'static> Data for Inner<T> {
 
     fn quiet(&self) -> bool {
         self.quiet.get()
+    }
+
+    fn transfer(&self) -> Transfer {
+        self.transfer.borrow().clone()
+    }
+
+    fn sorted(&self) -> bool {
+        self.sort.borrow().is_some()
+    }
+
+    fn rows_text(&self, view_rows: &[usize], columns: &[String]) -> String {
+        let columns: Vec<&Column<T>> = columns.iter().filter_map(|id| self.columns.iter().find(|c| &c.id == id)).collect();
+        let order = self.order.borrow();
+        let rows = self.rows.borrow();
+        let clean = |s: String| s.replace(['\t', '\n', '\r'], " ");
+        view_rows
+            .iter()
+            .filter_map(|&r| rows.get(*order.get(r)?))
+            .map(|row| columns.iter().map(|c| clean(display(c.kind, &(c.value)(row)))).collect::<Vec<_>>().join("\t"))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
 
@@ -662,6 +945,7 @@ impl<T: 'static> TableModel<T> {
             events: RefCell::new(VecDeque::new()),
             quiet: Cell::new(false),
             mounted: Cell::new(false),
+            transfer: RefCell::new(Transfer::default()),
             scroll,
             table: table.clone(),
             _source: source.clone(),
@@ -747,6 +1031,42 @@ impl<T: 'static> TableModel<T> {
         self.inner.select_model_rows(&selected);
     }
 
+    /// Appends rows in one step, for live data (a log tail, a feed): when
+    /// unsorted, the new rows are added to the end and AppKit only learns
+    /// the new count (cost independent of the rows already there; the
+    /// selection is kept). When sorted, the order is recomputed.
+    pub fn append(&self, rows: Vec<T>) {
+        if rows.is_empty() {
+            return;
+        }
+        let start = self.len();
+        self.inner.rows.borrow_mut().extend(rows);
+        if self.inner.sort.borrow().is_some() && self.inner.sorts_in_place.get() {
+            self.inner.resort_keeping_selection();
+            return;
+        }
+        let end = self.len();
+        self.inner.order.borrow_mut().extend(start..end);
+        self.inner.table.noteNumberOfRowsChanged();
+    }
+
+    /// Scrolls so the last row is visible.
+    pub fn scroll_to_end(&self) {
+        let n = self.inner.order.borrow().len();
+        if n > 0 {
+            self.inner.table.scrollRowToVisible((n - 1) as NSInteger);
+        }
+    }
+
+    /// Whether the table is scrolled to its last row (within one row), e.g.
+    /// to keep following new rows only while the user hasn't scrolled up.
+    pub fn is_at_end(&self) -> bool {
+        let table = &self.inner.table;
+        let visible = table.visibleRect();
+        let bottom = visible.origin.y + visible.size.height;
+        bottom >= table.bounds().size.height - table.rowHeight() - table.intercellSpacing().height - 1.0
+    }
+
     /// Appends a row.
     pub fn push(&self, row: T) {
         let len = self.len();
@@ -766,6 +1086,106 @@ impl<T: 'static> TableModel<T> {
         self.inner.table.reloadData();
         self.inner.select_model_rows(&selected);
         Some(row)
+    }
+
+    /// Moves `rows` (model indices) to just above the row `before` (or to
+    /// the end), keeping their order, as a drop reported by
+    /// [`TableEvent::RowsMoved`] asks. Returns their new model indices; they
+    /// end up selected.
+    pub fn move_rows(&self, rows: &[usize], before: Option<usize>) -> Vec<usize> {
+        let mut moving: Vec<usize> = rows.iter().copied().filter(|&r| r < self.len()).collect();
+        moving.sort_unstable();
+        moving.dedup();
+        let at = {
+            let mut all = self.inner.rows.borrow_mut();
+            let end = before.unwrap_or(all.len());
+            // Rows staying put above the drop point.
+            let at = (0..end.min(all.len())).filter(|r| moving.binary_search(r).is_err()).count();
+            let mut taken = Vec::with_capacity(moving.len());
+            for &r in moving.iter().rev() {
+                taken.push(all.remove(r));
+            }
+            for (i, row) in taken.into_iter().rev().enumerate() {
+                all.insert(at + i, row);
+            }
+            at
+        };
+        let moved: Vec<usize> = (at..at + moving.len()).collect();
+        self.inner.compute_order();
+        self.inner.table.reloadData();
+        self.inner.select_model_rows(&moved);
+        moved
+    }
+
+    /// Lets rows be dragged out: each carries its cells as tab-separated
+    /// text (for other apps), and its model index for
+    /// [`set_reorderable`](Self::set_reorderable). Off by default (a drag
+    /// then extends the selection).
+    pub fn set_row_drag(&self, on: bool) {
+        self.inner.transfer.borrow_mut().drag = on;
+        self.inner.table.setDraggingSourceOperationMask_forLocal(NSDragOperation::Copy, false);
+        self.register_drag_types();
+    }
+
+    /// Lets the user drag rows to a new place (also turns on
+    /// [`set_row_drag`](Self::set_row_drag)); each drop is reported as
+    /// [`TableEvent::RowsMoved`]. Refused while the table is sorted.
+    pub fn set_reorderable(&self, on: bool) {
+        if on {
+            self.set_row_drag(true);
+            self.inner.table.setDraggingSourceOperationMask_forLocal(NSDragOperation::Move, true);
+        }
+        self.inner.transfer.borrow_mut().reorder = on;
+        self.register_drag_types();
+    }
+
+    /// Accepts files dropped from the Finder: `Some(&["csv", "txt"])` for
+    /// those extensions, `Some(&[])` for any file, `None` to stop. Each drop
+    /// is reported as [`TableEvent::FilesDropped`].
+    pub fn set_file_drop(&self, extensions: Option<&[&str]>) {
+        self.inner.transfer.borrow_mut().files = extensions.map(|e| e.iter().map(|s| s.to_string()).collect());
+        self.register_drag_types();
+    }
+
+    /// Reports ⌘V on the table as [`TableEvent::Paste`] (and enables Paste
+    /// in the Edit menu while there is text to paste). Off by default.
+    pub fn set_pastes(&self, on: bool) {
+        self.inner.transfer.borrow_mut().pastes = on;
+    }
+
+    fn register_drag_types(&self) {
+        let t = self.inner.transfer.borrow();
+        let mut types = Vec::new();
+        if t.reorder {
+            types.push(row_type());
+        }
+        if t.files.is_some() {
+            // SAFETY: AppKit's pasteboard type constant.
+            types.push(NSString::from_str(&unsafe { NSPasteboardTypeFileURL }.to_string()));
+        }
+        self.inner.table.unregisterDraggedTypes();
+        if !types.is_empty() {
+            self.inner.table.registerForDraggedTypes(&NSArray::from_retained_slice(&types));
+        }
+    }
+
+    /// The selected rows as tab-separated text (columns in their current
+    /// order, one line per row, as ⌘C copies them).
+    pub fn selected_text(&self) -> String {
+        let rows = indexes(&self.inner.table.selectedRowIndexes());
+        self.inner.rows_text(&rows, &column_ids(&self.inner.table))
+    }
+
+    /// Copies the selected rows to `pasteboard` (what ⌘C does with the
+    /// general pasteboard). False if nothing is selected.
+    pub fn copy_to(&self, pasteboard: &NSPasteboard) -> bool {
+        self.inner.table.copy_rows(pasteboard)
+    }
+
+    /// Pastes `pasteboard`'s text (what ⌘V does with the general
+    /// pasteboard): queues [`TableEvent::Paste`] if the table takes pastes.
+    pub fn paste_from(&self, pasteboard: &NSPasteboard) -> bool {
+        self.inner.table.paste_text(pasteboard)
     }
 
     /// The model index of the row shown at `position` (0 = top row as
@@ -858,6 +1278,12 @@ impl<T: 'static> TableModel<T> {
     /// number of visible cells).
     pub fn cells_created(&self) -> usize {
         self.inner._source.ivars().created.get()
+    }
+
+    /// The `NSScrollView` holding the table, for hosts that place it
+    /// themselves (no [`crate::attach`]ed window).
+    pub fn scroll_view(&self) -> Retained<NSScrollView> {
+        self.inner.scroll.clone()
     }
 
     /// The underlying `NSTableView` (escape hatch).

@@ -107,7 +107,7 @@ pub fn attach(window: &impl HasWindowHandle) -> Result<(), AttachError> {
         *host = Some(Host { content, views: HashMap::new(), suppressed: HashSet::new(), frame: 0 })
     });
     crate::keys::install();
-    crate::appearance::install();
+    crate::appearance::observe_appearance();
     Ok(())
 }
 

@@ -16,10 +16,10 @@ use std::rc::{Rc, Weak};
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
-use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send};
+use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send};
 use objc2_app_kit::{
-    NSFont, NSResponder, NSScrollView, NSText, NSTextDelegate, NSTextInputClient, NSTextView, NSTextViewDelegate,
-    NSAutoresizingMaskOptions, NSView,
+    NSFont, NSResponder, NSScrollView, NSText, NSTextDelegate, NSTextInputClient, NSTextStorage, NSTextStorageDelegate,
+    NSTextStorageEditActions, NSTextView, NSTextViewDelegate, NSAutoresizingMaskOptions, NSView,
 };
 use objc2_foundation::{NSNotification, NSPoint, NSRange, NSRect, NSSize, NSString, NSUndoManager};
 
@@ -41,6 +41,7 @@ pub enum TextEvent {
 trait Data {
     fn push(&self, event: TextEvent);
     fn quiet(&self) -> bool;
+    fn composing(&self) -> bool;
     fn undo_manager(&self) -> Retained<NSUndoManager>;
 }
 
@@ -121,6 +122,19 @@ define_class!(
         }
     }
 
+    // Every character edit, including undo and redo (for which AppKit sends
+    // no textDidChange:), reaches the text storage.
+    unsafe impl NSTextStorageDelegate for Delegate {
+        #[unsafe(method(textStorage:didProcessEditing:range:changeInLength:))]
+        fn did_process_editing(&self, _storage: &NSTextStorage, edited: NSTextStorageEditActions, _range: NSRange, _delta: isize) {
+            if edited.contains(NSTextStorageEditActions::EditedCharacters)
+                && let Some(data) = self.data().filter(|d| !d.quiet() && !d.composing())
+            {
+                data.push(TextEvent::Changed);
+            }
+        }
+    }
+
     unsafe impl NSTextViewDelegate for Delegate {
         #[unsafe(method(textViewDidChangeSelection:))]
         fn selection_did_change(&self, notification: &NSNotification) {
@@ -186,7 +200,9 @@ struct Inner {
     events: RefCell<VecDeque<TextEvent>>,
     quiet: Cell<bool>,
     mounted: Cell<bool>,
-    undo: Retained<NSUndoManager>,
+    undo: RefCell<Retained<NSUndoManager>>,
+    /// Whether `undo` is someone else's (shared with other views).
+    shared: Cell<bool>,
     scroll: Retained<NSScrollView>,
     view: Retained<HostTextView>,
     _delegate: Retained<Delegate>,
@@ -195,6 +211,11 @@ struct Inner {
 impl Data for Inner {
     fn push(&self, event: TextEvent) {
         let mut events = self.events.borrow_mut();
+        // `Changed` means "read the text again": one queued is enough (an
+        // edit is reported by both the text storage and textDidChange:).
+        if event == TextEvent::Changed && events.contains(&TextEvent::Changed) {
+            return;
+        }
         // Keep only the latest of a run of selection moves.
         if let (TextEvent::Selection(_), Some(TextEvent::Selection(_))) = (&event, events.back()) {
             events.pop_back();
@@ -208,8 +229,12 @@ impl Data for Inner {
         self.quiet.get()
     }
 
+    fn composing(&self) -> bool {
+        self.view.hasMarkedText()
+    }
+
     fn undo_manager(&self) -> Retained<NSUndoManager> {
-        self.undo.clone()
+        self.undo.borrow().clone()
     }
 }
 
@@ -227,8 +252,11 @@ impl Drop for DelegateIvars {
 
 impl Drop for Inner {
     fn drop(&mut self) {
-        // The text view holds its delegate weakly: detach it first.
+        // The text view and its storage hold the delegate weakly: detach it first.
         self.view.setDelegate(None);
+        if let Some(storage) = unsafe { self.view.textStorage() } {
+            storage.setDelegate(None);
+        }
         crate::testing::LIVE_MODELS.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         crate::keys::set_accepts_tab(self.id, false);
         if self.mounted.get() {
@@ -295,7 +323,8 @@ impl TextModel {
             events: RefCell::new(VecDeque::new()),
             quiet: Cell::new(false),
             mounted: Cell::new(false),
-            undo: NSUndoManager::new(mtm),
+            undo: RefCell::new(NSUndoManager::new(mtm)),
+            shared: Cell::new(false),
             scroll,
             view: view.clone(),
             _delegate: delegate.clone(),
@@ -305,6 +334,10 @@ impl TextModel {
         *delegate.ivars().data.borrow_mut() = Some(weak);
         // SAFETY: the delegate lives as long as the model, which removes the view.
         view.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+        if let Some(storage) = unsafe { view.textStorage() } {
+            // Weak in AppKit, like the view's delegate; detached in Drop.
+            storage.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+        }
         crate::keys::set_accepts_tab(id, true);
         Self { inner }
     }
@@ -334,7 +367,44 @@ impl TextModel {
         self.inner.quiet.set(true);
         self.inner.view.setString(&NSString::from_str(text));
         self.inner.quiet.set(false);
-        self.inner.undo.removeAllActions();
+        self.clear_undo();
+    }
+
+    /// Removes this editor's edits from its undo history (only this
+    /// editor's, when the history is shared).
+    fn clear_undo(&self) {
+        let undo = self.inner.undo.borrow();
+        if self.inner.shared.get() {
+            // AppKit registers typing with the text storage as the target.
+            unsafe {
+                undo.removeAllActionsWithTarget(&self.inner.view);
+                if let Some(storage) = self.inner.view.textStorage() {
+                    undo.removeAllActionsWithTarget(&storage);
+                }
+            }
+        } else {
+            undo.removeAllActions();
+        }
+    }
+
+    /// Records edits in `manager` (e.g. the window's, shared with other
+    /// views and app-level changes) instead of the editor's own history, or
+    /// in a fresh history of its own again with `None`. Edits recorded so
+    /// far are dropped.
+    pub fn share_undo(&self, manager: Option<&NSUndoManager>) {
+        self.clear_undo();
+        let mtm = MainThreadMarker::from(&*self.inner.view);
+        let next = match manager {
+            Some(m) => m.retain(),
+            None => NSUndoManager::new(mtm),
+        };
+        *self.inner.undo.borrow_mut() = next;
+        self.inner.shared.set(manager.is_some());
+    }
+
+    /// The undo history the editor records in.
+    pub fn undo_manager(&self) -> Retained<NSUndoManager> {
+        self.inner.undo.borrow().clone()
     }
 
     /// Replaces the selection as if typed: undoable, emits `Changed`.
@@ -433,19 +503,26 @@ impl TextModel {
 
     /// Whether there is something to undo.
     pub fn can_undo(&self) -> bool {
-        self.inner.undo.canUndo()
+        self.inner.undo.borrow().canUndo()
     }
 
     /// Undoes the last edit (as ⌘Z does).
     pub fn undo(&self) {
-        if self.inner.undo.canUndo() {
-            self.inner.undo.undo();
+        let undo = self.undo_manager();
+        if undo.canUndo() {
+            undo.undo();
         }
     }
 
     /// Takes the queued user events (for the host widget).
     pub fn drain_events(&self) -> Vec<TextEvent> {
         self.inner.events.borrow_mut().drain(..).collect()
+    }
+
+    /// The `NSScrollView` holding the text view, for hosts that place it
+    /// themselves (no [`crate::attach`]ed window).
+    pub fn scroll_view(&self) -> Retained<NSScrollView> {
+        self.inner.scroll.clone()
     }
 
     /// The underlying `NSTextView` (escape hatch).
