@@ -3,7 +3,9 @@
 //! on a background thread and added once per display frame, and the table
 //! follows the end until you scroll up.
 //! `cargo run --release -p appkit-ui --example log_viewer [file]`; `CHECK=all`
-//! runs its self-checks and measurements (a 1,000,000-line live tail).
+//! runs its self-checks and measurements (a 1,000,000-line live tail);
+//! `CHECK=follow <file>` follows a real log for 10 s and checks it (e.g.
+//! `log stream --style compact > /tmp/sys.log`).
 
 use std::cell::RefCell;
 use std::io::{Read, Seek, SeekFrom};
@@ -32,20 +34,39 @@ struct Line {
 }
 
 impl Line {
-    fn parse(text: &str) -> Line {
-        let time_end = text.find(' ').unwrap_or(0);
-        let rest = &text[time_end..];
-        let level_start = time_end + (rest.len() - rest.trim_start().len());
-        let level_end = text[level_start..].find(' ').map_or(text.len(), |e| level_start + e);
-        let level = match &text[level_start..level_end] {
-            "ERROR" => Level::Error,
-            "WARN" => Level::Warn,
-            "DEBUG" => Level::Debug,
-            _ => Level::Info,
-        };
-        let message_start = (level_end + 1).min(text.len());
+    /// Parses "<time> <level> <message>". The time runs to the first word
+    /// that is a clock time ("2026-10-28T12:00:00.000", "2026-10-29
+    /// 08:47:54.561", "Oct 29 08:47:54"); the level is a word such as ERROR,
+    /// warn, [E] or `log stream`'s Df/E/F codes, or missing (Info). A line
+    /// starting with whitespace continues the one before and keeps its level.
+    fn parse(text: &str, previous: Level) -> Line {
         let short = |n: usize| u16::try_from(n).unwrap_or(0);
-        Line { text: text.into(), level, time_end: short(time_end), message_start: short(message_start) }
+        if text.starts_with(char::is_whitespace) {
+            return Line { text: text.into(), level: previous, time_end: 0, message_start: 0 };
+        }
+        // Word boundaries: (start, end) of the next word at or after `from`.
+        let word = |from: usize| {
+            let start = from + text[from..].len() - text[from..].trim_start().len();
+            (start, text[start..].find(' ').map_or(text.len(), |e| start + e))
+        };
+        let mut time_end = 0;
+        let mut at = 0;
+        for _ in 0..3 {
+            let (start, end) = word(at);
+            let w = &text[start..end];
+            if w.contains(':') && w.starts_with(|c: char| c.is_ascii_digit()) {
+                time_end = end;
+                break;
+            }
+            at = end;
+        }
+        let (level_start, level_end) = word(time_end);
+        let level = level_of(text[level_start..level_end].trim_matches(['[', ']', ':', '<', '>']));
+        let message_start = match level {
+            Some(_) => word(level_end).0,
+            None => word(time_end).0,
+        };
+        Line { text: text.into(), level: level.unwrap_or(Level::Info), time_end: short(time_end), message_start: short(message_start) }
     }
 
     fn time(&self) -> &str {
@@ -54,6 +75,23 @@ impl Line {
 
     fn message(&self) -> &str {
         self.text.get(self.message_start as usize..).unwrap_or(&self.text)
+    }
+}
+
+/// A level word, in any case: the usual names and `log stream`'s codes
+/// (Df default, I info, Db debug, E error, F fault, A activity).
+fn level_of(w: &str) -> Option<Level> {
+    let is = |names: &[&str]| names.iter().any(|n| w.eq_ignore_ascii_case(n));
+    if is(&["ERROR", "ERR", "E", "FATAL", "F", "FAULT", "CRITICAL", "CRIT"]) {
+        Some(Level::Error)
+    } else if is(&["WARN", "WARNING", "W"]) {
+        Some(Level::Warn)
+    } else if is(&["DEBUG", "DB", "D", "TRACE"]) {
+        Some(Level::Debug)
+    } else if is(&["INFO", "I", "DF", "DEFAULT", "NOTICE", "A"]) {
+        Some(Level::Info)
+    } else {
+        None
     }
 }
 
@@ -78,7 +116,7 @@ impl Tail {
         let stopped = stop.clone();
         std::thread::spawn(move || {
             let Ok(mut file) = std::fs::File::open(&path) else { return };
-            let (mut offset, mut partial) = (0u64, Vec::new());
+            let (mut offset, mut partial, mut level) = (0u64, Vec::new(), Level::Info);
             let mut chunk = vec![0u8; 8 << 20];
             while !stopped.load(Ordering::Relaxed) {
                 let len = file.metadata().map_or(0, |m| m.len());
@@ -95,8 +133,15 @@ impl Tail {
                 offset += n as u64;
                 partial.extend_from_slice(&chunk[..n]);
                 let Some(last) = partial.iter().rposition(|&b| b == b'\n') else { continue };
-                let lines: Vec<Line> =
-                    String::from_utf8_lossy(&partial[..last]).lines().filter(|l| !l.is_empty()).map(Line::parse).collect();
+                let lines: Vec<Line> = String::from_utf8_lossy(&partial[..last])
+                    .lines()
+                    .filter(|l| !l.is_empty())
+                    .map(|l| {
+                        let line = Line::parse(l, level);
+                        level = line.level;
+                        line
+                    })
+                    .collect();
                 partial.drain(..=last);
                 pending.lock().unwrap().extend(lines);
             }
@@ -257,7 +302,7 @@ fn content(v: &Viewer) -> impl View {
 fn main() {
     let v = Viewer::new();
     let (v1, v2) = (v.clone(), v.clone());
-    let checks = std::env::var("CHECK").is_ok_and(|c| c == "all");
+    let check = std::env::var("CHECK").unwrap_or_default();
     let arg = std::env::args().nth(1).map(PathBuf::from);
     App::new("Log Viewer")
         .window(
@@ -272,8 +317,10 @@ fn main() {
                 .view(content(&v)),
         )
         .on_launch(move || {
-            if checks {
+            if check == "all" {
                 self_checks::run(v2.clone());
+            } else if let (Some(p), "follow") = (&arg, check.as_str()) {
+                self_checks::follow(v2.clone(), p);
             } else if let Some(p) = &arg {
                 v2.open(p, &windows()[0]);
             }
@@ -405,7 +452,101 @@ mod self_checks {
         (c95, cmax, missed, l95)
     }
 
+    /// Sample lines in the formats the parser knows: (line, time, level, message).
+    const FORMATS: &[(&str, &str, Level, &str)] = &[
+        ("2026-10-28T12:00:00.000 ERROR worker-1 failed", "2026-10-28T12:00:00.000", Level::Error, "worker-1 failed"),
+        ("2026-10-29 08:47:54.561 Df locationd[589:299473] scan", "2026-10-29 08:47:54.561", Level::Info, "locationd[589:299473] scan"),
+        ("2026-10-29 08:47:54.562 E  kernel[0:1] oops", "2026-10-29 08:47:54.562", Level::Error, "kernel[0:1] oops"),
+        ("2026-10-29 08:47:54.563 F  launchd[1:2] fault", "2026-10-29 08:47:54.563", Level::Error, "launchd[1:2] fault"),
+        ("2026-10-29 08:47:54.564 Db app[2:3] detail", "2026-10-29 08:47:54.564", Level::Debug, "app[2:3] detail"),
+        ("Oct 29 08:47:54 host sshd[12]: accepted", "Oct 29 08:47:54", Level::Info, "host sshd[12]: accepted"),
+        ("12:00:01 [warn] disk almost full", "12:00:01", Level::Warn, "disk almost full"),
+        ("12:00:02 warning: deprecated", "12:00:02", Level::Warn, "deprecated"),
+        ("no time here at all", "", Level::Info, "no time here at all"),
+        ("    at frame 3 (continues an error)", "", Level::Error, "    at frame 3 (continues an error)"),
+        ("2026-10-29 08:47:54.565 Df 東京[5:6] ünïcode", "2026-10-29 08:47:54.565", Level::Info, "東京[5:6] ünïcode"),
+    ];
+
+    fn check_formats() {
+        let wrong: Vec<String> = FORMATS
+            .iter()
+            .filter_map(|(text, time, level, message)| {
+                let l = Line::parse(text, Level::Error);
+                (l.time() != *time || l.level != *level || l.message() != *message)
+                    .then(|| format!("{text:?} → ({:?}, {:?}, {:?})", l.time(), l.level, l.message()))
+            })
+            .collect();
+        check("formats", wrong.is_empty(), format!("{} sample lines; wrong: {wrong:?}", FORMATS.len()));
+    }
+
+    /// `CHECK=follow <file>`: follows a real, growing log (e.g. `log stream`)
+    /// for 10 s and checks that every line arrives, parsed, while following.
+    pub fn follow(v: Viewer, path: &Path) {
+        check_formats();
+        v.open(path, &windows()[0]);
+        let probe = on_frame(&windows()[0], |_| {});
+        let start = Instant::now();
+        let v1 = v.clone();
+        wait_until(
+            move || start.elapsed() > Duration::from_secs(10),
+            move || {
+                // Lines written so far (whole lines only), then wait for the table to have them.
+                let text = std::fs::read(v1.path.get_untracked().unwrap()).unwrap();
+                let end = text.iter().rposition(|&b| b == b'\n').map_or(0, |e| e + 1);
+                let want = String::from_utf8_lossy(&text[..end]).lines().filter(|l| !l.is_empty()).count();
+                let v2 = v1.clone();
+                let asked = Instant::now();
+                wait_until(
+                    move || v2.total.get_untracked() >= want || asked.elapsed() > Duration::from_secs(2),
+                    move || {
+                        let lines = v1.lines.borrow();
+                        let timed = lines.iter().filter(|l| !l.time().is_empty()).count();
+                        let by_level = |lv: Level| lines.iter().filter(|l| l.level == lv).count();
+                        // log stream's compact style: "<date> <time> <type> ...": the type is word 3.
+                        let misparsed = lines
+                            .iter()
+                            .filter(|l| l.text.starts_with(|c: char| c.is_ascii_digit()))
+                            .filter(|l| {
+                                let code = l.text.split_whitespace().nth(2).unwrap_or("");
+                                level_of(code).is_some_and(|lv| lv != l.level) || l.time().len() != 23
+                            })
+                            .count();
+                        let (display, fallback) = probe.counts();
+                        let costs: Vec<f64> = v1.log.borrow().iter().map(|(_, _, us)| us / 1000.0).collect();
+                        let cmax = costs.iter().copied().fold(0.0, f64::max);
+                        check(
+                            "follow",
+                            v1.total.get_untracked() >= want && want > 0 && misparsed == 0 && v1.table.is_at_end() && cmax < 8.3,
+                            format!(
+                                "{} of {want} lines in the file shown after 10 s ({timed} with a time; {} errors, {} warnings, {} debug); \
+                                 {misparsed} misparsed; frames: {display} display, {fallback} stand-in; per-frame cost max {cmax:.2} ms; following the end: {}",
+                                v1.total.get_untracked(),
+                                by_level(Level::Error),
+                                by_level(Level::Warn),
+                                by_level(Level::Debug),
+                                v1.table.is_at_end()
+                            ),
+                        );
+                        drop(lines);
+                        // Errors only (outside this batch, so the filter runs now).
+                        later(move || {
+                            v1.tail.borrow_mut().take();
+                            v1.level.set(Level::Error);
+                            let errors = v1.table.rows().iter().all(|&i| v1.lines.borrow()[i as usize].level == Level::Error);
+                            let want = v1.lines.borrow().iter().filter(|l| l.level == Level::Error).count();
+                            check("follow-filter", errors && v1.table.len() == want, format!("Errors only: {} rows (recount {want}), all errors: {errors}", v1.table.len()));
+                            let failed = FAILED.with(Cell::get);
+                            eprintln!("[check] done, {failed} failed");
+                            std::process::exit(if failed == 0 { 0 } else { 1 });
+                        });
+                    },
+                );
+            },
+        );
+    }
+
     pub fn run(v: Viewer) {
+        check_formats();
         let dir = std::env::temp_dir().join("appkit-ui-log-check");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();

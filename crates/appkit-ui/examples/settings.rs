@@ -249,10 +249,36 @@ mod self_checks {
                     busy && !s.syncing.get_untracked() && label_with("Synced 7").is_some() && button("Sync Now").isEnabled(),
                     format!("busy while running: {busy}; status {:?}", s.status.get_untracked()),
                 );
-                appearance(s.clone());
+                let s = s.clone();
+                // AppKit animates the bar out of indeterminate mode (about 2 s).
+                spawn(|| std::thread::sleep(std::time::Duration::from_millis(2500)), move |()| {
+                    progress_on_screen();
+                    // Outside the continuation's batch, so theme changes apply at once.
+                    let s = s.clone();
+                    later(move || appearance(s.clone()));
+                });
             });
         }
         wait(s2, busy, poll);
+    }
+
+    /// The finished sync's bar as the window server shows it (in-process
+    /// snapshots draw it empty on macOS 27): filled end to end, in the
+    /// accent colour, or grey while the window isn't key.
+    fn progress_on_screen() {
+        let bar = views().into_iter().find(|v| v.class().name().to_string_lossy() == "NSProgressIndicator").unwrap();
+        let w = bar.window().unwrap();
+        let Some(rep) = appkit_ui::testing::capture_window(&w) else {
+            return check("progress-on-screen", true, "skipped: no screen-recording permission".into());
+        };
+        let rows = appkit_ui::testing::captured_pixels(&rep, &bar, 1);
+        // A column is filled when any pixel in it is coloured or mid-grey
+        // (the empty track is near white, or near black in Dark Mode).
+        let filled = |(r, g, b): (f64, f64, f64)| r.max(g).max(b) - r.min(g).min(b) > 0.3 || (0.45..0.8).contains(&((r + g + b) / 3.0));
+        let columns = rows.first().map_or(0, Vec::len);
+        let full = (0..columns).filter(|&x| rows.iter().any(|row| filled(row[x]))).count();
+        let share = full as f64 / columns.max(1) as f64;
+        check("progress-on-screen", share > 0.9, format!("{:.0}% of the bar's width filled on screen, 2.5 s after the sync ({columns} px)", share * 100.0));
     }
 
     fn appearance(s: Settings) {

@@ -576,11 +576,28 @@ mod self_checks {
         check("scroll", worst < 16.7, format!("100 jumps: {:.0} ms total, worst {worst:.1} ms", t.elapsed().as_secs_f64() * 1e3));
         let (now, peak) = (footprint_mb(), peak_footprint_mb());
         check("memory", peak < 400.0, format!("footprint now {now:.0} MB, peak {peak:.0} MB (Iced demo 420, WaterUI 1,300–2,300)"));
-        if let Ok(dir) = std::env::var("SNAP") {
-            snapshot_windows(&dir);
+        let finish = || {
+            let failed = FAILED.with(Cell::get);
+            eprintln!("[check] done, {failed} failed");
+            std::process::exit(if failed == 0 { 0 } else { 1 });
+        };
+        let Ok(dir) = std::env::var("SNAP") else { return finish() };
+        snapshot_windows(&dir);
+        // On screen: rows scrolled half a row under the header (which should
+        // blur them), as the window server shows it.
+        tv.scrollRowToVisible(0);
+        if let Some(clip) = tv.enclosingScrollView().map(|s| s.contentView()) {
+            let mut b = clip.bounds();
+            b.origin.y += 30.0;
+            clip.setBoundsOrigin(b.origin);
         }
-        let failed = FAILED.with(Cell::get);
-        eprintln!("[check] done, {failed} failed");
-        std::process::exit(if failed == 0 { 0 } else { 1 });
+        let w = tv.window().unwrap();
+        spawn(|| std::thread::sleep(std::time::Duration::from_millis(500)), move |()| {
+            if let Some(rep) = appkit_ui::testing::capture_window(&w) {
+                let png = unsafe { rep.representationUsingType_properties(objc2_app_kit::NSBitmapImageFileType::PNG, &objc2_foundation::NSDictionary::new()) };
+                png.unwrap().writeToFile_atomically(&objc2_foundation::NSString::from_str(&format!("{dir}/screen.png")), true);
+            }
+            finish();
+        });
     }
 }

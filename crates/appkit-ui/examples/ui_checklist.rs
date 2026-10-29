@@ -166,6 +166,7 @@ struct MenuState {
     sidebar: Signal<bool>,
     sort: Signal<u8>,
     refreshed: Signal<u32>,
+    renamed: Signal<String>,
 }
 
 thread_local! {
@@ -174,6 +175,7 @@ thread_local! {
         sidebar: Signal::new(true),
         sort: Signal::new(0),
         refreshed: Signal::new(0),
+        renamed: Signal::new("A".into()),
     };
 }
 
@@ -195,11 +197,13 @@ fn view_menu() -> Vec<MenuItem> {
         menu_item(title, move || a.set(v)).checked_when(move || b.get() == v)
     };
     let r = m.refreshed.clone();
+    let rn = m.renamed.clone();
     vec![
         menu_item("Show Sidebar", move || s1.update(|s| *s = !*s)).key_with("s", &[Modifier::Control]).checked_when(move || s2.get()),
         submenu("Sort By", vec![sort_item("Name", 0), sort_item("Date", 1)]),
         menu_separator(),
         menu_item("Refresh", move || r.update(|n| *n += 1)).key("R"),
+        menu_item("Rename", move || set_undoable("Rename", &rn, format!("{}+", rn.get_untracked()))).key_with("e", &[Modifier::Control]),
     ]
 }
 
@@ -481,7 +485,220 @@ fn undo_stack_checks(u: UndoState, events: Rc<RefCell<Vec<AppEvent>>>) {
     event(&|| set_undoable("Rename", &u.name, "F".to_string()));
     appkit_ui::close_window(w);
     check("undo-close", !m.canUndo() && !m.canRedo(), format!("after close: can undo {}, redo {}", m.canUndo(), m.canRedo()));
-    after_events(move || transfer_checks(events.clone()));
+    after_events(move || posted_event_checks(events.clone()));
+}
+
+/// Posts a key press (down and up) to the app's event queue for `w`, as the
+/// keyboard does: it goes through the run loop, the menu's key equivalents
+/// and the first responder, and AppKit closes its per-event undo group.
+fn post_key(w: &objc2_app_kit::NSWindow, chars: &str, flags: NSEventModifierFlags) {
+    use objc2_app_kit::{NSEvent, NSEventType};
+    // US-layout key codes, for input methods that look at them.
+    let code = match chars.to_lowercase().as_str() {
+        "a" => 0, "s" => 1, "h" => 4, "c" => 8, "b" => 11, "e" => 14, "r" => 15, "i" => 34, "," => 43, "n" => 45, _ => 6,
+    };
+    for t in [NSEventType::KeyDown, NSEventType::KeyUp] {
+        let e = NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+            t, objc2_foundation::NSPoint::new(0.0, 0.0), flags, 0.0, w.windowNumber(), None, &NSString::from_str(chars), &NSString::from_str(chars), false, code,
+        )
+        .unwrap();
+        NSApplication::sharedApplication(mtm()).postEvent_atStart(&e, false);
+    }
+}
+
+/// Runs `steps` one per 150 ms (each posts events), calling `snap` after
+/// each has been handled, then `done`.
+fn posted_steps(steps: Rc<Vec<Box<dyn Fn()>>>, i: usize, snap: Rc<dyn Fn(usize)>, done: Rc<dyn Fn()>) {
+    if i == steps.len() {
+        return done();
+    }
+    steps[i]();
+    spawn(|| std::thread::sleep(std::time::Duration::from_millis(150)), move |()| {
+        snap(i);
+        posted_steps(steps, i + 1, snap, done);
+    });
+}
+
+/// Real key events posted to the app's queue (the app needn't be active):
+/// typing, a menu shortcut and ⌘Z / ⇧⌘Z with AppKit's own per-event undo
+/// grouping (the checks above use explicit groups), the custom menus'
+/// shortcuts, and a text field's undo.
+fn posted_event_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let m = MENU.with(Clone::clone);
+    let field_text = Signal::new(String::new());
+    let shared = Rc::new(TextModel::new(ViewId(960), ""));
+    let w = open(Window::new("Events").size(420.0, 260.0).view(vstack((text_field(&field_text), text_editor(&shared).shared_undo())).padding(12.0)));
+    w.makeKeyAndOrderFront(None);
+    w.makeFirstResponder(Some(&shared.text_view()));
+    let cmd = NSEventModifierFlags::Command;
+    let k = |c: &'static str, f: NSEventModifierFlags| {
+        let w = w.clone();
+        Box::new(move || post_key(&w, c, f)) as Box<dyn Fn()>
+    };
+    let none = NSEventModifierFlags::empty();
+    let steps = Rc::new(vec![
+        Box::new({ let w = w.clone(); move || { post_key(&w, "a", none); post_key(&w, "b", none) } }) as Box<dyn Fn()>,
+        k("e", cmd | NSEventModifierFlags::Control),
+        k("c", none),
+        k("z", cmd),
+        k("z", cmd),
+        k("z", cmd),
+        k("Z", cmd | NSEventModifierFlags::Shift),
+    ]);
+    // (name, editor text, Edit menu's Undo title, open undo groups) after each step.
+    type Seen = Vec<(String, String, String, isize)>;
+    let seen: Rc<RefCell<Seen>> = Rc::default();
+    let snap: Rc<dyn Fn(usize)> = {
+        let (seen, m, shared, w) = (seen.clone(), m.clone(), shared.clone(), w.clone());
+        Rc::new(move |_| {
+            let um = w.undoManager().unwrap();
+            seen.borrow_mut().push((m.renamed.get_untracked(), shared.text(), um.undoMenuItemTitle().to_string(), um.groupingLevel()));
+        })
+    };
+    let done: Rc<dyn Fn()> = Rc::new(move || {
+        let want: Vec<(String, String, String, isize)> = [
+            ("A", "ab", "Undo Typing"),
+            ("A+", "ab", "Undo Rename"),
+            ("A+", "abc", "Undo Typing"),
+            ("A+", "ab", "Undo Rename"),
+            ("A", "ab", "Undo Typing"),
+            ("A", "", "Undo"),
+            ("A", "ab", "Undo Typing"),
+        ]
+        .iter()
+        .map(|(a, b, c)| (a.to_string(), b.to_string(), c.to_string(), 0))
+        .collect();
+        let got = seen.borrow().clone();
+        check(
+            "posted-undo",
+            got == want,
+            format!("type ab, ⌃⌘E Rename, type c, ⌘Z ×3, ⇧⌘Z (name, text, Edit menu, open groups): {got:?}"),
+        );
+        posted_shortcut_checks(w.clone(), field_text.clone(), events.clone());
+    });
+    posted_steps(steps, 0, snap, done);
+}
+
+/// A split divider dragged with posted mouse events (NSSplitView tracks the
+/// drag from the event queue): the panes resize and their content relayouts.
+fn posted_split_drag(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use objc2_app_kit::{NSEvent, NSEventType, NSSplitView};
+    use objc2_foundation::NSPoint;
+    let w = open(
+        Window::new("Split Drag")
+            .size(600.0, 300.0)
+            .view(split((vstack((text("Left").fill_width(),)).padding(8.0), vstack((text("Right").fill_width(),)).padding(8.0))).position(160.0)),
+    );
+    w.makeKeyAndOrderFront(None);
+    let sv = all_views(&w.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<NSSplitView>().ok()).unwrap();
+    let sv2 = sv.clone();
+    let pane = move |i: usize| sv2.subviews().objectAtIndex(i).frame().size.width;
+    let content = w.contentView().unwrap();
+    let label_width = move |title: &str| {
+        all_views(&content)
+            .into_iter()
+            .filter_map(|v| v.downcast::<NSTextField>().ok())
+            .find(|t| t.stringValue().to_string() == title)
+            .map_or(0.0, |t| t.frame().size.width)
+    };
+    let before = (pane(0), pane(1), label_width("Left"), label_width("Right"));
+    let x = pane(0) + sv.dividerThickness() / 2.0;
+    let post = |t: NSEventType, x: f64| {
+        let p = sv.convertPoint_toView(NSPoint::new(x, 100.0), None);
+        let e = NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+            t, p, NSEventModifierFlags::empty(), 0.0, w.windowNumber(), None, 0, 1, 1.0,
+        )
+        .unwrap();
+        NSApplication::sharedApplication(mtm()).postEvent_atStart(&e, false);
+    };
+    post(NSEventType::LeftMouseDown, x);
+    for i in 1..=10 {
+        post(NSEventType::LeftMouseDragged, x + 8.0 * i as f64);
+    }
+    post(NSEventType::LeftMouseUp, x + 80.0);
+    spawn(|| std::thread::sleep(std::time::Duration::from_millis(300)), move |()| {
+        let after = (pane(0), pane(1), label_width("Left"), label_width("Right"));
+        check(
+            "posted-split-drag",
+            (after.0 - before.0 - 80.0).abs() < 1.0 && (before.1 - after.1 - 80.0).abs() < 1.0 && (after.2 - before.2 - 80.0).abs() < 1.0 && (before.3 - after.3 - 80.0).abs() < 1.0,
+            format!("divider dragged 80 pt: panes {:.0}/{:.0} → {:.0}/{:.0}; labels {:.0}/{:.0} → {:.0}/{:.0}", before.0, before.1, after.0, after.1, before.2, before.3, after.2, after.3),
+        );
+        appkit_ui::close_window(&w);
+        let events = events.clone();
+        after_events(move || transfer_checks(events.clone()));
+    });
+}
+
+/// The custom menus' shortcuts and Settings (⌘,) from posted key presses,
+/// then typing and ⌘Z in a text field.
+fn posted_shortcut_checks(w: Retained<objc2_app_kit::NSWindow>, field_text: Signal<String>, events: Rc<RefCell<Vec<AppEvent>>>) {
+    let m = MENU.with(Clone::clone);
+    let cmd = NSEventModifierFlags::Command;
+    let start = (m.items.get_untracked(), m.sidebar.get_untracked(), m.refreshed.get_untracked());
+    let combos: Vec<(&'static str, NSEventModifierFlags)> = vec![
+        ("n", cmd),
+        ("n", cmd),
+        ("n", cmd | NSEventModifierFlags::Option),
+        ("s", cmd | NSEventModifierFlags::Control),
+        ("R", cmd | NSEventModifierFlags::Shift),
+        (",", cmd),
+    ];
+    let steps: Rc<Vec<Box<dyn Fn()>>> = Rc::new(
+        combos
+            .into_iter()
+            .map(|(c, f)| {
+                let w = w.clone();
+                Box::new(move || post_key(&w, c, f)) as Box<dyn Fn()>
+            })
+            .collect(),
+    );
+    let seen: Rc<RefCell<Vec<(i64, bool, u32)>>> = Rc::default();
+    let snap: Rc<dyn Fn(usize)> = {
+        let (seen, m) = (seen.clone(), m.clone());
+        Rc::new(move |_| seen.borrow_mut().push((m.items.get_untracked(), m.sidebar.get_untracked(), m.refreshed.get_untracked())))
+    };
+    let done: Rc<dyn Fn()> = Rc::new(move || {
+        let (i0, s0, r0) = start;
+        let got = seen.borrow().clone();
+        let settings = NSApplication::sharedApplication(mtm()).windows().iter().find(|w| w.title().to_string() == "Settings" && w.isVisible());
+        let want = vec![(i0 + 1, s0, r0), (i0 + 2, s0, r0), (i0 + 1, s0, r0), (i0 + 1, !s0, r0), (i0 + 1, !s0, r0 + 1), (i0 + 1, !s0, r0 + 1)];
+        check(
+            "posted-shortcuts",
+            got == want && settings.is_some(),
+            format!("⌘N ⌘N ⌥⌘N ⌃⌘S ⇧⌘R → (items, sidebar, refreshed) {got:?}; ⌘, opened Settings: {}", settings.is_some()),
+        );
+        if let Some(s) = settings {
+            s.close();
+        }
+        // Typing in a text field, then ⌘Z and ⇧⌘Z: the field and its bound
+        // signal. AppKit (plain AppKit too) sends ⇧⌘Z to the window's undo
+        // manager when it has a redo pending, not to the field's private
+        // one, so the window's history is cleared first, as in a fresh form.
+        w.undoManager().unwrap().removeAllActions();
+        let field = all_views(&w.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<NSTextField>().ok()).unwrap();
+        w.makeFirstResponder(Some(&field));
+        let none = NSEventModifierFlags::empty();
+        let steps: Rc<Vec<Box<dyn Fn()>>> = Rc::new(vec![
+            Box::new({ let w = w.clone(); move || { post_key(&w, "h", none); post_key(&w, "i", none) } }),
+            Box::new({ let w = w.clone(); move || post_key(&w, "z", cmd) }),
+            Box::new({ let w = w.clone(); move || post_key(&w, "Z", cmd | NSEventModifierFlags::Shift) }),
+        ]);
+        let seen: Rc<RefCell<Vec<(String, String)>>> = Rc::default();
+        let snap: Rc<dyn Fn(usize)> = {
+            let (seen, f, field) = (seen.clone(), field_text.clone(), field.clone());
+            Rc::new(move |_| seen.borrow_mut().push((field.stringValue().to_string(), f.get_untracked())))
+        };
+        let (w2, events2) = (w.clone(), events.clone());
+        let done: Rc<dyn Fn()> = Rc::new(move || {
+            let got = seen.borrow().clone();
+            let want: Vec<(String, String)> = [("hi", "hi"), ("", ""), ("hi", "hi")].iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+            check("posted-field-undo", got == want, format!("type hi, ⌘Z, ⇧⌘Z → (field, bound signal): {got:?}"));
+            appkit_ui::close_window(&w2);
+            posted_split_drag(events2.clone());
+        });
+        posted_steps(steps, 0, snap, done);
+    });
+    posted_steps(steps, 0, snap, done);
 }
 
 #[derive(Clone, Debug, PartialEq)]

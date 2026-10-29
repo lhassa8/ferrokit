@@ -237,3 +237,42 @@ pub fn context_menu_for_word(view: &objc2_app_kit::NSTextView, word: &str) -> Ve
     let Some(menu) = view.menuForEvent(&event) else { return Vec::new() };
     (0..menu.numberOfItems()).filter_map(|i| menu.itemAtIndex(i)).map(|item| item.title().to_string()).collect()
 }
+
+/// Captures `window` as the window server shows it (lossless, no shadow, via
+/// `screencapture -l`): what's on screen, which in-process snapshots can
+/// miss (Core Animation layers, animations, vibrancy). Needs the
+/// screen-recording permission; `None` without it.
+pub fn capture_window(window: &objc2_app_kit::NSWindow) -> Option<Retained<objc2_app_kit::NSBitmapImageRep>> {
+    let path = std::env::temp_dir().join(format!("appkit-ui-capture-{}-{}.png", std::process::id(), window.windowNumber()));
+    let ok = std::process::Command::new("screencapture")
+        .args(["-x", "-o", "-l", &window.windowNumber().to_string()])
+        .arg(&path)
+        .status()
+        .is_ok_and(|s| s.success());
+    let bytes = if ok { std::fs::read(&path).ok() } else { None };
+    let rep = bytes.and_then(|b| objc2_app_kit::NSBitmapImageRep::imageRepWithData(&objc2_foundation::NSData::with_bytes(&b)));
+    let _ = std::fs::remove_file(&path);
+    // Without the permission screencapture writes the desktop or nothing.
+    rep.filter(|r| (r.pixelsWide() as f64 - window.frame().size.width * window.backingScaleFactor()).abs() < 2.0)
+}
+
+/// The sRGB colours (r, g, b in 0…1) of a capture from [`capture_window`]
+/// inside `view`'s bounds: rows from the top, every `step` pixels.
+pub fn captured_pixels(rep: &objc2_app_kit::NSBitmapImageRep, view: &objc2_app_kit::NSView, step: usize) -> Vec<Vec<(f64, f64, f64)>> {
+    let Some(window) = view.window() else { return Vec::new() };
+    let scale = window.backingScaleFactor();
+    let r = view.convertRect_toView(view.bounds(), None);
+    let height = window.frame().size.height;
+    let (x0, x1) = ((r.origin.x * scale) as isize, ((r.origin.x + r.size.width) * scale) as isize);
+    let (y0, y1) = (((height - r.origin.y - r.size.height) * scale) as isize, ((height - r.origin.y) * scale) as isize);
+    let srgb = objc2_app_kit::NSColorSpace::sRGBColorSpace();
+    let mut out = Vec::new();
+    for y in (y0.max(0)..y1.min(rep.pixelsHigh())).step_by(step.max(1)) {
+        let row = (x0.max(0)..x1.min(rep.pixelsWide()))
+            .step_by(step.max(1))
+            .map(|x| rep.colorAtX_y(x, y).and_then(|c| c.colorUsingColorSpace(&srgb)).map_or((0.0, 0.0, 0.0), |c| (c.redComponent(), c.greenComponent(), c.blueComponent())))
+            .collect();
+        out.push(row);
+    }
+    out
+}
