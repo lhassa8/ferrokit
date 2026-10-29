@@ -7,6 +7,7 @@
 #   --no-iced   skip the iced-appkit checklist (it bundles an .app first)
 #   --no-lint   skip clippy, tests and docs (suites only)
 #
+# Logs go to a temporary folder, or to $CHECK_ALL_LOGS if set (CI uploads it).
 # The suites open real windows: run it in a logged-in session with the
 # display awake. Each suite prints "[check] <name> PASS|FAIL ..." lines.
 set -u
@@ -17,12 +18,12 @@ for a in "$@"; do
   case "$a" in
     --no-iced) iced= ;;
     --no-lint) lint= ;;
-    -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
     *) echo "check-all: unknown option $a" >&2; exit 2 ;;
   esac
 done
 
-log=$(mktemp -d)/check-all
+log=${CHECK_ALL_LOGS:-$(mktemp -d)/check-all}
 mkdir -p "$log"
 summary=
 failed=0
@@ -48,10 +49,18 @@ suite() {
   name=$1 env=$2; shift 2
   printf '%-22s ' "$name"
   start=$(date +%s)
-  # A hung suite fails after 10 minutes instead of blocking the run.
+  # A hung suite fails after 10 minutes instead of blocking the run; its
+  # call stacks are sampled first, to show where it hung.
   env "$env" "$@" >"$log/$name.log" 2>&1 &
   pid=$!
-  ( sleep 600; kill "$pid" 2>/dev/null && echo "[check] watchdog FAIL killed after 600 s" >>"$log/$name.log" ) &
+  (
+    sleep 600
+    if kill -0 "$pid" 2>/dev/null; then
+      sample "$pid" 3 -file "$log/$name.hang.txt" >/dev/null 2>&1
+      kill "$pid" 2>/dev/null
+      echo "[check] watchdog FAIL killed after 600 s; stacks in $name.hang.txt" >>"$log/$name.log"
+    fi
+  ) &
   dog=$!
   wait "$pid"
   code=$?
@@ -65,6 +74,12 @@ suite() {
   else
     printf 'FAILED %3s of %s checks, exit %s (%ss)\n' "$fail" $((pass + fail)) "$code" $(( $(date +%s) - start ))
     grep '^\[check\] .* FAIL' "$log/$name.log" | sed 's/^/    /'
+    echo "    last lines:"
+    tail -6 "$log/$name.log" | sed 's/^/      /'
+    if [ -f "$log/$name.hang.txt" ]; then
+      echo "    main thread when it hung:"
+      grep -A40 'Thread_.*com.apple.main-thread' "$log/$name.hang.txt" | grep -E 'ui_checklist|appkit_ui|AppKit|\]' | head -25 | sed 's/^/      /'
+    fi
     summary="$summary\n  FAIL  $name: $fail failed, exit $code"
     failed=$((failed + 1))
   fi

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### appkit-ui
+
+- Fix: with classic (always-shown) scroll bars, as on a Mac with a mouse, a `scroll` view's content stayed wider than the view once the vertical bar appeared (a stray horizontal scroll bar, clipped content). The content now re-fits.
+- `testing::heap_in_use_mb()`: live allocations, for leak checks (footprint lags while the allocator returns freed pages).
+- `testing::capture_window` returns `None` for a capture without the window's content (no screen-recording permission).
+
 ## 0.2.0 (2026-10-29)
 
 `appkit-host` 0.2.0 has breaking changes, and `iced-appkit` re-exports its types (`host`, `TableEvent`, `Column`…), so both move to 0.2.0. `appkit-ui` 0.1.0 is new.

@@ -252,8 +252,29 @@ pub fn capture_window(window: &objc2_app_kit::NSWindow) -> Option<Retained<objc2
     let bytes = if ok { std::fs::read(&path).ok() } else { None };
     let rep = bytes.and_then(|b| objc2_app_kit::NSBitmapImageRep::imageRepWithData(&objc2_foundation::NSData::with_bytes(&b)));
     let _ = std::fs::remove_file(&path);
-    // Without the permission screencapture writes the desktop or nothing.
+    // Without the permission screencapture writes the desktop, nothing, or
+    // a window-sized image without the window's content.
     rep.filter(|r| (r.pixelsWide() as f64 - window.frame().size.width * window.backingScaleFactor()).abs() < 2.0)
+        .filter(|r| has_content(r))
+}
+
+/// Whether a capture shows anything: a window with views has some
+/// variation in its colours; a blank stand-in is one flat colour.
+fn has_content(rep: &objc2_app_kit::NSBitmapImageRep) -> bool {
+    let srgb = objc2_app_kit::NSColorSpace::sRGBColorSpace();
+    let (w, h) = (rep.pixelsWide(), rep.pixelsHigh());
+    let mut seen: Vec<(f64, f64, f64)> = Vec::new();
+    for y in (0..h).step_by((h / 40).max(1) as usize) {
+        for x in (0..w).step_by((w / 40).max(1) as usize) {
+            if let Some(c) = rep.colorAtX_y(x, y).and_then(|c| c.colorUsingColorSpace(&srgb)) {
+                let p = (c.redComponent(), c.greenComponent(), c.blueComponent());
+                if !seen.iter().any(|q| (q.0 - p.0).abs() + (q.1 - p.1).abs() + (q.2 - p.2).abs() < 0.05) {
+                    seen.push(p);
+                }
+            }
+        }
+    }
+    seen.len() >= 3
 }
 
 /// The sRGB colours (r, g, b in 0…1) of a capture from [`capture_window`]
@@ -362,4 +383,30 @@ pub fn ax_audit(window: &objc2_app_kit::NSWindow) -> Vec<String> {
             })
         })
         .collect()
+}
+
+#[repr(C)]
+#[derive(Default)]
+struct MallocStatistics {
+    blocks_in_use: u32,
+    size_in_use: usize,
+    max_size_in_use: usize,
+    size_allocated: usize,
+}
+
+unsafe extern "C" {
+    fn malloc_zone_statistics(zone: *mut std::ffi::c_void, stats: *mut MallocStatistics);
+}
+
+/// Memory the process has allocated and not freed, in MB (all malloc
+/// zones). Unlike [`footprint_mb`], it drops as soon as something is freed:
+/// the allocator returns freed pages to the system in batches, at times of
+/// its own (seconds later when the machine is busy), so footprint can't tell
+/// a leak from memory not yet handed back. Use this for leak checks.
+pub fn heap_in_use_mb() -> f64 {
+    let mut stats = MallocStatistics::default();
+    // SAFETY: a null zone means all zones; `stats` is a valid out-pointer
+    // with the C layout of malloc_statistics_t.
+    unsafe { malloc_zone_statistics(std::ptr::null_mut(), &mut stats) };
+    stats.size_in_use as f64 / (1024.0 * 1024.0)
 }

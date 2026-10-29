@@ -46,6 +46,9 @@ pub(crate) trait Platform {
     fn set_size(view: &Self::View, size: Size);
     /// Places a scroll view; returns the size of its visible area.
     fn place_scroll(scroll: &Self::Scroll, rect: Rect) -> Size;
+    /// A scroll view's visible size now, after it re-tiles (its scroll bars
+    /// may have appeared or gone since the document was sized).
+    fn visible_size(scroll: &Self::Scroll) -> Size;
     /// Places a split view and re-tiles its panes.
     fn place_split(split: &Self::Split, rect: Rect);
     /// Moves a split view's first divider.
@@ -101,6 +104,12 @@ impl Platform for AppKit {
         if scroll.frame() != r {
             scroll.setFrame(r);
         }
+        let v = scroll.contentSize();
+        Size { w: v.width, h: v.height }
+    }
+
+    fn visible_size(scroll: &NSScrollView) -> Size {
+        scroll.tile();
         let v = scroll.contentSize();
         Size { w: v.width, h: v.height }
     }
