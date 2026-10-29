@@ -12,6 +12,9 @@
 #   --icon <file>           .icns, or a square .png (1024 px best), converted to .icns.
 #   --min-macos <v>         LSMinimumSystemVersion (default: 15.0).
 #   --category <uti>        LSApplicationCategoryType (e.g. public.app-category.developer-tools).
+#   --doc-type <name:exts>  A document type the app opens and edits, e.g. "Text:txt,md"
+#                           (repeatable): the Finder then offers the app for those files
+#                           (Open With, double-click if chosen) and drops on its icon work.
 #   --sign <identity>       Code-signing identity (default: "-", ad hoc). A Developer ID
 #                           identity also gets a secure timestamp, as notarisation needs.
 #   --entitlements <file>   Entitlements plist for codesign.
@@ -29,7 +32,7 @@ cd "$(dirname "$0")/.."
 
 die() { echo "package-app: $*" >&2; exit 1; }
 
-package= kind= target= name= id= version= build= icon= min=15.0 category= identity=- entitlements= universal= zip= notarize= out=target/apps
+package= kind= target= name= id= version= build= icon= min=15.0 category= doc_types= identity=- entitlements= universal= zip= notarize= out=target/apps
 while [ $# -gt 0 ]; do
   case "$1" in
     -p|--package) package=$2; shift 2 ;;
@@ -42,13 +45,15 @@ while [ $# -gt 0 ]; do
     --icon) icon=$2; shift 2 ;;
     --min-macos) min=$2; shift 2 ;;
     --category) category=$2; shift 2 ;;
+    --doc-type) doc_types="$doc_types
+$2"; shift 2 ;;
     --sign) identity=$2; shift 2 ;;
     --entitlements) entitlements=$2; shift 2 ;;
     --universal) universal=1; shift ;;
     --zip) zip=1; shift ;;
     --notarize) notarize=$2; zip=1; shift 2 ;;
     --out) out=$2; shift 2 ;;
-    -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
     *) die "unknown option $1 (see --help)" ;;
   esac
 done
@@ -112,6 +117,18 @@ if [ -n "$icon" ]; then
 fi
 category_key=
 [ -z "$category" ] || category_key="  <key>LSApplicationCategoryType</key><string>$category</string>"
+doc_key=
+if [ -n "$doc_types" ]; then
+  doc_key="  <key>CFBundleDocumentTypes</key><array>"
+  for spec in $(echo "$doc_types" | tr ' ' '_'); do
+    type_name=$(echo "${spec%%:*}" | tr '_' ' ')
+    exts=$(echo "${spec#*:}" | tr ',' ' ')
+    ext_xml=
+    for e in $exts; do ext_xml="$ext_xml<string>$e</string>"; done
+    doc_key="$doc_key<dict><key>CFBundleTypeName</key><string>$type_name</string><key>CFBundleTypeRole</key><string>Editor</string><key>LSHandlerRank</key><string>Alternate</string><key>CFBundleTypeExtensions</key><array>$ext_xml</array></dict>"
+  done
+  doc_key="$doc_key</array>"
+fi
 
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -132,6 +149,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
 $icon_key
 $category_key
+$doc_key
 </dict></plist>
 PLIST
 plutil -lint -s "$app/Contents/Info.plist"

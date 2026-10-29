@@ -450,7 +450,7 @@ impl App {
             }
         });
         if start_untitled {
-            objc2::rc::autoreleasepool(|_| documents::new_document());
+            objc2::rc::autoreleasepool(|_| documents::new_launch_document());
         }
         #[allow(deprecated)]
         app.activateIgnoringOtherApps(true);

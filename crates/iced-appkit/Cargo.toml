@@ -15,7 +15,7 @@ default-target = "aarch64-apple-darwin"
 targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
 
 [dependencies]
-appkit-host = { path = "../appkit-host", version = "0.2.0" }
+appkit-host = { path = "../appkit-host", version = "0.2.1" }
 iced = { version = "0.14", features = ["advanced", "image"] }
 
 [dev-dependencies]

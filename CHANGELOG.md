@@ -1,19 +1,35 @@
 # Changelog
 
-## Unreleased
+## appkit-host 0.2.1, iced-appkit 0.2.1, appkit-ui 0.2.0 (2026-10-29)
 
-### appkit-host (additive)
+`appkit-host` and `iced-appkit` only gain API (patch releases); `iced-appkit` re-exports the new `CellImage`, so it needs `appkit-host` 0.2.1. `appkit-ui` moves to 0.2.0: besides new features, some behaviour changed (see below).
+
+### appkit-host 0.2.1 (additive)
 
 - Group rows: `TableModel::set_group_by(key)` puts a header before each group (full width, floating, not selectable; sorting sorts within groups); `groups()`, `shown_rows()`. `row_at` is `None` for a header; event indices stay model indices.
 - `Column::progress` (a bar from 0 to 1), `Column::icon` (`CellImage::Symbol` or `FileIcon` before the text), `Column::fit` (width from the longest values).
 
-### appkit-ui
+### iced-appkit 0.2.1 (additive)
+
+- Re-exports `CellImage` (for `Column::icon`); requires `appkit-host` 0.2.1.
+
+### appkit-ui 0.2.0
+
+Changed behaviour:
+
+- `image(symbol)` is decorative (hidden from VoiceOver) unless given a `.description`; it used to read the symbol name.
+- `quit()` starts on the next run-loop pass (it used to terminate inside the caller's batch).
+- Windows closed by the close button or ⌘W are torn down (views, effects, undo history), like `close_window`; the Settings window is kept.
+- `layout_times_us()` keeps the most recent 10,000–20,000 passes (it grew forever); `layout_passes()` gives the total.
+
+Added:
 
 - **Document apps:** `App::documents(DocumentType)`.
   - The File menu gets New, Open…, Open Recent, Save, Save As… and Revert to Saved.
   - Each window is a `Document<T>`: a content signal and a file. The title bar shows the edited dot and the file's proxy icon.
   - Closing or quitting with changes asks to save.
   - `new_document`, `open_document`, `save_document(_as)`, `revert_document`, `document_edited`, `recent_documents`.
+- Document apps open files from the Finder (`application:openURLs:`): double-click, Open With, drops on the Dock icon; the untouched Untitled window from launch then closes. `package-app.sh --doc-type "Name:ext,ext"` declares the types.
 - `dynamic_submenu(title, items)`: a submenu rebuilt each time it opens.
 - `collection(items, describe)`: a grid of items (`NSCollectionView`), virtualised (cells reused), with a title, subtitle and an image (SF Symbol, file icon or colour) per item; two-way selection by id (single or multiple); double-click and Return activate; VoiceOver reads items by title. `collection_cells_made()` diagnostic.
 - More controls, each bound two ways to a signal: `date_picker` (`SystemTime`; with time, calendar style, range), `color_well` (`Color`), `segmented`, `combo_box` (text plus suggestions), `search_field` (placeholder, submit, clear).
