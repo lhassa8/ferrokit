@@ -493,6 +493,12 @@ fn undo_stack_checks(u: UndoState, events: Rc<RefCell<Vec<AppEvent>>>) {
 /// and the first responder, and AppKit closes its per-event undo group.
 fn post_key(w: &objc2_app_kit::NSWindow, chars: &str, flags: NSEventModifierFlags) {
     use objc2_app_kit::{NSEvent, NSEventType};
+    // Keys go to the key window's first responder; something else on the
+    // machine (a person using it meanwhile) can take key status away.
+    if !w.isKeyWindow() {
+        w.makeKeyWindow();
+        eprintln!("[note] {:?} wasn't the key window before {chars:?}; made it key again", w.title().to_string());
+    }
     // US-layout key codes, for input methods that look at them.
     let code = match chars.to_lowercase().as_str() {
         "a" => 0, "s" => 1, "h" => 4, "c" => 8, "b" => 11, "e" => 14, "r" => 15, "i" => 34, "," => 43, "n" => 45, _ => 6,
@@ -752,7 +758,8 @@ fn close_cycles(value: Signal<u32>, events: Rc<RefCell<Vec<AppEvent>>>, round: u
         let floor = PLAIN_FLOOR_KB.with(Cell::get);
         check(
             "close-cycles-memory",
-            per < floor * 1.5 + 32.0,
+            // The floor can measure below zero (memory freed meanwhile): clamp it.
+            per < floor.max(0.0) * 1.5 + 32.0,
             format!("{} cycles through the close button: {per:.0} KB per cycle; a plain AppKit window with the same views {floor:.0} KB (budget 1.5× + 32)", ROUNDS - WARM),
         );
         after_events(move || sheet_cycles(events.clone()));
