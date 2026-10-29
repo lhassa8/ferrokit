@@ -8,6 +8,8 @@
 - `Column::editable(true)` makes a text or number column's cells editable. Finishing an edit emits `TableEvent::Edit`; apply it with `update_row`.
 - `TableModel::scroll_view()` returns the table's scroll view, for hosts that place it themselves.
 - `observe_appearance()` is public, for apps without an attached host window.
+- `TextModel::scroll_view()`.
+- Fix: `TextEvent::Changed` is now sent for undo and redo too. AppKit sends no `textDidChange:` for them, so the model also listens to its text storage; a queued `Changed` isn't repeated.
 
 ### iced-appkit
 

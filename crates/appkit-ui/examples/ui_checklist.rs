@@ -9,12 +9,14 @@ use appkit_ui::{
     Align, App, AppEvent, Effect, Identifiable, Signal, View, ViewExt, Window, batch, button, checkbox, dynamic, effect_runs,
     for_each, grid, hstack, label, later, layout_stats, layout_times_us, live_nodes, open, secure_field, spacer, spawn, text,
     text_field, toggle, vstack, windows, divider, image, picker, progress, scroll, slider, stepper, table, Column, Sort,
-    TableModel, ViewId, TreeNode, outline, sidebar,
+    TableModel, ViewId, TreeNode, outline, sidebar, TextModel, text_editor,
 };
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2_app_kit::{NSApplication, NSEventModifierFlags, NSTextField, NSView};
-use appkit_ui::testing::{ax_tree, footprint_mb, has_ax, post_edit, send_action, shortcut, snapshot_windows};
+use appkit_ui::testing::{
+    ax_tree, context_menu_for_word, footprint_mb, has_ax, is_misspelled, post_edit, send_action, shortcut, snapshot_windows,
+};
 use objc2_app_kit::{NSAppearanceCustomization, NSTextInputClient};
 use objc2_foundation::NSString;
 
@@ -87,9 +89,9 @@ fn run_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     // Windows: both open; AppKit lists them in the Window menu.
     let ws = windows();
     let visible = ws.iter().filter(|w| w.isVisible()).count();
-    check("windows", ws.len() == 9 && visible == 9, format!("{} windows, {visible} visible", ws.len()));
+    check("windows", ws.len() == 10 && visible == 10, format!("{} windows, {visible} visible", ws.len()));
     let window_menu = menu_items(2);
-    let listed = ["First", "Second", "Views", "Layout", "Controls", "Controls B", "Teardown", "Table", "Outline"].iter().all(|t| window_menu.iter().any(|(title, _, _)| title == t));
+    let listed = ["First", "Second", "Views", "Layout", "Controls", "Controls B", "Teardown", "Table", "Outline", "Editor"].iter().all(|t| window_menu.iter().any(|(title, _, _)| title == t));
     check("window-menu-lists-windows", listed && app.windowsMenu().is_some(), format!("{:?}", window_menu.iter().map(|e| &e.0).collect::<Vec<_>>()));
     check("help-menu", app.helpMenu().is_some(), String::new());
 
@@ -1249,7 +1251,173 @@ fn outline_bench(o: OutlineState, events: Rc<RefCell<Vec<AppEvent>>>) {
         tree.numberOfRows() == 10_101 && build_ms < 100.0 && update_ms < 100.0,
         format!("10,100 items: rebuild {build_ms:.1} ms; expand all + display {expand_ms:.1} ms; one added item (expansion kept) {update_ms:.1} ms; {} rows", tree.numberOfRows()),
     );
-    appearance_check(events);
+    editor_checks(events);
+}
+
+const NOTES: &str = "This sentense has a speling error.";
+
+#[derive(Clone)]
+struct EditorState {
+    model: TextModel,
+    notes: Signal<String>,
+    changes: Signal<u32>,
+    compositions: Signal<Vec<Option<String>>>,
+    show: Signal<bool>,
+}
+
+thread_local! {
+    static EDITOR: EditorState = EditorState {
+        model: TextModel::new(ViewId(900), NOTES),
+        notes: Signal::new(NOTES.to_string()),
+        changes: Signal::new(0),
+        compositions: Signal::new(vec![]),
+        show: Signal::new(true),
+    };
+}
+
+fn editor_window() -> impl View {
+    let e = EDITOR.with(Clone::clone);
+    let (e1, e2) = (e.clone(), e.clone());
+    vstack((
+        label(move || format!("{} characters", e1.notes.with(|t| t.chars().count()))),
+        dynamic(move || {
+            if e2.show.get() {
+                let (c, k) = (e2.changes.clone(), e2.compositions.clone());
+                appkit_ui::AnyView::new(
+                    text_editor(&e2.model)
+                        .bind(&e2.notes)
+                        .on_change(move |_| c.update(|n| *n += 1))
+                        .on_composition(move |m| k.update(|v| v.push(m))),
+                )
+                .id(1)
+            } else {
+                appkit_ui::AnyView::new(text("no editor")).id(0)
+            }
+        }),
+    ))
+    .padding(12.0)
+}
+
+fn editor_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let e = EDITOR.with(Clone::clone);
+    let w = windows().into_iter().find(|w| w.title().to_string() == "Editor").unwrap();
+    w.makeKeyAndOrderFront(None);
+    let tv = e.model.text_view();
+    let sv = e.model.scroll_view();
+    check(
+        "editor-placed",
+        sv.frame().size.height > 200.0 && tv.string().to_string() == NOTES && has_ax(&ax_tree(&w), "AXTextArea", "", ""),
+        format!("scroll view {:.0}×{:.0}; text {:?}; AXTextArea in the tree", sv.frame().size.width, sv.frame().size.height, tv.string().to_string()),
+    );
+
+    // Typing at the end → binding, on_change, and the label.
+    w.makeFirstResponder(Some(&tv));
+    let end = tv.string().length();
+    tv.setSelectedRange(objc2_foundation::NSRange::new(end, 0));
+    let not_found = objc2_foundation::NSRange::new(usize::MAX >> 1, 0);
+    unsafe { tv.insertText_replacementRange(&NSString::from_str(" More."), not_found) };
+    let e2 = e.clone();
+    after_events(move || {
+        let e = e2.clone();
+        let w = windows().into_iter().find(|w| w.title().to_string() == "Editor").unwrap();
+        let bound = e.notes.get_untracked();
+        let label_ok = w.contentView().unwrap().subviews().iter().filter_map(|v| v.downcast::<NSTextField>().ok())
+            .any(|f| f.stringValue().to_string() == format!("{} characters", bound.chars().count()));
+        check("editor-typing", bound.ends_with("error. More.") && e.changes.get_untracked() >= 1 && label_ok, format!("binding {bound:?}; on_change ×{}; label follows: {label_ok}", e.changes.get_untracked()));
+
+        // Signal → editor: replaces the text and clears undo.
+        batch(|| e.notes.set("Replaced".into()));
+        let tv = e.model.text_view();
+        check("editor-bind", tv.string().to_string() == "Replaced" && !e.model.can_undo(), format!("editor shows {:?}; can undo: {}", tv.string().to_string(), e.model.can_undo()));
+
+        // Japanese input: no change while composing; one change on commit.
+        let changes0 = e.changes.get_untracked();
+        let end = tv.string().length();
+        tv.setSelectedRange(objc2_foundation::NSRange::new(end, 0));
+        let not_found = objc2_foundation::NSRange::new(usize::MAX >> 1, 0);
+        unsafe { tv.setMarkedText_selectedRange_replacementRange(&NSString::from_str("とうきょう"), objc2_foundation::NSRange::new(5, 0), not_found) };
+        let e3 = e.clone();
+        let events = events.clone();
+        after_events(move || {
+            let e = e3.clone();
+            let tv = e.model.text_view();
+            let mid_changes = e.changes.get_untracked() - changes0;
+            let mid_bound = e.notes.get_untracked();
+            let not_found = objc2_foundation::NSRange::new(usize::MAX >> 1, 0);
+            unsafe { tv.insertText_replacementRange(&NSString::from_str("東京"), not_found) };
+            let e4 = e.clone();
+            let events = events.clone();
+            after_events(move || {
+                let e = e4.clone();
+                let comps = e.compositions.get_untracked();
+                check(
+                    "editor-ime",
+                    mid_changes == 0 && mid_bound == "Replaced" && e.notes.get_untracked() == "Replaced東京"
+                        && comps.first() == Some(&Some("とうきょう".to_string())) && comps.last() == Some(&None),
+                    format!("while composing: {mid_changes} changes, binding {mid_bound:?}; committed → {:?}; compositions {comps:?}", e.notes.get_untracked()),
+                );
+                editor_undo_and_spelling(events.clone());
+            });
+        });
+    });
+}
+
+fn editor_undo_and_spelling(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let e = EDITOR.with(Clone::clone);
+    let w = windows().into_iter().find(|w| w.title().to_string() == "Editor").unwrap();
+    let tv = e.model.text_view();
+    w.makeFirstResponder(Some(&tv));
+    // Undo through the Edit menu's ⌘Z (the editor's own undo manager).
+    let before = e.notes.get_untracked();
+    let undone = shortcut(&w, "z", false);
+    let e2 = e.clone();
+    after_events(move || {
+        let e = e2.clone();
+        let after = e.notes.get_untracked();
+        check(
+            "editor-undo",
+            undone && after == "Replaced" && e.model.text() == "Replaced",
+            format!("⌘Z sent: {undone}; {before:?} → binding {after:?}, editor {:?}", e.model.text()),
+        );
+        // Spell check (Phase 1's T11): continuous checking flags the words
+        // (asynchronously), and the context menu offers suggestions.
+        batch(|| e.notes.set(NOTES.to_string()));
+        let e3 = e.clone();
+        let events = events.clone();
+        spawn(|| std::thread::sleep(std::time::Duration::from_millis(1500)), move |_| {
+            let e = e3.clone();
+            let tv = e.model.text_view();
+            let flagged = ["sentense", "speling"].map(is_misspelled);
+            let menu = context_menu_for_word(&tv, "speling");
+            let suggests = menu.iter().any(|t| t == "spelling");
+            let grammar = menu.iter().any(|t| t.starts_with("Spelling and Grammar"));
+            check(
+                "editor-spell-check",
+                tv.isContinuousSpellCheckingEnabled() && flagged == [true, true] && suggests && grammar,
+                format!("continuous checking {}; flagged {flagged:?}; right-click 'speling' → first items {:?}", tv.isContinuousSpellCheckingEnabled(), &menu[..menu.len().min(3)]),
+            );
+            let events = events.clone();
+            later(move || editor_teardown(events.clone()));
+        });
+    });
+}
+
+fn editor_teardown(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let e = EDITOR.with(Clone::clone);
+    let sv = e.model.scroll_view();
+    batch(|| e.show.set(false));
+    let removed = unsafe { sv.superview() }.is_none();
+    let changes = e.changes.get_untracked();
+    e.model.replace_selection("ignored");
+    let e2 = e.clone();
+    after_events(move || {
+        let e = e2.clone();
+        let quiet = e.changes.get_untracked() == changes;
+        batch(|| e.show.set(true));
+        let back = unsafe { e.model.scroll_view().superview() }.is_some();
+        check("editor-teardown", removed && quiet && back, format!("removed: {removed}; no callback after removal: {quiet}; re-added: {back}"));
+        appearance_check(events.clone());
+    });
 }
 
 fn controls_b_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
@@ -1356,6 +1524,7 @@ fn main() {
         .window(Window::new("Teardown").size(380.0, 520.0).view(teardown_window()))
         .window(Window::new("Table").size(560.0, 420.0).view(table_window()))
         .window(Window::new("Outline").size(560.0, 360.0).view(outline_window()))
+        .window(Window::new("Editor").size(480.0, 320.0).view(editor_window()))
         .on_event(move |e| e2.borrow_mut().push(e))
         .on_launch(move || {
             if checks {

@@ -18,8 +18,8 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
-    NSFont, NSResponder, NSScrollView, NSText, NSTextDelegate, NSTextInputClient, NSTextView, NSTextViewDelegate,
-    NSAutoresizingMaskOptions, NSView,
+    NSFont, NSResponder, NSScrollView, NSText, NSTextDelegate, NSTextInputClient, NSTextStorage, NSTextStorageDelegate,
+    NSTextStorageEditActions, NSTextView, NSTextViewDelegate, NSAutoresizingMaskOptions, NSView,
 };
 use objc2_foundation::{NSNotification, NSPoint, NSRange, NSRect, NSSize, NSString, NSUndoManager};
 
@@ -41,6 +41,7 @@ pub enum TextEvent {
 trait Data {
     fn push(&self, event: TextEvent);
     fn quiet(&self) -> bool;
+    fn composing(&self) -> bool;
     fn undo_manager(&self) -> Retained<NSUndoManager>;
 }
 
@@ -121,6 +122,19 @@ define_class!(
         }
     }
 
+    // Every character edit, including undo and redo (for which AppKit sends
+    // no textDidChange:), reaches the text storage.
+    unsafe impl NSTextStorageDelegate for Delegate {
+        #[unsafe(method(textStorage:didProcessEditing:range:changeInLength:))]
+        fn did_process_editing(&self, _storage: &NSTextStorage, edited: NSTextStorageEditActions, _range: NSRange, _delta: isize) {
+            if edited.contains(NSTextStorageEditActions::EditedCharacters)
+                && let Some(data) = self.data().filter(|d| !d.quiet() && !d.composing())
+            {
+                data.push(TextEvent::Changed);
+            }
+        }
+    }
+
     unsafe impl NSTextViewDelegate for Delegate {
         #[unsafe(method(textViewDidChangeSelection:))]
         fn selection_did_change(&self, notification: &NSNotification) {
@@ -195,6 +209,11 @@ struct Inner {
 impl Data for Inner {
     fn push(&self, event: TextEvent) {
         let mut events = self.events.borrow_mut();
+        // `Changed` means "read the text again": one queued is enough (an
+        // edit is reported by both the text storage and textDidChange:).
+        if event == TextEvent::Changed && events.contains(&TextEvent::Changed) {
+            return;
+        }
         // Keep only the latest of a run of selection moves.
         if let (TextEvent::Selection(_), Some(TextEvent::Selection(_))) = (&event, events.back()) {
             events.pop_back();
@@ -206,6 +225,10 @@ impl Data for Inner {
 
     fn quiet(&self) -> bool {
         self.quiet.get()
+    }
+
+    fn composing(&self) -> bool {
+        self.view.hasMarkedText()
     }
 
     fn undo_manager(&self) -> Retained<NSUndoManager> {
@@ -227,8 +250,11 @@ impl Drop for DelegateIvars {
 
 impl Drop for Inner {
     fn drop(&mut self) {
-        // The text view holds its delegate weakly: detach it first.
+        // The text view and its storage hold the delegate weakly: detach it first.
         self.view.setDelegate(None);
+        if let Some(storage) = unsafe { self.view.textStorage() } {
+            storage.setDelegate(None);
+        }
         crate::testing::LIVE_MODELS.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         crate::keys::set_accepts_tab(self.id, false);
         if self.mounted.get() {
@@ -305,6 +331,10 @@ impl TextModel {
         *delegate.ivars().data.borrow_mut() = Some(weak);
         // SAFETY: the delegate lives as long as the model, which removes the view.
         view.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+        if let Some(storage) = unsafe { view.textStorage() } {
+            // Weak in AppKit, like the view's delegate; detached in Drop.
+            storage.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+        }
         crate::keys::set_accepts_tab(id, true);
         Self { inner }
     }
@@ -446,6 +476,12 @@ impl TextModel {
     /// Takes the queued user events (for the host widget).
     pub fn drain_events(&self) -> Vec<TextEvent> {
         self.inner.events.borrow_mut().drain(..).collect()
+    }
+
+    /// The `NSScrollView` holding the text view, for hosts that place it
+    /// themselves (no [`crate::attach`]ed window).
+    pub fn scroll_view(&self) -> Retained<NSScrollView> {
+        self.inner.scroll.clone()
     }
 
     /// The underlying `NSTextView` (escape hatch).

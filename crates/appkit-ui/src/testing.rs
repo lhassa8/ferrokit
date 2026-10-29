@@ -170,3 +170,40 @@ pub fn shortcut(window: &objc2_app_kit::NSWindow, chars: &str, shift: bool) -> b
     // SAFETY: standard responder-chain dispatch with a nil sender.
     window.firstResponder().is_some_and(|r| unsafe { r.tryToPerform_with(action, None) })
 }
+
+/// Whether the system spell checker flags `word` in English. (With automatic
+/// language detection one isolated word can be guessed as another language
+/// and pass, so the language is given.)
+pub fn is_misspelled(word: &str) -> bool {
+    let checker = objc2_app_kit::NSSpellChecker::sharedSpellChecker();
+    let mut count: isize = 0;
+    // SAFETY: documented NSSpellChecker method; wordCount out-pointer is valid.
+    let range: objc2_foundation::NSRange = unsafe {
+        objc2::msg_send![&*checker, checkSpellingOfString: &*NSString::from_str(word), startingAt: 0isize,
+            language: &*NSString::from_str("en"), wrap: false, inSpellDocumentWithTag: 0isize, wordCount: &mut count]
+    };
+    range.length > 0
+}
+
+/// The titles of a text view's context menu for a right-click on `word`.
+pub fn context_menu_for_word(view: &objc2_app_kit::NSTextView, word: &str) -> Vec<String> {
+    use objc2_app_kit::{NSEvent, NSEventModifierFlags, NSEventType};
+    use objc2_foundation::{NSPoint, NSRange, NSRect};
+    let Some(window) = view.window() else { return Vec::new() };
+    let text = view.string().to_string();
+    let Some(byte_index) = text.find(word) else { return Vec::new() };
+    let location = text[..byte_index].encode_utf16().count();
+    // SAFETY: NSTextInputClient geometry query.
+    let screen: NSRect = unsafe {
+        objc2::msg_send![view, firstRectForCharacterRange: NSRange::new(location + word.len() / 2, 1), actualRange: std::ptr::null_mut::<NSRange>()]
+    };
+    let w = window.convertRectFromScreen(screen);
+    let point = NSPoint::new(w.origin.x + w.size.width / 2.0, w.origin.y + w.size.height / 2.0);
+    let Some(event) = NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+        NSEventType::RightMouseDown, point, NSEventModifierFlags::empty(), 0.0, window.windowNumber(), None, 0, 1, 1.0,
+    ) else {
+        return Vec::new();
+    };
+    let Some(menu) = view.menuForEvent(&event) else { return Vec::new() };
+    (0..menu.numberOfItems()).filter_map(|i| menu.itemAtIndex(i)).map(|item| item.title().to_string()).collect()
+}

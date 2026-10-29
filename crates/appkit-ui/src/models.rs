@@ -1,14 +1,14 @@
-//! Views over `appkit-host`'s models: the native table (and, from F2.3, the
-//! text editor). The model owns the AppKit view and the data; the view places
+//! Views over `appkit-host`'s models: the native table and the text editor. The model owns the AppKit view and the data; the view places
 //! it and turns the model's events into callbacks.
 
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
 
 use appkit_host::table::{ColumnState, Sort, TableEvent, TableModel};
+use appkit_host::text::{TextEvent, TextModel};
 use objc2::rc::Retained;
 
-use crate::signal::batch;
+use crate::signal::{Effect, Signal, batch, untrack};
 use crate::view::{Cx, Node, Size, View};
 
 type Drain = Rc<dyn Fn()>;
@@ -126,4 +126,90 @@ pub fn table<T: 'static>(model: &Rc<TableModel<T>>) -> Table<T> {
         on_edit: None,
         on_columns: None,
     }
+}
+
+/// A native plain-text editor (`NSTextView` in a scroll view) showing a
+/// [`TextModel`]: input methods, spell checking, find, undo, text services
+/// and VoiceOver come from AppKit.
+pub struct TextEditor {
+    model: TextModel,
+    bound: Option<Signal<String>>,
+    on_change: Callback<String>,
+    on_selection: Callback<std::ops::Range<usize>>,
+    on_composition: Callback<Option<String>>,
+}
+
+impl TextEditor {
+    /// Binds the text two ways to `text`: edits set it (not while an input
+    /// method is composing); setting it replaces the editor's text (clearing
+    /// undo, like [`TextModel::set_text`]) unless it already matches.
+    pub fn bind(mut self, text: &Signal<String>) -> Self {
+        self.bound = Some(text.clone());
+        self
+    }
+
+    /// The text changed (typing, paste, undo, a committed composition).
+    pub fn on_change(mut self, f: impl Fn(String) + 'static) -> Self {
+        self.on_change = Some(Box::new(f));
+        self
+    }
+
+    /// The selection or caret moved (UTF-8 byte range).
+    pub fn on_selection(mut self, f: impl Fn(std::ops::Range<usize>) + 'static) -> Self {
+        self.on_selection = Some(Box::new(f));
+        self
+    }
+
+    /// An input method is composing (`Some(marked text)`) or stopped (`None`).
+    pub fn on_composition(mut self, f: impl Fn(Option<String>) + 'static) -> Self {
+        self.on_composition = Some(Box::new(f));
+        self
+    }
+}
+
+impl View for TextEditor {
+    fn build(self, cx: &mut Cx) -> Node {
+        let scroll = self.model.scroll_view();
+        let (mut node, _) = Node::leaf(cx, Retained::into_super(scroll), (true, true), Size { w: 200.0, h: 80.0 });
+        if let crate::view::Kind::Leaf(l) = &node.kind {
+            l.content.set(Some(Size { w: 200.0, h: 80.0 }));
+        }
+        if let Some(bound) = &self.bound {
+            // Signal → editor (skipped when equal: the editor is the source).
+            let (bound, model) = (bound.clone(), self.model.clone());
+            node.own(Effect::new(move || {
+                let want = bound.get();
+                untrack(|| {
+                    if model.text() != want {
+                        model.set_text(&want);
+                    }
+                });
+            }));
+        }
+        let model = self.model.clone();
+        let TextEditor { bound, on_change, on_selection, on_composition, .. } = self;
+        let drain: Drain = Rc::new(move || {
+            for event in model.drain_events() {
+                match event {
+                    TextEvent::Changed => {
+                        let text = model.text();
+                        if let Some(b) = &bound {
+                            b.set_if_changed(text.clone());
+                        }
+                        on_change.iter().for_each(|f| f(text.clone()));
+                    }
+                    TextEvent::Selection(r) => on_selection.iter().for_each(|f| f(r.clone())),
+                    TextEvent::Composition(c) => on_composition.iter().for_each(|f| f(c.clone())),
+                }
+            }
+        });
+        register(&drain);
+        node.hold(drain);
+        node
+    }
+}
+
+/// A native text editor showing `model` (see [`TextEditor`]).
+pub fn text_editor(model: &TextModel) -> TextEditor {
+    TextEditor { model: model.clone(), bound: None, on_change: None, on_selection: None, on_composition: None }
 }
