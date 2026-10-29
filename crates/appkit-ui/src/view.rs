@@ -52,7 +52,7 @@ impl AnyView {
         AnyView { id: None, build: Box::new(move |cx| view.build(cx)) }
     }
 
-    fn build_node(self, cx: &mut Cx) -> Node {
+    pub(crate) fn build_node(self, cx: &mut Cx) -> Node {
         let mut node = (self.build)(cx);
         node.id = self.id;
         node
@@ -182,6 +182,13 @@ pub(crate) enum Kind {
     Group(Rc<RefCell<Vec<Node>>>),
     /// Content inside an `NSScrollView`'s (flipped) document view.
     Scroll { scroll: Retained<NSScrollView>, doc: Retained<NSView>, content: Box<Node> },
+    /// Panes of an `NSSplitView`, each laid out in its pane's bounds.
+    Split {
+        split: Retained<objc2_app_kit::NSSplitView>,
+        panes: Vec<(Retained<crate::chrome::SplitPane>, Node)>,
+        /// Initial divider position, applied at the first layout.
+        position: Cell<Option<f64>>,
+    },
 }
 
 /// A built view: native views, effects and helper objects it owns.
@@ -226,6 +233,7 @@ impl Node {
             Kind::Stack { children, .. } => children.iter().collect(),
             Kind::Grid { rows, .. } => rows.iter().flatten().collect(),
             Kind::Scroll { content, .. } => vec![&**content],
+            Kind::Split { panes, .. } => panes.iter().map(|(_, n)| n).collect(),
             _ => Vec::new(),
         }
     }
@@ -247,6 +255,19 @@ impl Node {
         self.keep.push(object);
     }
 
+    /// The native views of this subtree's leaves (and scroll and split views).
+    pub(crate) fn leaf_views(&self, out: &mut Vec<Retained<NSView>>) {
+        match &self.kind {
+            Kind::Leaf(l) => out.push(l.view.clone()),
+            Kind::Scroll { scroll, .. } => out.push(Retained::into_super(scroll.clone())),
+            Kind::Split { panes, .. } => panes.iter().for_each(|(_, n)| n.leaf_views(out)),
+            Kind::Stack { children, .. } => children.iter().for_each(|c| c.leaf_views(out)),
+            Kind::Grid { rows, .. } => rows.iter().flatten().for_each(|c| c.leaf_views(out)),
+            Kind::Group(g) => g.borrow().iter().for_each(|c| c.leaf_views(out)),
+            Kind::Spacer => {}
+        }
+    }
+
     /// Keeps a Rust value alive for as long as the node.
     pub(crate) fn hold<V: ?Sized + 'static>(&mut self, value: Rc<V>) {
         self.held.push(Rc::new(value));
@@ -260,6 +281,9 @@ impl Drop for Node {
         self.effects.clear();
         if let Kind::Scroll { scroll, .. } = &self.kind {
             scroll.removeFromSuperview();
+        }
+        if let Kind::Split { split, .. } = &self.kind {
+            split.removeFromSuperview();
         }
         if let Kind::Leaf(l) = &self.kind {
             l.view.removeFromSuperview();
@@ -302,6 +326,11 @@ pub trait ViewExt: View + Sized {
     fn fill_height(self) -> Modified<Self> {
         Modified::new(self).fill_height()
     }
+
+    /// A right-click menu on this view's native views.
+    fn context_menu(self, items: Vec<crate::chrome::MenuItem>) -> Modified<Self> {
+        Modified::new(self).context_menu(items)
+    }
 }
 
 impl<V: View> ViewExt for V {}
@@ -313,11 +342,18 @@ pub struct Modified<V> {
     width: Option<f64>,
     height: Option<f64>,
     fill: (bool, bool),
+    menu: Option<Vec<crate::chrome::MenuItem>>,
 }
 
 impl<V: View> Modified<V> {
     fn new(view: V) -> Self {
-        Modified { view, padding: None, width: None, height: None, fill: (false, false) }
+        Modified { view, padding: None, width: None, height: None, fill: (false, false), menu: None }
+    }
+
+    /// A right-click menu on this view's native views.
+    pub fn context_menu(mut self, items: Vec<crate::chrome::MenuItem>) -> Self {
+        self.menu = Some(items);
+        self
     }
 
     /// Takes all the width its container offers.
@@ -359,6 +395,16 @@ impl<V: View> View for Modified<V> {
         }
         node.fixed = (self.width.or(node.fixed.0), self.height.or(node.fixed.1));
         node.fill = (node.fill.0 || self.fill.0, node.fill.1 || self.fill.1);
+        if let Some(items) = self.menu {
+            let (menu, targets) = crate::chrome::build_menu(cx.mtm, items);
+            let mut leaves = Vec::new();
+            node.leaf_views(&mut leaves);
+            for v in leaves {
+                // SAFETY: the node keeps the menu's targets alive.
+                unsafe { crate::chrome::menu_host(&v).setMenu(Some(&menu)) };
+            }
+            targets.into_iter().for_each(|t| node.keep(t));
+        }
         node
     }
 }

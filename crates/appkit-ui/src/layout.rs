@@ -91,6 +91,15 @@ pub(crate) fn ideal(node: &Node) -> Size {
         Kind::Spacer => Size::default(),
         Kind::Group(g) => stack_ideal(&g.borrow(), Axis::Vertical, 0.0),
         Kind::Stack { axis, spacing, children, .. } => stack_ideal(children, *axis, *spacing),
+        Kind::Split { panes, .. } => {
+            let (mut w, mut h) = (0.0f64, 0.0f64);
+            for (_, n) in panes {
+                let s = ideal(n);
+                w += s.w + 1.0;
+                h = h.max(s.h);
+            }
+            Size { w, h }
+        }
         Kind::Scroll { content, .. } => {
             // Room for the content's width plus a scroller; a modest height.
             let c = ideal(content);
@@ -165,7 +174,7 @@ pub(crate) fn flexible(node: &Node, axis: Axis, parent: Option<Axis>) -> bool {
             }
         }
         Kind::Spacer => parent == Some(axis),
-        Kind::Scroll { .. } => true,
+        Kind::Scroll { .. } | Kind::Split { .. } => true,
         Kind::Group(g) => g.borrow().iter().any(|c| flexible(c, axis, parent)),
         Kind::Stack { axis: own, children, .. } => {
             let mut any = false;
@@ -216,6 +225,21 @@ pub(crate) fn place(node: &Node, x: f64, y: f64, w: f64, h: f64, snap: &Snap) {
                 doc.setFrameSize(NSSize::new(w, h));
             }
             place(content, 0.0, 0.0, w, h, snap);
+        }
+        Kind::Split { split, panes, position } => {
+            let (x0, y0) = (snap.r(ix), snap.r(iy));
+            let r = NSRect::new(NSPoint::new(x0, y0), NSSize::new(snap.r(ix + iw) - x0, snap.r(iy + ih) - y0));
+            if split.frame() != r {
+                split.setFrame(r);
+                split.adjustSubviews();
+            }
+            if let Some(p) = position.take() {
+                split.setPosition_ofDividerAtIndex(p, 0);
+            }
+            for (pane, child) in panes {
+                let b = pane.bounds().size;
+                place(child, 0.0, 0.0, b.width, b.height, snap);
+            }
         }
         Kind::Group(g) => place_stack(&g.borrow(), Axis::Vertical, 0.0, None, [ix, iy, iw, ih], snap),
         Kind::Stack { axis, spacing, align, children } => {

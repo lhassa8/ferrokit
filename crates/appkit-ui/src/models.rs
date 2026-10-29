@@ -34,6 +34,8 @@ fn register(drain: &Drain) {
 }
 
 type Callback<A> = Option<Box<dyn Fn(A)>>;
+/// A row-menu item: its title and the action given the row.
+type RowAction = (String, Box<dyn Fn(usize)>);
 
 /// A native `NSTableView` showing a [`TableModel`]: millions of rows,
 /// sorting, column resizing, type-select and VoiceOver come from AppKit.
@@ -45,9 +47,17 @@ pub struct Table<T: 'static> {
     on_toggle: Callback<(usize, String, bool)>,
     on_edit: Callback<(usize, String, String)>,
     on_columns: Callback<Vec<ColumnState>>,
+    row_menu: Vec<RowAction>,
 }
 
 impl<T: 'static> Table<T> {
+    /// A right-click menu for rows: each action gets the clicked row (model
+    /// index), or the selected row when invoked another way.
+    pub fn row_menu(mut self, title: &str, action: impl Fn(usize) + 'static) -> Self {
+        self.row_menu.push((title.into(), Box::new(action)));
+        self
+    }
+
     /// The selected rows (model indices) changed.
     pub fn on_select(mut self, f: impl Fn(Vec<usize>) + 'static) -> Self {
         self.on_select = Some(Box::new(f));
@@ -87,12 +97,32 @@ impl<T: 'static> Table<T> {
 }
 
 impl<T: 'static> View for Table<T> {
-    fn build(self, cx: &mut Cx) -> Node {
+    fn build(mut self, cx: &mut Cx) -> Node {
         let scroll = self.model.scroll_view();
         let (mut node, _) = Node::leaf(cx, Retained::into_super(scroll), (true, true), Size { w: 200.0, h: 120.0 });
         if let crate::view::Kind::Leaf(l) = &node.kind {
             // A scroll view has no useful fitting size: it takes what it's given.
             l.content.set(Some(Size { w: 200.0, h: 120.0 }));
+        }
+        if !self.row_menu.is_empty() {
+            let tv = self.model.table_view();
+            let items = std::mem::take(&mut self.row_menu)
+                .into_iter()
+                .map(|(title, action)| {
+                    let (tv, model) = (tv.clone(), self.model.clone());
+                    crate::chrome::menu_item(&title, move || {
+                        let clicked = tv.clickedRow();
+                        let view_row = if clicked >= 0 { clicked } else { tv.selectedRow() };
+                        if let Some(row) = usize::try_from(view_row).ok().and_then(|r| model.row_at(r)) {
+                            action(row);
+                        }
+                    })
+                })
+                .collect();
+            let (menu, targets) = crate::chrome::build_menu(cx.mtm, items);
+            // SAFETY: the node keeps the menu's targets alive.
+            unsafe { tv.setMenu(Some(&menu)) };
+            targets.into_iter().for_each(|t| node.keep(t));
         }
         let model = self.model.clone();
         let Table { on_select, on_activate, on_sort, on_toggle, on_edit, on_columns, .. } = self;
@@ -125,6 +155,7 @@ pub fn table<T: 'static>(model: &Rc<TableModel<T>>) -> Table<T> {
         on_toggle: None,
         on_edit: None,
         on_columns: None,
+        row_menu: Vec::new(),
     }
 }
 

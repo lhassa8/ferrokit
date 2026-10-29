@@ -9,7 +9,8 @@ use appkit_ui::{
     Align, App, AppEvent, Effect, Identifiable, Signal, View, ViewExt, Window, batch, button, checkbox, dynamic, effect_runs,
     for_each, grid, hstack, label, later, layout_stats, layout_times_us, live_nodes, open, secure_field, spacer, spawn, text,
     text_field, toggle, vstack, windows, divider, image, picker, progress, scroll, slider, stepper, table, Column, Sort,
-    TableModel, ViewId, TreeNode, outline, sidebar, TextModel, text_editor,
+    TableModel, ViewId, TreeNode, outline, sidebar, TextModel, text_editor, split, toolbar_button, toolbar_space,
+    toolbar_search, menu_item, menu_separator,
 };
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
@@ -89,9 +90,9 @@ fn run_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     // Windows: both open; AppKit lists them in the Window menu.
     let ws = windows();
     let visible = ws.iter().filter(|w| w.isVisible()).count();
-    check("windows", ws.len() == 10 && visible == 10, format!("{} windows, {visible} visible", ws.len()));
+    check("windows", ws.len() == 11 && visible == 11, format!("{} windows, {visible} visible", ws.len()));
     let window_menu = menu_items(2);
-    let listed = ["First", "Second", "Views", "Layout", "Controls", "Controls B", "Teardown", "Table", "Outline", "Editor"].iter().all(|t| window_menu.iter().any(|(title, _, _)| title == t));
+    let listed = ["First", "Second", "Views", "Layout", "Controls", "Controls B", "Teardown", "Table", "Outline", "Editor", "Chrome"].iter().all(|t| window_menu.iter().any(|(title, _, _)| title == t));
     check("window-menu-lists-windows", listed && app.windowsMenu().is_some(), format!("{:?}", window_menu.iter().map(|e| &e.0).collect::<Vec<_>>()));
     check("help-menu", app.helpMenu().is_some(), String::new());
 
@@ -1416,8 +1417,149 @@ fn editor_teardown(events: Rc<RefCell<Vec<AppEvent>>>) {
         batch(|| e.show.set(true));
         let back = unsafe { e.model.scroll_view().superview() }.is_some();
         check("editor-teardown", removed && quiet && back, format!("removed: {removed}; no callback after removal: {quiet}; re-added: {back}"));
-        appearance_check(events.clone());
+        chrome_checks(events.clone());
     });
+}
+
+
+#[derive(Clone)]
+struct ChromeState {
+    adds: Signal<u32>,
+    locked: Signal<bool>,
+    query: Signal<String>,
+    renames: Signal<u32>,
+    archivable: Signal<bool>,
+    deleted: Signal<Option<usize>>,
+    model: Rc<TableModel<Order>>,
+}
+
+thread_local! {
+    static CHROME: ChromeState = {
+        let model = Rc::new(TableModel::new(ViewId(950), vec![Column::text("name", "Name", |o: &Order| o.name.clone())]));
+        model.set_rows((0..50).map(|i| Order { name: format!("Row {i}"), qty: 0.0, done: false }).collect());
+        ChromeState {
+            adds: Signal::new(0),
+            locked: Signal::new(false),
+            query: Signal::new(String::new()),
+            renames: Signal::new(0),
+            archivable: Signal::new(false),
+            deleted: Signal::new(None),
+            model,
+        }
+    };
+}
+
+fn chrome_window() -> Window {
+    let c = CHROME.with(Clone::clone);
+    let (adds, locked, renames, archivable, deleted) = (c.adds.clone(), c.locked.clone(), c.renames.clone(), c.archivable.clone(), c.deleted.clone());
+    Window::new("Chrome")
+        .size(620.0, 400.0)
+        .toolbar(vec![
+            toolbar_button("add", "Add", "plus", move || adds.update(|n| *n += 1)).disabled(move || locked.get()),
+            toolbar_space(),
+            toolbar_search("search", &c.query),
+        ])
+        .view(
+            split((
+                vstack((text("Sidebar pane").fill_width(),)).padding(8.0),
+                vstack((
+                    text("Content pane").fill_width(),
+                    table(&c.model).row_menu("Delete Row", move |row| deleted.set(Some(row))),
+                    text("Right-click me").context_menu(vec![
+                        menu_item("Rename", move || renames.update(|n| *n += 1)),
+                        menu_separator(),
+                        menu_item("Archive", || {}).enabled_when(move || archivable.get_untracked()),
+                    ]),
+                ))
+                .padding(8.0),
+            ))
+            .position(160.0),
+        )
+}
+
+fn chrome_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use objc2_app_kit::{NSSearchToolbarItem, NSSplitView};
+    let c = CHROME.with(Clone::clone);
+    let w = windows().into_iter().find(|w| w.title().to_string() == "Chrome").unwrap();
+    w.makeKeyAndOrderFront(None);
+    let sv = w.contentView().unwrap().subviews().iter().find_map(|v| v.downcast::<NSSplitView>().ok()).unwrap();
+    let panes: Vec<Retained<NSView>> = sv.subviews().to_vec();
+    let label = |text: &str| {
+        panes.iter().flat_map(|p| p.subviews().to_vec()).filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string() == text).unwrap()
+    };
+    let (left, right) = (panes[0].frame().size.width, panes[1].frame().size.width);
+    let content = label("Content pane");
+    let fits = (content.frame().size.width - (right - 16.0)).abs() < 1.0;
+    check(
+        "split-panes",
+        panes.len() == 2 && (left - 160.0).abs() < 1.0 && fits && has_ax(&ax_tree(&w), "AXSplitGroup", "", ""),
+        format!("panes {left:.0} + {right:.0}; content label {:.0} wide in its pane; AXSplitGroup in the tree", content.frame().size.width),
+    );
+
+    // Window resize: the first pane keeps its width; the second takes the change.
+    w.setContentSize(objc2_foundation::NSSize::new(720.0, 400.0));
+    let (l2, r2) = (panes[0].frame().size.width, panes[1].frame().size.width);
+    let follows = (label("Content pane").frame().size.width - (r2 - 16.0)).abs() < 1.0;
+    check("split-resize", (l2 - left).abs() < 1.0 && (r2 - right - 100.0).abs() < 1.0 && follows, format!("after +100 pt: panes {l2:.0} + {r2:.0}; content follows: {follows}"));
+
+    // Divider drag (as the user does): the pane's content re-lays out at once.
+    sv.setPosition_ofDividerAtIndex(240.0, 0);
+    let (l3, r3) = (panes[0].frame().size.width, panes[1].frame().size.width);
+    let follows = (label("Content pane").frame().size.width - (r3 - 16.0)).abs() < 1.0
+        && (label("Sidebar pane").frame().size.width - (l3 - 16.0)).abs() < 1.0;
+    check("split-drag", (l3 - 240.0).abs() < 1.0 && follows, format!("divider at 240: panes {l3:.0} + {r3:.0}; both panes' content follows: {follows}"));
+
+    // Toolbar: items in order; the button's action and its disabled state.
+    let tb = w.toolbar().unwrap();
+    let items = tb.items();
+    let ids: Vec<String> = items.iter().map(|i| i.itemIdentifier().to_string()).collect();
+    let add = items.iter().find(|i| i.itemIdentifier().to_string() == "add").unwrap();
+    let app = NSApplication::sharedApplication(mtm());
+    let fired = unsafe { app.sendAction_to_from(add.action().unwrap(), add.target().as_deref(), Some(&add)) };
+    let enabled_before = add.isEnabled();
+    batch(|| c.locked.set(true));
+    let enabled_after = add.isEnabled();
+    check(
+        "toolbar-button",
+        ids.len() == 3 && ids[0] == "add" && ids[2] == "search" && fired && c.adds.get_untracked() == 1 && enabled_before && !enabled_after,
+        format!("items {ids:?}; Add → {} add(s); disabled when locked: {}", c.adds.get_untracked(), !enabled_after),
+    );
+
+    // Toolbar search: both ways.
+    let search = items.iter().find_map(|i| i.downcast::<NSSearchToolbarItem>().ok()).unwrap();
+    let field = search.searchField();
+    post_edit(&field, "invoice");
+    let typed = c.query.get_untracked();
+    batch(|| c.query.set("receipt".into()));
+    check("toolbar-search", typed == "invoice" && field.stringValue().to_string() == "receipt", format!("typed → {typed:?}; signal → field {:?}", field.stringValue().to_string()));
+
+    // Context menu: items, action, validation when the menu opens.
+    let target = label("Right-click me");
+    let menu = target.menu().unwrap();
+    let titles: Vec<String> = (0..menu.numberOfItems()).filter_map(|i| menu.itemAtIndex(i)).map(|i| i.title().to_string()).collect();
+    menu.performActionForItemAtIndex(0);
+    menu.update();
+    let archive_off = !menu.itemAtIndex(2).unwrap().isEnabled();
+    batch(|| c.archivable.set(true));
+    menu.update();
+    let archive_on = menu.itemAtIndex(2).unwrap().isEnabled();
+    check(
+        "context-menu",
+        titles == ["Rename", "", "Archive"] && c.renames.get_untracked() == 1 && archive_off && archive_on,
+        format!("{titles:?}; Rename ran: {}; Archive disabled then enabled: {archive_off}/{archive_on}", c.renames.get_untracked() == 1),
+    );
+
+    // Table row menu: acts on the clicked row, or the selected one.
+    let tv = c.model.table_view();
+    tv.selectRowIndexes_byExtendingSelection(&objc2_foundation::NSIndexSet::indexSetWithIndex(3), false);
+    let row_menu = tv.menu().unwrap();
+    row_menu.performActionForItemAtIndex(0);
+    check(
+        "table-row-menu",
+        row_menu.itemAtIndex(0).is_some_and(|i| i.title().to_string() == "Delete Row") && c.deleted.get_untracked() == c.model.row_at(3),
+        format!("Delete Row on the selected row → model row {:?}", c.deleted.get_untracked()),
+    );
+    appearance_check(events);
 }
 
 fn controls_b_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
@@ -1525,6 +1667,7 @@ fn main() {
         .window(Window::new("Table").size(560.0, 420.0).view(table_window()))
         .window(Window::new("Outline").size(560.0, 360.0).view(outline_window()))
         .window(Window::new("Editor").size(480.0, 320.0).view(editor_window()))
+        .window(chrome_window())
         .on_event(move |e| e2.borrow_mut().push(e))
         .on_launch(move || {
             if checks {

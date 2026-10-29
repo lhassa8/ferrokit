@@ -5,7 +5,7 @@ use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSButton, NSControlStateValueOff, NSControlStateValueOn, NSControlTextEditingDelegate, NSSecureTextField, NSSwitch,
+    NSButton, NSControlStateValueOff, NSControlStateValueOn, NSControlTextEditingDelegate, NSSearchFieldDelegate, NSSecureTextField, NSSwitch,
     NSTextField, NSTextFieldDelegate, NSView,
 };
 use objc2_foundation::{NSNotification, NSString};
@@ -19,7 +19,7 @@ define_class!(
     #[thread_kind = MainThreadOnly]
     #[name = "AppKitUiFieldDelegate"]
     #[ivars = Signal<String>]
-    struct FieldDelegate;
+    pub(crate) struct FieldDelegate;
 
     unsafe impl NSObjectProtocol for FieldDelegate {}
 
@@ -34,10 +34,11 @@ define_class!(
     }
 
     unsafe impl NSTextFieldDelegate for FieldDelegate {}
+    unsafe impl NSSearchFieldDelegate for FieldDelegate {}
 );
 
 impl FieldDelegate {
-    fn new(mtm: MainThreadMarker, value: Signal<String>) -> Retained<Self> {
+    pub(crate) fn new(mtm: MainThreadMarker, value: Signal<String>) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(value);
         // SAFETY: NSObject's designated initialiser.
         unsafe { msg_send![super(this), init] }

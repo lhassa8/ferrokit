@@ -6,12 +6,13 @@
 //! secure fields, toggles and checkboxes bound to signals (F1.5); pickers,
 //! sliders, steppers, progress, SF Symbols, dividers and scroll views (F1.6);
 //! the native table (F2.1); outlines and the source-list sidebar (F2.2); the
-//! text editor (F2.3).
+//! text editor (F2.3); split views, toolbars and context menus (F2.4).
 //!
 //! Main thread only.
 
 #![warn(missing_docs)]
 
+mod chrome;
 mod controls;
 mod layout;
 mod menu;
@@ -43,6 +44,7 @@ pub use controls::{
     Checkbox, Image, Picker, Progress, Slider, Stepper, TextField, checkbox, image, picker, progress, secure_field, slider,
     stepper, text_field, toggle,
 };
+pub use chrome::{MenuItem, Split, ToolbarItem, menu_item, menu_separator, split, toolbar_button, toolbar_search, toolbar_space};
 pub use layout::layout_stats;
 pub use models::{Table, TextEditor, table, text_editor};
 pub use outline::{Outline, TreeNode, outline, sidebar};
@@ -65,12 +67,13 @@ pub struct Window {
     size: (f64, f64),
     content: Option<Box<dyn FnOnce() -> Retained<NSView>>>,
     view: Option<AnyView>,
+    toolbar: Vec<ToolbarItem>,
 }
 
 impl Window {
     /// A titled, resizable window of 800 × 600 points.
     pub fn new(title: &str) -> Self {
-        Window { title: title.into(), size: (800.0, 600.0), content: None, view: None }
+        Window { title: title.into(), size: (800.0, 600.0), content: None, view: None, toolbar: Vec::new() }
     }
 
     /// The content size in points.
@@ -82,6 +85,12 @@ impl Window {
     /// The window's content: `view`, laid out to fill the window.
     pub fn view(mut self, view: impl View) -> Self {
         self.view = Some(AnyView::new(view));
+        self
+    }
+
+    /// A unified toolbar with these items.
+    pub fn toolbar(mut self, items: Vec<ToolbarItem>) -> Self {
+        self.toolbar = items;
         self
     }
 
@@ -111,6 +120,10 @@ impl Window {
         // must not release them on close.
         unsafe { window.setReleasedWhenClosed(false) };
         window.setTitle(&NSString::from_str(&self.title));
+        if !self.toolbar.is_empty() {
+            let delegate = chrome::install_toolbar(&window, self.toolbar);
+            EXTRAS.with_borrow_mut(|e| e.push(delegate));
+        }
         // Tab follows the views' positions (top-left to bottom-right).
         window.setAutorecalculatesKeyViewLoop(true);
         if let Some(build) = self.content {
@@ -165,6 +178,8 @@ define_class!(
 thread_local! {
     static ROOTS: RefCell<Vec<(Retained<RootView>, Node)>> = const { RefCell::new(Vec::new()) };
     static IN_LAYOUT: Cell<bool> = const { Cell::new(false) };
+    /// Objects windows need for the app's lifetime (toolbar delegates).
+    static EXTRAS: RefCell<Vec<Retained<NSObject>>> = const { RefCell::new(Vec::new()) };
     static LAYOUT_US: RefCell<Vec<f64>> = const { RefCell::new(Vec::new()) };
 }
 
@@ -184,6 +199,16 @@ fn relayout(root: &RootView) {
     });
     LAYOUT_US.with_borrow_mut(|v| v.push(t.elapsed().as_secs_f64() * 1e6));
     IN_LAYOUT.with(|l| l.set(false));
+}
+
+/// Whether a layout pass is running.
+pub(crate) fn in_layout() -> bool {
+    IN_LAYOUT.with(Cell::get)
+}
+
+/// Lays every window out now (after AppKit resized part of one).
+pub(crate) fn relayout_now() {
+    relayout_all();
 }
 
 fn relayout_all() {
