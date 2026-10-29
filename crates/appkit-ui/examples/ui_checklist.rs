@@ -10,13 +10,13 @@ use appkit_ui::{
     for_each, grid, hstack, label, later, layout_stats, layout_times_us, live_nodes, open, secure_field, spacer, spawn, text,
     text_field, toggle, vstack, windows, divider, image, picker, progress, scroll, slider, stepper, table, Column, Sort,
     TableModel, ViewId, TreeNode, outline, sidebar, TextModel, text_editor, split, toolbar_button, toolbar_space,
-    toolbar_search, menu_item, menu_separator, Alert, OpenOptions, SheetHandle, alert, open_panel, save_panel, sheet,
+    toolbar_search, menu_item, menu_separator, MenuItem, Modifier, submenu, stored, Alert, OpenOptions, SheetHandle, alert, open_panel, save_panel, sheet,
 };
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2_app_kit::{NSApplication, NSEventModifierFlags, NSTextField, NSView};
 use appkit_ui::testing::{
-    ax_tree, context_menu_for_word, footprint_mb, has_ax, is_misspelled, post_edit, send_action, shortcut, snapshot_windows,
+    ax_tree, context_menu_for_word, footprint_mb, has_ax, is_misspelled, menu_key, post_edit, send_action, shortcut, snapshot_windows,
 };
 use objc2_app_kit::{NSAppearanceCustomization, NSTextInputClient};
 use objc2_foundation::NSString;
@@ -48,11 +48,15 @@ fn field(text: &str) -> Retained<NSView> {
     content
 }
 
+/// A top-level menu by title.
+fn bar_menu(title: &str) -> Retained<objc2_app_kit::NSMenu> {
+    let bar = NSApplication::sharedApplication(mtm()).mainMenu().unwrap();
+    bar.itemWithTitle(&NSString::from_str(title)).and_then(|i| i.submenu()).unwrap()
+}
+
 /// The titles and key equivalents of a top-level menu's items.
-fn menu_items(index: isize) -> Vec<(String, String, bool)> {
-    let app = NSApplication::sharedApplication(mtm());
-    let bar = app.mainMenu().unwrap();
-    let menu = bar.itemAtIndex(index).and_then(|i| i.submenu()).unwrap();
+fn menu_items(title: &str) -> Vec<(String, String, bool)> {
+    let menu = bar_menu(title);
     (0..menu.numberOfItems())
         .filter_map(|i| menu.itemAtIndex(i))
         .map(|i| {
@@ -72,14 +76,14 @@ fn run_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     // Menu bar: App, Edit, Window, Help.
     let bar = app.mainMenu().unwrap();
     let titles: Vec<String> = (0..bar.numberOfItems()).filter_map(|i| bar.itemAtIndex(i)).map(|i| i.title().to_string()).collect();
-    check("menu-bar", titles == ["Checklist", "Edit", "Window", "Help"], format!("{titles:?}"));
-    let app_menu = menu_items(0);
+    check("menu-bar", titles == ["Checklist", "File", "Edit", "View", "Window", "Help"], format!("{titles:?}"));
+    let app_menu = menu_items("Checklist");
     check(
         "app-menu",
         has(&app_menu, "Quit Checklist", "q") && has(&app_menu, "Hide Checklist", "h") && has(&app_menu, "About Checklist", ""),
         format!("{} items", app_menu.len()),
     );
-    let edit = menu_items(1);
+    let edit = menu_items("Edit");
     let redo_shift = edit.iter().any(|(t, k, _)| t == "Redo" && k == "Z");
     check(
         "edit-menu",
@@ -91,7 +95,7 @@ fn run_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let ws = windows();
     let visible = ws.iter().filter(|w| w.isVisible()).count();
     check("windows", ws.len() == 12 && visible == 12, format!("{} windows, {visible} visible", ws.len()));
-    let window_menu = menu_items(2);
+    let window_menu = menu_items("Window");
     let listed = ["First", "Second", "Views", "Layout", "Controls", "Controls B", "Teardown", "Table", "Outline", "Editor", "Chrome", "Dialogs"].iter().all(|t| window_menu.iter().any(|(title, _, _)| title == t));
     check("window-menu-lists-windows", listed && app.windowsMenu().is_some(), format!("{:?}", window_menu.iter().map(|e| &e.0).collect::<Vec<_>>()));
     check("help-menu", app.helpMenu().is_some(), String::new());
@@ -100,7 +104,7 @@ fn run_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let first = &ws[0];
     let field = first.contentView().unwrap().subviews().firstObject().unwrap().downcast::<NSTextField>().unwrap();
     first.makeFirstResponder(Some(&field));
-    let edit_menu = app.mainMenu().unwrap().itemAtIndex(1).and_then(|i| i.submenu()).unwrap();
+    let edit_menu = bar_menu("Edit");
     let select_all = edit_menu.indexOfItemWithTitle(&NSString::from_str("Select All"));
     edit_menu.performActionForItemAtIndex(select_all);
     let selected = field.currentEditor().map(|e| e.selectedRange().length).unwrap_or(0);
@@ -154,6 +158,200 @@ fn run_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
             });
         },
     );
+}
+
+#[derive(Clone)]
+struct MenuState {
+    items: Signal<i64>,
+    sidebar: Signal<bool>,
+    sort: Signal<u8>,
+    refreshed: Signal<u32>,
+}
+
+thread_local! {
+    static MENU: MenuState = MenuState {
+        items: Signal::new(0),
+        sidebar: Signal::new(true),
+        sort: Signal::new(0),
+        refreshed: Signal::new(0),
+    };
+}
+
+fn file_menu() -> Vec<MenuItem> {
+    let m = MENU.with(Clone::clone);
+    let (add, remove) = (m.items.clone(), m.items.clone());
+    let has = m.items.clone();
+    vec![
+        menu_item("New Item", move || add.update(|n| *n += 1)).key("n"),
+        menu_item("Remove Item", move || remove.update(|n| *n -= 1)).key_with("n", &[Modifier::Option]).enabled_when(move || has.get() > 0),
+    ]
+}
+
+fn view_menu() -> Vec<MenuItem> {
+    let m = MENU.with(Clone::clone);
+    let (s1, s2) = (m.sidebar.clone(), m.sidebar.clone());
+    let sort_item = |title: &str, v: u8| {
+        let (a, b) = (m.sort.clone(), m.sort.clone());
+        menu_item(title, move || a.set(v)).checked_when(move || b.get() == v)
+    };
+    let r = m.refreshed.clone();
+    vec![
+        menu_item("Show Sidebar", move || s1.update(|s| *s = !*s)).key_with("s", &[Modifier::Control]).checked_when(move || s2.get()),
+        submenu("Sort By", vec![sort_item("Name", 0), sort_item("Date", 1)]),
+        menu_separator(),
+        menu_item("Refresh", move || r.update(|n| *n += 1)).key("R"),
+    ]
+}
+
+fn settings_window() -> Window {
+    let dark = stored("check.settings.dark", false);
+    let name = stored("check.settings.name", "Untitled".to_string());
+    Window::new("Settings").size(360.0, 140.0).view(vstack((toggle("Dark tables", &dark), text_field(&name))).padding(20.0))
+}
+
+fn menu_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use objc2_app_kit::{NSControlStateValueOn, NSWindowStyleMask};
+    let m = MENU.with(Clone::clone);
+    let file = bar_menu("File");
+    let file_items = menu_items("File");
+    let titles: Vec<&str> = file_items.iter().map(|e| e.0.as_str()).collect();
+    check(
+        "file-menu",
+        // AppKit adds Close All (⌥) after Close itself.
+        titles.starts_with(&["New Item", "Remove Item", "", "Close"]) && has(&file_items, "New Item", "n") && has(&file_items, "Close", "w"),
+        format!("{titles:?}"),
+    );
+
+    // Custom items: actions, key equivalents, enabled state from signals.
+    file.update();
+    let remove = file.itemWithTitle(&NSString::from_str("Remove Item")).unwrap();
+    let off = !remove.isEnabled();
+    let cmd = NSEventModifierFlags::Command;
+    // A disabled item's shortcut is taken (AppKit beeps) but doesn't run.
+    menu_key("n", cmd | NSEventModifierFlags::Option);
+    let blocked = m.items.get_untracked() == 0;
+    let new_key = menu_key("n", cmd);
+    file.update();
+    let on = remove.isEnabled();
+    let alt_key = menu_key("n", cmd | NSEventModifierFlags::Option);
+    let after = m.items.get_untracked();
+    let refresh = menu_key("R", cmd | NSEventModifierFlags::Shift);
+    check(
+        "menu-key-equivalents",
+        off && blocked && new_key && on && alt_key && after == 0 && refresh && m.refreshed.get_untracked() == 1,
+        format!(
+            "Remove disabled at 0: {off}; its ⌥⌘N ran nothing: {blocked}; ⌘N fired: {new_key}; Remove enabled at 1: {on}; ⌥⌘N fired: {alt_key} → {after}; ⇧⌘R: {refresh}"
+        ),
+    );
+
+    // Checked state and submenus.
+    let view = bar_menu("View");
+    let sidebar = view.itemWithTitle(&NSString::from_str("Show Sidebar")).unwrap();
+    view.update();
+    let checked0 = sidebar.state() == NSControlStateValueOn;
+    let toggled = menu_key("s", cmd | NSEventModifierFlags::Control);
+    view.update();
+    let checked1 = sidebar.state() == NSControlStateValueOn;
+    let sort = view.itemWithTitle(&NSString::from_str("Sort By")).and_then(|i| i.submenu()).unwrap();
+    let date = sort.indexOfItemWithTitle(&NSString::from_str("Date"));
+    sort.performActionForItemAtIndex(date);
+    sort.update();
+    let marks: Vec<bool> = (0..sort.numberOfItems()).map(|i| sort.itemAtIndex(i).unwrap().state() == NSControlStateValueOn).collect();
+    check(
+        "menu-checked-submenu",
+        checked0 && toggled && !checked1 && !m.sidebar.get_untracked() && m.sort.get_untracked() == 1 && marks == [false, true],
+        format!("sidebar ✓ {checked0} → ⌃⌘S → {checked1}; Sort By › Date → sort {} marks {marks:?}", m.sort.get_untracked()),
+    );
+
+    // Settings: ⌘, in the app menu; built once, then brought to the front.
+    let app_items = menu_items("Checklist");
+    let item_ok = has(&app_items, "Settings…", ",");
+    let before = NSApplication::sharedApplication(mtm()).windows().count();
+    let fired = menu_key(",", cmd);
+    let s1 = NSApplication::sharedApplication(mtm()).windows().iter().find(|w| w.title().to_string() == "Settings");
+    let built = NSApplication::sharedApplication(mtm()).windows().count();
+    if let Some(w) = &s1 {
+        w.close();
+    }
+    let s2 = appkit_ui::open_settings();
+    let after = NSApplication::sharedApplication(mtm()).windows().count();
+    let same = s1.as_ref().zip(s2.as_ref()).is_some_and(|(a, b)| std::ptr::eq(&**a, &**b));
+    let fixed = s2.as_ref().is_some_and(|w| !w.styleMask().contains(NSWindowStyleMask::Resizable) && w.isExcludedFromWindowsMenu() && w.isVisible());
+    let unlisted = !menu_items("Window").iter().any(|(t, _, _)| t == "Settings");
+    check(
+        "settings-window",
+        item_ok && fired && built == before + 1 && after == built && same && fixed && unlisted,
+        format!("Settings… ⌘, listed: {item_ok}; fired: {fired}; windows {before} → {built} → reopen {after}; same window: {same}; fixed, unlisted: {fixed} {unlisted}"),
+    );
+
+    // Stored settings: the toggle writes user defaults; a new signal reads them.
+    let w = s2.unwrap();
+    let toggle_v = all_views(&w.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSSwitch>().ok());
+    let defaults = objc2_foundation::NSUserDefaults::standardUserDefaults();
+    let key = NSString::from_str("check.settings.dark");
+    let unset = defaults.objectForKey(&key).is_none();
+    if let Some(t) = &toggle_v {
+        t.setState(NSControlStateValueOn);
+        send_action(t);
+    }
+    let written = defaults.boolForKey(&key);
+    let reread = stored("check.settings.dark", false).get_untracked();
+    check("stored-settings", unset && toggle_v.is_some() && written && reread, format!("unset before: {unset}; toggle → defaults {written}; a new stored signal reads {reread}"));
+    w.close();
+    defaults.removeObjectForKey(&key);
+
+    // Frame autosave: a window moved and resized; a new one with the same
+    // name opens there.
+    let frame_key = NSString::from_str("NSWindow Frame check restore");
+    defaults.removeObjectForKey(&frame_key);
+    let a = open(Window::new("Restore A").size(300.0, 200.0).remember_frame("check restore"));
+    let target = objc2_foundation::NSRect::new(objc2_foundation::NSPoint::new(140.0, 160.0), objc2_foundation::NSSize::new(420.0, 260.0));
+    a.setFrame_display(target, true);
+    let saved = defaults.stringForKey(&frame_key).map(|s| s.to_string());
+    appkit_ui::close_window(&a);
+    a.setFrameAutosaveName(&NSString::new());
+    let b = open(Window::new("Restore B").size(300.0, 200.0).remember_frame("check restore"));
+    let got = b.frame();
+    appkit_ui::close_window(&b);
+    check(
+        "frame-autosave",
+        saved.is_some() && got == target,
+        format!("saved {saved:?}; reopened at {:.0},{:.0} {:.0}×{:.0}", got.origin.x, got.origin.y, got.size.width, got.size.height),
+    );
+    defaults.removeObjectForKey(&frame_key);
+
+    // Split position: a divider moved outside layout (as a drag) is saved; a
+    // new split with the same name starts there.
+    let split_key = NSString::from_str("appkit-ui split check");
+    defaults.removeObjectForKey(&split_key);
+    let split_window = || Window::new("Split R").size(500.0, 200.0).view(split((text("a"), text("b"))).position(150.0).remember("check"));
+    let c = open(split_window());
+    let sv = all_views(&c.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSSplitView>().ok()).unwrap();
+    let initial = sv.arrangedSubviews().firstObject().unwrap().frame().size.width;
+    sv.setPosition_ofDividerAtIndex(230.0, 0);
+    let stored_pos = defaults.doubleForKey(&split_key);
+    appkit_ui::close_window(&c);
+    let d = open(split_window());
+    let sv = all_views(&d.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSSplitView>().ok()).unwrap();
+    let restored = sv.arrangedSubviews().firstObject().unwrap().frame().size.width;
+    appkit_ui::close_window(&d);
+    check(
+        "split-remember",
+        initial == 150.0 && stored_pos == 230.0 && restored == 230.0,
+        format!("first pane {initial} → dragged to 230 → saved {stored_pos} → new split {restored}"),
+    );
+    defaults.removeObjectForKey(&split_key);
+
+    after_events(move || appearance_check(events.clone()));
+}
+
+fn all_views(v: &NSView) -> Vec<Retained<NSView>> {
+    let mut out = Vec::new();
+    for s in v.subviews().iter() {
+        out.extend(all_views(&s));
+        out.push(s);
+    }
+    out
 }
 
 fn appearance_check(events: Rc<RefCell<Vec<AppEvent>>>) {
@@ -1693,7 +1891,7 @@ fn panel_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                 format!("proposed {name:?} in {folder:?} (expected folder: {folder_ok}); Cancel → {got:?}"),
             );
             let events = events.clone();
-            after_events(move || appearance_check(events.clone()));
+            after_events(move || menu_checks(events.clone()));
         });
     });
 }
@@ -1788,7 +1986,39 @@ fn controls_b_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     keyboard_checks(events);
 }
 
+/// Window restoration across launches: `RESTORE=save` moves a remembered
+/// window and split, then quits (⌘Q's path, which flushes user defaults);
+/// `RESTORE=verify`, in a second launch, checks both came back and cleans up.
+fn restore_run(step: String) {
+    use objc2_foundation::{NSPoint, NSRect, NSSize, NSUserDefaults};
+    let target = NSRect::new(NSPoint::new(180.0, 140.0), NSSize::new(520.0, 300.0));
+    App::new("Checklist")
+        .window(Window::new("Restore").size(400.0, 240.0).remember_frame("two-launch").view(split((text("a"), text("b"))).position(120.0).remember("two-launch")))
+        .on_launch(move || {
+            let w = windows().remove(0);
+            let sv = all_views(&w.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSSplitView>().ok()).unwrap();
+            let pane = || sv.arrangedSubviews().firstObject().unwrap().frame().size.width;
+            if step == "save" {
+                w.setFrame_display(target, true);
+                sv.setPosition_ofDividerAtIndex(210.0, 0);
+                eprintln!("[restore] saved frame {:?} pane {}", w.frame(), pane());
+                appkit_ui::quit();
+            } else {
+                let (frame, width) = (w.frame(), pane());
+                check("restore-across-launches", frame == target && width == 210.0, format!("frame {frame:?}; pane {width}"));
+                let d = NSUserDefaults::standardUserDefaults();
+                d.removeObjectForKey(&NSString::from_str("NSWindow Frame two-launch"));
+                d.removeObjectForKey(&NSString::from_str("appkit-ui split two-launch"));
+                std::process::exit(FAILED.with(Cell::get) as i32);
+            }
+        })
+        .run();
+}
+
 fn main() {
+    if let Ok(step) = std::env::var("RESTORE") {
+        return restore_run(step);
+    }
     let events: Rc<RefCell<Vec<AppEvent>>> = Rc::default();
     let checks = std::env::var("CHECK").is_ok_and(|v| v == "all");
     let e2 = events.clone();
@@ -1805,6 +2035,9 @@ fn main() {
         .window(Window::new("Editor").size(480.0, 320.0).view(editor_window()))
         .window(chrome_window())
         .window(Window::new("Dialogs").size(420.0, 260.0).view(vstack((text("Dialogs"),)).padding(12.0)))
+        .menu("File", file_menu())
+        .menu("View", view_menu())
+        .settings(settings_window())
         .on_event(move |e| e2.borrow_mut().push(e))
         .on_launch(move || {
             if checks {

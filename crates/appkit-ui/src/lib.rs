@@ -7,7 +7,8 @@
 //! sliders, steppers, progress, SF Symbols, dividers and scroll views (F1.6);
 //! the native table (F2.1); outlines and the source-list sidebar (F2.2); the
 //! text editor (F2.3); split views, toolbars and context menus (F2.4); sheets,
-//! alerts and file panels (F2.5).
+//! alerts and file panels (F2.5); the app's menus, its Settings window,
+//! stored settings and window restoration (F3.1).
 //!
 //! Main thread only.
 
@@ -21,6 +22,7 @@ mod menu;
 mod models;
 mod outline;
 mod signal;
+mod store;
 pub mod testing;
 mod view;
 
@@ -41,12 +43,13 @@ use objc2_core_foundation::{CFRunLoop, kCFRunLoopCommonModes};
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
 pub use appkit_host::{is_dark, system_colors};
+pub use store::{Stored, stored};
 pub use signal::{Effect, Memo, Signal, after_batch, batch, effect_runs, untrack};
 pub use controls::{
     Checkbox, Image, Picker, Progress, Slider, Stepper, TextField, checkbox, image, picker, progress, secure_field, slider,
     stepper, text_field, toggle,
 };
-pub use chrome::{MenuItem, Split, ToolbarItem, menu_item, menu_separator, split, toolbar_button, toolbar_search, toolbar_space};
+pub use chrome::{MenuItem, Modifier, Split, submenu, ToolbarItem, menu_item, menu_separator, split, toolbar_button, toolbar_search, toolbar_space};
 pub use dialogs::{Alert, OpenOptions, SheetHandle, alert, open_panel, save_panel, sheet};
 pub use layout::layout_stats;
 pub use models::{Table, TextEditor, table, text_editor};
@@ -71,12 +74,22 @@ pub struct Window {
     content: Option<Box<dyn FnOnce() -> Retained<NSView>>>,
     view: Option<AnyView>,
     toolbar: Vec<ToolbarItem>,
+    autosave: Option<String>,
+    fixed: bool,
 }
 
 impl Window {
     /// A titled, resizable window of 800 × 600 points.
     pub fn new(title: &str) -> Self {
-        Window { title: title.into(), size: (800.0, 600.0), content: None, view: None, toolbar: Vec::new() }
+        Window {
+            title: title.into(),
+            size: (800.0, 600.0),
+            content: None,
+            view: None,
+            toolbar: Vec::new(),
+            autosave: None,
+            fixed: false,
+        }
     }
 
     /// The content size in points.
@@ -97,6 +110,14 @@ impl Window {
         self
     }
 
+    /// Saves the window's position and size under `name` whenever they
+    /// change, and reopens it there next time (AppKit's frame autosave, in
+    /// the app's user defaults).
+    pub fn remember_frame(mut self, name: &str) -> Self {
+        self.autosave = Some(name.into());
+        self
+    }
+
     /// A plain `NSView` as the window's content (escape hatch; no layout).
     pub fn content(mut self, build: impl FnOnce() -> Retained<NSView> + 'static) -> Self {
         self.content = Some(Box::new(build));
@@ -105,10 +126,11 @@ impl Window {
 
     pub(crate) fn open(self, mtm: MainThreadMarker) -> Retained<NSWindow> {
         let rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(self.size.0, self.size.1));
-        let style = NSWindowStyleMask::Titled
-            | NSWindowStyleMask::Closable
-            | NSWindowStyleMask::Miniaturizable
-            | NSWindowStyleMask::Resizable;
+        let style = if self.fixed {
+            NSWindowStyleMask::Titled | NSWindowStyleMask::Closable
+        } else {
+            NSWindowStyleMask::Titled | NSWindowStyleMask::Closable | NSWindowStyleMask::Miniaturizable | NSWindowStyleMask::Resizable
+        };
         // SAFETY: standard window creation on the main thread.
         let window = unsafe {
             NSWindow::initWithContentRect_styleMask_backing_defer(
@@ -141,6 +163,12 @@ impl Window {
             relayout_all();
         }
         window.center();
+        if let Some(name) = &self.autosave {
+            let name = NSString::from_str(name);
+            // Restore first: setting the name alone doesn't move the window.
+            window.setFrameUsingName(&name);
+            window.setFrameAutosaveName(&name);
+        }
         window
     }
 }
@@ -248,17 +276,36 @@ pub struct App {
     name: String,
     windows: Vec<Window>,
     on_launch: Option<Box<dyn FnOnce()>>,
+    menus: Vec<(String, Vec<MenuItem>)>,
+    settings: Option<Window>,
 }
 
 impl App {
     /// An app called `name` (shown in the menu bar).
     pub fn new(name: &str) -> Self {
-        App { name: name.into(), windows: Vec::new(), on_launch: None }
+        App { name: name.into(), windows: Vec::new(), on_launch: None, menus: Vec::new(), settings: None }
     }
 
     /// Opens `window` at launch. Call more than once for several windows.
     pub fn window(mut self, window: Window) -> Self {
         self.windows.push(window);
+        self
+    }
+
+    /// Adds a menu to the menu bar, between Edit and Window ("View", "Go"…).
+    /// A menu titled "File" fills the standard File menu instead, above its
+    /// Close item. Items run in a [`batch`]; their enabled and checked
+    /// states are evaluated when the menu opens or a key equivalent fires.
+    pub fn menu(mut self, title: &str, items: Vec<MenuItem>) -> Self {
+        self.menus.push((title.into(), items));
+        self
+    }
+
+    /// The app's Settings window: "Settings…" (⌘,) in the app menu opens it
+    /// (built on first use, then brought to the front). It isn't resizable
+    /// or listed in the Window menu, and it remembers its position.
+    pub fn settings(mut self, window: Window) -> Self {
+        self.settings = Some(window);
         self
     }
 
@@ -280,7 +327,14 @@ impl App {
         let mtm = mtm();
         let app = NSApplication::sharedApplication(mtm);
         app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
-        menu::install(mtm, &self.name);
+        let settings = self.settings.map(|w| {
+            SETTINGS.with_borrow_mut(|s| *s = Some(Err(w)));
+            Retained::into_super(view::ActionTarget::new(mtm, || {
+                open_settings();
+            }))
+        });
+        let targets = menu::install(mtm, &self.name, self.menus, settings);
+        EXTRAS.with_borrow_mut(|e| e.extend(targets));
         after_batch(|| {
             if view::LAYOUT_DIRTY.with(Cell::get) {
                 relayout_all();
@@ -335,6 +389,44 @@ pub fn open(window: Window) -> Retained<NSWindow> {
         WINDOWS.with_borrow_mut(|ws| ws.push(w.clone()));
         w
     })
+}
+
+thread_local! {
+    /// The Settings window: not yet built, or open.
+    static SETTINGS: RefCell<Option<Result<Retained<NSWindow>, Window>>> = const { RefCell::new(None) };
+}
+
+/// Opens the app's Settings window (see [`App::settings`]), or brings it to
+/// the front, and returns it. `None` if the app has none.
+pub fn open_settings() -> Option<Retained<NSWindow>> {
+    let mtm = mtm();
+    let pending = SETTINGS.with_borrow_mut(|s| match s.take() {
+        Some(Err(w)) => Some(w),
+        other => {
+            *s = other;
+            None
+        }
+    });
+    if let Some(mut w) = pending {
+        w.fixed = true;
+        if w.autosave.is_none() {
+            w.autosave = Some("appkit-ui settings".into());
+        }
+        let window = objc2::rc::autoreleasepool(|_| w.open(mtm));
+        window.setExcludedFromWindowsMenu(true);
+        SETTINGS.with_borrow_mut(|s| *s = Some(Ok(window)));
+    }
+    let window = SETTINGS.with_borrow(|s| s.as_ref().and_then(|w| w.as_ref().ok().cloned()))?;
+    window.makeKeyAndOrderFront(None);
+    Some(window)
+}
+
+/// Closes `window` and tears down its views (its node is dropped: effects
+/// stop, native views go). The app no longer lists it in [`windows`].
+pub fn close_window(window: &NSWindow) {
+    window.close();
+    drop_root(window);
+    WINDOWS.with_borrow_mut(|ws| ws.retain(|w| !std::ptr::eq(&**w, window)));
 }
 
 /// The app's windows, in the order they were opened.

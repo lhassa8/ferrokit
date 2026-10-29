@@ -146,6 +146,26 @@ pub fn key_equiv(w: &objc2_app_kit::NSWindow, chars: &str, shift: bool) -> bool 
     NSApplication::sharedApplication(mtm()).mainMenu().unwrap().performKeyEquivalent(&event)
 }
 
+/// Sends a key-down with `chars` and `modifiers` to the main menu's key
+/// equivalents (no window needed); true if an enabled item took it.
+pub fn menu_key(chars: &str, modifiers: objc2_app_kit::NSEventModifierFlags) -> bool {
+    use objc2_app_kit::{NSEvent, NSEventType};
+    let event = NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+        NSEventType::KeyDown,
+        objc2_foundation::NSPoint::new(0.0, 0.0),
+        modifiers,
+        0.0,
+        0,
+        None,
+        &NSString::from_str(chars),
+        &NSString::from_str(chars),
+        false,
+        0,
+    )
+    .unwrap();
+    NSApplication::sharedApplication(mtm()).mainMenu().unwrap().performKeyEquivalent(&event)
+}
+
 /// Performs a keyboard shortcut the way the menu bar does, without needing
 /// the app to be active: finds the main-menu item for ⌘`chars` (⇧⌘ when
 /// `shift`; AppKit's rule: an uppercase key equivalent implies Shift) and
