@@ -839,9 +839,63 @@ fn deep_widget_cycles(events: Rc<RefCell<Vec<AppEvent>>>) {
             format!("70 windows with a 10,000-row table, an outline and an editor, closed by the close button: {per:.1} KB per cycle after warm-up (budget 64); nodes left {left}; windows still alive {alive}"),
         );
         let events = events.clone();
-        after_events(move || transfer_checks(events.clone()));
+        after_events(move || accessibility_checks(events.clone()));
     });
     cycles(0, 0.0, cycle, done);
+}
+
+/// Names VoiceOver reads: `accessibility_label` on a field, a slider, a
+/// pop-up, a stepper and an editor; a toggle's switch; decorative and
+/// described images. The audit finds an unnamed field, then nothing.
+fn accessibility_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use appkit_ui::testing::{ax_audit, ax_elements};
+    let (name, vol, pick, days, on) = (Signal::new(String::new()), Signal::new(0.5), Signal::new(1u8), Signal::new(3.0), Signal::new(true));
+    let notes = TextModel::new(ViewId(990), "");
+    let bare = Signal::new(String::new());
+    let w = open(Window::new("Accessibility").size(420.0, 420.0).view(
+        vstack((
+            hstack((text("Name:"), text_field(&name).accessibility_label("Name"))),
+            hstack((image("speaker.fill"), slider(&vol, 0.0, 1.0).accessibility_label("Volume"))),
+            picker(&pick, vec![("One", 1u8), ("Two", 2)]).accessibility_label("Count"),
+            stepper(&days, 1.0, 9.0, 1.0).accessibility_label("Days"),
+            toggle("Sync", &on),
+            image("star.fill").description("Favourite"),
+            text_editor(&notes).accessibility_label("Notes"),
+            text_field(&bare),
+        ))
+        .padding(12.0),
+    ));
+    let named = |role: &str, label: &str| ax_elements(&w).iter().any(|e| e.role == role && e.name == label);
+    let found = [
+        ("AXTextField", "Name"),
+        ("AXSlider", "Volume"),
+        ("AXPopUpButton", "Count"),
+        ("AXIncrementor", "Days"),
+        ("AXButton", "Sync"),
+        ("AXImage", "Favourite"),
+        ("AXTextArea", "Notes"),
+    ]
+    .iter()
+    .filter(|(r, l)| !named(r, l))
+    .map(|(r, l)| format!("{r} {l}"))
+    .collect::<Vec<_>>();
+    let images = ax_elements(&w).iter().filter(|e| e.role == "AXImage").count();
+    let problems = ax_audit(&w);
+    check(
+        "accessibility-labels",
+        found.is_empty() && images == 1 && problems.len() == 1 && problems[0].contains("AXTextField"),
+        format!("names missing {found:?}; images exposed {images} (the decorative one hidden); audit finds only the bare field: {problems:?}"),
+    );
+    appkit_ui::close_window(&w);
+    // The form windows of this checklist.
+    let mut forms = Vec::new();
+    for title in ["Controls", "Controls B"] {
+        if let Some(fw) = windows().into_iter().find(|w| w.title().to_string() == title) {
+            forms.extend(ax_audit(&fw).into_iter().map(|p| format!("{title}: {p}")));
+        }
+    }
+    check("accessibility-audit-forms", forms.is_empty(), format!("Controls and Controls B: {forms:?}"));
+    after_events(move || transfer_checks(events.clone()));
 }
 
 /// The custom menus' shortcuts and Settings (⌘,) from posted key presses,
@@ -1620,8 +1674,8 @@ fn controls_b_window() -> impl View {
     let c = CTRL_B.with(Clone::clone);
     let (count, prog, lines) = (c.count.clone(), c.progress.clone(), c.lines.clone());
     vstack((
-        picker(&c.size, vec![("Small", 1), ("Medium", 2), ("Large", 3)]),
-        hstack((slider(&c.volume, 0.0, 1.0), stepper(&c.count, 0.0, 10.0, 1.0), label(move || format!("count {}", count.get())))),
+        picker(&c.size, vec![("Small", 1), ("Medium", 2), ("Large", 3)]).accessibility_label("Size"),
+        hstack((slider(&c.volume, 0.0, 1.0).accessibility_label("Volume"), stepper(&c.count, 0.0, 10.0, 1.0).accessibility_label("Count"), label(move || format!("count {}", count.get())))),
         progress(move || prog.get()),
         hstack((image("star.fill").description("Favourite"), text("starred"))),
         divider(),

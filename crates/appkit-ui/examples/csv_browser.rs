@@ -147,7 +147,8 @@ fn content(b: &Browser) -> impl View {
                     }
                 }
             })
-            .height(110.0),
+            .height(110.0)
+            .accessibility_label("Notes"),
             show_note,
         ))
         .padding(8.0),
@@ -576,6 +577,8 @@ mod self_checks {
             worst = worst.max(s.elapsed().as_secs_f64() * 1e3);
         }
         check("scroll", worst < 16.7, format!("100 jumps: {:.0} ms total, worst {worst:.1} ms", t.elapsed().as_secs_f64() * 1e3));
+        let problems = appkit_ui::testing::ax_audit(&windows()[0]);
+        check("accessibility-audit", problems.is_empty(), format!("controls VoiceOver can't name: {problems:?}"));
         let (now, peak) = (footprint_mb(), peak_footprint_mb());
         check("memory", peak < 400.0, format!("footprint now {now:.0} MB, peak {peak:.0} MB (Iced demo 420, WaterUI 1,300–2,300)"));
         let finish = || {

@@ -68,7 +68,7 @@ fn appearance(s: &Settings) -> impl View {
     let options = vec![("System", Appearance::System), ("Light", Appearance::Light), ("Dark", Appearance::Dark)];
     vstack((
         text("Appearance"),
-        grid([(text("Theme:"), picker(&s.theme, options))]).align_column(0, Align::End),
+        grid([(text("Theme:"), picker(&s.theme, options).accessibility_label("Theme"))]).align_column(0, Align::End),
         watch(move || set_appearance(theme.get())),
     ))
 }
@@ -80,8 +80,8 @@ fn notifications(s: &Settings) -> impl View {
         toggle("Show notifications", &s.notify),
         checkbox("Play sounds", &s.sounds),
         grid([
-            (text("Volume:"), hstack((image("speaker.fill").description("Volume"), slider(&s.volume, 0.0, 1.0)))),
-            (text("Keep for:"), hstack((stepper(&s.keep_days, 1.0, 365.0, 1.0), label(move || format!("{} days", days.get()))))),
+            (text("Volume:"), hstack((image("speaker.fill"), slider(&s.volume, 0.0, 1.0).accessibility_label("Volume")))),
+            (text("Keep for:"), hstack((stepper(&s.keep_days, 1.0, 365.0, 1.0).accessibility_label("Keep for"), label(move || format!("{} days", days.get()))))),
         ])
         .align_column(0, Align::End),
     ))
@@ -227,9 +227,12 @@ mod self_checks {
         let missing: Vec<_> = roles.iter().filter(|(r, sr)| !has_ax(&tree, r, sr, "")).collect();
         check(
             "accessibility-tree",
-            missing.is_empty() && tree.iter().any(|(_, sr, _)| sr == "AXSwitch") && has_ax(&tree, "AXImage", "", "Volume"),
+            missing.is_empty() && tree.iter().any(|(_, sr, _)| sr == "AXSwitch") && has_ax(&tree, "AXSlider", "", "Volume"),
             format!("{} elements; missing {missing:?}", tree.len()),
         );
+
+        let problems = appkit_ui::testing::ax_audit(&windows()[0]);
+        check("accessibility-audit", problems.is_empty(), format!("controls VoiceOver can't name: {problems:?}"));
 
         // Sync: background work, progress indeterminate while it runs, then done.
         unsafe { button("Sync Now").performClick(None) };

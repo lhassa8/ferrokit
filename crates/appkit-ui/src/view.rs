@@ -331,6 +331,13 @@ pub trait ViewExt: View + Sized {
     fn context_menu(self, items: Vec<crate::chrome::MenuItem>) -> Modified<Self> {
         Modified::new(self).context_menu(items)
     }
+
+    /// The name VoiceOver reads for this view's native views ("Name",
+    /// "Volume"), for controls whose visible label is a separate view or
+    /// that have none (a field after a `text("Name:")`, an icon button).
+    fn accessibility_label(self, label: &str) -> Modified<Self> {
+        Modified::new(self).accessibility_label(label)
+    }
 }
 
 impl<V: View> ViewExt for V {}
@@ -343,11 +350,18 @@ pub struct Modified<V> {
     height: Option<f64>,
     fill: (bool, bool),
     menu: Option<Vec<crate::chrome::MenuItem>>,
+    label: Option<String>,
 }
 
 impl<V: View> Modified<V> {
     fn new(view: V) -> Self {
-        Modified { view, padding: None, width: None, height: None, fill: (false, false), menu: None }
+        Modified { view, padding: None, width: None, height: None, fill: (false, false), menu: None, label: None }
+    }
+
+    /// The name VoiceOver reads for this view's native views.
+    pub fn accessibility_label(mut self, label: &str) -> Self {
+        self.label = Some(label.into());
+        self
     }
 
     /// A right-click menu on this view's native views.
@@ -405,7 +419,52 @@ impl<V: View> View for Modified<V> {
             }
             targets.into_iter().for_each(|t| node.keep(t));
         }
+        if let Some(label) = &self.label {
+            let mut leaves = Vec::new();
+            node.leaf_views(&mut leaves);
+            for v in leaves {
+                set_accessibility_label(&v, label);
+            }
+        }
         node
+    }
+}
+
+/// Names a native view for VoiceOver. Cell-based controls (text fields,
+/// sliders, pop-ups) are exposed through their cell on macOS 27, so the
+/// cell gets the label too; the view also becomes an accessibility element
+/// again if it was hidden (a decorative image).
+pub(crate) fn set_accessibility_label(view: &NSView, label: &str) {
+    // A scrolled view (a text editor, a table): VoiceOver reads the document.
+    if let Some(doc) = view.downcast_ref::<objc2_app_kit::NSScrollView>().and_then(|s| s.documentView()) {
+        set_accessibility_label(&doc, label);
+    }
+    let label = NSString::from_str(label);
+    set_accessibility_element(view, true);
+    // SAFETY: NSAccessibility setters on main-thread objects; `cell` is
+    // only sent to views that answer it.
+    unsafe {
+        let () = objc2::msg_send![view, setAccessibilityLabel: &*label];
+        if objc2::runtime::NSObjectProtocol::respondsToSelector(view, objc2::sel!(cell)) {
+            let cell: Option<Retained<objc2::runtime::AnyObject>> = objc2::msg_send![view, cell];
+            if let Some(cell) = cell {
+                let () = objc2::msg_send![&*cell, setAccessibilityLabel: &*label];
+            }
+        }
+    }
+}
+
+/// Shows a native view to VoiceOver, or hides it (and its cell).
+pub(crate) fn set_accessibility_element(view: &NSView, on: bool) {
+    // SAFETY: as above.
+    unsafe {
+        let () = objc2::msg_send![view, setAccessibilityElement: on];
+        if objc2::runtime::NSObjectProtocol::respondsToSelector(view, objc2::sel!(cell)) {
+            let cell: Option<Retained<objc2::runtime::AnyObject>> = objc2::msg_send![view, cell];
+            if let Some(cell) = cell {
+                let () = objc2::msg_send![&*cell, setAccessibilityElement: on];
+            }
+        }
     }
 }
 

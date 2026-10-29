@@ -276,3 +276,90 @@ pub fn captured_pixels(rep: &objc2_app_kit::NSBitmapImageRep, view: &objc2_app_k
     }
     out
 }
+
+/// One accessibility element as VoiceOver gets it.
+#[derive(Debug, Clone)]
+pub struct AxElement {
+    /// Nesting depth under the window's content view.
+    pub depth: usize,
+    /// `AXButton`, `AXTextField`…
+    pub role: String,
+    /// `AXSwitch`, `AXSearchField`…
+    pub subrole: String,
+    /// What VoiceOver reads as the name: the label, else the title, else a
+    /// linked title element's value, else the placeholder.
+    pub name: String,
+    /// The element's own label (set with `accessibility_label`).
+    pub label: String,
+}
+
+/// Every accessibility element under `window`'s content view, depth first.
+pub fn ax_elements(window: &objc2_app_kit::NSWindow) -> Vec<AxElement> {
+    use objc2::runtime::AnyObject;
+    fn string(obj: &AnyObject, sel: objc2::runtime::Sel) -> String {
+        if !obj.class().responds_to(sel) {
+            return String::new();
+        }
+        // SAFETY: the selector exists and returns an object (or nil).
+        let v: Option<Retained<AnyObject>> = unsafe { objc2::msg_send![obj, performSelector: sel] };
+        v.and_then(|v| v.downcast::<NSString>().ok()).map(|s| s.to_string()).unwrap_or_default()
+    }
+    fn walk(obj: &AnyObject, depth: usize, out: &mut Vec<AxElement>) {
+        let label = string(obj, objc2::sel!(accessibilityLabel));
+        let title = string(obj, objc2::sel!(accessibilityTitle));
+        let linked = if obj.class().responds_to(objc2::sel!(accessibilityTitleUIElement)) {
+            // SAFETY: returns an element or nil.
+            let e: Option<Retained<AnyObject>> = unsafe { objc2::msg_send![obj, accessibilityTitleUIElement] };
+            e.map(|e| string(&e, objc2::sel!(accessibilityValue))).unwrap_or_default()
+        } else {
+            String::new()
+        };
+        let placeholder = string(obj, objc2::sel!(accessibilityPlaceholderValue));
+        let name = [&label, &title, &linked, &placeholder].into_iter().find(|s| !s.trim().is_empty()).cloned().unwrap_or_default();
+        out.push(AxElement {
+            depth,
+            role: string(obj, objc2::sel!(accessibilityRole)),
+            subrole: string(obj, objc2::sel!(accessibilitySubrole)),
+            name,
+            label,
+        });
+        if depth > 14 || !obj.class().responds_to(objc2::sel!(accessibilityChildren)) {
+            return;
+        }
+        // SAFETY: returns an array of elements or nil.
+        let kids: Option<Retained<objc2_foundation::NSArray<AnyObject>>> = unsafe { objc2::msg_send![obj, accessibilityChildren] };
+        for k in kids.iter().flat_map(|k| k.iter()) {
+            walk(&k, depth + 1, out);
+        }
+    }
+    let mut out = Vec::new();
+    if let Some(content) = window.contentView() {
+        walk(&content, 0, &mut out);
+    }
+    out
+}
+
+/// What VoiceOver users would miss in `window`: controls with no name to
+/// read (fields, editors, sliders, pop-ups, checkboxes, switches, buttons,
+/// steppers) and images read as a symbol name ("speaker.wave.2"). Empty
+/// when every control can be told apart by ear.
+pub fn ax_audit(window: &objc2_app_kit::NSWindow) -> Vec<String> {
+    const NEEDS_NAME: &[&str] =
+        &["AXTextField", "AXTextArea", "AXSlider", "AXPopUpButton", "AXCheckBox", "AXRadioButton", "AXButton", "AXIncrementor", "AXComboBox", "AXMenuButton"];
+    let symbol_like = |s: &str| s.contains('.') && !s.contains(' ') && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.');
+    ax_elements(window)
+        .iter()
+        .enumerate()
+        .filter_map(|(i, e)| {
+            // A stepper's or scroll bar's arrows and pages are parts VoiceOver
+            // names itself.
+            let part = ["AXIncrementArrow", "AXDecrementArrow", "AXIncrementPage", "AXDecrementPage"].contains(&e.subrole.as_str());
+            let unnamed = NEEDS_NAME.contains(&e.role.as_str()) && !part && e.name.trim().is_empty();
+            let symbol = e.role == "AXImage" && (e.name.is_empty() || symbol_like(&e.name));
+            (unnamed || symbol).then(|| {
+                let what = if e.subrole.is_empty() { e.role.clone() } else { format!("{} {}", e.role, e.subrole) };
+                if symbol { format!("#{i} {what} named {:?}", e.name) } else { format!("#{i} {what} without a name") }
+            })
+        })
+        .collect()
+}

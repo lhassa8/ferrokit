@@ -287,7 +287,7 @@ fn content(v: &Viewer) -> impl View {
     vstack((
         table(&v.table).row_drag(),
         hstack((
-            picker(&v.level, vec![("All levels", Level::Debug), ("Info and up", Level::Info), ("Warnings and up", Level::Warn), ("Errors", Level::Error)]),
+            picker(&v.level, vec![("All levels", Level::Debug), ("Info and up", Level::Info), ("Warnings and up", Level::Warn), ("Errors", Level::Error)]).accessibility_label("Level"),
             checkbox("Follow", &v.follow),
             spacer(),
             label(move || {
@@ -547,6 +547,8 @@ mod self_checks {
 
     pub fn run(v: Viewer) {
         check_formats();
+        let problems = appkit_ui::testing::ax_audit(&windows()[0]);
+        check("accessibility-audit", problems.is_empty(), format!("controls VoiceOver can't name: {problems:?}"));
         let dir = std::env::temp_dir().join("appkit-ui-log-check");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();

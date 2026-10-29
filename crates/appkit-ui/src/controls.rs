@@ -11,7 +11,7 @@ use objc2_app_kit::{
 use objc2_foundation::{NSNotification, NSString};
 
 use crate::signal::{Effect, Signal, batch};
-use crate::view::{ActionTarget, Cx, Node, Size, View, hstack, text};
+use crate::view::{ActionTarget, Cx, Node, Size, View, ViewExt, hstack, text};
 
 define_class!(
     // Live edits of a text field → its signal.
@@ -199,7 +199,8 @@ impl View for SwitchView {
 
 /// A labelled switch (`NSSwitch`) bound two ways to `value`.
 pub fn toggle(title: &str, value: &Signal<bool>) -> impl View {
-    hstack((text(title), SwitchView(value.clone())))
+    // The switch itself is named too: VoiceOver reads it apart from the text.
+    hstack((text(title), SwitchView(value.clone()).accessibility_label(title)))
 }
 
 /// Wires `control` to call `f` (in a batch) when the user changes it.
@@ -363,7 +364,8 @@ pub struct Image {
 }
 
 impl Image {
-    /// What VoiceOver says (defaults to the symbol name).
+    /// What VoiceOver says. Without one the image is decorative and
+    /// VoiceOver skips it (as for an icon beside a labelled control).
     pub fn description(mut self, text: &str) -> Self {
         self.description = Some(text.into());
         self
@@ -372,14 +374,18 @@ impl Image {
 
 impl View for Image {
     fn build(self, cx: &mut Cx) -> Node {
-        let description = self.description.unwrap_or_else(|| self.symbol.clone());
         let image = objc2_app_kit::NSImage::imageWithSystemSymbolName_accessibilityDescription(
             &NSString::from_str(&self.symbol),
-            Some(&NSString::from_str(&description)),
+            self.description.as_deref().map(NSString::from_str).as_deref(),
         )
         .unwrap_or_else(|| panic!("no SF Symbol named {:?}", self.symbol));
         let view = objc2_app_kit::NSImageView::imageViewWithImage(&image, cx.mtm);
-        Node::leaf(cx, Retained::into_super(Retained::into_super(view)), (false, false), Size::default()).0
+        let view: Retained<NSView> = Retained::into_super(Retained::into_super(view));
+        if self.description.is_none() {
+            // Decorative: hidden from VoiceOver (`accessibility_label` shows it again).
+            crate::view::set_accessibility_element(&view, false);
+        }
+        Node::leaf(cx, view, (false, false), Size::default()).0
     }
 }
 
