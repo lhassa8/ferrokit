@@ -134,7 +134,14 @@ pub struct Signal<T>(Rc<SignalInner<T>>);
 struct SignalInner<T> {
     value: RefCell<T>,
     subs: RefCell<Vec<(Weak<EffectInner>, u64)>>,
+    /// Subscriber count at which `track` next sweeps out dead and outdated
+    /// entries (`notify` drops them all, but a signal that rarely changes,
+    /// read by views that come and go, would otherwise keep every one).
+    sweep_at: Cell<usize>,
 }
+
+/// The smallest subscriber list `track` sweeps.
+const SWEEP_MIN: usize = 32;
 
 impl<T> Clone for Signal<T> {
     fn clone(&self) -> Self {
@@ -151,7 +158,7 @@ impl<T: fmt::Debug> fmt::Debug for Signal<T> {
 impl<T: 'static> Signal<T> {
     /// A signal holding `value`.
     pub fn new(value: T) -> Self {
-        Signal(Rc::new(SignalInner { value: RefCell::new(value), subs: RefCell::new(Vec::new()) }))
+        Signal(Rc::new(SignalInner { value: RefCell::new(value), subs: RefCell::new(Vec::new()), sweep_at: Cell::new(SWEEP_MIN) }))
     }
 
     fn track(&self) {
@@ -160,6 +167,12 @@ impl<T: 'static> Signal<T> {
                 let generation = e.generation.get();
                 let mut subs = self.0.subs.borrow_mut();
                 if !subs.iter().any(|(w, g)| *g == generation && std::ptr::eq(w.as_ptr(), Rc::as_ptr(e))) {
+                    if subs.len() >= self.0.sweep_at.get() {
+                        // Keep live effects still on the run that read this
+                        // signal; doubling the threshold keeps sweeps amortised O(1).
+                        subs.retain(|(w, g)| w.upgrade().is_some_and(|e| e.generation.get() == *g && !e.stopped.get()));
+                        self.0.sweep_at.set((subs.len() * 2).max(SWEEP_MIN));
+                    }
                     subs.push((Rc::downgrade(e), generation));
                 }
             }
@@ -397,5 +410,47 @@ mod tests {
         });
         t.set_if_changed(5);
         assert_eq!(runs.get(), 1);
+    }
+
+    #[test]
+    fn short_lived_readers_dont_pile_up() {
+        // A signal that never changes, read by effects that come and go (views
+        // in windows that open and close): its list stays small.
+        let s = Signal::new(0);
+        let keep = Signal::new(0);
+        let (k, (runs, bump)) = (keep.clone(), counter());
+        let _kept = Effect::new(move || {
+            bump();
+            let _ = k.get();
+        });
+        for _ in 0..10_000 {
+            let s2 = s.clone();
+            let e = Effect::new(move || {
+                let _ = s2.get();
+            });
+            drop(e);
+        }
+        assert!(s.0.subs.borrow().len() <= 2 * SWEEP_MIN, "{} entries", s.0.subs.borrow().len());
+        // Live readers survive sweeps and still run.
+        let live: Vec<Effect> = (0..100)
+            .map(|_| {
+                let s2 = s.clone();
+                Effect::new(move || {
+                    let _ = s2.get();
+                })
+            })
+            .collect();
+        for _ in 0..1_000 {
+            let s2 = s.clone();
+            drop(Effect::new(move || {
+                let _ = s2.get();
+            }));
+        }
+        let before = effect_runs();
+        s.set(1);
+        assert_eq!(effect_runs() - before, 100);
+        keep.set(1);
+        assert_eq!(runs.get(), 2);
+        drop(live);
     }
 }

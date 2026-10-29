@@ -153,10 +153,10 @@ impl Window {
         window.setTitle(&NSString::from_str(&self.title));
         if !self.toolbar.is_empty() {
             let delegate = chrome::install_toolbar(&window, self.toolbar);
-            EXTRAS.with_borrow_mut(|e| e.push(delegate));
+            WINDOW_EXTRAS.with_borrow_mut(|e| e.push((window.clone(), delegate)));
         }
         let (delegate, undo) = undo::install(mtm, &window);
-        EXTRAS.with_borrow_mut(|e| e.push(delegate));
+        WINDOW_EXTRAS.with_borrow_mut(|e| e.push((window.clone(), delegate)));
         // Tab follows the views' positions (top-left to bottom-right).
         window.setAutorecalculatesKeyViewLoop(true);
         if let Some(build) = self.content {
@@ -219,7 +219,11 @@ thread_local! {
     static IN_LAYOUT: Cell<bool> = const { Cell::new(false) };
     /// Objects windows need for the app's lifetime (toolbar delegates).
     static EXTRAS: RefCell<Vec<Retained<NSObject>>> = const { RefCell::new(Vec::new()) };
+    /// Objects a window needs while it's open (its delegate, its toolbar's
+    /// delegate); released when it closes.
+    static WINDOW_EXTRAS: RefCell<Vec<(Retained<NSWindow>, Retained<NSObject>)>> = const { RefCell::new(Vec::new()) };
     static LAYOUT_US: RefCell<Vec<f64>> = const { RefCell::new(Vec::new()) };
+    static LAYOUT_PASSES: Cell<u64> = const { Cell::new(0) };
 }
 
 fn relayout(root: &RootView) {
@@ -236,7 +240,14 @@ fn relayout(root: &RootView) {
             }
         }
     });
-    LAYOUT_US.with_borrow_mut(|v| v.push(t.elapsed().as_secs_f64() * 1e6));
+    LAYOUT_US.with_borrow_mut(|v| {
+        // Keep the recent passes only: an app resized for hours mustn't grow.
+        if v.len() >= 2 * LAYOUT_KEPT {
+            v.drain(..LAYOUT_KEPT);
+        }
+        v.push(t.elapsed().as_secs_f64() * 1e6);
+    });
+    LAYOUT_PASSES.with(|n| n.set(n.get() + 1));
     IN_LAYOUT.with(|l| l.set(false));
 }
 
@@ -269,9 +280,19 @@ fn relayout_all() {
     }
 }
 
-/// Microseconds of each layout pass so far (diagnostic).
+/// How many layout passes [`layout_times_us`] keeps at least.
+const LAYOUT_KEPT: usize = 10_000;
+
+/// Microseconds of the recent layout passes, oldest first (diagnostic; at
+/// least the last 10,000).
 pub fn layout_times_us() -> Vec<f64> {
     LAYOUT_US.with_borrow(Clone::clone)
+}
+
+/// Layout passes so far. With [`layout_times_us`], the times of the passes
+/// since an earlier count: `let t = layout_times_us(); &t[t.len() - (layout_passes() - n0) as usize..]`.
+pub fn layout_passes() -> u64 {
+    LAYOUT_PASSES.with(Cell::get)
 }
 
 thread_local! {
@@ -431,13 +452,55 @@ pub fn open_settings() -> Option<Retained<NSWindow>> {
 
 /// Closes `window` and tears down its views (its node is dropped: effects
 /// stop, native views go). The app no longer lists it in [`windows`].
+///
+/// The close button and ⌘W do the same (except for the Settings window,
+/// which is kept and reused).
 pub fn close_window(window: &NSWindow) {
     window.close();
+    teardown(window);
+}
+
+/// Called by the window delegate as `window` closes (close button, ⌘W,
+/// `close`): tears it down on the next pass, outside AppKit's close
+/// sequence and the delegate's own call.
+pub(crate) fn window_will_close(window: &NSWindow) {
+    if is_settings(window) {
+        return;
+    }
+    let window = objc2::Message::retain(window);
+    later(move || {
+        // Reopened since (`makeKeyAndOrderFront` on a kept handle): keep it.
+        if !window.isVisible() {
+            teardown(&window);
+        }
+    });
+}
+
+fn is_settings(window: &NSWindow) -> bool {
+    SETTINGS.with_borrow(|s| matches!(s, Some(Ok(w)) if std::ptr::eq(&**w, window)))
+}
+
+/// Drops a closed window's undo history, view tree, delegates and entry in
+/// [`windows`]. Running it again does nothing.
+fn teardown(window: &NSWindow) {
     if let Some(undo) = window.undoManager() {
         undo.removeAllActions();
     }
     drop_root(window);
     WINDOWS.with_borrow_mut(|ws| ws.retain(|w| !std::ptr::eq(&**w, window)));
+    let extras: Vec<Retained<NSObject>> = WINDOW_EXTRAS.with_borrow_mut(|e| {
+        let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(e).into_iter().partition(|(w, _)| std::ptr::eq(&**w, window));
+        *e = rest;
+        mine.into_iter().map(|(_, x)| x).collect()
+    });
+    if !extras.is_empty() {
+        // The delegates are about to go: AppKit mustn't call them again.
+        window.setDelegate(None);
+        if let Some(toolbar) = window.toolbar() {
+            toolbar.setDelegate(None);
+        }
+    }
+    drop(extras);
 }
 
 /// The app's windows, in the order they were opened.

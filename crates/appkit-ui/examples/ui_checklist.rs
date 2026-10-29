@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use appkit_ui::{
     Align, App, AppEvent, Effect, Identifiable, Signal, View, ViewExt, Window, batch, button, checkbox, dynamic, effect_runs,
-    for_each, grid, hstack, label, later, layout_stats, layout_times_us, live_nodes, open, secure_field, spacer, spawn, text,
+    for_each, grid, hstack, label, later, layout_stats, layout_passes, layout_times_us, live_nodes, open, secure_field, spacer, spawn, text,
     text_field, toggle, vstack, windows, divider, image, picker, progress, scroll, slider, stepper, table, Column, Sort,
     TableModel, ViewId, TreeNode, outline, sidebar, TextModel, text_editor, split, toolbar_button, toolbar_space,
     toolbar_search, menu_item, menu_separator, MenuItem, Modifier, submenu, stored, set_undoable, Alert, OpenOptions, SheetHandle, alert, open_panel, save_panel, sheet,
@@ -625,8 +625,148 @@ fn posted_split_drag(events: Rc<RefCell<Vec<AppEvent>>>) {
         );
         appkit_ui::close_window(&w);
         let events = events.clone();
-        after_events(move || transfer_checks(events.clone()));
+        after_events(move || close_button_checks(events.clone()));
     });
+}
+
+/// A window of 200 bound labels and a table (with a toolbar), for close checks.
+fn closable_window(title: &str, value: &Signal<u32>) -> Window {
+    let labels: Vec<appkit_ui::AnyView> = (0..200)
+        .map(|i| {
+            let v = value.clone();
+            appkit_ui::AnyView::new(label(move || format!("{i}: {}", v.get())))
+        })
+        .collect();
+    let model = Rc::new(TableModel::new(ViewId(970), vec![Column::text("n", "N", |n: &u32| n.to_string())]));
+    model.set_rows((0..1000).collect());
+    Window::new(title)
+        .size(420.0, 400.0)
+        .toolbar(vec![toolbar_button("add", "Add", "plus", || {})])
+        .view(vstack((scroll(vstack(labels)), table(&model))))
+}
+
+/// The close button (performClose:, the path a click takes) and ⌘W tear a
+/// window down like close_window; Settings is kept.
+fn close_button_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let value = Signal::new(0u32);
+    let (n0, list0) = (live_nodes(), windows().len());
+    let w = open(closable_window("Close Me", &value));
+    let built = live_nodes() - n0;
+    let weak = objc2::rc::Weak::from_retained(&w);
+    w.performClose(None);
+    drop(w);
+    let v = value.clone();
+    after_idle(move || {
+        let runs = effect_runs();
+        batch(|| v.set(1));
+        let ran = effect_runs() - runs;
+        let freed = weak.load().is_none();
+        check(
+            "close-button-teardown",
+            built > 200 && live_nodes() == n0 && windows().len() == list0 && ran == 0 && freed,
+            format!(
+                "{built} nodes built; after the close button: {} left, listed windows {} (was {list0}), effects run on a change {ran}, window freed {freed}",
+                live_nodes() - n0,
+                windows().len()
+            ),
+        );
+        // Settings is reused: closing it keeps the same window and its views.
+        let s1 = appkit_ui::open_settings().unwrap();
+        let s_nodes = live_nodes();
+        s1.performClose(None);
+        let s1p = Retained::as_ptr(&s1);
+        drop(s1);
+        let v = v.clone();
+        let events = events.clone();
+        after_idle(move || {
+            let s2 = appkit_ui::open_settings().unwrap();
+            let same = Retained::as_ptr(&s2) == s1p && live_nodes() == s_nodes;
+            s2.close();
+            check("close-settings-kept", same, format!("Settings after closing: same window and views {same}"));
+            close_cycles(v.clone(), events.clone(), 0, 0.0);
+        });
+    });
+}
+
+/// A plain AppKit window like `closable_window` (200 labels in a scroll
+/// view, a table, a toolbar-less frame), opened and closed: AppKit's own
+/// cost per cycle, the floor for ours.
+fn plain_cycle() {
+    use objc2::MainThreadOnly;
+    use objc2_app_kit::{NSBackingStoreType, NSScrollView, NSTableColumn, NSTableView, NSWindow, NSWindowStyleMask};
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+    let mtm = MainThreadMarker::new().unwrap();
+    objc2::rc::autoreleasepool(|_| {
+        let rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(420.0, 400.0));
+        let style = NSWindowStyleMask::Titled | NSWindowStyleMask::Closable | NSWindowStyleMask::Resizable;
+        let w = unsafe { NSWindow::initWithContentRect_styleMask_backing_defer(NSWindow::alloc(mtm), rect, style, NSBackingStoreType::Buffered, false) };
+        unsafe { w.setReleasedWhenClosed(false) };
+        let content = w.contentView().unwrap();
+        let doc = NSView::initWithFrame(NSView::alloc(mtm), NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(400.0, 200.0 * 18.0)));
+        for i in 0..200 {
+            let l = NSTextField::labelWithString(&NSString::from_str(&format!("{i}: 0")), mtm);
+            l.setFrame(NSRect::new(NSPoint::new(0.0, i as f64 * 18.0), NSSize::new(200.0, 17.0)));
+            doc.addSubview(&l);
+        }
+        let sv = NSScrollView::initWithFrame(NSScrollView::alloc(mtm), NSRect::new(NSPoint::new(0.0, 200.0), NSSize::new(420.0, 200.0)));
+        sv.setDocumentView(Some(&doc));
+        content.addSubview(&sv);
+        let tv = NSTableView::initWithFrame(NSTableView::alloc(mtm), NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(420.0, 200.0)));
+        tv.addTableColumn(&NSTableColumn::initWithIdentifier(NSTableColumn::alloc(mtm), &NSString::from_str("n")));
+        let tsv = NSScrollView::initWithFrame(NSScrollView::alloc(mtm), NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(420.0, 200.0)));
+        tsv.setDocumentView(Some(&tv));
+        content.addSubview(&tsv);
+        w.makeKeyAndOrderFront(None);
+        w.performClose(None);
+    });
+}
+
+/// Open/close cycles through the close button, against the same number of
+/// plain AppKit windows: ours shouldn't cost much more than AppKit's own.
+/// AppKit's caches grow over the first few dozen windows of a kind (the
+/// toolbar's longest), so 40 cycles warm up before 30 are measured.
+fn close_cycles(value: Signal<u32>, events: Rc<RefCell<Vec<AppEvent>>>, round: u32, base: f64) {
+    const ROUNDS: u32 = 70;
+    const WARM: u32 = 40;
+    if round == 0 {
+        // The floor: plain AppKit, same warm-up and count, one per idle pass.
+        fn plain(round: u32, base: f64, then: Rc<dyn Fn(f64)>) {
+            let base = if round == WARM { footprint_mb() } else { base };
+            if round == ROUNDS {
+                return then((footprint_mb() - base) * 1024.0 / (ROUNDS - WARM) as f64);
+            }
+            plain_cycle();
+            let then = then.clone();
+            after_idle(move || plain(round + 1, base, then.clone()));
+        }
+        let (v, e) = (value.clone(), events.clone());
+        plain(0, 0.0, Rc::new(move |floor| {
+            PLAIN_FLOOR_KB.with(|f| f.set(floor));
+            close_cycles(v.clone(), e.clone(), 1, 0.0);
+        }));
+        return;
+    }
+    let base = if round == WARM { footprint_mb() } else { base };
+    if round == ROUNDS {
+        let per = (footprint_mb() - base) * 1024.0 / (ROUNDS - WARM) as f64;
+        let floor = PLAIN_FLOOR_KB.with(Cell::get);
+        check(
+            "close-cycles-memory",
+            per < floor * 1.5 + 32.0,
+            format!("{} cycles through the close button: {per:.0} KB per cycle; a plain AppKit window with the same views {floor:.0} KB (budget 1.5× + 32)", ROUNDS - WARM),
+        );
+        after_events(move || transfer_checks(events.clone()));
+        return;
+    }
+    let w = open(closable_window("Cycle", &value));
+    w.performClose(None);
+    drop(w);
+    let v = value.clone();
+    after_idle(move || close_cycles(v.clone(), events.clone(), round + 1, base));
+}
+
+thread_local! {
+    static PLAIN_FLOOR_KB: Cell<f64> = const { Cell::new(0.0) };
 }
 
 /// The custom menus' shortcuts and Settings (⌘,) from posted key presses,
@@ -1216,11 +1356,13 @@ fn layout_bench(events: Rc<RefCell<Vec<AppEvent>>>) {
     let w = open(Window::new("Bench").size(700.0, 700.0).view(vstack(rows).padding(12.0)));
     let build_ms = t.elapsed().as_secs_f64() * 1e3;
     let views = w.contentView().unwrap().subviews().len();
-    let n0 = layout_times_us().len();
+    let n0 = layout_passes();
     for k in 0..200 {
         w.setContentSize(objc2_foundation::NSSize::new(600.0 + (k % 40) as f64 * 10.0, 700.0));
     }
-    let mut resize: Vec<f64> = layout_times_us()[n0..].to_vec();
+    let times = layout_times_us();
+    let new = ((layout_passes() - n0) as usize).min(times.len());
+    let mut resize: Vec<f64> = times[times.len() - new..].to_vec();
     resize.sort_by(|a, b| a.total_cmp(b));
     let mut upd = Vec::new();
     let (p0, _, _) = layout_stats();

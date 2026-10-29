@@ -11,12 +11,13 @@ use objc2::rc::{Retained, Weak};
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{NSApplication, NSWindow, NSWindowDelegate};
-use objc2_foundation::{NSString, NSUndoManager};
+use objc2_foundation::{NSNotification, NSString, NSUndoManager};
 
 use crate::signal::{Signal, batch};
 
 define_class!(
-    // Gives its window the undo manager appkit-ui made for it.
+    // Each window's delegate: gives it the undo manager appkit-ui made for
+    // it, and tears the window down when it closes.
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
     #[name = "AppKitUiWindowDelegate"]
@@ -29,6 +30,13 @@ define_class!(
         #[unsafe(method_id(windowWillReturnUndoManager:))]
         fn undo_manager(&self, _window: &NSWindow) -> Option<Retained<NSUndoManager>> {
             Some(self.ivars().clone())
+        }
+
+        #[unsafe(method(windowWillClose:))]
+        fn will_close(&self, notification: &NSNotification) {
+            if let Some(window) = notification.object().and_then(|o| o.downcast::<NSWindow>().ok()) {
+                crate::window_will_close(&window);
+            }
         }
     }
 );
