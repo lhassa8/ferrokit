@@ -10,7 +10,7 @@ use appkit_ui::{
     for_each, grid, hstack, label, later, layout_stats, layout_times_us, live_nodes, open, secure_field, spacer, spawn, text,
     text_field, toggle, vstack, windows, divider, image, picker, progress, scroll, slider, stepper, table, Column, Sort,
     TableModel, ViewId, TreeNode, outline, sidebar, TextModel, text_editor, split, toolbar_button, toolbar_space,
-    toolbar_search, menu_item, menu_separator,
+    toolbar_search, menu_item, menu_separator, Alert, OpenOptions, SheetHandle, alert, open_panel, save_panel, sheet,
 };
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
@@ -90,9 +90,9 @@ fn run_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     // Windows: both open; AppKit lists them in the Window menu.
     let ws = windows();
     let visible = ws.iter().filter(|w| w.isVisible()).count();
-    check("windows", ws.len() == 11 && visible == 11, format!("{} windows, {visible} visible", ws.len()));
+    check("windows", ws.len() == 12 && visible == 12, format!("{} windows, {visible} visible", ws.len()));
     let window_menu = menu_items(2);
-    let listed = ["First", "Second", "Views", "Layout", "Controls", "Controls B", "Teardown", "Table", "Outline", "Editor", "Chrome"].iter().all(|t| window_menu.iter().any(|(title, _, _)| title == t));
+    let listed = ["First", "Second", "Views", "Layout", "Controls", "Controls B", "Teardown", "Table", "Outline", "Editor", "Chrome", "Dialogs"].iter().all(|t| window_menu.iter().any(|(title, _, _)| title == t));
     check("window-menu-lists-windows", listed && app.windowsMenu().is_some(), format!("{:?}", window_menu.iter().map(|e| &e.0).collect::<Vec<_>>()));
     check("help-menu", app.helpMenu().is_some(), String::new());
 
@@ -1559,7 +1559,143 @@ fn chrome_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         row_menu.itemAtIndex(0).is_some_and(|i| i.title().to_string() == "Delete Row") && c.deleted.get_untracked() == c.model.row_at(3),
         format!("Delete Row on the selected row → model row {:?}", c.deleted.get_untracked()),
     );
-    appearance_check(events);
+    dialog_checks(events);
+}
+
+
+fn dialogs_window() -> Retained<objc2_app_kit::NSWindow> {
+    windows().into_iter().find(|w| w.title().to_string() == "Dialogs").unwrap()
+}
+
+fn buttons_in(w: &objc2_app_kit::NSWindow) -> Vec<Retained<objc2_app_kit::NSButton>> {
+    fn walk(v: &NSView, out: &mut Vec<Retained<objc2_app_kit::NSButton>>) {
+        for c in v.subviews().iter() {
+            if let Ok(b) = c.clone().downcast::<objc2_app_kit::NSButton>() {
+                out.push(b);
+            }
+            walk(&c, out);
+        }
+    }
+    let mut out = Vec::new();
+    if let Some(v) = w.contentView() {
+        walk(&v, &mut out);
+    }
+    out
+}
+
+fn dialog_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let w = dialogs_window();
+    w.makeKeyAndOrderFront(None);
+    // Alert sheet: destructive button, the chosen button's index, closes.
+    let chosen = Signal::new(None::<usize>);
+    let ch = chosen.clone();
+    alert(&w, Alert::new("Delete “report.csv”?", "This can't be undone.").button("Delete").button("Cancel").destructive(0).warning(), move |i| ch.set(Some(i)));
+    let sheet_win = w.attachedSheet();
+    let buttons = sheet_win.as_ref().map(|s| buttons_in(s)).unwrap_or_default();
+    let delete = buttons.iter().find(|b| b.title().to_string() == "Delete");
+    let destructive = delete.is_some_and(|b| b.hasDestructiveAction());
+    if let Some(cancel) = buttons.iter().find(|b| b.title().to_string() == "Cancel") {
+        unsafe { cancel.performClick(None) };
+    }
+    after_events(move || {
+        let w = dialogs_window();
+        check(
+            "alert-sheet",
+            destructive && chosen.get_untracked() == Some(1) && w.attachedSheet().is_none(),
+            format!("Delete shown destructive: {destructive}; Cancel → {:?}; sheet closed: {}", chosen.get_untracked(), w.attachedSheet().is_none()),
+        );
+        view_sheet_check(events.clone());
+    });
+}
+
+fn view_sheet_check(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let w = dialogs_window();
+    let nodes0 = live_nodes();
+    let name = Signal::new("draft".to_string());
+    let closed = Signal::new(false);
+    let handle: Rc<RefCell<Option<SheetHandle>>> = Rc::default();
+    let h2 = handle.clone();
+    let content = Window::new("Rename").size(320.0, 110.0).view(
+        vstack((text_field(&name), hstack((spacer(), button("Done", move || {
+            if let Some(h) = h2.borrow().as_ref() {
+                h.close();
+            }
+        }).default_action()))))
+        .padding(16.0),
+    );
+    let c2 = closed.clone();
+    *handle.borrow_mut() = Some(sheet(&w, content, move || c2.set(true)));
+    let sheet_win = w.attachedSheet().unwrap();
+    let field = sheet_win.contentView().unwrap().subviews().iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.isEditable()).unwrap();
+    let shown = field.stringValue().to_string();
+    let nodes_open = live_nodes();
+    post_edit(&field, "final.csv");
+    let typed = name.get_untracked();
+    let done = buttons_in(&sheet_win).into_iter().find(|b| b.title().to_string() == "Done").unwrap();
+    unsafe { done.performClick(None) };
+    after_events(move || {
+        let w = dialogs_window();
+        check(
+            "view-sheet",
+            shown == "draft" && typed == "final.csv" && closed.get_untracked() && w.attachedSheet().is_none() && live_nodes() == nodes0 && nodes_open > nodes0,
+            format!(
+                "field showed {shown:?}; typed → {typed:?}; Done closed it: {}; nodes {nodes0} → {nodes_open} open → {} after",
+                closed.get_untracked(),
+                live_nodes()
+            ),
+        );
+        panel_checks(events.clone());
+    });
+}
+
+fn panel_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let w = dialogs_window();
+    // Open panel: configuration, then Cancel → None.
+    let result = Signal::new(Some(None::<Vec<std::path::PathBuf>>));
+    let r2 = result.clone();
+    open_panel(&w, OpenOptions { extensions: vec!["csv".into(), "txt".into()], multiple: true, directories: false }, move |p| r2.set(Some(p)));
+    let panel = w.attachedSheet().and_then(|s| s.downcast::<objc2_app_kit::NSOpenPanel>().ok());
+    let types = panel.as_ref().map_or(0, |p| p.allowedContentTypes().count());
+    let multiple = panel.as_ref().is_some_and(|p| p.allowsMultipleSelection());
+    if let Some(p) = &panel {
+        unsafe { p.cancel(None) };
+    }
+    after_events(move || {
+        let w = dialogs_window();
+        check(
+            "open-panel",
+            panel.is_some() && types == 2 && multiple && result.get_untracked() == Some(None) && w.attachedSheet().is_none(),
+            format!("NSOpenPanel sheet: {}; {types} allowed types; multiple: {multiple}; Cancel → {:?}", panel.is_some(), result.get_untracked()),
+        );
+        // Save panel: proposed name and folder; Cancel → None. (The panel runs
+        // out of process; a programmatic OK isn't reliable, so choosing a
+        // path is a hands-on check.)
+        let dir = std::env::temp_dir().join("appkit-ui-check");
+        let _ = std::fs::create_dir_all(&dir);
+        let saved = Signal::new(None::<Option<std::path::PathBuf>>);
+        let s2 = saved.clone();
+        save_panel(&w, "export.csv", Some(&dir), move |p| s2.set(Some(p)));
+        let panel = w.attachedSheet().and_then(|s| s.downcast::<objc2_app_kit::NSSavePanel>().ok());
+        let name = panel.as_ref().map(|p| p.nameFieldStringValue().to_string());
+        let folder = panel.as_ref().and_then(|p| p.directoryURL()).and_then(|u| u.path()).map(|p| p.to_string());
+        let want = dir.canonicalize().unwrap_or(dir.clone()).to_string_lossy().to_string();
+        let folder_ok = folder.as_deref().is_some_and(|f| std::path::Path::new(f).canonicalize().map(|c| c.to_string_lossy().to_string()).unwrap_or_default() == want);
+        if let Some(p) = &panel {
+            unsafe { p.cancel(None) };
+        }
+        let events = events.clone();
+        after_events(move || {
+            let w = dialogs_window();
+            let got = saved.get_untracked();
+            check(
+                "save-panel",
+                name.as_deref() == Some("export.csv") && folder_ok && got == Some(None) && w.attachedSheet().is_none(),
+                format!("proposed {name:?} in {folder:?} (expected folder: {folder_ok}); Cancel → {got:?}"),
+            );
+            let events = events.clone();
+            after_events(move || appearance_check(events.clone()));
+        });
+    });
 }
 
 fn controls_b_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
@@ -1668,6 +1804,7 @@ fn main() {
         .window(Window::new("Outline").size(560.0, 360.0).view(outline_window()))
         .window(Window::new("Editor").size(480.0, 320.0).view(editor_window()))
         .window(chrome_window())
+        .window(Window::new("Dialogs").size(420.0, 260.0).view(vstack((text("Dialogs"),)).padding(12.0)))
         .on_event(move |e| e2.borrow_mut().push(e))
         .on_launch(move || {
             if checks {

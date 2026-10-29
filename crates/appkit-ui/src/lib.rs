@@ -6,7 +6,8 @@
 //! secure fields, toggles and checkboxes bound to signals (F1.5); pickers,
 //! sliders, steppers, progress, SF Symbols, dividers and scroll views (F1.6);
 //! the native table (F2.1); outlines and the source-list sidebar (F2.2); the
-//! text editor (F2.3); split views, toolbars and context menus (F2.4).
+//! text editor (F2.3); split views, toolbars and context menus (F2.4); sheets,
+//! alerts and file panels (F2.5).
 //!
 //! Main thread only.
 
@@ -14,6 +15,7 @@
 
 mod chrome;
 mod controls;
+mod dialogs;
 mod layout;
 mod menu;
 mod models;
@@ -45,6 +47,7 @@ pub use controls::{
     stepper, text_field, toggle,
 };
 pub use chrome::{MenuItem, Split, ToolbarItem, menu_item, menu_separator, split, toolbar_button, toolbar_search, toolbar_space};
+pub use dialogs::{Alert, OpenOptions, SheetHandle, alert, open_panel, save_panel, sheet};
 pub use layout::layout_stats;
 pub use models::{Table, TextEditor, table, text_editor};
 pub use outline::{Outline, TreeNode, outline, sidebar};
@@ -100,7 +103,7 @@ impl Window {
         self
     }
 
-    fn open(self, mtm: MainThreadMarker) -> Retained<NSWindow> {
+    pub(crate) fn open(self, mtm: MainThreadMarker) -> Retained<NSWindow> {
         let rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(self.size.0, self.size.1));
         let style = NSWindowStyleMask::Titled
             | NSWindowStyleMask::Closable
@@ -199,6 +202,17 @@ fn relayout(root: &RootView) {
     });
     LAYOUT_US.with_borrow_mut(|v| v.push(t.elapsed().as_secs_f64() * 1e6));
     IN_LAYOUT.with(|l| l.set(false));
+}
+
+/// Tears down the view tree of `window`'s content (its node is dropped:
+/// effects stop, native views go).
+pub(crate) fn drop_root(window: &NSWindow) {
+    let Some(content) = window.contentView() else { return };
+    let node = ROOTS.with_borrow_mut(|r| {
+        let i = r.iter().position(|(v, _)| std::ptr::eq(&***v as *const NSView, &*content as *const NSView))?;
+        Some(r.remove(i))
+    });
+    drop(node);
 }
 
 /// Whether a layout pass is running.
