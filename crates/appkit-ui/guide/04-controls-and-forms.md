@@ -38,6 +38,47 @@ let form = vstack((
 | `progress` | `NSProgressIndicator` | a closure: `Some(fraction)` or `None` |
 | `image` | `NSImageView` with an SF Symbol | – |
 | `button` | `NSButton` | an action |
+| `date_picker` | `NSDatePicker` | `Signal<SystemTime>` |
+| `color_well` | `NSColorWell` | `Signal<Color>` |
+| `segmented` | `NSSegmentedControl` | any `Signal<T: PartialEq + Clone>` |
+| `combo_box` | `NSComboBox` | `Signal<String>`, with suggestions |
+| `search_field` | `NSSearchField` | `Signal<String>` |
+
+## Dates, colours, segments, suggestions, search
+
+```rust,no_run
+use std::time::SystemTime;
+use appkit_ui::*;
+
+#[derive(Clone, PartialEq)]
+enum Layout { List, Grid }
+
+let due = Signal::new(SystemTime::now());
+let tint = Signal::new(Color::rgb(0.2, 0.5, 1.0));
+let layout = Signal::new(Layout::List);
+let city = Signal::new(String::new());
+let query = Signal::new(String::new());
+
+let form = vstack((
+    date_picker(&due).with_time().accessibility_label("Due"),       // .calendar(), .range(min, max)
+    color_well(&tint).accessibility_label("Tint"),
+    segmented(&layout, vec![("List", Layout::List), ("Grid", Layout::Grid)]).accessibility_label("Layout"),
+    combo_box(&city, vec!["Berlin", "Lagos", "Tokyo"]).accessibility_label("City"),
+    search_field(&query).placeholder("Search orders").on_submit(|| println!("search")),
+));
+# let _ = form;
+```
+
+- `date_picker` holds a `std::time::SystemTime`; `.calendar()` shows a
+  month calendar instead of a field with a stepper.
+- `Color` is sRGB (`Color::rgb(r, g, b)`, components 0–1); the well opens
+  the system colour picker.
+- `segmented` reads each segment's title to VoiceOver; give the control as
+  a whole a name too.
+- `combo_box` keeps free text: typing sets the signal, and so does picking
+  a suggestion.
+- `search_field` updates its signal as the user types; the clear button
+  empties it, and Return runs `on_submit`.
 
 ## Buttons
 

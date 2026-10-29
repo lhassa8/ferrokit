@@ -5,7 +5,7 @@ use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSButton, NSControlStateValueOff, NSControlStateValueOn, NSControlTextEditingDelegate, NSSearchFieldDelegate, NSSecureTextField, NSSwitch,
+    NSButton, NSComboBoxDelegate, NSControlStateValueOff, NSControlStateValueOn, NSControlTextEditingDelegate, NSSearchFieldDelegate, NSSecureTextField, NSSwitch,
     NSTextField, NSTextFieldDelegate, NSView,
 };
 use objc2_foundation::{NSNotification, NSString};
@@ -392,4 +392,334 @@ impl View for Image {
 /// An SF Symbol by name (e.g. `"star.fill"`). Panics if the name is unknown.
 pub fn image(symbol: &str) -> Image {
     Image { symbol: symbol.into(), description: None }
+}
+
+// ---- G2: dates, colours, segments, combo boxes, search fields ----
+
+/// A date (and optionally time) picker bound two ways to `value`.
+pub struct DatePicker {
+    value: Signal<std::time::SystemTime>,
+    time: bool,
+    calendar: bool,
+    range: Option<(std::time::SystemTime, std::time::SystemTime)>,
+}
+
+impl DatePicker {
+    /// Also picks the time of day.
+    pub fn with_time(mut self) -> Self {
+        self.time = true;
+        self
+    }
+
+    /// A month calendar (clock too, with [`with_time`](Self::with_time))
+    /// instead of a text field with a stepper.
+    pub fn calendar(mut self) -> Self {
+        self.calendar = true;
+        self
+    }
+
+    /// Only dates from `min` to `max` can be picked.
+    pub fn range(mut self, min: std::time::SystemTime, max: std::time::SystemTime) -> Self {
+        self.range = Some((min, max));
+        self
+    }
+}
+
+fn ns_date(t: std::time::SystemTime) -> Retained<objc2_foundation::NSDate> {
+    let secs = match t.duration_since(std::time::UNIX_EPOCH) {
+        Ok(d) => d.as_secs_f64(),
+        Err(e) => -e.duration().as_secs_f64(),
+    };
+    objc2_foundation::NSDate::dateWithTimeIntervalSince1970(secs)
+}
+
+fn system_time(d: &objc2_foundation::NSDate) -> std::time::SystemTime {
+    let secs = d.timeIntervalSince1970();
+    let delta = std::time::Duration::from_secs_f64(secs.abs());
+    if secs >= 0.0 { std::time::UNIX_EPOCH + delta } else { std::time::UNIX_EPOCH - delta }
+}
+
+impl View for DatePicker {
+    fn build(self, cx: &mut Cx) -> Node {
+        use objc2_app_kit::{NSDatePickerElementFlags, NSDatePickerStyle};
+        let picker = objc2_app_kit::NSDatePicker::new(cx.mtm);
+        let mut elements = NSDatePickerElementFlags::YearMonthDay;
+        if self.time {
+            elements |= NSDatePickerElementFlags::HourMinute;
+        }
+        picker.setDatePickerElements(elements);
+        picker.setDatePickerStyle(if self.calendar { NSDatePickerStyle::ClockAndCalendar } else { NSDatePickerStyle::TextFieldAndStepper });
+        if let Some((min, max)) = self.range {
+            picker.setMinDate(Some(&ns_date(min)));
+            picker.setMaxDate(Some(&ns_date(max)));
+        }
+        let (value, p) = (self.value.clone(), picker.clone());
+        let target = on_action(cx, &picker, move || value.set(system_time(&p.dateValue())));
+        let (mut node, _) = Node::leaf(cx, Retained::into_super(Retained::into_super(picker.clone())), (false, false), Size::default());
+        let value = self.value;
+        node.own(Effect::new(move || {
+            let want = ns_date(value.get());
+            // A second's tolerance: the picker keeps whole seconds or minutes.
+            if (picker.dateValue().timeIntervalSince1970() - want.timeIntervalSince1970()).abs() >= 1.0 {
+                picker.setDateValue(&want);
+            }
+        }));
+        node.keep(target);
+        node
+    }
+}
+
+/// A date picker bound two ways to `value` (date only; see
+/// [`DatePicker::with_time`]).
+pub fn date_picker(value: &Signal<std::time::SystemTime>) -> DatePicker {
+    DatePicker { value: value.clone(), time: false, calendar: false, range: None }
+}
+
+/// An sRGB colour, components from 0 to 1.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Color {
+    /// Red.
+    pub r: f64,
+    /// Green.
+    pub g: f64,
+    /// Blue.
+    pub b: f64,
+    /// Opacity.
+    pub a: f64,
+}
+
+impl Color {
+    /// An opaque colour.
+    pub fn rgb(r: f64, g: f64, b: f64) -> Self {
+        Color { r, g, b, a: 1.0 }
+    }
+
+    fn ns(self) -> Retained<objc2_app_kit::NSColor> {
+        objc2_app_kit::NSColor::colorWithSRGBRed_green_blue_alpha(self.r, self.g, self.b, self.a)
+    }
+
+    fn from_ns(c: &objc2_app_kit::NSColor) -> Option<Self> {
+        let c = c.colorUsingColorSpace(&objc2_app_kit::NSColorSpace::sRGBColorSpace())?;
+        Some(Color { r: c.redComponent(), g: c.greenComponent(), b: c.blueComponent(), a: c.alphaComponent() })
+    }
+
+    fn close_to(self, o: Color) -> bool {
+        [(self.r, o.r), (self.g, o.g), (self.b, o.b), (self.a, o.a)].iter().all(|(a, b)| (a - b).abs() < 1.0 / 512.0)
+    }
+}
+
+/// A colour well bound two ways to `value`: a click opens the system's
+/// colour picker.
+pub struct ColorWell(Signal<Color>);
+
+impl View for ColorWell {
+    fn build(self, cx: &mut Cx) -> Node {
+        let well = objc2_app_kit::NSColorWell::new(cx.mtm);
+        let (value, w) = (self.0.clone(), well.clone());
+        let target = on_action(cx, &well, move || {
+            if let Some(c) = Color::from_ns(&w.color()) {
+                value.set(c);
+            }
+        });
+        let (mut node, _) = Node::leaf(cx, Retained::into_super(Retained::into_super(well.clone())), (false, false), Size { w: 44.0, h: 24.0 });
+        if let crate::view::Kind::Leaf(l) = &node.kind {
+            l.content.set(Some(Size { w: 44.0, h: 24.0 }));
+        }
+        let value = self.0;
+        node.own(Effect::new(move || {
+            let want = value.get();
+            if !Color::from_ns(&well.color()).is_some_and(|c| c.close_to(want)) {
+                well.setColor(&want.ns());
+            }
+        }));
+        node.keep(target);
+        node
+    }
+}
+
+/// A colour well bound two ways to `value`.
+pub fn color_well(value: &Signal<Color>) -> ColorWell {
+    ColorWell(value.clone())
+}
+
+/// A segmented control choosing one of several values.
+pub struct Segmented<T> {
+    value: Signal<T>,
+    options: Vec<(String, T)>,
+}
+
+impl<T: PartialEq + Clone + 'static> View for Segmented<T> {
+    fn build(self, cx: &mut Cx) -> Node {
+        use objc2_app_kit::NSSegmentSwitchTracking;
+        let control = objc2_app_kit::NSSegmentedControl::new(cx.mtm);
+        control.setSegmentCount(self.options.len() as isize);
+        control.setTrackingMode(NSSegmentSwitchTracking::SelectOne);
+        for (i, (title, _)) in self.options.iter().enumerate() {
+            control.setLabel_forSegment(&NSString::from_str(title), i as isize);
+            control.setWidth_forSegment(0.0, i as isize);
+        }
+        let options = std::rc::Rc::new(self.options);
+        let (value, opts, c) = (self.value.clone(), options.clone(), control.clone());
+        let target = on_action(cx, &control, move || {
+            if let Some((_, v)) = usize::try_from(c.selectedSegment()).ok().and_then(|i| opts.get(i)) {
+                value.set(v.clone());
+            }
+        });
+        let (mut node, _) = Node::leaf(cx, Retained::into_super(Retained::into_super(control.clone())), (false, false), Size::default());
+        let value = self.value;
+        node.own(Effect::new(move || {
+            let current = value.get();
+            if let Some(i) = options.iter().position(|(_, v)| *v == current)
+                && control.selectedSegment() != i as isize
+            {
+                control.setSelectedSegment(i as isize);
+            }
+        }));
+        node.keep(target);
+        node
+    }
+}
+
+/// A segmented control bound two ways to `value`, one segment per option
+/// (title, value). VoiceOver reads each segment's title.
+pub fn segmented<T: PartialEq + Clone + 'static>(value: &Signal<T>, options: Vec<(&str, T)>) -> Segmented<T> {
+    Segmented { value: value.clone(), options: options.into_iter().map(|(t, v)| (t.to_string(), v)).collect() }
+}
+
+define_class!(
+    // A combo box's typed text and chosen suggestions → its signal.
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "AppKitUiComboDelegate"]
+    #[ivars = Signal<String>]
+    struct ComboDelegate;
+
+    unsafe impl NSObjectProtocol for ComboDelegate {}
+
+    unsafe impl NSControlTextEditingDelegate for ComboDelegate {
+        #[unsafe(method(controlTextDidChange:))]
+        fn did_change(&self, notification: &NSNotification) {
+            let Some(field) = notification.object().and_then(|o| o.downcast::<NSTextField>().ok()) else { return };
+            let value = field.stringValue().to_string();
+            let signal = self.ivars().clone();
+            batch(|| signal.set_if_changed(value));
+        }
+    }
+
+    unsafe impl NSTextFieldDelegate for ComboDelegate {}
+
+    unsafe impl NSComboBoxDelegate for ComboDelegate {
+        #[unsafe(method(comboBoxSelectionDidChange:))]
+        fn selection_did_change(&self, notification: &NSNotification) {
+            let Some(combo) = notification.object().and_then(|o| o.downcast::<objc2_app_kit::NSComboBox>().ok()) else { return };
+            // The field shows the choice only after this notification: read
+            // the chosen item itself.
+            let chosen = combo.objectValueOfSelectedItem().and_then(|o| o.downcast::<NSString>().ok()).map(|s| s.to_string());
+            if let Some(value) = chosen {
+                let signal = self.ivars().clone();
+                batch(|| signal.set_if_changed(value));
+            }
+        }
+    }
+);
+
+/// A text field with a list of suggestions (`NSComboBox`).
+pub struct ComboBox {
+    value: Signal<String>,
+    suggestions: Vec<String>,
+}
+
+impl View for ComboBox {
+    fn build(self, cx: &mut Cx) -> Node {
+        let combo = objc2_app_kit::NSComboBox::new(cx.mtm);
+        for s in &self.suggestions {
+            // SAFETY: the combo box takes object values; NSStrings are what
+            // it shows and what the delegate reads back.
+            unsafe { combo.addItemWithObjectValue(&NSString::from_str(s)) };
+        }
+        combo.setCompletes(true);
+        let delegate = ComboDelegate::alloc(cx.mtm).set_ivars(self.value.clone());
+        // SAFETY: NSObject's designated initialiser.
+        let delegate: Retained<ComboDelegate> = unsafe { msg_send![super(delegate), init] };
+        // SAFETY: the delegate is weak in AppKit; the node keeps it.
+        unsafe { combo.setDelegate(Some(ProtocolObject::from_ref(&*delegate))) };
+        let (mut node, _) = Node::leaf(cx, Retained::into_super(Retained::into_super(Retained::into_super(combo.clone()))), (true, false), Size { w: 120.0, h: 0.0 });
+        let value = self.value;
+        node.own(Effect::new(move || {
+            let v = value.get();
+            if combo.stringValue().to_string() != v {
+                combo.setStringValue(&NSString::from_str(&v));
+            }
+        }));
+        node.keep(Retained::into_super(delegate));
+        node
+    }
+}
+
+/// A text field bound two ways to `value`, with `suggestions` in a pop-up
+/// list (typing completes from them).
+pub fn combo_box(value: &Signal<String>, suggestions: Vec<&str>) -> ComboBox {
+    ComboBox { value: value.clone(), suggestions: suggestions.into_iter().map(String::from).collect() }
+}
+
+/// A search field (rounded, with a clear button) bound to `value`.
+pub struct SearchField {
+    value: Signal<String>,
+    placeholder: Option<String>,
+    on_submit: Option<Box<dyn Fn()>>,
+}
+
+impl SearchField {
+    /// Grey text shown while it's empty (default "Search").
+    pub fn placeholder(mut self, text: &str) -> Self {
+        self.placeholder = Some(text.into());
+        self
+    }
+
+    /// Runs `f` on Return.
+    pub fn on_submit(mut self, f: impl Fn() + 'static) -> Self {
+        self.on_submit = Some(Box::new(f));
+        self
+    }
+}
+
+impl View for SearchField {
+    fn build(self, cx: &mut Cx) -> Node {
+        let field = objc2_app_kit::NSSearchField::new(cx.mtm);
+        if let Some(p) = &self.placeholder {
+            field.setPlaceholderString(Some(&NSString::from_str(p)));
+        }
+        // Each keystroke is a change (not only Return), like the toolbar's.
+        field.setSendsSearchStringImmediately(true);
+        let delegate = FieldDelegate::new(cx.mtm, self.value.clone());
+        // SAFETY: the delegate is weak in AppKit; the node keeps it.
+        unsafe { field.setDelegate(Some(ProtocolObject::from_ref(&*delegate))) };
+        // The clear button sends the action with empty text, but no
+        // change notification: the action reads the field too.
+        let (value, f, submit) = (self.value.clone(), field.clone(), self.on_submit);
+        let target = on_action(cx, &field, move || {
+            let text = f.stringValue().to_string();
+            if text.is_empty() || value.get_untracked() != text {
+                value.set_if_changed(text);
+            } else if let Some(s) = &submit {
+                s();
+            }
+        });
+        let (mut node, _) = Node::leaf(cx, Retained::into_super(Retained::into_super(Retained::into_super(field.clone()))), (true, false), Size { w: 160.0, h: 0.0 });
+        let value = self.value;
+        node.own(Effect::new(move || {
+            let v = value.get();
+            if field.stringValue().to_string() != v {
+                field.setStringValue(&NSString::from_str(&v));
+            }
+        }));
+        node.keep(target);
+        node.keep(Retained::into_super(delegate));
+        node
+    }
+}
+
+/// A search field bound two ways to `value` (updated as the user types).
+pub fn search_field(value: &Signal<String>) -> SearchField {
+    SearchField { value: value.clone(), placeholder: None, on_submit: None }
 }

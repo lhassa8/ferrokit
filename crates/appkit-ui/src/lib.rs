@@ -75,6 +75,7 @@ pub use store::{Stored, stored};
 pub use undo::{set_undoable, undoable, undoable_in};
 pub use signal::{Effect, Memo, Signal, after_batch, batch, effect_runs, untrack};
 pub use controls::{
+    Color, ColorWell, ComboBox, DatePicker, SearchField, Segmented, color_well, combo_box, date_picker, search_field, segmented,
     Checkbox, Image, Picker, Progress, Slider, Stepper, TextField, checkbox, image, picker, progress, secure_field, slider,
     stepper, text_field, toggle,
 };

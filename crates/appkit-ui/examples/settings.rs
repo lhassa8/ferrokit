@@ -277,7 +277,9 @@ mod self_checks {
         let rows = appkit_ui::testing::captured_pixels(&rep, &bar, 1);
         // A column is filled when any pixel in it is coloured or mid-grey
         // (the empty track is near white, or near black in Dark Mode).
-        let filled = |(r, g, b): (f64, f64, f64)| r.max(g).max(b) - r.min(g).min(b) > 0.3 || (0.45..0.8).contains(&((r + g + b) / 3.0));
+        // Tinted (the accent colour: vivid on macOS 27, pale blue (0.69,
+        // 0.83, 0.95) on macOS 15) or mid-grey (an inactive window).
+        let filled = |(r, g, b): (f64, f64, f64)| r.max(g).max(b) - r.min(g).min(b) > 0.15 || (0.45..0.8).contains(&((r + g + b) / 3.0));
         let columns = rows.first().map_or(0, Vec::len);
         let full = (0..columns).filter(|&x| rows.iter().any(|row| filled(row[x]))).count();
         let share = full as f64 / columns.max(1) as f64;

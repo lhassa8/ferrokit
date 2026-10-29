@@ -662,7 +662,10 @@ fn posted_split_drag(events: Rc<RefCell<Vec<AppEvent>>>) {
         let after = (pane(0), pane(1), label_width("Left"), label_width("Right"));
         // On macOS 26 posted mouse input reaches only the active app (as
         // posted ⌘ shortcuts need a key window): skip when it isn't.
-        let skip = (!app_active && after == before).then_some("skipped: the app wasn't active, so the posted drag wasn't delivered; ");
+        // Not delivered at all: an inactive app, or the macOS 26 CI runner
+        // (where posted drags don't reach even the active app). The divider
+        // and relayout themselves are covered by `split-drag` (AppKit's API).
+        let skip = (after == before && (!app_active || on_ci())).then_some("skipped: the posted drag wasn't delivered here (inactive app or CI runner); ");
         check(
             "posted-split-drag",
             skip.is_some() || (after.0 - before.0 - 80.0).abs() < 1.0 && (before.1 - after.1 - 80.0).abs() < 1.0 && (after.2 - before.2 - 80.0).abs() < 1.0 && (before.3 - after.3 - 80.0).abs() < 1.0,
@@ -952,6 +955,7 @@ fn accessibility_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
             image("star.fill").description("Favourite"),
             text_editor(&notes).accessibility_label("Notes"),
             text_field(&bare),
+            appkit_ui::date_picker(&Signal::new(std::time::UNIX_EPOCH)),
         ))
         .padding(12.0),
     ));
@@ -973,8 +977,10 @@ fn accessibility_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let problems = ax_audit(&w);
     check(
         "accessibility-labels",
-        found.is_empty() && images == 1 && problems.len() == 1 && problems[0].contains("AXTextField"),
-        format!("names missing {found:?}; images exposed {images} (the decorative one hidden); audit finds only the bare field: {problems:?}"),
+        // An unnamed date picker is reported with its stepper (its parts are
+        // skipped only inside a named one).
+        found.is_empty() && images == 1 && problems.len() == 3 && problems[0].contains("AXTextField") && problems[1].contains("AXDateTimeArea") && problems[2].contains("AXIncrementor"),
+        format!("names missing {found:?}; images exposed {images} (the decorative one hidden); audit finds only the bare field and the bare date picker (with its stepper): {problems:?}"),
     );
     appkit_ui::close_window(&w);
     // The form windows of this checklist.
@@ -985,7 +991,7 @@ fn accessibility_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         }
     }
     check("accessibility-audit-forms", forms.is_empty(), format!("Controls and Controls B: {forms:?}"));
-    after_events(move || transfer_checks(events.clone()));
+    after_events(move || controls_c_checks(events.clone()));
 }
 
 /// The custom menus' shortcuts and Settings (⌘,) from posted key presses,
@@ -1081,6 +1087,102 @@ struct TransferState {
 
 fn names(m: &TableModel<Item2>) -> Vec<String> {
     m.rows().iter().map(|r| r.name.clone()).collect()
+}
+
+/// G2 controls: date picker, colour well, segmented control, combo box and
+/// search field. Each way: the user's edit (through the control's own
+/// action or notification) sets the signal; setting the signal updates
+/// the control.
+fn controls_c_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use appkit_ui::{Color, color_well, combo_box, date_picker, search_field, segmented};
+    use objc2_app_kit::{NSColorWell, NSComboBox, NSDatePicker, NSSearchField, NSSegmentedControl};
+    use std::time::{Duration, UNIX_EPOCH};
+    let day = |d: u64| UNIX_EPOCH + Duration::from_secs(1_790_000_000 + d * 86_400);
+    let date = Signal::new(day(0));
+    let colour = Signal::new(Color::rgb(1.0, 0.0, 0.0));
+    let view_mode = Signal::new(1u8);
+    let city = Signal::new(String::new());
+    let query = Signal::new(String::new());
+    let submits = Signal::new(0u32);
+    let s2 = submits.clone();
+    let w = open(Window::new("Controls C").size(420.0, 320.0).view(
+        vstack((
+            date_picker(&date).accessibility_label("Due"),
+            date_picker(&date).with_time().calendar().range(day(0), day(400)).accessibility_label("Due, calendar"),
+            color_well(&colour).accessibility_label("Colour"),
+            segmented(&view_mode, vec![("List", 1u8), ("Grid", 2), ("Columns", 3)]).accessibility_label("View"),
+            combo_box(&city, vec!["Berlin", "Lagos", "Tokyo"]).accessibility_label("City"),
+            search_field(&query).placeholder("Search orders").on_submit(move || s2.update(|n| *n += 1)).accessibility_label("Search"),
+        ))
+        .padding(12.0),
+    ));
+    let all = all_views(&w.contentView().unwrap());
+    let pickers: Vec<_> = all.iter().filter_map(|v| v.clone().downcast::<NSDatePicker>().ok()).collect();
+    let well = all.iter().find_map(|v| v.clone().downcast::<NSColorWell>().ok()).unwrap();
+    let seg = all.iter().find_map(|v| v.clone().downcast::<NSSegmentedControl>().ok()).unwrap();
+    let combo = all.iter().find_map(|v| v.clone().downcast::<NSComboBox>().ok()).unwrap();
+    let search = all.iter().find_map(|v| v.clone().downcast::<NSSearchField>().ok()).unwrap();
+    let secs = |p: &NSDatePicker| p.dateValue().timeIntervalSince1970() as u64;
+
+    // Date: signal → both pickers; the user's pick → signal.
+    batch(|| date.set(day(10)));
+    let shown = pickers.iter().all(|p| secs(p) == 1_790_000_000 + 10 * 86_400);
+    pickers[0].setDateValue(&objc2_foundation::NSDate::dateWithTimeIntervalSince1970((1_790_000_000 + 20 * 86_400) as f64));
+    send_action(&pickers[0]);
+    let picked = date.get_untracked() == day(20) && secs(&pickers[1]) == 1_790_000_000 + 20 * 86_400;
+    let max_ok = pickers[1].maxDate().is_some_and(|d| d.timeIntervalSince1970() as u64 == 1_790_000_000 + 400 * 86_400);
+    check("date-picker", pickers.len() == 2 && shown && picked && max_ok, format!("signal → pickers: {shown}; pick → signal and the other picker: {picked}; calendar range max set: {max_ok}"));
+
+    // Colour: signal → well; the user's colour → signal.
+    let srgb = objc2_app_kit::NSColorSpace::sRGBColorSpace();
+    let red = well.color().colorUsingColorSpace(&srgb).is_some_and(|c| c.redComponent() > 0.99 && c.greenComponent() < 0.01);
+    well.setColor(&objc2_app_kit::NSColor::colorWithSRGBRed_green_blue_alpha(0.0, 0.5, 1.0, 1.0));
+    send_action(&well);
+    let got = colour.get_untracked();
+    let chosen = (got.g - 0.5).abs() < 0.01 && (got.b - 1.0).abs() < 0.01 && got.r < 0.01;
+    batch(|| colour.set(Color::rgb(0.2, 0.8, 0.2)));
+    let back = well.color().colorUsingColorSpace(&srgb).is_some_and(|c| (c.greenComponent() - 0.8).abs() < 0.01);
+    check("color-well", red && chosen && back, format!("starts red: {red}; picked → {got:?}; signal → well: {back}"));
+
+    // Segments: signal → selection; a click → signal.
+    let first = seg.selectedSegment() == 0;
+    seg.setSelectedSegment(2);
+    send_action(&seg);
+    let clicked = view_mode.get_untracked() == 3;
+    batch(|| view_mode.set(2));
+    check("segmented", first && clicked && seg.selectedSegment() == 1, format!("List selected first: {first}; Columns → {}; signal Grid → segment {}", view_mode.get_untracked(), seg.selectedSegment()));
+
+    // Combo box: typing → signal; a suggestion → signal; signal → text.
+    post_edit(&combo, "Os");
+    let typed = city.get_untracked() == "Os";
+    combo.selectItemAtIndex(1);
+    let chose = city.get_untracked() == "Lagos";
+    batch(|| city.set("Tokyo".into()));
+    check("combo-box", typed && chose && combo.stringValue().to_string() == "Tokyo", format!("typed → {typed}; chose Lagos → {chose}; signal → field {:?}", combo.stringValue()));
+
+    // Search: typing → signal; Return → submit; the clear button → empty.
+    post_edit(&search, "1234");
+    let typed = query.get_untracked() == "1234";
+    send_action(&search);
+    let submitted = submits.get_untracked() == 1;
+    search.setStringValue(&NSString::from_str(""));
+    send_action(&search);
+    let cleared = query.get_untracked().is_empty();
+    batch(|| query.set("paris".into()));
+    let placeholder = search.placeholderString().map(|p| p.to_string());
+    check(
+        "search-field",
+        typed && submitted && cleared && search.stringValue().to_string() == "paris" && placeholder.as_deref() == Some("Search orders"),
+        format!("typed → {typed}; Return → submit {submitted}; clear → empty {cleared}; signal → field {:?}; placeholder {placeholder:?}", search.stringValue()),
+    );
+
+    // VoiceOver: every control named; segments read by title.
+    let problems = appkit_ui::testing::ax_audit(&w);
+    let elements = appkit_ui::testing::ax_elements(&w);
+    let segments: Vec<String> = elements.iter().filter(|e| e.role == "AXRadioButton").map(|e| e.name.clone()).collect();
+    check("controls-c-accessibility", problems.is_empty() && segments == ["List", "Grid", "Columns"], format!("unnamed: {problems:?}; segments {segments:?}"));
+    appkit_ui::close_window(&w);
+    after_events(move || transfer_checks(events.clone()));
 }
 
 /// Drag and drop, copy and paste on a small table. Only private pasteboards
