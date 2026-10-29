@@ -66,6 +66,13 @@ suite() {
   code=$?
   kill "$dog" 2>/dev/null
   wait "$dog" 2>/dev/null
+  # Died on a signal (a crash, not the watchdog): keep macOS's crash report.
+  if [ "$code" -gt 128 ] && [ ! -f "$log/$name.hang.txt" ]; then
+    bin=$(basename "$1")
+    report=$(ls -t "$HOME/Library/Logs/DiagnosticReports/$bin"*.ips 2>/dev/null | head -1)
+    for _ in 1 2 3 4 5; do [ -n "$report" ] && break; sleep 2; report=$(ls -t "$HOME/Library/Logs/DiagnosticReports/$bin"*.ips 2>/dev/null | head -1); done
+    [ -n "$report" ] && cp "$report" "$log/$name.crash.ips"
+  fi
   pass=$(grep -c '^\[check\] .* PASS' "$log/$name.log")
   fail=$(grep -c '^\[check\] .* FAIL' "$log/$name.log")
   if [ "$code" -eq 0 ] && [ "$fail" -eq 0 ] && [ "$pass" -gt 0 ]; then
@@ -76,6 +83,23 @@ suite() {
     grep '^\[check\] .* FAIL' "$log/$name.log" | sed 's/^/    /'
     echo "    last lines:"
     tail -6 "$log/$name.log" | sed 's/^/      /'
+    if [ -f "$log/$name.crash.ips" ]; then
+      echo "    crashed; the faulting thread:"
+      python3 - "$log/$name.crash.ips" <<'PY' 2>/dev/null | head -25 | sed 's/^/      /'
+import json, sys
+text = open(sys.argv[1]).read()
+body = json.loads(text[text.index("\n") + 1:])
+ex = body.get("exception", {})
+print("exception:", ex.get("type"), ex.get("signal"), body.get("termination", {}).get("indicator", ""))
+threads = body.get("threads", [])
+images = body.get("usedImages", [])
+for t in threads:
+    if t.get("triggered"):
+        for f in t.get("frames", [])[:20]:
+            img = images[f["imageIndex"]].get("name", "?") if "imageIndex" in f and f["imageIndex"] < len(images) else "?"
+            print(img, f.get("symbol", hex(f.get("imageOffset", 0))))
+PY
+    fi
     if [ -f "$log/$name.hang.txt" ]; then
       echo "    main thread when it hung:"
       grep -A40 'Thread_.*com.apple.main-thread' "$log/$name.hang.txt" | grep -E 'ui_checklist|appkit_ui|AppKit|\]' | head -25 | sed 's/^/      /'
@@ -99,6 +123,7 @@ suite native_csv CHECK=all "$ex/native_csv"
 suite log_viewer CHECK=all "$ex/log_viewer"
 suite hands_on CHECK=drop "$ex/hands_on"
 suite notes CHECK=all "$ex/notes"
+suite gallery CHECK=all "$ex/gallery"
 if [ -n "$iced" ]; then
   step iced_bundle scripts/bundle-example.sh checklist
   suite iced_checklist CHECK=all target/checklist.app/Contents/MacOS/checklist

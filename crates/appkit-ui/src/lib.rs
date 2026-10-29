@@ -40,6 +40,7 @@
 #![warn(missing_docs)]
 
 mod chrome;
+mod collection;
 mod controls;
 mod dialogs;
 mod documents;
@@ -87,6 +88,7 @@ pub use documents::{
 pub use layout::layout_stats;
 pub use models::{Table, TextEditor, table, text_editor};
 pub use outline::{Outline, TreeNode, outline, sidebar};
+pub use collection::{Collection, CollectionItem, ItemImage, collection, collection_cells_made};
 pub use appkit_host::table::{Column, ColumnState, Sort, TableModel};
 pub use appkit_host::text::TextModel;
 pub use appkit_host::ViewId;
