@@ -1031,6 +1031,42 @@ impl<T: 'static> TableModel<T> {
         self.inner.select_model_rows(&selected);
     }
 
+    /// Appends rows in one step, for live data (a log tail, a feed): when
+    /// unsorted, the new rows are added to the end and AppKit only learns
+    /// the new count (cost independent of the rows already there; the
+    /// selection is kept). When sorted, the order is recomputed.
+    pub fn append(&self, rows: Vec<T>) {
+        if rows.is_empty() {
+            return;
+        }
+        let start = self.len();
+        self.inner.rows.borrow_mut().extend(rows);
+        if self.inner.sort.borrow().is_some() && self.inner.sorts_in_place.get() {
+            self.inner.resort_keeping_selection();
+            return;
+        }
+        let end = self.len();
+        self.inner.order.borrow_mut().extend(start..end);
+        self.inner.table.noteNumberOfRowsChanged();
+    }
+
+    /// Scrolls so the last row is visible.
+    pub fn scroll_to_end(&self) {
+        let n = self.inner.order.borrow().len();
+        if n > 0 {
+            self.inner.table.scrollRowToVisible((n - 1) as NSInteger);
+        }
+    }
+
+    /// Whether the table is scrolled to its last row (within one row), e.g.
+    /// to keep following new rows only while the user hasn't scrolled up.
+    pub fn is_at_end(&self) -> bool {
+        let table = &self.inner.table;
+        let visible = table.visibleRect();
+        let bottom = visible.origin.y + visible.size.height;
+        bottom >= table.bounds().size.height - table.rowHeight() - table.intercellSpacing().height - 1.0
+    }
+
     /// Appends a row.
     pub fn push(&self, row: T) {
         let len = self.len();

@@ -9,6 +9,7 @@
 - `TableModel::scroll_view()` returns the table's scroll view, for hosts that place it themselves.
 - `observe_appearance()` is public, for apps without an attached host window.
 - `TextModel::scroll_view()`.
+- `TableModel::append(rows)` adds rows for live data: when unsorted, its cost doesn't depend on the rows already there, and the selection is kept. `scroll_to_end()` and `is_at_end()` support following a tail.
 - Tables copy: ⌘C copies the selected rows as tab-separated text (columns in their shown order). `TableModel::selected_text()`, `copy_to(&pasteboard)`.
 - Opt-in table transfers, each reported as a new `TableEvent` that the app applies:
   - `set_row_drag(true)`: rows drag out as text.

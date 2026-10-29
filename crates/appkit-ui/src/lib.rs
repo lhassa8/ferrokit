@@ -9,7 +9,8 @@
 //! text editor (F2.3); split views, toolbars and context menus (F2.4); sheets,
 //! alerts and file panels (F2.5); the app's menus, its Settings window,
 //! stored settings and window restoration (F3.1); undo, one history per
-//! window (F3.2); drag and drop, copy and paste of table rows (F3.3).
+//! window (F3.2); drag and drop, copy and paste of table rows (F3.3);
+//! per-frame callbacks for live data (F3.5).
 //!
 //! Main thread only.
 
@@ -18,6 +19,7 @@
 mod chrome;
 mod controls;
 mod dialogs;
+mod frame;
 mod layout;
 mod menu;
 mod models;
@@ -45,6 +47,7 @@ use objc2_core_foundation::{CFRunLoop, kCFRunLoopCommonModes};
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
 pub use appkit_host::{is_dark, system_colors};
+pub use frame::{FrameLoop, on_frame};
 pub use store::{Stored, stored};
 pub use undo::{set_undoable, undoable, undoable_in};
 pub use signal::{Effect, Memo, Signal, after_batch, batch, effect_runs, untrack};

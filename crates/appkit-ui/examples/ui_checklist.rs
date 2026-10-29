@@ -653,10 +653,41 @@ fn transfer_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                 let w = windows().into_iter().find(|w| w.title().to_string() == "Transfer").unwrap();
                 appkit_ui::close_window(&w);
                 let events = events.clone();
-                after_events(move || appearance_check(events.clone()));
+                after_events(move || frame_check(events.clone()));
             });
         });
     });
+}
+
+/// on_frame: calls come (from display frames, or the stand-in timer while
+/// the display isn't drawing), run in a batch, and stop when the loop is dropped.
+fn frame_check(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let w = windows().into_iter().find(|w| w.title().to_string() == "Views").unwrap();
+    let calls = Rc::new(Cell::new(0u32));
+    let c = calls.clone();
+    let lp = appkit_ui::on_frame(&w, move |_| c.set(c.get() + 1));
+    spawn(
+        || std::thread::sleep(std::time::Duration::from_millis(500)),
+        move |()| {
+            let (display, fallback) = lp.counts();
+            let seen = calls.get();
+            drop(lp);
+            let calls2 = calls.clone();
+            spawn(
+                || std::thread::sleep(std::time::Duration::from_millis(300)),
+                move |()| {
+                    let after = calls2.get();
+                    check(
+                        "frame-loop",
+                        seen >= 3 && u64::from(seen) == display + fallback && after == seen,
+                        format!("{seen} calls in 0.5 s ({display} from display frames, {fallback} from the stand-in timer); none after drop: {}", after == seen),
+                    );
+                    let events = events.clone();
+                    after_events(move || appearance_check(events.clone()));
+                },
+            );
+        },
+    );
 }
 
 fn all_views(v: &NSView) -> Vec<Retained<NSView>> {
