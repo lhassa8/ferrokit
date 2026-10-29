@@ -1,13 +1,28 @@
 # Changelog
 
-## Unreleased
+## appkit-host 0.2.1, iced-appkit 0.2.1, appkit-ui 0.2.0 (unreleased: versions set, not yet published)
 
-### appkit-host (additive)
+`appkit-host` and `iced-appkit` only gain API (patch releases); `iced-appkit` re-exports the new `CellImage`, so it needs `appkit-host` 0.2.1. `appkit-ui` moves to 0.2.0: besides new features, some behaviour changed (see below).
+
+### appkit-host 0.2.1 (additive)
 
 - Group rows: `TableModel::set_group_by(key)` puts a header before each group (full width, floating, not selectable; sorting sorts within groups); `groups()`, `shown_rows()`. `row_at` is `None` for a header; event indices stay model indices.
 - `Column::progress` (a bar from 0 to 1), `Column::icon` (`CellImage::Symbol` or `FileIcon` before the text), `Column::fit` (width from the longest values).
 
-### appkit-ui
+### iced-appkit 0.2.1 (additive)
+
+- Re-exports `CellImage` (for `Column::icon`); requires `appkit-host` 0.2.1.
+
+### appkit-ui 0.2.0
+
+Changed behaviour:
+
+- `image(symbol)` is decorative (hidden from VoiceOver) unless given a `.description`; it used to read the symbol name.
+- `quit()` starts on the next run-loop pass (it used to terminate inside the caller's batch).
+- Windows closed by the close button or ⌘W are torn down (views, effects, undo history), like `close_window`; the Settings window is kept.
+- `layout_times_us()` keeps the most recent 10,000–20,000 passes (it grew forever); `layout_passes()` gives the total.
+
+Added:
 
 - **Document apps:** `App::documents(DocumentType)`.
   - The File menu gets New, Open…, Open Recent, Save, Save As… and Revert to Saved.

@@ -2,7 +2,7 @@
 
 Real AppKit controls inside [Iced](https://iced.rs) 0.14 windows on macOS. Not imitations: an actual `NSTableView` in your Iced layout, so you get native scrolling, keyboard navigation, type-select, Dark Mode and VoiceOver for free.
 
-Status: **0.2.0**. Part of [Ferrokit](https://github.com/lhassa8/ferrokit). macOS 15 or later, Iced 0.14. Two widgets: a table (`NSTableView`) and a plain-text editor (`NSTextView`).
+Status: **0.2.1**. Part of [Ferrokit](https://github.com/lhassa8/ferrokit). macOS 15 or later, Iced 0.14. Two widgets: a table (`NSTableView`) and a plain-text editor (`NSTextView`).
 
 ## Why
 

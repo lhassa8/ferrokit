@@ -8,7 +8,7 @@ Real AppKit controls for Rust apps on macOS. Not GPU-drawn imitations and not we
 | [`appkit-host`](crates/appkit-host) | The framework-agnostic layer underneath: places AppKit views inside a GPU-rendered window and keeps layout, clipping, focus, shortcuts and appearance in step. |
 | [`appkit-ui`](crates/appkit-ui) | A standalone native framework on `appkit-host`: whole Mac apps in Rust, every view a real AppKit view, updated in place by signals. See its [guide](crates/appkit-ui/guide/README.md). |
 
-Status: `iced-appkit` and `appkit-host` **0.2.0**, `appkit-ui` **0.1.0** (alpha). macOS 15 or later.
+Status: `iced-appkit` and `appkit-host` **0.2.1**, `appkit-ui` **0.2.0** (alpha). macOS 15 or later.
 
 ## Try it
 

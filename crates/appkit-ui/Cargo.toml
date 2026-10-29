@@ -1,6 +1,6 @@
 [package]
 name = "appkit-ui"
-version = "0.1.0"
+version = "0.2.0"
 description = "A native macOS UI framework for Rust: real AppKit views (tables, outlines, text) updated in place by fine-grained signals"
 edition.workspace = true
 license.workspace = true
@@ -14,7 +14,7 @@ categories = ["gui", "os::macos-apis"]
 default-target = "aarch64-apple-darwin"
 
 [dependencies]
-appkit-host = { path = "../appkit-host", version = "0.2.0" }
+appkit-host = { path = "../appkit-host", version = "0.2.1" }
 objc2 = "0.6"
 block2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSGeometry", "NSObject", "NSNotification", "NSArray", "NSDictionary", "NSData", "NSRange", "NSUndoManager", "NSIndexSet", "NSSortDescriptor", "NSURL", "NSUserDefaults", "NSRunLoop", "NSDate", "NSIndexPath", "NSSet"] }
