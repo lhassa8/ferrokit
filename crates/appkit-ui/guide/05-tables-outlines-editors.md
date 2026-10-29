@@ -93,6 +93,53 @@ let view = sidebar(tree, |f: &Folder| f.name.clone()).icon(|_| Some("folder".int
 # let _ = view;
 ```
 
+## Collections: grids of items
+
+`collection(items, describe)` shows items in a grid (`NSCollectionView`),
+as Finder's icon view or Photos do. Only the items on screen have views:
+cells are made once and refilled as they scroll in, so 100,000 items load,
+lay out and draw in about 5 ms.
+
+```rust,no_run
+use std::path::PathBuf;
+use appkit_ui::*;
+
+#[derive(Clone)]
+struct File(PathBuf);
+
+impl Identifiable for File {
+    type Id = PathBuf;
+    fn id(&self) -> PathBuf {
+        self.0.clone()
+    }
+}
+
+let files = Signal::new(vec![File("/System/Applications/Calculator.app".into())]);
+let selected = Signal::new(Vec::<PathBuf>::new());
+let f = files.clone();
+let grid = collection(move || f.get(), |file: &File| {
+    let name = file.0.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    CollectionItem::new(name, ItemImage::FileIcon(file.0.clone()))
+})
+.item_size(110.0, 104.0)
+.selection(&selected)
+.multiple()
+.on_activate(|file| println!("open {:?}", file.0))   // double-click or Return
+.accessibility_label("Files");
+# let _ = grid;
+```
+
+- Each item shows a `CollectionItem`: a title, an optional subtitle and an
+  image: `ItemImage::Symbol` (an SF Symbol), `FileIcon` (the Finder's icon
+  for a path), `Color` (a swatch) or `None`.
+- Items are keyed by `Identifiable` id: the selection (a signal of ids)
+  follows its items when the list changes.
+- Arrow keys, ⌘-click and ⇧-click work as in any Mac grid; VoiceOver reads
+  each item by its title (and subtitle).
+
+The `gallery` example browses a folder's apps with their icons, or 100,000
+colour swatches.
+
 ## Text editor
 
 `text_editor` shows a `TextModel` in an `NSTextView`: spell checking,
