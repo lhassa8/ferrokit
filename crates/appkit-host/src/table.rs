@@ -51,7 +51,23 @@ enum Kind {
     Text,
     Number { decimals: usize },
     Check,
+    /// A bar from 0 to 1 (the value is a number).
+    Progress,
 }
+
+/// A small image shown before a cell's text (see [`Column::icon`]).
+#[derive(Debug, Clone, PartialEq)]
+pub enum CellImage {
+    /// An SF Symbol by name.
+    Symbol(String),
+    /// The Finder's icon for a file or folder.
+    FileIcon(std::path::PathBuf),
+}
+
+type IconFn<T> = Box<dyn Fn(&T) -> Option<CellImage>>;
+
+/// A row's group (see [`TableModel::set_group_by`]).
+pub type GroupKey<T> = Box<dyn Fn(&T) -> String>;
 
 /// A column: an id (stable, used for sorting and saved state), a title, and
 /// how to get the cell value from a row.
@@ -63,12 +79,14 @@ pub struct Column<T> {
     kind: Kind,
     sortable: bool,
     editable: bool,
+    fit: bool,
+    icon: Option<IconFn<T>>,
     value: Box<dyn Fn(&T) -> Value>,
 }
 
 impl<T> Column<T> {
     fn new(id: &str, title: &str, kind: Kind, value: Box<dyn Fn(&T) -> Value>) -> Self {
-        Self { id: id.into(), title: title.into(), width: 120.0, min_width: 40.0, kind, sortable: true, editable: false, value }
+        Self { id: id.into(), title: title.into(), width: 120.0, min_width: 40.0, kind, sortable: true, editable: false, fit: false, icon: None, value }
     }
 
     /// A text column.
@@ -85,6 +103,26 @@ impl<T> Column<T> {
     /// the model doesn't change the row itself.
     pub fn check(id: &str, title: &str, value: impl Fn(&T) -> bool + 'static) -> Self {
         Self::new(id, title, Kind::Check, Box::new(move |row| Value::Bool(value(row)))).width(60.0)
+    }
+
+    /// A progress bar from 0 to 1 (values outside are clamped). Sorted and
+    /// copied as the number; VoiceOver reads it as a percentage.
+    pub fn progress(id: &str, title: &str, value: impl Fn(&T) -> f64 + 'static) -> Self {
+        Self::new(id, title, Kind::Progress, Box::new(move |row| Value::Number(value(row).clamp(0.0, 1.0)))).width(100.0)
+    }
+
+    /// Shows an image before each cell's text (a text or number column),
+    /// e.g. a file's icon before its name. `None` leaves the space empty.
+    pub fn icon(mut self, image: impl Fn(&T) -> Option<CellImage> + 'static) -> Self {
+        self.icon = Some(Box::new(image));
+        self
+    }
+
+    /// Sizes the column to its widest content (and its title) whenever the
+    /// rows change. With many rows, the longest values are measured.
+    pub fn fit(mut self) -> Self {
+        self.fit = true;
+        self
     }
 
     /// Initial width in points (default 120).
@@ -131,6 +169,9 @@ fn display(kind: Kind, value: &Value) -> String {
         (_, Value::Bool(b)) => if *b { "Yes".into() } else { "No".into() },
     }
 }
+
+/// Group header slots in `order` carry this bit (and the group's index).
+const HEADER: usize = 1 << (usize::BITS - 1);
 
 /// The table's sort: a column id and a direction.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -237,6 +278,12 @@ trait Data {
     fn sorted(&self) -> bool;
     /// Tab-separated text of rows (view positions), columns in `columns` order.
     fn rows_text(&self, view_rows: &[usize], columns: &[String]) -> String;
+    /// The title of the group header shown at `view_row`, if it is one.
+    fn group_title(&self, view_row: usize) -> Option<String>;
+    /// The cell's image (an [`Column::icon`] column).
+    fn icon(&self, view_row: usize, column: &str) -> Option<CellImage>;
+    /// Whether the column has icons.
+    fn has_icon(&self, column: &str) -> bool;
 }
 
 struct SourceIvars {
@@ -310,7 +357,21 @@ define_class!(
     unsafe impl NSTableViewDelegate for Source {
         #[unsafe(method_id(tableView:viewForTableColumn:row:))]
         fn view_for(&self, table: &NSTableView, column: Option<&NSTableColumn>, row: NSInteger) -> Option<Retained<NSView>> {
-            column.and_then(|column| self.cell_view(table, column, row))
+            match column {
+                Some(column) => self.cell_view(table, column, row),
+                // A group row spans the table (no column).
+                None => self.group_view(table, row),
+            }
+        }
+
+        #[unsafe(method(tableView:isGroupRow:))]
+        fn is_group_row(&self, _table: &NSTableView, row: NSInteger) -> bool {
+            self.data().is_some_and(|d| d.group_title(row as usize).is_some())
+        }
+
+        #[unsafe(method(tableView:shouldSelectRow:))]
+        fn should_select_row(&self, _table: &NSTableView, row: NSInteger) -> bool {
+            self.data().is_none_or(|d| d.group_title(row as usize).is_none())
         }
 
         #[unsafe(method(tableViewSelectionDidChange:))]
@@ -573,10 +634,68 @@ impl Source {
         (!paths.is_empty() && paths.iter().all(accepted)).then_some(Dropped::Files(paths))
     }
 
+    /// A group header: its title, in the table's group-row style.
+    fn group_view(&self, table: &NSTableView, row: NSInteger) -> Option<Retained<NSView>> {
+        let title = self.data()?.group_title(row as usize)?;
+        let ident = NSString::from_str("appkit-host.group");
+        // SAFETY: reuse lookup by identifier; owner may be nil.
+        let field = match unsafe { table.makeViewWithIdentifier_owner(&ident, None) }.and_then(|v| v.downcast::<NSTextField>().ok()) {
+            Some(f) => f,
+            None => {
+                let f = NSTextField::labelWithString(&NSString::new(), MainThreadMarker::from(self));
+                f.setIdentifier(Some(&ident));
+                f.setFont(Some(&objc2_app_kit::NSFont::boldSystemFontOfSize(objc2_app_kit::NSFont::smallSystemFontSize())));
+                f.setTextColor(Some(&objc2_app_kit::NSColor::secondaryLabelColor()));
+                f
+            }
+        };
+        field.setStringValue(&NSString::from_str(&title));
+        Some(Retained::into_super(Retained::into_super(field)))
+    }
+
+    fn progress_view(&self, table: &NSTableView, ident: &NSString, value: f64) -> Retained<NSView> {
+        use objc2_app_kit::{NSProgressIndicator, NSProgressIndicatorStyle, NSTableCellView};
+        let mtm = MainThreadMarker::from(self);
+        // SAFETY: reuse lookup by identifier; owner may be nil.
+        let cell = match unsafe { table.makeViewWithIdentifier_owner(ident, None) }.and_then(|v| v.downcast::<NSTableCellView>().ok()) {
+            Some(c) => c,
+            None => {
+                self.ivars().created.set(self.ivars().created.get() + 1);
+                let c = NSTableCellView::new(mtm);
+                c.setIdentifier(Some(ident));
+                let bar = NSProgressIndicator::new(mtm);
+                bar.setStyle(NSProgressIndicatorStyle::Bar);
+                bar.setIndeterminate(false);
+                bar.setMinValue(0.0);
+                bar.setMaxValue(1.0);
+                bar.setControlSize(objc2_app_kit::NSControlSize::Small);
+                bar.setAutoresizingMask(objc2_app_kit::NSAutoresizingMaskOptions::ViewWidthSizable | objc2_app_kit::NSAutoresizingMaskOptions::ViewMinYMargin | objc2_app_kit::NSAutoresizingMaskOptions::ViewMaxYMargin);
+                bar.setFrame(objc2_foundation::NSRect::new(objc2_foundation::NSPoint::new(2.0, 2.0), objc2_foundation::NSSize::new(96.0, 12.0)));
+                c.addSubview(&bar);
+                if let Some(title) = self.data().and_then(|d| d.title(&ident.to_string())) {
+                    // SAFETY: NSAccessibility's label setter.
+                    let () = unsafe { msg_send![&*bar, setAccessibilityLabel: &*NSString::from_str(&title)] };
+                }
+                c
+            }
+        };
+        if let Some(bar) = cell.subviews().iter().find_map(|v| v.downcast::<objc2_app_kit::NSProgressIndicator>().ok()) {
+            bar.setDoubleValue(value);
+        }
+        Retained::into_super(cell)
+    }
+
     fn cell_view(&self, table: &NSTableView, column: &NSTableColumn, row: NSInteger) -> Option<Retained<NSView>> {
         let ident = column.identifier();
         let (kind, value) = self.data()?.cell(row as usize, &ident.to_string())?;
         let mtm = MainThreadMarker::from(self);
+        if kind == Kind::Progress {
+            let v = if let Value::Number(n) = value { n } else { 0.0 };
+            return Some(self.progress_view(table, &ident, v));
+        }
+        if self.data().is_some_and(|d| d.has_icon(&ident.to_string())) {
+            return Some(self.icon_view(table, &ident, kind, &value, row));
+        }
         // SAFETY: reuse lookup by identifier; owner may be nil.
         let reused = unsafe { table.makeViewWithIdentifier_owner(&ident, None) };
         if kind == Kind::Check {
@@ -638,14 +757,65 @@ impl Source {
         field.setStringValue(&NSString::from_str(&display(kind, &value)));
         Some(Retained::into_super(Retained::into_super(field)))
     }
+
+    /// A cell with an image before its text (an icon column).
+    fn icon_view(&self, table: &NSTableView, ident: &NSString, kind: Kind, value: &Value, row: NSInteger) -> Retained<NSView> {
+        use objc2_app_kit::{NSImageView, NSTableCellView};
+        let mtm = MainThreadMarker::from(self);
+        // SAFETY: reuse lookup by identifier; owner may be nil.
+        let cell = match unsafe { table.makeViewWithIdentifier_owner(ident, None) }.and_then(|v| v.downcast::<NSTableCellView>().ok()) {
+            Some(c) => c,
+            None => {
+                self.ivars().created.set(self.ivars().created.get() + 1);
+                let c = NSTableCellView::new(mtm);
+                c.setIdentifier(Some(ident));
+                let image = NSImageView::new(mtm);
+                image.setFrame(objc2_foundation::NSRect::new(objc2_foundation::NSPoint::new(2.0, 0.0), objc2_foundation::NSSize::new(16.0, 16.0)));
+                image.setAutoresizingMask(objc2_app_kit::NSAutoresizingMaskOptions::ViewMinYMargin | objc2_app_kit::NSAutoresizingMaskOptions::ViewMaxYMargin);
+                let text = NSTextField::labelWithString(&NSString::new(), mtm);
+                text.setLineBreakMode(NSLineBreakMode::ByTruncatingTail);
+                text.setFrame(objc2_foundation::NSRect::new(objc2_foundation::NSPoint::new(22.0, 0.0), objc2_foundation::NSSize::new(100.0, 17.0)));
+                text.setAutoresizingMask(objc2_app_kit::NSAutoresizingMaskOptions::ViewWidthSizable | objc2_app_kit::NSAutoresizingMaskOptions::ViewMinYMargin | objc2_app_kit::NSAutoresizingMaskOptions::ViewMaxYMargin);
+                if let Kind::Number { .. } = kind {
+                    text.setAlignment(NSTextAlignment::Right);
+                }
+                c.addSubview(&image);
+                c.addSubview(&text);
+                // SAFETY: weak outlets; both views are the cell's subviews,
+                // which keeps them alive.
+                unsafe {
+                    c.setImageView(Some(&image));
+                    c.setTextField(Some(&text));
+                }
+                c
+            }
+        };
+        let image = self.data().and_then(|d| d.icon(row as usize, &ident.to_string())).and_then(|i| match i {
+            CellImage::Symbol(name) => objc2_app_kit::NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str(&name), None),
+            CellImage::FileIcon(path) => Some(objc2_app_kit::NSWorkspace::sharedWorkspace().iconForFile(&NSString::from_str(&path.to_string_lossy()))),
+        });
+        // SAFETY: the outlets set above (subviews of the cell).
+        if let Some(iv) = unsafe { cell.imageView() } {
+            iv.setImage(image.as_deref());
+        }
+        // SAFETY: as above.
+        if let Some(tf) = unsafe { cell.textField() } {
+            tf.setStringValue(&NSString::from_str(&display(kind, value)));
+        }
+        Retained::into_super(cell)
+    }
 }
 
 struct Inner<T: 'static> {
     id: ViewId,
     columns: Vec<Column<T>>,
     rows: RefCell<Vec<T>>,
-    /// View position → model index (identity when unsorted).
+    /// View position → model index (identity when unsorted); a group
+    /// header's slot is `HEADER | group`.
     order: RefCell<Vec<usize>>,
+    /// Groups' titles (see `set_group_by`).
+    groups: RefCell<Vec<String>>,
+    group_by: RefCell<Option<GroupKey<T>>>,
     sort: RefCell<Option<Sort>>,
     sorts_in_place: Cell<bool>,
     events: RefCell<VecDeque<TableEvent>>,
@@ -665,13 +835,29 @@ impl<T: 'static> Data for Inner<T> {
 
     fn cell(&self, view_row: usize, column: &str) -> Option<(Kind, Value)> {
         let column = self.columns.iter().find(|c| c.id == column)?;
-        let index = *self.order.borrow().get(view_row)?;
+        let index = self.model_row(view_row)?;
         let rows = self.rows.borrow();
         Some((column.kind, (column.value)(rows.get(index)?)))
     }
 
     fn model_row(&self, view_row: usize) -> Option<usize> {
-        self.order.borrow().get(view_row).copied()
+        self.order.borrow().get(view_row).copied().filter(|m| m & HEADER == 0)
+    }
+
+    fn group_title(&self, view_row: usize) -> Option<String> {
+        let slot = *self.order.borrow().get(view_row)?;
+        (slot & HEADER != 0).then(|| self.groups.borrow().get(slot & !HEADER).cloned()).flatten()
+    }
+
+    fn icon(&self, view_row: usize, column: &str) -> Option<CellImage> {
+        let column = self.columns.iter().find(|c| c.id == column)?;
+        let index = self.model_row(view_row)?;
+        let rows = self.rows.borrow();
+        column.icon.as_ref().and_then(|f| f(rows.get(index)?))
+    }
+
+    fn has_icon(&self, column: &str) -> bool {
+        self.columns.iter().any(|c| c.id == column && c.icon.is_some())
     }
 
     fn editable(&self, column: &str) -> bool {
@@ -762,19 +948,69 @@ impl<T: 'static> Inner<T> {
                 order.reverse();
             }
         }
+        // Groups: rows gathered by key (groups in order of first appearance
+        // in the model, rows in the sort's order within each), each run
+        // after a header slot.
+        let mut groups = Vec::new();
+        if let Some(key) = self.group_by.borrow().as_ref() {
+            let keys: Vec<String> = rows.iter().map(key).collect();
+            let mut index_of: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+            for k in &keys {
+                if !index_of.contains_key(k.as_str()) {
+                    index_of.insert(k, groups.len());
+                    groups.push(k.clone());
+                }
+            }
+            let mut buckets: Vec<Vec<usize>> = vec![Vec::new(); groups.len()];
+            for &m in &order {
+                buckets[index_of[keys[m].as_str()]].push(m);
+            }
+            order = buckets.into_iter().enumerate().flat_map(|(g, rows)| std::iter::once(HEADER | g).chain(rows)).collect();
+        }
+        drop(rows);
+        *self.groups.borrow_mut() = groups;
         *self.order.borrow_mut() = order;
+        self.fit_columns();
+    }
+
+    /// Sizes `fit` columns to their widest content: the title and, with many
+    /// rows, the 64 longest values by character count (all of them below
+    /// 2,000 rows), measured in the table's font.
+    fn fit_columns(&self) {
+        let rows = self.rows.borrow();
+        for column in self.columns.iter().filter(|c| c.fit) {
+            let Some(native) = self.table.tableColumnWithIdentifier(&NSString::from_str(&column.id)) else { continue };
+            let mut texts: Vec<String> = rows.iter().map(|r| display(column.kind, &(column.value)(r))).collect();
+            if texts.len() > 2_000 {
+                texts.sort_by_key(|t| std::cmp::Reverse(t.chars().count()));
+                texts.truncate(64);
+            }
+            let font = objc2_app_kit::NSFont::systemFontOfSize(objc2_app_kit::NSFont::systemFontSize());
+            let attrs = objc2_foundation::NSDictionary::from_retained_objects(
+                // SAFETY: AppKit's font attribute key.
+                &[unsafe { objc2_app_kit::NSFontAttributeName }],
+                &[Retained::into_super(Retained::into_super(font)) as Retained<AnyObject>],
+            );
+            // SAFETY: measuring a string with font attributes.
+            let width = |s: &str| unsafe { objc2_app_kit::NSStringDrawing::sizeWithAttributes(&*NSString::from_str(s), Some(&attrs)).width };
+            let widest = texts.iter().map(|t| width(t)).fold(width(&column.title) + 16.0, f64::max);
+            let icon = if column.icon.is_some() { 22.0 } else { 0.0 };
+            native.setWidth((widest + icon + 12.0).ceil().max(column.min_width));
+        }
     }
 
     fn selection_model_rows(&self) -> Vec<usize> {
         let order = self.order.borrow();
-        indexes(&self.table.selectedRowIndexes()).into_iter().filter_map(|r| order.get(r).copied()).collect()
+        indexes(&self.table.selectedRowIndexes()).into_iter().filter_map(|r| order.get(r).copied()).filter(|m| m & HEADER == 0).collect()
     }
 
     fn select_model_rows(&self, rows: &[usize]) {
         let order = self.order.borrow();
         let mut position = vec![usize::MAX; self.rows.borrow().len()];
         for (view, &model) in order.iter().enumerate() {
-            position[model] = view;
+            if model & HEADER == 0 {
+                position[model] = view;
+            }
         }
         drop(order);
         let set = NSMutableIndexSet::new();
@@ -940,6 +1176,8 @@ impl<T: 'static> TableModel<T> {
             columns,
             rows: RefCell::new(Vec::new()),
             order: RefCell::new(Vec::new()),
+            groups: RefCell::new(Vec::new()),
+            group_by: RefCell::new(None),
             sort: RefCell::new(None),
             sorts_in_place: Cell::new(true),
             events: RefCell::new(VecDeque::new()),
@@ -1041,7 +1279,8 @@ impl<T: 'static> TableModel<T> {
         }
         let start = self.len();
         self.inner.rows.borrow_mut().extend(rows);
-        if self.inner.sort.borrow().is_some() && self.inner.sorts_in_place.get() {
+        let grouped = self.inner.group_by.borrow().is_some();
+        if grouped || (self.inner.sort.borrow().is_some() && self.inner.sorts_in_place.get()) {
             self.inner.resort_keeping_selection();
             return;
         }
@@ -1189,9 +1428,31 @@ impl<T: 'static> TableModel<T> {
     }
 
     /// The model index of the row shown at `position` (0 = top row as
-    /// currently sorted).
+    /// currently sorted); `None` past the end or for a group header.
     pub fn row_at(&self, position: usize) -> Option<usize> {
-        self.inner.order.borrow().get(position).copied()
+        self.inner.model_row(position)
+    }
+
+    /// Groups the rows under headers by `key` (e.g. a date or a category):
+    /// groups appear in the order their first row has in the model, rows
+    /// keep the sort's order within each group, and each group starts with
+    /// a header row showing the key (full width, not selectable, floating
+    /// while its rows scroll). `None` ungroups. Row indices in events stay
+    /// model indices.
+    pub fn set_group_by(&self, key: Option<GroupKey<T>>) {
+        *self.inner.group_by.borrow_mut() = key;
+        self.inner.table.setFloatsGroupRows(true);
+        self.inner.resort_keeping_selection();
+    }
+
+    /// The groups' titles, in the order shown (empty when not grouped).
+    pub fn groups(&self) -> Vec<String> {
+        self.inner.groups.borrow().clone()
+    }
+
+    /// The number of rows shown, group headers included.
+    pub fn shown_rows(&self) -> usize {
+        self.inner.order.borrow().len()
     }
 
     /// Selected rows (model indices, ascending in view order).

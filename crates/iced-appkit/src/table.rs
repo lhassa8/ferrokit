@@ -6,7 +6,7 @@ use iced::advanced::widget::{Operation, Tree, Widget};
 use iced::advanced::{Clipboard, Renderer, Shell, renderer};
 use iced::{Element, Event, Length, Rectangle, Size, Vector, mouse};
 
-pub use appkit_host::table::{Column, ColumnState, Sort, TableEvent, TableModel, Value};
+pub use appkit_host::table::{CellImage, Column, ColumnState, Sort, TableEvent, TableModel, Value};
 
 use crate::NativeSlot;
 

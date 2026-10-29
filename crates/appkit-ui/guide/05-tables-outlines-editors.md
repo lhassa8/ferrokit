@@ -49,6 +49,35 @@ let view = table(&model)
 - `update_row`, `append` and `select` change the model in place. Only the
   rows on screen have views; 200,000 rows load in about 150 ms.
 
+### Groups, icons, progress bars, fitted columns
+
+```rust,no_run
+use std::rc::Rc;
+use appkit_ui::*;
+
+#[derive(Clone)]
+struct Download { name: String, day: String, done: f64 }
+
+let model = Rc::new(TableModel::new(
+    ViewId(3),
+    vec![
+        Column::text("name", "Name", |d: &Download| d.name.clone())
+            .icon(|_| Some(CellImage::Symbol("doc".into())))   // or CellImage::FileIcon(path)
+            .fit(),                                             // as wide as the longest name
+        Column::progress("done", "Done", |d: &Download| d.done), // a bar from 0 to 1
+    ],
+));
+model.set_rows(vec![Download { name: "report.pdf".into(), day: "Today".into(), done: 0.4 }]);
+model.set_group_by(Some(Box::new(|d: &Download| d.day.clone())));  // a header per day
+let view = table(&model).accessibility_label("Downloads");
+# let _ = view;
+```
+
+- `set_group_by` shows a header row before each group. Headers are full width, float while their rows scroll, and can't be selected. Groups appear in the order of their first row; sorting by a column sorts within each group.
+- Row indices in every event stay model indices, never header positions. `row_at(view_row)` is `None` for a header.
+- A progress column sorts and copies as its number; VoiceOver reads the bar's value.
+- `.fit()` measures the column's longest values (by character count, with many rows) whenever the rows change.
+
 ### Copy, paste, drag and drop
 
 - ⌘C copies the selected rows as tab-separated text (Numbers and Excel
