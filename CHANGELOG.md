@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### appkit-host (additive)
+
+- Group rows: `TableModel::set_group_by(key)` puts a header before each group (full width, floating, not selectable; sorting sorts within groups); `groups()`, `shown_rows()`. `row_at` is `None` for a header; event indices stay model indices.
+- `Column::progress` (a bar from 0 to 1), `Column::icon` (`CellImage::Symbol` or `FileIcon` before the text), `Column::fit` (width from the longest values).
+
 ### appkit-ui
 
 - **Document apps:** `App::documents(DocumentType)`.

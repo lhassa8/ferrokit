@@ -1191,7 +1191,143 @@ fn controls_c_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let segments: Vec<String> = elements.iter().filter(|e| e.role == "AXRadioButton").map(|e| e.name.clone()).collect();
     check("controls-c-accessibility", problems.is_empty() && segments == ["List", "Grid", "Columns"], format!("unnamed: {problems:?}; segments {segments:?}"));
     appkit_ui::close_window(&w);
-    after_events(move || transfer_checks(events.clone()));
+    after_events(move || rich_table_checks(events.clone()));
+}
+
+#[derive(Clone)]
+struct Task {
+    name: String,
+    group: String,
+    done: f64,
+    size: f64,
+}
+
+/// G4: group rows, icon cells, progress cells, a fitted column; indices in
+/// events stay model indices.
+fn rich_table_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use appkit_ui::CellImage;
+    use objc2_app_kit::{NSEvent, NSProgressIndicator, NSTableCellView};
+    let groups = ["Today", "Yesterday", "Last Week"];
+    let tasks: Vec<Task> = (0..300)
+        .map(|i| Task { name: format!("Task {i}"), group: groups[i % 3].into(), done: (i % 10) as f64 / 10.0, size: ((i * 37) % 500) as f64 })
+        .chain(std::iter::once(Task { name: "A much longer task name than the others".into(), group: "Today".into(), done: 1.0, size: 1.0 }))
+        .collect();
+    let model = Rc::new(TableModel::new(
+        ViewId(995),
+        vec![
+            Column::text("name", "Name", |t: &Task| t.name.clone()).icon(|t: &Task| Some(CellImage::Symbol(if t.done >= 1.0 { "checkmark.circle".into() } else { "circle".into() }))).fit(),
+            Column::progress("done", "Done", |t: &Task| t.done),
+            Column::number("size", "Size", |t: &Task| t.size),
+        ],
+    ));
+    model.set_rows(tasks.clone());
+    model.set_group_by(Some(Box::new(|t: &Task| t.group.clone())));
+    let activated = Signal::new(None::<usize>);
+    let selected = Signal::new(Vec::<usize>::new());
+    let (a2, s2) = (activated.clone(), selected.clone());
+    let w = open(Window::new("Rich Table").size(560.0, 420.0).view(
+        table(&model).on_activate(move |r| a2.set(Some(r))).on_select(move |r| s2.set(r)).accessibility_label("Tasks"),
+    ));
+    let tv = model.table_view();
+    tv.layoutSubtreeIfNeeded();
+
+    // Groups: a header before each run; headers aren't rows.
+    let n = tasks.len();
+    let headers: Vec<usize> = (0..model.shown_rows()).filter(|&r| model.row_at(r).is_none()).collect();
+    let first_group = (1..headers[1]).filter_map(|r| model.row_at(r)).all(|m| tasks[m].group == "Today");
+    let styled = {
+        // SAFETY: NSTableView's row view lookup and NSTableRowView's style flag.
+        let row_view: Option<Retained<objc2::runtime::AnyObject>> = unsafe { objc2::msg_send![&*tv, rowViewAtRow: 0isize, makeIfNecessary: true] };
+        row_view.is_some_and(|v| unsafe { objc2::msg_send![&*v, isGroupRowStyle] })
+    };
+    check(
+        "table-groups",
+        model.groups() == groups && model.shown_rows() == n + 3 && headers.len() == 3 && headers[0] == 0 && first_group && styled,
+        format!("groups {:?}; {} rows shown for {n} rows; headers at {headers:?}; first group all Today: {first_group}; header row styled as a group: {styled}", model.groups(), model.shown_rows()),
+    );
+
+    // Sorting sorts within each group; groups keep their order.
+    let desc = objc2_foundation::NSSortDescriptor::sortDescriptorWithKey_ascending(Some(&NSString::from_str("size")), false);
+    tv.setSortDescriptors(&objc2_foundation::NSArray::from_retained_slice(&[desc]));
+    let mut ok = true;
+    let mut last_group = String::new();
+    let mut prev = f64::MAX;
+    for r in 0..model.shown_rows() {
+        match model.row_at(r) {
+            None => prev = f64::MAX,
+            Some(m) => {
+                if tasks[m].group != last_group && prev != f64::MAX {
+                    ok = false;
+                }
+                ok &= tasks[m].size <= prev;
+                prev = tasks[m].size;
+                last_group = tasks[m].group.clone();
+            }
+        }
+    }
+    let still = model.groups() == groups;
+    check("table-groups-sorted", ok && still, format!("sorted by Size, descending, within each group: {ok}; groups in order: {still}"));
+
+    // Selection and activation report model indices; headers can't be selected.
+    model.select(&[headers[1] - 1]);
+    let picked = model.selection();
+    let header_selectable = unsafe { tv.delegate() }.is_some_and(|d| {
+        let ok: bool = unsafe { objc2::msg_send![&*d, tableView: &*tv, shouldSelectRow: 0isize] };
+        ok
+    });
+    let row = tv.selectedRow();
+    let e = NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+        objc2_app_kit::NSEventType::KeyDown, objc2_foundation::NSPoint::new(0.0, 0.0), NSEventModifierFlags::empty(), 0.0, w.windowNumber(), None, &NSString::from_str("\r"), &NSString::from_str("\r"), false, 36,
+    ).unwrap();
+    tv.keyDown(&e);
+    let model2 = model.clone();
+    let (activated2, w2, events2) = (activated.clone(), w.clone(), events.clone());
+    after_idle(move || {
+        let act = activated2.get_untracked();
+        check(
+            "table-groups-indices",
+            // `row` is where the selected model row is shown (headers count as rows).
+            !header_selectable && picked.len() == 1 && act == picked.first().copied() && model2.row_at(row as usize) == picked.first().copied(),
+            format!("header row selectable: {header_selectable}; selected model row {picked:?} at view row {row}; Return → Activate({act:?})"),
+        );
+
+        // Icon, progress and fitted cells.
+        let tv = model2.table_view();
+        let view_row = 1;
+        let m = model2.row_at(view_row).unwrap();
+        let cell = tv.viewAtColumn_row_makeIfNecessary(0, view_row as isize, true).and_then(|v| v.downcast::<NSTableCellView>().ok());
+        let (has_image, text) = cell.map_or((false, String::new()), |c| unsafe { (c.imageView().is_some_and(|i| i.image().is_some()), c.textField().map(|t| t.stringValue().to_string()).unwrap_or_default()) });
+        let bar = tv.viewAtColumn_row_makeIfNecessary(1, view_row as isize, true).and_then(|v| v.subviews().iter().find_map(|s| s.downcast::<NSProgressIndicator>().ok()));
+        let tasks_now = model2.rows().clone();
+        let bar_ok = bar.as_ref().is_some_and(|b| (b.doubleValue() - tasks_now[m].done).abs() < 1e-9 && !b.isIndeterminate());
+        let name_width = tv.tableColumnWithIdentifier(&NSString::from_str("name")).map_or(0.0, |c| c.width());
+        check(
+            "table-cell-kinds",
+            has_image && text == tasks_now[m].name && bar_ok && name_width > 250.0 && name_width < 420.0,
+            format!("icon cell: image {has_image}, text {text:?}; progress cell at {:?}; fitted Name column {name_width:.0} pt (longest name)", bar.map(|b| b.doubleValue())),
+        );
+
+        // Copying the selection: rows only, never headers.
+        let pb = appkit_host::testing::private_pasteboard();
+        model2.select(&[tasks_now.iter().position(|t| t.group == "Yesterday").unwrap()]);
+        let copied = model2.copy_to(&pb) && appkit_host::testing::pasteboard_text(&pb).is_some_and(|t| !t.contains("Yesterday") && t.starts_with("Task "));
+        appkit_host::testing::release_pasteboard(&pb);
+
+        // Appending with groups regroups; ungrouping restores plain rows.
+        model2.append(vec![Task { name: "New".into(), group: "Tomorrow".into(), done: 0.0, size: 1.0 }]);
+        let regrouped = model2.groups().last().map(String::as_str) == Some("Tomorrow") && model2.shown_rows() == tasks_now.len() + 1 + 4;
+        model2.set_group_by(None);
+        let plain = model2.groups().is_empty() && model2.shown_rows() == tasks_now.len() + 1 && model2.row_at(0).is_some();
+        let problems = appkit_ui::testing::ax_audit(&w2);
+        check(
+            "table-groups-edit",
+            copied && regrouped && plain && problems.is_empty(),
+            format!("copy has rows only: {copied}; append adds a group: {regrouped}; ungrouped: {plain}; unnamed: {problems:?}"),
+        );
+        appkit_ui::close_window(&w2);
+        let events = events2.clone();
+        after_events(move || transfer_checks(events.clone()));
+    });
 }
 
 /// Drag and drop, copy and paste on a small table. Only private pasteboards
