@@ -132,7 +132,7 @@ fn main() {
 mod self_checks {
     use std::cell::Cell;
 
-    use appkit_ui::testing::{ax_tree, has_ax, key_equiv, post_edit, snapshot_windows};
+    use appkit_ui::testing::{ax_tree, has_ax, post_edit, shortcut, snapshot_windows};
     use appkit_ui::*;
     use objc2::rc::Retained;
     use objc2_app_kit::{NSAppearanceCustomization, NSButton, NSSecureTextField, NSTextField, NSView};
@@ -209,7 +209,7 @@ mod self_checks {
 
         // Shortcut through the menu: ⌘A in the name field.
         w.makeFirstResponder(Some(&f[0]));
-        let all = key_equiv(&w, "a", false) && f[0].currentEditor().is_some_and(|e| e.selectedRange().length == s.name.get_untracked().chars().count());
+        let all = shortcut(&w, "a", false) && f[0].currentEditor().is_some_and(|e| e.selectedRange().length == s.name.get_untracked().chars().count());
         check("select-all", all, "⌘A selects the whole name".into());
 
         // Accessibility: every control is in the tree with its role.

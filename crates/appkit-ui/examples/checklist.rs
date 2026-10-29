@@ -9,12 +9,12 @@ use appkit_ui::{
     Align, App, AppEvent, Effect, Identifiable, Signal, View, ViewExt, Window, batch, button, checkbox, dynamic, effect_runs,
     for_each, grid, hstack, label, later, layout_stats, layout_times_us, live_nodes, open, secure_field, spacer, spawn, text,
     text_field, toggle, vstack, windows, divider, image, picker, progress, scroll, slider, stepper, table, Column, Sort,
-    TableModel, ViewId,
+    TableModel, ViewId, TreeNode, outline, sidebar,
 };
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2_app_kit::{NSApplication, NSEventModifierFlags, NSTextField, NSView};
-use appkit_ui::testing::{ax_tree, footprint_mb, has_ax, key_equiv, post_edit, send_action, snapshot_windows};
+use appkit_ui::testing::{ax_tree, footprint_mb, has_ax, post_edit, send_action, shortcut, snapshot_windows};
 use objc2_app_kit::{NSAppearanceCustomization, NSTextInputClient};
 use objc2_foundation::NSString;
 
@@ -87,9 +87,9 @@ fn run_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     // Windows: both open; AppKit lists them in the Window menu.
     let ws = windows();
     let visible = ws.iter().filter(|w| w.isVisible()).count();
-    check("windows", ws.len() == 8 && visible == 8, format!("{} windows, {visible} visible", ws.len()));
+    check("windows", ws.len() == 9 && visible == 9, format!("{} windows, {visible} visible", ws.len()));
     let window_menu = menu_items(2);
-    let listed = ["First", "Second", "Views", "Layout", "Controls", "Controls B", "Teardown", "Table"].iter().all(|t| window_menu.iter().any(|(title, _, _)| title == t));
+    let listed = ["First", "Second", "Views", "Layout", "Controls", "Controls B", "Teardown", "Table", "Outline"].iter().all(|t| window_menu.iter().any(|(title, _, _)| title == t));
     check("window-menu-lists-windows", listed && app.windowsMenu().is_some(), format!("{:?}", window_menu.iter().map(|e| &e.0).collect::<Vec<_>>()));
     check("help-menu", app.helpMenu().is_some(), String::new());
 
@@ -688,22 +688,36 @@ fn keyboard_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let ed = editor_of(&field);
     unsafe { ed.insertText_replacementRange(&NSString::from_str("Hello"), objc2_foundation::NSRange::new(usize::MAX >> 1, 0)) };
     let typed = c.name.get_untracked();
-    let w2 = w.clone();
     later(move || {
         let (w, field, _) = controls_field();
         let ed = editor_of(&field);
-        let sel_all = key_equiv(&w, "a", false) && ed.selectedRange().length == 5;
-        let undo_sent = key_equiv(&w, "z", false);
-        let after_undo = c.name.get_untracked();
-        let redo_sent = key_equiv(&w, "z", true);
-        let after_redo = c.name.get_untracked();
-        check(
-            "shortcuts",
-            typed == "Hello" && sel_all && undo_sent && after_undo.is_empty() && redo_sent && after_redo == "Hello",
-            format!("typed {typed:?}; ⌘A selected all: {sel_all}; ⌘Z → {after_undo:?}; ⇧⌘Z → {after_redo:?}"),
-        );
-        let _ = &w2;
-        ime_checks(events.clone());
+        let sel_all = shortcut(&w, "a", false) && ed.selectedRange().length == 5;
+        let undo_sent = shortcut(&w, "z", false);
+        let (c, typed, events) = (c.clone(), typed.clone(), events.clone());
+        // The field reports the undone text on the next pass.
+        later(move || {
+            let (w, field, _) = controls_field();
+            // With the app active, the binding follows undo/redo. When another
+            // app is in front, AppKit doesn't send the field's change
+            // notification for an undo (no key window), so check the field.
+            let active = NSApplication::sharedApplication(mtm()).isActive();
+            let read = |f: &NSTextField| if active { c.name.get_untracked() } else { f.stringValue().to_string() };
+            let after_undo = read(&field);
+            let redo_sent = shortcut(&w, "z", true);
+            let (c, typed, events, after_undo) = (c.clone(), typed.clone(), events.clone(), after_undo.clone());
+            later(move || {
+                let after_redo = if active { c.name.get_untracked() } else { field.stringValue().to_string() };
+                check(
+                    "shortcuts",
+                    typed == "Hello" && sel_all && undo_sent && after_undo.is_empty() && redo_sent && after_redo == "Hello",
+                    format!(
+                        "typed {typed:?}; ⌘A selected all: {sel_all}; ⌘Z → {after_undo:?}; ⇧⌘Z → {after_redo:?} ({})",
+                        if active { "app active: checked the binding" } else { "app inactive: checked the field" }
+                    ),
+                );
+                ime_checks(events.clone());
+            });
+        });
     });
 }
 
@@ -798,6 +812,11 @@ fn teardown_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         batch(|| show.set(false));
         batch(|| show.set(true));
     }
+    fn count(v: &NSView) -> usize {
+        1 + v.subviews().iter().map(|c| count(&c)).sum::<usize>()
+    }
+    // Every view in the form, AppKit's internal subviews included.
+    let per_form = count(&w.contentView().unwrap()) - 1;
     let (n0, v0, f0) = (live_nodes(), w.contentView().unwrap().subviews().len(), footprint_mb());
     let t = std::time::Instant::now();
     for _ in 0..300 {
@@ -809,10 +828,13 @@ fn teardown_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         let w = windows().into_iter().find(|w| w.title().to_string() == "Teardown").unwrap();
         let (n1, v1, f1) = (live_nodes(), w.contentView().unwrap().subviews().len(), footprint_mb());
         let gone = weak.load().is_none();
+        // AppKit keeps ~1 KB per view ever measured and added to a window
+        // (plain AppKit, same form: 7.5 MB per 300 cycles); more is ours.
+        let kb_per_view = (f1 - f0) * 1024.0 / (300.0 * per_form as f64);
         check(
             "controls-teardown",
-            n1 == n0 && v1 == v0 && gone && f1 - f0 < 10.0,
-            format!("300 × a 15-control form in {ms:.0} ms; nodes {n0} → {n1}; subviews {v0} → {v1}; first switch deallocated: {gone}; footprint {f0:.0} → {f1:.0} MB"),
+            n1 == n0 && v1 == v0 && gone && kb_per_view < 1.5,
+            format!("300 × a 15-control form ({per_form} views) in {ms:.0} ms; nodes {n0} → {n1}; subviews {v0} → {v1}; first switch deallocated: {gone}; footprint {f0:.0} → {f1:.0} MB = {kb_per_view:.2} KB per view created (AppKit's floor ≈ 1)"),
         );
         table_checks(events.clone());
     });
@@ -1032,6 +1054,201 @@ fn table_bench(events: Rc<RefCell<Vec<AppEvent>>>) {
         worst < 16.7 && created < 200,
         format!("100 jumps across 200k rows (scroll + display): total {total:.0} ms, worst {worst:.1} ms; {created} new cell views (reuse)"),
     );
+    outline_checks(events);
+}
+
+#[derive(Clone)]
+struct Place {
+    id: u32,
+    name: String,
+    symbol: Option<&'static str>,
+}
+
+impl Identifiable for Place {
+    type Id = u32;
+    fn id(&self) -> u32 {
+        self.id
+    }
+}
+
+fn place(id: u32, name: &str, symbol: Option<&'static str>) -> Place {
+    Place { id, name: name.into(), symbol }
+}
+
+#[derive(Clone)]
+struct OutlineState {
+    sections: Signal<Vec<TreeNode<Place>>>,
+    tree: Signal<Vec<TreeNode<Place>>>,
+    place: Signal<Option<u32>>,
+    node: Signal<Option<u32>>,
+    show: Signal<bool>,
+}
+
+fn project(id: u32, files: u32) -> TreeNode<Place> {
+    TreeNode::branch(
+        place(id, &format!("Project {id}"), Some("folder")),
+        (0..files).map(|f| TreeNode::leaf(place(id * 1000 + f, &format!("file{f}.rs"), Some("doc")))).collect(),
+    )
+}
+
+thread_local! {
+    static OUTLINE: OutlineState = OutlineState {
+        sections: Signal::new(vec![
+            TreeNode::branch(place(1, "Favourites", None), vec![
+                TreeNode::leaf(place(11, "Documents", Some("doc.text"))),
+                TreeNode::leaf(place(12, "Downloads", Some("arrow.down.circle"))),
+            ]),
+            TreeNode::branch(place(2, "Locations", None), vec![
+                TreeNode::leaf(place(21, "Mac", Some("desktopcomputer"))),
+                TreeNode::leaf(place(22, "Network", Some("network"))),
+            ]),
+        ]),
+        tree: Signal::new((1..=3).map(|p| project(p, 3)).collect()),
+        place: Signal::new(None),
+        node: Signal::new(None),
+        show: Signal::new(true),
+    };
+}
+
+fn outline_window() -> impl View {
+    let o = OUTLINE.with(Clone::clone);
+    let (sections, o2) = (o.sections.clone(), o.clone());
+    hstack((
+        sidebar(move || sections.get(), |p: &Place| p.name.clone())
+            .icon(|p: &Place| p.symbol.map(String::from))
+            .selection(&o.place)
+            .width(180.0),
+        dynamic(move || {
+            if o2.show.get() {
+                let tree = o2.tree.clone();
+                appkit_ui::AnyView::new(
+                    outline(move || tree.get(), |p: &Place| p.name.clone())
+                        .icon(|p: &Place| p.symbol.map(String::from))
+                        .selection(&o2.node)
+                        .fill_width()
+                        .fill_height(),
+                )
+                .id(1)
+            } else {
+                appkit_ui::AnyView::new(text("no outline")).id(0)
+            }
+        }),
+    ))
+}
+
+fn outline_views() -> (Retained<objc2_app_kit::NSOutlineView>, Option<Retained<objc2_app_kit::NSOutlineView>>) {
+    let w = windows().into_iter().find(|w| w.title().to_string() == "Outline").unwrap();
+    let mut outlines: Vec<(f64, Retained<objc2_app_kit::NSOutlineView>)> = w
+        .contentView()
+        .unwrap()
+        .subviews()
+        .iter()
+        .filter_map(|v| v.downcast::<objc2_app_kit::NSScrollView>().ok())
+        .filter_map(|sv| {
+            let x = sv.frame().origin.x;
+            sv.documentView().and_then(|d| d.downcast::<objc2_app_kit::NSOutlineView>().ok()).map(|o| (x, o))
+        })
+        .collect();
+    outlines.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut it = outlines.into_iter().map(|(_, o)| o);
+    (it.next().unwrap(), it.next())
+}
+
+fn outline_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let o = OUTLINE.with(Clone::clone);
+    let w = windows().into_iter().find(|w| w.title().to_string() == "Outline").unwrap();
+    w.makeKeyAndOrderFront(None);
+    let (side, tree) = outline_views();
+    let tree = tree.unwrap();
+
+    // Sidebar: source-list style; sections expanded as group rows; icons.
+    let item0 = side.itemAtRow(0);
+    let group = item0.as_ref().is_some_and(|i| unsafe { side.isExpandable(Some(i)) } && unsafe { side.isItemExpanded(Some(i)) });
+    let icon = side
+        .viewAtColumn_row_makeIfNecessary(0, 1, true)
+        .and_then(|v| v.downcast::<objc2_app_kit::NSTableCellView>().ok())
+        .and_then(|c| unsafe { c.imageView() })
+        .is_some_and(|iv| iv.image().is_some());
+    check(
+        "sidebar-style",
+        side.style() == objc2_app_kit::NSTableViewStyle::SourceList && side.numberOfRows() == 6 && group && icon,
+        format!("style source list: {}; {} rows (2 sections + 4 items); section expanded: {group}; icon: {icon}", side.style() == objc2_app_kit::NSTableViewStyle::SourceList, side.numberOfRows()),
+    );
+
+    // Sidebar selection both ways.
+    side.selectRowIndexes_byExtendingSelection(&objc2_foundation::NSIndexSet::indexSetWithIndex(2), false);
+    let picked = o.place.get_untracked();
+    batch(|| o.place.set(Some(22)));
+    let row_of_network = side.selectedRow();
+    check("sidebar-selection", picked == Some(12) && row_of_network == 5, format!("row 2 → {picked:?}; Network → row {row_of_network}"));
+
+    // Outline: collapsed at first; expanding a project shows its files.
+    let rows0 = tree.numberOfRows();
+    let first = tree.itemAtRow(0);
+    unsafe { tree.expandItem(first.as_deref()) };
+    let rows1 = tree.numberOfRows();
+    check(
+        "outline-expand",
+        rows0 == 3 && rows1 == 6 && has_ax(&ax_tree(&w), "AXOutline", "", ""),
+        format!("{rows0} rows collapsed → {rows1} after expanding Project 1; AXOutline in the tree"),
+    );
+
+    // Update: add a file to the expanded project; expansion and selection survive.
+    tree.selectRowIndexes_byExtendingSelection(&objc2_foundation::NSIndexSet::indexSetWithIndex(2), false);
+    let sel_before = o.node.get_untracked();
+    batch(|| {
+        o.tree.update(|t| {
+            t[0].children.push(TreeNode::leaf(place(1999, "new.rs", Some("doc"))));
+            t.push(project(4, 2));
+        })
+    });
+    let rows2 = tree.numberOfRows();
+    let still_expanded = tree.itemAtRow(0).is_some_and(|i| unsafe { tree.isItemExpanded(Some(&i)) });
+    let sel_after = o.node.get_untracked();
+    let row_after = tree.selectedRow();
+    check(
+        "outline-update",
+        sel_before == Some(1001) && rows2 == 8 && still_expanded && sel_after == sel_before && row_after == 2,
+        format!("selected {sel_before:?}; after adding a file and a project: {rows2} rows, Project 1 expanded {still_expanded}, selection {sel_after:?} at row {row_after}"),
+    );
+
+    // Teardown: the outline's item objects go with it.
+    let weak_item = tree.itemAtRow(0).map(|i| objc2::rc::Weak::from_retained(&i));
+    drop(tree);
+    batch(|| o.show.set(false));
+    let o2 = o.clone();
+    // AppKit releases a removed outline's items a little later.
+    spawn(|| std::thread::sleep(std::time::Duration::from_millis(300)), move |_| {
+        let gone = weak_item.as_ref().is_some_and(|w| w.load().is_none());
+        let none_left = outline_views().1.is_none();
+        check("outline-teardown", gone && none_left, format!("outline removed: {none_left}; its item objects deallocated: {gone}"));
+        batch(|| o2.show.set(true));
+        // spawn's continuation is itself a batch: the outline comes back when
+        // it ends, so measure on the next pass.
+        let (o3, events) = (o2.clone(), events.clone());
+        later(move || outline_bench(o3.clone(), events.clone()));
+    });
+}
+
+fn outline_bench(o: OutlineState, events: Rc<RefCell<Vec<AppEvent>>>) {
+    // 100 projects × 100 files: rebuild from the signal, then expand everything.
+    let t = std::time::Instant::now();
+    batch(|| o.tree.set((1..=100).map(|p| project(p, 100)).collect()));
+    let build_ms = t.elapsed().as_secs_f64() * 1e3;
+    let (_, tree) = outline_views();
+    let tree = tree.unwrap();
+    let t = std::time::Instant::now();
+    unsafe { tree.expandItem_expandChildren(None, true) };
+    tree.displayIfNeeded();
+    let expand_ms = t.elapsed().as_secs_f64() * 1e3;
+    let t = std::time::Instant::now();
+    batch(|| o.tree.update(|tr| tr[50].children.push(TreeNode::leaf(place(999_999, "late.rs", None)))));
+    let update_ms = t.elapsed().as_secs_f64() * 1e3;
+    check(
+        "outline-bench",
+        tree.numberOfRows() == 10_101 && build_ms < 100.0 && update_ms < 100.0,
+        format!("10,100 items: rebuild {build_ms:.1} ms; expand all + display {expand_ms:.1} ms; one added item (expansion kept) {update_ms:.1} ms; {} rows", tree.numberOfRows()),
+    );
     appearance_check(events);
 }
 
@@ -1138,6 +1355,7 @@ fn main() {
         .window(Window::new("Controls B").size(380.0, 460.0).view(controls_b_window()))
         .window(Window::new("Teardown").size(380.0, 520.0).view(teardown_window()))
         .window(Window::new("Table").size(560.0, 420.0).view(table_window()))
+        .window(Window::new("Outline").size(560.0, 360.0).view(outline_window()))
         .on_event(move |e| e2.borrow_mut().push(e))
         .on_launch(move || {
             if checks {

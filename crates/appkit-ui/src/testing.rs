@@ -24,7 +24,22 @@ pub fn footprint_mb() -> f64 {
 /// macOS 27, AppKit's text fields and checkboxes host SwiftUI internally, so
 /// the AX element is a child of the NSView, not the view itself.
 pub fn ax_tree(window: &objc2_app_kit::NSWindow) -> Vec<(String, String, String)> {
+    // Not every element in the tree implements every accessor; sending an
+    // unknown selector raises an exception that would unwind out of the
+    // caller. Ask first.
+    fn responds(obj: &objc2::runtime::AnyObject, sel: objc2::runtime::Sel) -> bool {
+        obj.class().responds_to(sel)
+    }
     fn s(obj: &objc2::runtime::AnyObject, sel: &str) -> String {
+        let selector = match sel {
+            "role" => objc2::sel!(accessibilityRole),
+            "subrole" => objc2::sel!(accessibilitySubrole),
+            "label" => objc2::sel!(accessibilityLabel),
+            _ => objc2::sel!(accessibilityTitle),
+        };
+        if !responds(obj, selector) {
+            return String::new();
+        }
         let value: Option<Retained<objc2::runtime::AnyObject>> = unsafe {
             match sel {
                 "role" => objc2::msg_send![obj, accessibilityRole],
@@ -39,6 +54,9 @@ pub fn ax_tree(window: &objc2_app_kit::NSWindow) -> Vec<(String, String, String)
         let label = { let l = s(obj, "label"); if l.is_empty() { s(obj, "title") } else { l } };
         out.push((s(obj, "role"), s(obj, "subrole"), label));
         if depth > 12 {
+            return;
+        }
+        if !responds(obj, objc2::sel!(accessibilityChildren)) {
             return;
         }
         let kids: Option<Retained<objc2_foundation::NSArray<objc2::runtime::AnyObject>>> =
@@ -116,4 +134,39 @@ pub fn key_equiv(w: &objc2_app_kit::NSWindow, chars: &str, shift: bool) -> bool 
     }
     .unwrap();
     NSApplication::sharedApplication(mtm()).mainMenu().unwrap().performKeyEquivalent(&event)
+}
+
+/// Performs a keyboard shortcut the way the menu bar does, without needing
+/// the app to be active: finds the main-menu item for ⌘`chars` (⇧⌘ when
+/// `shift`; AppKit's rule: an uppercase key equivalent implies Shift) and
+/// sends its action along `window`'s responder chain, starting at its first
+/// responder. Returns whether an item matched and something handled it.
+///
+/// (A synthesized key event through `NSMenu.performKeyEquivalent` matches
+/// the item but goes nowhere when the app isn't active: there's no key
+/// window. A person pressing keys always has the app active.)
+pub fn shortcut(window: &objc2_app_kit::NSWindow, chars: &str, shift: bool) -> bool {
+    use objc2_app_kit::{NSEventModifierFlags, NSMenu};
+    fn find(menu: &NSMenu, key: &str, shift: bool) -> Option<objc2::runtime::Sel> {
+        for i in 0..menu.numberOfItems() {
+            let item = menu.itemAtIndex(i)?;
+            if let Some(sub) = item.submenu() {
+                if let Some(sel) = find(&sub, key, shift) {
+                    return Some(sel);
+                }
+                continue;
+            }
+            let k = item.keyEquivalent().to_string();
+            let mask = item.keyEquivalentModifierMask();
+            let wants_shift = mask.contains(NSEventModifierFlags::Shift) || (k.chars().all(char::is_uppercase) && !k.is_empty());
+            if k.to_lowercase() == key && mask.contains(NSEventModifierFlags::Command) && wants_shift == shift {
+                return item.action();
+            }
+        }
+        None
+    }
+    let app = NSApplication::sharedApplication(mtm());
+    let Some(action) = app.mainMenu().and_then(|m| find(&m, &chars.to_lowercase(), shift)) else { return false };
+    // SAFETY: standard responder-chain dispatch with a nil sender.
+    window.firstResponder().is_some_and(|r| unsafe { r.tryToPerform_with(action, None) })
 }

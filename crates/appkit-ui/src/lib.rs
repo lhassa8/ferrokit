@@ -5,7 +5,7 @@
 //! stacks, grids, alignment and subtree-only relayout (F1.4); text fields,
 //! secure fields, toggles and checkboxes bound to signals (F1.5); pickers,
 //! sliders, steppers, progress, SF Symbols, dividers and scroll views (F1.6);
-//! the native table (F2.1).
+//! the native table (F2.1); outlines and the source-list sidebar (F2.2).
 //!
 //! Main thread only.
 
@@ -15,6 +15,7 @@ mod controls;
 mod layout;
 mod menu;
 mod models;
+mod outline;
 mod signal;
 pub mod testing;
 mod view;
@@ -43,6 +44,7 @@ pub use controls::{
 };
 pub use layout::layout_stats;
 pub use models::{Table, table};
+pub use outline::{Outline, TreeNode, outline, sidebar};
 pub use appkit_host::table::{Column, ColumnState, Sort, TableModel};
 pub use appkit_host::ViewId;
 pub use view::{
