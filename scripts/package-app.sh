@@ -17,16 +17,19 @@
 #   --entitlements <file>   Entitlements plist for codesign.
 #   --universal             arm64 + x86_64 (needs: rustup target add x86_64-apple-darwin).
 #   --zip                   Also write "<name>.zip" next to the app (ditto, for sharing).
+#   --notarize <profile>    Notarise with Apple and staple the ticket (needs a Developer ID
+#                           --sign and a profile saved once with
+#                           xcrun notarytool store-credentials <profile> --apple-id … --team-id …).
+#                           Implies --zip; the zip then holds the stapled app.
 #   --out <dir>             Output folder (default: target/apps).
 #
-# Signing uses the hardened runtime. Notarisation (xcrun notarytool submit, then
-# xcrun stapler staple) is the developer's step: it needs an Apple account.
+# Signing uses the hardened runtime.
 set -eu
 cd "$(dirname "$0")/.."
 
 die() { echo "package-app: $*" >&2; exit 1; }
 
-package= kind= target= name= id= version= build= icon= min=15.0 category= identity=- entitlements= universal= zip= out=target/apps
+package= kind= target= name= id= version= build= icon= min=15.0 category= identity=- entitlements= universal= zip= notarize= out=target/apps
 while [ $# -gt 0 ]; do
   case "$1" in
     -p|--package) package=$2; shift 2 ;;
@@ -43,8 +46,9 @@ while [ $# -gt 0 ]; do
     --entitlements) entitlements=$2; shift 2 ;;
     --universal) universal=1; shift ;;
     --zip) zip=1; shift ;;
+    --notarize) notarize=$2; zip=1; shift 2 ;;
     --out) out=$2; shift 2 ;;
-    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
     *) die "unknown option $1 (see --help)" ;;
   esac
 done
@@ -60,6 +64,7 @@ print(pkg[0]["version"] if pkg else "")' "$package")
 fi
 [ -n "$build" ] || build=$version
 [ -z "$entitlements" ] || [ -f "$entitlements" ] || die "no entitlements file $entitlements"
+[ -z "$notarize" ] || [ "$identity" != - ] || die "--notarize needs a Developer ID identity (--sign \"Developer ID Application: …\")"
 
 # Build: one binary per architecture, merged with lipo for --universal.
 triples="aarch64-apple-darwin"
@@ -142,5 +147,17 @@ codesign --verify --strict --deep "$app"
 if [ -n "$zip" ]; then
   rm -f "$out/$name.zip"
   ditto -c -k --sequesterRsrc --keepParent "$app" "$out/$name.zip"
+fi
+
+# Notarise: submit the zip, wait for Apple's verdict, staple the ticket to the
+# app (so it opens offline), re-zip the stapled app, and check Gatekeeper.
+if [ -n "$notarize" ]; then
+  result=$(xcrun notarytool submit "$out/$name.zip" --keychain-profile "$notarize" --wait 2>&1) || true
+  echo "$result" | tail -3
+  echo "$result" | grep -q "status: Accepted" || die "notarisation wasn't accepted; see: xcrun notarytool log <id> --keychain-profile $notarize"
+  xcrun stapler staple "$app"
+  rm -f "$out/$name.zip"
+  ditto -c -k --sequesterRsrc --keepParent "$app" "$out/$name.zip"
+  spctl -a -vv "$app"
 fi
 echo "$app"
