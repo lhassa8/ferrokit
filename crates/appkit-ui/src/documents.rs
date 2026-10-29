@@ -229,6 +229,8 @@ thread_local! {
     static OPENER: RefCell<Option<Rc<dyn Opener>>> = const { RefCell::new(None) };
     static UNTITLED: Cell<u32> = const { Cell::new(0) };
     static DELEGATE: RefCell<Option<Retained<AppDelegate>>> = const { RefCell::new(None) };
+    /// The untitled document opened at launch, until files are opened.
+    static AUTO_UNTITLED: RefCell<Weak<NSWindow>> = RefCell::new(Weak::default());
 }
 
 /// Opens a window for a document with `content`.
@@ -288,6 +290,22 @@ fn current() -> Option<Rc<dyn AnyDoc>> {
 /// Drops a closed window's document (called from window teardown).
 pub(crate) fn forget(window: &NSWindow) {
     DOCS.with_borrow_mut(|docs| docs.retain(|d| d.window().is_some_and(|w| !std::ptr::eq(&*w, window))));
+}
+
+/// Opens the untitled document a document app starts with (when no files
+/// were opened), remembering it: opening files closes it while it's
+/// unchanged, as TextEdit does.
+pub(crate) fn new_launch_document() {
+    let window = new_document();
+    AUTO_UNTITLED.with_borrow_mut(|a| *a = window.as_ref().map(Weak::from_retained).unwrap_or_default());
+}
+
+fn close_auto_untitled() {
+    let Some(window) = AUTO_UNTITLED.with_borrow_mut(std::mem::take).load() else { return };
+    let opened_more = DOCS.with_borrow(|docs| docs.len() > 1);
+    if opened_more && !document_edited(&window) && document_of(&window).is_some_and(|d| d.path().is_none()) {
+        window.close();
+    }
 }
 
 /// Opens a new, empty document. `None` if the app has no document type.
@@ -558,6 +576,20 @@ define_class!(
     unsafe impl NSObjectProtocol for AppDelegate {}
 
     unsafe impl NSApplicationDelegate for AppDelegate {
+        // Files opened from the Finder (double-click, drop on the Dock icon,
+        // `open file.txt`), at launch or later.
+        #[unsafe(method(application:openURLs:))]
+        fn open_urls(&self, _app: &NSApplication, urls: &objc2_foundation::NSArray<NSURL>) {
+            let paths: Vec<PathBuf> = urls.iter().filter_map(|u| u.path()).map(|p| PathBuf::from(p.to_string())).collect();
+            // After launch work is done (the run loop is up).
+            crate::later(move || {
+                for p in &paths {
+                    open_reporting(p);
+                }
+                close_auto_untitled();
+            });
+        }
+
         #[unsafe(method(applicationShouldTerminate:))]
         fn should_terminate(&self, _app: &NSApplication) -> NSApplicationTerminateReply {
             if !DOCS.with_borrow(|docs| docs.iter().any(|d| d.edited())) {

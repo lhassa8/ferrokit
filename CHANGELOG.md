@@ -14,6 +14,7 @@
   - Each window is a `Document<T>`: a content signal and a file. The title bar shows the edited dot and the file's proxy icon.
   - Closing or quitting with changes asks to save.
   - `new_document`, `open_document`, `save_document(_as)`, `revert_document`, `document_edited`, `recent_documents`.
+- Document apps open files from the Finder (`application:openURLs:`): double-click, Open With, drops on the Dock icon; the untouched Untitled window from launch then closes. `package-app.sh --doc-type "Name:ext,ext"` declares the types.
 - `dynamic_submenu(title, items)`: a submenu rebuilt each time it opens.
 - `collection(items, describe)`: a grid of items (`NSCollectionView`), virtualised (cells reused), with a title, subtitle and an image (SF Symbol, file icon or colour) per item; two-way selection by id (single or multiple); double-click and Return activate; VoiceOver reads items by title. `collection_cells_made()` diagnostic.
 - More controls, each bound two ways to a signal: `date_picker` (`SystemTime`; with time, calendar style, range), `color_well` (`Color`), `segmented`, `combo_box` (text plus suggestions), `search_field` (placeholder, submit, clear).

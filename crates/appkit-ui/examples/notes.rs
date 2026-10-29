@@ -21,12 +21,21 @@ fn text_document() -> DocumentType<String> {
 }
 
 fn main() {
-    let checks = std::env::var("CHECK").is_ok_and(|c| c == "all");
+    let check = std::env::var("CHECK").unwrap_or_default();
+    let checks = check == "all";
     App::new("Notes")
         .documents(text_document())
         .on_launch(move || {
             if checks {
                 self_checks::run();
+            } else if check == "opened" {
+                // Launched with files (from the Finder or `open`): report the
+                // windows once they're open, then quit.
+                spawn(|| std::thread::sleep(std::time::Duration::from_millis(1500)), |()| {
+                    let titles: Vec<String> = windows().iter().filter(|w| w.isVisible()).map(|w| w.title().to_string()).collect();
+                    eprintln!("[opened] {titles:?}");
+                    std::process::exit(0);
+                });
             }
         })
         .run();

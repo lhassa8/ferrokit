@@ -67,6 +67,15 @@ App::new("Notes").documents(text_files).run(); // starts with an untitled docume
   `document_edited(window)` and `recent_documents()` do the same from code,
   without panels.
 
+Files opened from the Finder (double-click, Open With, a drop on the Dock
+icon, `open file.txt`) open as documents; an untouched Untitled window
+from launch closes. For the Finder to offer your app, declare the types
+when packaging:
+
+```bash
+scripts/package-app.sh -p my-app --bin my-app --name "My Notes" --doc-type "Plain Text:txt,md"
+```
+
 The `notes` example is a complete text editor built this way.
 
 ## Toolbar and split view
