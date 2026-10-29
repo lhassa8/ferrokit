@@ -11,7 +11,8 @@ use objc2_app_kit::{
 use objc2_foundation::{NSNotification, NSString};
 
 use crate::signal::{Effect, Signal, batch};
-use crate::view::{ActionTarget, Cx, Node, Size, View, ViewExt, hstack, text};
+use crate::appkit_views::{ActionTarget, text};
+use crate::view::{Cx, Node, Size, View, ViewExt, hstack};
 
 define_class!(
     // Live edits of a text field → its signal.
@@ -383,7 +384,7 @@ impl View for Image {
         let view: Retained<NSView> = Retained::into_super(Retained::into_super(view));
         if self.description.is_none() {
             // Decorative: hidden from VoiceOver (`accessibility_label` shows it again).
-            crate::view::set_accessibility_element(&view, false);
+            <crate::platform::Native as crate::platform::Platform>::set_accessibility_element(&view, false);
         }
         Node::leaf(cx, view, (false, false), Size::default()).0
     }

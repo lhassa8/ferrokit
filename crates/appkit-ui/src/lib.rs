@@ -39,6 +39,7 @@
 
 #![warn(missing_docs)]
 
+mod appkit_views;
 mod chrome;
 mod collection;
 mod controls;
@@ -97,10 +98,10 @@ pub use objc2_app_kit::NSWindow;
 /// The owning pointer to an AppKit object (as returned by [`open`]).
 pub use objc2::rc::Retained;
 pub use view::{
-    Align, AnyView, Axis, Button, Cx, Divider, Dynamic, ForEach, Grid, Identifiable, Label, Modified, Node, Scroll, Size,
-    Spacer, Stack, Text, View, ViewExt, Views, button, divider, dynamic, for_each, grid, hstack, label, live_nodes, scroll,
-    spacer, text, vstack, watch, Watch,
+    Align, AnyView, Axis, Cx, Dynamic, ForEach, Grid, Identifiable, Modified, Node, Size, Spacer, Stack, View, ViewExt, Views,
+    dynamic, for_each, grid, hstack, live_nodes, spacer, vstack, watch, Watch,
 };
+pub use appkit_views::{Button, Divider, Label, Scroll, Text, button, divider, label, scroll, text};
 
 fn mtm() -> MainThreadMarker {
     MainThreadMarker::new().expect("appkit-ui must be used on the main thread")
@@ -402,7 +403,7 @@ impl App {
         app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
         let settings = self.settings.map(|w| {
             SETTINGS.with_borrow_mut(|s| *s = Some(Err(w)));
-            Retained::into_super(view::ActionTarget::new(mtm, || {
+            Retained::into_super(appkit_views::ActionTarget::new(mtm, || {
                 open_settings();
             }))
         });

@@ -14,13 +14,8 @@ use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::{Rc, Weak};
 
-use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, NSObject};
-use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
-use objc2_app_kit::{NSBox, NSBoxType, NSButton, NSResponder, NSScrollView, NSTextField, NSView};
-use objc2_foundation::NSString;
-
-use crate::signal::{Effect, batch, untrack};
+use crate::platform::{MainThread, Native, NativeObject, NativeScroll, NativeSplit, NativeView, Platform};
+use crate::signal::{Effect, untrack};
 
 /// Something that can be shown. Build-once: [`View::build`] creates native
 /// views and effects; it is never called again for the same place.
@@ -67,13 +62,13 @@ impl View for AnyView {
 
 /// Where a view is being built: the native view its leaves are added to.
 pub struct Cx {
-    pub(crate) container: Retained<NSView>,
-    pub(crate) mtm: MainThreadMarker,
+    pub(crate) container: NativeView,
+    pub(crate) mtm: MainThread,
 }
 
 impl Cx {
-    pub(crate) fn new(container: Retained<NSView>) -> Self {
-        Cx { container, mtm: MainThreadMarker::new().expect("main thread") }
+    pub(crate) fn new(container: NativeView) -> Self {
+        Cx { container, mtm: MainThread::new().expect("main thread") }
     }
 
     fn child(&self) -> Cx {
@@ -158,7 +153,7 @@ pub struct Size {
 }
 
 pub(crate) struct Leaf {
-    pub(crate) view: Retained<NSView>,
+    pub(crate) view: NativeView,
     pub(crate) flex: (bool, bool),
     pub(crate) min: Size,
     /// Cached `fittingSize`.
@@ -169,8 +164,8 @@ pub(crate) struct Leaf {
 
 /// What an effect needs to report that a leaf's content changed.
 pub(crate) struct LeafHandle {
-    content: Rc<Cell<Option<Size>>>,
-    meta: Rc<Meta>,
+    pub(crate) content: Rc<Cell<Option<Size>>>,
+    pub(crate) meta: Rc<Meta>,
 }
 
 pub(crate) enum Kind {
@@ -180,12 +175,12 @@ pub(crate) enum Kind {
     Spacer,
     /// Children that change over time; laid out inline in the parent stack.
     Group(Rc<RefCell<Vec<Node>>>),
-    /// Content inside an `NSScrollView`'s (flipped) document view.
-    Scroll { scroll: Retained<NSScrollView>, doc: Retained<NSView>, content: Box<Node> },
-    /// Panes of an `NSSplitView`, each laid out in its pane's bounds.
+    /// Content inside a scroll container's (flipped) document view.
+    Scroll { scroll: NativeScroll, doc: NativeView, content: Box<Node> },
+    /// Panes of a split container, each laid out in its pane's bounds.
     Split {
-        split: Retained<objc2_app_kit::NSSplitView>,
-        panes: Vec<(Retained<crate::chrome::SplitPane>, Node)>,
+        split: NativeSplit,
+        panes: Vec<(NativeView, Node)>,
         /// Initial divider position, applied at the first layout.
         position: Cell<Option<f64>>,
     },
@@ -201,7 +196,7 @@ pub struct Node {
     pub(crate) fill: (bool, bool),
     pub(crate) meta: Rc<Meta>,
     effects: Vec<Effect>,
-    keep: Vec<Retained<NSObject>>,
+    keep: Vec<NativeObject>,
     held: Vec<Rc<dyn std::any::Any>>,
 }
 
@@ -238,8 +233,8 @@ impl Node {
         }
     }
 
-    pub(crate) fn leaf(cx: &Cx, view: Retained<NSView>, flex: (bool, bool), min: Size) -> (Node, LeafHandle) {
-        cx.container.addSubview(&view);
+    pub(crate) fn leaf(cx: &Cx, view: NativeView, flex: (bool, bool), min: Size) -> (Node, LeafHandle) {
+        Native::add_subview(&cx.container, &view);
         let content = Rc::new(Cell::new(None));
         invalidate_layout();
         let node = Node::new(Kind::Leaf(Leaf { view, flex, min, content: content.clone(), cross_only: false }));
@@ -251,15 +246,15 @@ impl Node {
         self.effects.push(effect);
     }
 
-    pub(crate) fn keep(&mut self, object: Retained<NSObject>) {
+    pub(crate) fn keep(&mut self, object: NativeObject) {
         self.keep.push(object);
     }
 
     /// The native views of this subtree's leaves (and scroll and split views).
-    pub(crate) fn leaf_views(&self, out: &mut Vec<Retained<NSView>>) {
+    pub(crate) fn leaf_views(&self, out: &mut Vec<NativeView>) {
         match &self.kind {
             Kind::Leaf(l) => out.push(l.view.clone()),
-            Kind::Scroll { scroll, .. } => out.push(Retained::into_super(scroll.clone())),
+            Kind::Scroll { scroll, .. } => out.push(Native::scroll_as_view(scroll)),
             Kind::Split { panes, .. } => panes.iter().for_each(|(_, n)| n.leaf_views(out)),
             Kind::Stack { children, .. } => children.iter().for_each(|c| c.leaf_views(out)),
             Kind::Grid { rows, .. } => rows.iter().flatten().for_each(|c| c.leaf_views(out)),
@@ -280,13 +275,13 @@ impl Drop for Node {
         // Effects stop first (dropping them), then the native view leaves.
         self.effects.clear();
         if let Kind::Scroll { scroll, .. } = &self.kind {
-            scroll.removeFromSuperview();
+            Native::remove(&Native::scroll_as_view(scroll));
         }
         if let Kind::Split { split, .. } = &self.kind {
-            split.removeFromSuperview();
+            Native::remove(&Native::split_as_view(split));
         }
         if let Kind::Leaf(l) = &self.kind {
-            l.view.removeFromSuperview();
+            Native::remove(&l.view);
             if let Some(parent) = self.meta.parent.borrow().upgrade() {
                 parent.mark();
             }
@@ -410,61 +405,20 @@ impl<V: View> View for Modified<V> {
         node.fixed = (self.width.or(node.fixed.0), self.height.or(node.fixed.1));
         node.fill = (node.fill.0 || self.fill.0, node.fill.1 || self.fill.1);
         if let Some(items) = self.menu {
-            let (menu, targets) = crate::chrome::build_menu(cx.mtm, items);
             let mut leaves = Vec::new();
             node.leaf_views(&mut leaves);
-            for v in leaves {
-                // SAFETY: the node keeps the menu's targets alive.
-                unsafe { crate::chrome::menu_host(&v).setMenu(Some(&menu)) };
+            for t in Native::set_context_menu(cx.mtm, &leaves, items) {
+                node.keep(t);
             }
-            targets.into_iter().for_each(|t| node.keep(t));
         }
         if let Some(label) = &self.label {
             let mut leaves = Vec::new();
             node.leaf_views(&mut leaves);
             for v in leaves {
-                set_accessibility_label(&v, label);
+                Native::set_accessibility_label(&v, label);
             }
         }
         node
-    }
-}
-
-/// Names a native view for VoiceOver. Cell-based controls (text fields,
-/// sliders, pop-ups) are exposed through their cell on macOS 27, so the
-/// cell gets the label too; the view also becomes an accessibility element
-/// again if it was hidden (a decorative image).
-pub(crate) fn set_accessibility_label(view: &NSView, label: &str) {
-    // A scrolled view (a text editor, a table): VoiceOver reads the document.
-    if let Some(doc) = view.downcast_ref::<objc2_app_kit::NSScrollView>().and_then(|s| s.documentView()) {
-        set_accessibility_label(&doc, label);
-    }
-    let label = NSString::from_str(label);
-    set_accessibility_element(view, true);
-    // SAFETY: NSAccessibility setters on main-thread objects; `cell` is
-    // only sent to views that answer it.
-    unsafe {
-        let () = objc2::msg_send![view, setAccessibilityLabel: &*label];
-        if objc2::runtime::NSObjectProtocol::respondsToSelector(view, objc2::sel!(cell)) {
-            let cell: Option<Retained<objc2::runtime::AnyObject>> = objc2::msg_send![view, cell];
-            if let Some(cell) = cell {
-                let () = objc2::msg_send![&*cell, setAccessibilityLabel: &*label];
-            }
-        }
-    }
-}
-
-/// Shows a native view to VoiceOver, or hides it (and its cell).
-pub(crate) fn set_accessibility_element(view: &NSView, on: bool) {
-    // SAFETY: as above.
-    unsafe {
-        let () = objc2::msg_send![view, setAccessibilityElement: on];
-        if objc2::runtime::NSObjectProtocol::respondsToSelector(view, objc2::sel!(cell)) {
-            let cell: Option<Retained<objc2::runtime::AnyObject>> = objc2::msg_send![view, cell];
-            if let Some(cell) = cell {
-                let () = objc2::msg_send![&*cell, setAccessibilityElement: on];
-            }
-        }
     }
 }
 
@@ -581,127 +535,7 @@ pub fn grid(rows: impl IntoIterator<Item = impl Views>) -> Grid {
     Grid { spacing: (8.0, 8.0), rows: rows.into_iter().map(Views::into_views).collect(), align: Vec::new() }
 }
 
-/// A thin separator line across its stack: horizontal in a vertical stack,
-/// vertical in a horizontal one.
-pub struct Divider;
 
-impl View for Divider {
-    fn build(self, cx: &mut Cx) -> Node {
-        let line = NSBox::new(cx.mtm);
-        line.setBoxType(NSBoxType::Separator);
-        let (mut node, _) = Node::leaf(cx, Retained::into_super(line), (false, false), Size { w: 1.0, h: 1.0 });
-        if let Kind::Leaf(l) = &mut node.kind {
-            l.cross_only = true;
-            l.content.set(Some(Size { w: 1.0, h: 1.0 }));
-        }
-        node
-    }
-}
-
-/// A separator line across its stack.
-pub fn divider() -> Divider {
-    Divider
-}
-
-define_class!(
-    // A scroll view's document view: flipped, so content starts at the top.
-    #[unsafe(super(NSView, NSResponder, NSObject))]
-    #[thread_kind = MainThreadOnly]
-    #[name = "AppKitUiFlippedView"]
-    struct FlippedView;
-
-    impl FlippedView {
-        #[unsafe(method(isFlipped))]
-        fn is_flipped(&self) -> bool {
-            true
-        }
-    }
-);
-
-/// Vertically scrolling content (`NSScrollView`). The content is laid out at
-/// the visible width and at least the visible height.
-pub struct Scroll(AnyView);
-
-impl View for Scroll {
-    fn build(self, cx: &mut Cx) -> Node {
-        let scroll = NSScrollView::new(cx.mtm);
-        scroll.setHasVerticalScroller(true);
-        scroll.setAutohidesScrollers(true);
-        scroll.setDrawsBackground(false);
-        // SAFETY: NSView's designated initialiser.
-        let doc: Retained<FlippedView> = unsafe { msg_send![FlippedView::alloc(cx.mtm), init] };
-        let doc: Retained<NSView> = Retained::into_super(doc);
-        scroll.setDocumentView(Some(&doc));
-        cx.container.addSubview(&scroll);
-        let content = self.0.build_node(&mut Cx::new(doc.clone()));
-        invalidate_layout();
-        let clip = scroll.contentView();
-        let mut node = Node::new(Kind::Scroll { scroll, doc: doc.clone(), content: Box::new(content) });
-        // Classic scroll bars appear and go when AppKit tiles the view (also
-        // while drawing, after our layout): re-fit the content when the
-        // visible width no longer matches it.
-        let observer = ClipObserver::alloc(cx.mtm).set_ivars(ClipWatch { meta: Rc::downgrade(&node.meta), doc: objc2::rc::Weak::from_retained(&doc) });
-        // SAFETY: NSObject's designated initialiser.
-        let observer: Retained<ClipObserver> = unsafe { msg_send![super(observer), init] };
-        clip.setPostsFrameChangedNotifications(true);
-        // SAFETY: the observer answers clipChanged:; the node keeps it, and
-        // the notification centre doesn't retain selector observers.
-        unsafe {
-            objc2_foundation::NSNotificationCenter::defaultCenter().addObserver_selector_name_object(
-                &observer,
-                objc2::sel!(clipChanged:),
-                Some(objc2_app_kit::NSViewFrameDidChangeNotification),
-                Some(&clip),
-            )
-        };
-        node.hold(Rc::new(Observing(observer)));
-        node
-    }
-}
-
-/// Unregisters a notification observer when its node goes (the centre
-/// would otherwise keep its record of it).
-struct Observing(Retained<ClipObserver>);
-
-impl Drop for Observing {
-    fn drop(&mut self) {
-        // SAFETY: removing an observer this module registered.
-        unsafe { objc2_foundation::NSNotificationCenter::defaultCenter().removeObserver(&self.0) };
-    }
-}
-
-struct ClipWatch {
-    meta: Weak<Meta>,
-    doc: objc2::rc::Weak<NSView>,
-}
-
-define_class!(
-    // Watches a scroll view's visible area for size changes.
-    #[unsafe(super(NSObject))]
-    #[thread_kind = MainThreadOnly]
-    #[name = "AppKitUiClipObserver"]
-    #[ivars = ClipWatch]
-    struct ClipObserver;
-
-    impl ClipObserver {
-        #[unsafe(method(clipChanged:))]
-        fn clip_changed(&self, note: &objc2_foundation::NSNotification) {
-            let (Some(clip), Some(doc)) = (note.object().and_then(|o| o.downcast::<NSView>().ok()), self.ivars().doc.load()) else { return };
-            if (clip.frame().size.width - doc.frame().size.width).abs() < 0.25 || crate::in_layout() {
-                return;
-            }
-            if let Some(meta) = self.ivars().meta.upgrade() {
-                meta.mark();
-                crate::later(crate::relayout_now);
-            }
-        }
-    }
-);
-
-/// Vertically scrolling `content`.
-pub fn scroll(content: impl View) -> Scroll {
-    Scroll(AnyView::new(content))
-}
 
 /// Runs a side effect for as long as this place in the tree exists; takes
 /// no space. For work that follows signals but shows nothing (applying a
@@ -735,123 +569,6 @@ pub fn spacer() -> Spacer {
     Spacer
 }
 
-/// After a content change: re-measure, and mark the leaf (and its
-/// ancestors) for layout only if its size changed.
-pub(crate) fn remeasure(view: &NSView, leaf: &LeafHandle) {
-    let s = view.fittingSize();
-    let new = Size { w: s.width, h: s.height };
-    if leaf.content.get() != Some(new) {
-        leaf.content.set(Some(new));
-        leaf.meta.mark();
-    }
-}
-
-/// A static label.
-pub struct Text(String);
-
-impl View for Text {
-    fn build(self, cx: &mut Cx) -> Node {
-        let field = NSTextField::labelWithString(&NSString::from_str(&self.0), cx.mtm);
-        Node::leaf(cx, Retained::into_super(Retained::into_super(field)), (false, false), Size::default()).0
-    }
-}
-
-/// A static label.
-pub fn text(s: impl Into<String>) -> Text {
-    Text(s.into())
-}
-
-/// A label computed from signals; updates in place.
-pub struct Label(Box<dyn Fn() -> String>);
-
-impl View for Label {
-    fn build(self, cx: &mut Cx) -> Node {
-        let field = NSTextField::labelWithString(&NSString::from_str(""), cx.mtm);
-        let view: Retained<NSView> = Retained::into_super(Retained::into_super(field.clone()));
-        let (mut node, handle) = Node::leaf(cx, view.clone(), (false, false), Size::default());
-        let f = self.0;
-        node.own(Effect::new(move || {
-            field.setStringValue(&NSString::from_str(&f()));
-            remeasure(&view, &handle);
-        }));
-        node
-    }
-}
-
-/// A label computed from signals; updates in place.
-pub fn label(f: impl Fn() -> String + 'static) -> Label {
-    Label(Box::new(f))
-}
-
-define_class!(
-    #[unsafe(super(NSObject))]
-    #[thread_kind = MainThreadOnly]
-    #[name = "AppKitUiAction"]
-    #[ivars = Box<dyn Fn()>]
-    pub(crate) struct ActionTarget;
-
-    impl ActionTarget {
-        #[unsafe(method(fire:))]
-        fn fire(&self, _sender: Option<&AnyObject>) {
-            batch(|| (self.ivars())());
-        }
-    }
-);
-
-impl ActionTarget {
-    pub(crate) fn new(mtm: MainThreadMarker, f: impl Fn() + 'static) -> Retained<Self> {
-        let this = Self::alloc(mtm).set_ivars(Box::new(f) as Box<dyn Fn()>);
-        // SAFETY: NSObject's designated initialiser.
-        unsafe { msg_send![super(this), init] }
-    }
-}
-
-/// A push button.
-pub struct Button {
-    title: String,
-    action: Box<dyn Fn()>,
-    disabled: Option<Box<dyn Fn() -> bool>>,
-    default_action: bool,
-}
-
-impl Button {
-    /// Disables the button while `f` (reading signals) returns true.
-    pub fn disabled(mut self, f: impl Fn() -> bool + 'static) -> Self {
-        self.disabled = Some(Box::new(f));
-        self
-    }
-
-    /// Makes this the window's default button: blue, and Return presses it.
-    pub fn default_action(mut self) -> Self {
-        self.default_action = true;
-        self
-    }
-}
-
-impl View for Button {
-    fn build(self, cx: &mut Cx) -> Node {
-        let target = ActionTarget::new(cx.mtm, self.action);
-        // SAFETY: the target responds to `fire:` and the node keeps it alive.
-        let button = unsafe {
-            NSButton::buttonWithTitle_target_action(&NSString::from_str(&self.title), Some(&target), Some(sel!(fire:)), cx.mtm)
-        };
-        if self.default_action {
-            button.setKeyEquivalent(&NSString::from_str("\r"));
-        }
-        let (mut node, _) =
-            Node::leaf(cx, Retained::into_super(Retained::into_super(button.clone())), (false, false), Size::default());
-        if let Some(disabled) = self.disabled {
-            node.own(Effect::new(move || button.setEnabled(!disabled())));
-        }
-        node.keep(Retained::into_super(target));
-        node
-    }
-}
-
-/// A push button; `action` runs inside a batch.
-pub fn button(title: &str, action: impl Fn() + 'static) -> Button {
-    Button { title: title.into(), action: Box::new(action), disabled: None, default_action: false }
-}
 
 /// A region whose content is rebuilt when the signals `f` reads change. If
 /// the new view has the same `.id(..)` as the current one, the current node
