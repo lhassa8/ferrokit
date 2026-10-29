@@ -19,6 +19,16 @@ pub fn footprint_mb() -> f64 {
     let (num, unit) = v.split_at(v.len() - 1);
     num.parse::<f64>().unwrap_or(0.0) * if unit == "G" { 1024.0 } else if unit == "K" { 1.0 / 1024.0 } else { 1.0 }
 }
+
+/// The process's peak physical footprint so far, in MB (via vmmap).
+pub fn peak_footprint_mb() -> f64 {
+    let out = std::process::Command::new("vmmap").args(["--summary", &std::process::id().to_string()]).output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    let line = text.lines().find(|l| l.starts_with("Physical footprint (peak):")).unwrap_or("");
+    let v = line.split_whitespace().last().unwrap_or("0M");
+    let (num, unit) = v.split_at(v.len() - 1);
+    num.parse::<f64>().unwrap_or(0.0) * if unit == "G" { 1024.0 } else if unit == "K" { 1.0 / 1024.0 } else { 1.0 }
+}
 /// The window's accessibility tree, flattened: (role, subrole, label/title)
 /// for every element under the content view, as VoiceOver sees it. On
 /// macOS 27, AppKit's text fields and checkboxes host SwiftUI internally, so
