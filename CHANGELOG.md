@@ -1,8 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 (unreleased: versions set, not yet published)
 
-### appkit-host (breaking: release as 0.2.0)
+`appkit-host` 0.2.0 has breaking changes, and `iced-appkit` re-exports its types (`host`, `TableEvent`, `Column`…), so both move to 0.2.0. `appkit-ui` 0.1.0 is new.
+
+### appkit-host 0.2.0 (breaking)
 
 - `TableEvent` is now `#[non_exhaustive]` and has a new `Edit { row, column, value }` variant.
 - `Column::editable(true)` makes a text or number column's cells editable. Finishing an edit emits `TableEvent::Edit`; apply it with `update_row`.
@@ -20,9 +22,22 @@
 - `TextModel::share_undo(Some(&manager))` records the editor's edits in another undo manager (a window's, shared with other views); `None` returns to a history of its own, still the default. `TextModel::undo_manager()` returns the one in use. `set_text` drops only this editor's steps from a shared history.
 - Fix: `TextEvent::Changed` is now sent for undo and redo too. AppKit sends no `textDidChange:` for them, so the model also listens to its text storage; a queued `Changed` isn't repeated.
 
-### iced-appkit
+### iced-appkit 0.2.0
 
 - `table(..).on_edit(..)` for editable columns.
+- Depends on `appkit-host` 0.2 (its re-exported `TableEvent` gained variants and is now `#[non_exhaustive]`).
+
+### appkit-ui 0.1.0 (new)
+
+A native macOS UI framework on `appkit-host`: real AppKit views built once and updated in place by fine-grained signals.
+
+- Signals, memos, effects, batching, background work (`spawn`), stored settings.
+- Layout in Rust: stacks, grids, spacers, padding and sizes, keyed lists (`for_each`), `dynamic` subtrees, subtree-only relayout.
+- Controls bound to signals: text and secure fields, toggles, checkboxes, pickers, sliders, steppers, progress, SF Symbols, buttons; `.accessibility_label`.
+- Deep widgets: `table` (sorting, editing, copy, drag and drop), `outline` and `sidebar`, `text_editor`.
+- App shell: menus with shortcuts and state, toolbars, split views, sheets, alerts, open and save panels, Settings, window and split restoration, per-window undo, `on_frame` for live data; windows torn down when closed.
+- `testing`: self-check helpers, accessibility audits, window captures.
+- A guide (`guide/`) whose examples compile as doc tests; example apps `settings`, `native_csv`, `log_viewer`, `hands_on`.
 
 ## 0.1.0 (2026-10-28)
 
