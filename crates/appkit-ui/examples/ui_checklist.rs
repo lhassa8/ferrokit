@@ -121,7 +121,7 @@ fn run_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         n.set(i);
     }
     let per = t.elapsed().as_secs_f64() * 1e9 / 100_000.0;
-    check("signal-update-cost", seen.get() == 100_000, format!("{per:.0} ns per set + effect run"));
+    check("signal-update-cost", seen.get() == 100_000 && per < 500.0, format!("{per:.0} ns per set + effect run (budget 500)"));
     let runs = effect_runs();
     batch(|| (0..1000).for_each(|i| n.set(i)));
     check("signal-batch", effect_runs() - runs == 1, format!("{} effect run(s) for 1,000 sets in one batch", effect_runs() - runs));

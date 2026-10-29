@@ -1,7 +1,7 @@
 //! F2.6 exit check: the CSV browser as a native app. Open a CSV (or the
 //! 200,000-row sample), filter it from the toolbar, narrow it by a sidebar
 //! group, sort, see a record's details in a sheet, keep notes per record.
-//! `cargo run --release -p appkit-ui --example csv_browser`; `CHECK=all`
+//! `cargo run --release -p appkit-ui --example native_csv`; `CHECK=all`
 //! runs its self-checks and measurements; `SNAP=<dir>` saves an image.
 
 use std::cell::RefCell;
@@ -433,8 +433,8 @@ mod self_checks {
             let rows = orders().numberOfRows();
             check(
                 "load",
-                rows == 200_000 && d.headers.len() == 8,
-                format!("200k rows parsed in {:.0} ms on a background thread; in the table {shown_ms:.0} ms after Open; {rows} rows; footprint {f0:.0} → {:.0} MB", d.load_ms, footprint_mb()),
+                rows == 200_000 && d.headers.len() == 8 && shown_ms < 1000.0,
+                format!("200k rows parsed in {:.0} ms on a background thread; in the table {shown_ms:.0} ms after Open (budget 1000); {rows} rows; footprint {f0:.0} → {:.0} MB", d.load_ms, footprint_mb()),
             );
             interact(b.clone());
         });
@@ -451,7 +451,8 @@ mod self_checks {
             times.push(b.filter_ms.get_untracked().round());
         }
         let paris = b.shown.get_untracked();
-        check("search", paris == 16_632 && orders().numberOfRows() == 16_632, format!("'paris' → {paris} rows; per keystroke {times:?} ms"));
+        let worst = times.iter().copied().fold(0.0, f64::max);
+        check("search", paris == 16_632 && orders().numberOfRows() == 16_632 && worst < 100.0, format!("'paris' → {paris} rows; per keystroke {times:?} ms (budget 100)"));
 
         // Sidebar group (plus the search: no Tokyo order mentions Paris).
         batch(|| b.group.set(Some("Tokyo".into())));
@@ -485,7 +486,7 @@ mod self_checks {
             .viewAtColumn_row_makeIfNecessary(tv.columnWithIdentifier(&NSString::from_str("c5")), 0, true)
             .and_then(|v| v.downcast::<NSTextField>().ok())
             .map(|f| f.stringValue().to_string());
-        check("sort", first.as_deref() == Some("942.75"), format!("16,429 rows by Total, descending, in {sort_ms:.1} ms; first {first:?}"));
+        check("sort", first.as_deref() == Some("942.75") && sort_ms < 300.0, format!("16,429 rows by Total, descending, in {sort_ms:.1} ms (budget 300); first {first:?}"));
 
         // Details: select row 0, Return → sheet with the record; Close.
         tv.selectRowIndexes_byExtendingSelection(&objc2_foundation::NSIndexSet::indexSetWithIndex(0), false);

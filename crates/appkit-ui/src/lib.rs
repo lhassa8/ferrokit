@@ -24,6 +24,7 @@ mod layout;
 mod menu;
 mod models;
 mod outline;
+mod platform;
 mod signal;
 mod store;
 mod undo;
@@ -34,16 +35,15 @@ use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
 
-use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSResponder, NSView, NSWindow, NSWindowStyleMask,
 };
 use objc2_foundation::NSObject;
-use objc2_core_foundation::{CFRunLoop, kCFRunLoopCommonModes};
+
+use platform::{Native, Platform};
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
 pub use appkit_host::{is_dark, system_colors};
@@ -510,14 +510,7 @@ pub fn windows() -> Vec<Retained<NSWindow>> {
 
 /// Runs `f` on a later pass of the main run loop.
 pub fn later(f: impl Fn() + 'static) {
-    let main = CFRunLoop::main().expect("main run loop");
-    // Blocks run outside NSApplication's per-event autorelease pool, so give
-    // each its own: without it, everything AppKit autoreleases inside (e.g.
-    // new controls) is never released.
-    let block = RcBlock::new(move || objc2::rc::autoreleasepool(|_| f()));
-    // SAFETY: runs on the main run loop; touches main-thread state only.
-    unsafe { main.perform_block(kCFRunLoopCommonModes.map(|m| m.as_ref()), Some(&block)) };
-    main.wake_up();
+    Native::later(Box::new(f));
 }
 
 /// The app's appearance.
@@ -570,20 +563,13 @@ pub fn spawn<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static, then:
         )
     });
     std::thread::spawn(move || {
-        let result: Arc<Mutex<Option<Box<dyn Any + Send>>>> = Arc::new(Mutex::new(Some(Box::new(work()))));
-        let main = CFRunLoop::main().expect("main run loop");
-        let block = RcBlock::new(move || {
-            let result = result.lock().expect("task result").take();
-            let then = CONTINUATIONS.with_borrow_mut(|c| c.remove(&id));
-            if let (Some(result), Some(then)) = (result, then) {
-                // Own pool: see `later`.
-                objc2::rc::autoreleasepool(|_| batch(|| then(result)));
+        let result: Box<dyn Any + Send> = Box::new(work());
+        // On the main thread the continuation (a main-thread value) is
+        // looked up by id.
+        Native::on_main(Box::new(move || {
+            if let Some(then) = CONTINUATIONS.with_borrow_mut(|c| c.remove(&id)) {
+                batch(|| then(result));
             }
-        });
-        // SAFETY: CFRunLoopPerformBlock and CFRunLoopWakeUp may be called from
-        // any thread; the block runs on the main run loop, where the
-        // continuation (a main-thread value) is looked up by id.
-        unsafe { main.perform_block(kCFRunLoopCommonModes.map(|m| m.as_ref()), Some(&block)) };
-        main.wake_up();
+        }));
     });
 }

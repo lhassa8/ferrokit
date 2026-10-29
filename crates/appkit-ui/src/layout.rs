@@ -13,8 +13,7 @@
 
 use std::cell::Cell;
 
-use objc2_foundation::{NSPoint, NSRect, NSSize};
-
+use crate::platform::{Native, Platform, Rect};
 use crate::view::{Align, Axis, Kind, Meta, Node, Size};
 
 thread_local! {
@@ -81,8 +80,7 @@ pub(crate) fn ideal(node: &Node) -> Size {
     let mut s = match &node.kind {
         Kind::Leaf(l) => {
             let s = l.content.get().unwrap_or_else(|| {
-                let f = l.view.fittingSize();
-                let s = Size { w: f.width, h: f.height };
+                let s = Native::fitting_size(&l.view);
                 l.content.set(Some(s));
                 s
             });
@@ -193,6 +191,12 @@ impl Snap {
     }
 }
 
+/// The rectangle `x, y, w, h` with its edges on device pixels.
+fn snapped(x: f64, y: f64, w: f64, h: f64, snap: &Snap) -> Rect {
+    let (x0, y0) = (snap.r(x), snap.r(y));
+    Rect { x: x0, y: y0, w: snap.r(x + w) - x0, h: snap.r(y + h) - y0 }
+}
+
 /// Places `node` (and its subtree) in the rectangle `x, y, w, h` of the
 /// flipped container, skipping it if it is clean and its rectangle is the same.
 pub(crate) fn place(node: &Node, x: f64, y: f64, w: f64, h: f64, snap: &Snap) {
@@ -205,40 +209,22 @@ pub(crate) fn place(node: &Node, x: f64, y: f64, w: f64, h: f64, snap: &Snap) {
     let p = node.padding;
     let (ix, iy, iw, ih) = (x + p, y + p, (w - 2.0 * p).max(0.0), (h - 2.0 * p).max(0.0));
     match &node.kind {
-        Kind::Leaf(l) => {
-            let (x0, y0) = (snap.r(ix), snap.r(iy));
-            let r = NSRect::new(NSPoint::new(x0, y0), NSSize::new(snap.r(ix + iw) - x0, snap.r(iy + ih) - y0));
-            if l.view.frame() != r {
-                l.view.setFrame(r);
-            }
-        }
+        Kind::Leaf(l) => Native::place(&l.view, snapped(ix, iy, iw, ih, snap)),
         Kind::Spacer => {}
         Kind::Scroll { scroll, doc, content } => {
-            let (x0, y0) = (snap.r(ix), snap.r(iy));
-            let r = NSRect::new(NSPoint::new(x0, y0), NSSize::new(snap.r(ix + iw) - x0, snap.r(iy + ih) - y0));
-            if scroll.frame() != r {
-                scroll.setFrame(r);
-            }
-            let visible = scroll.contentSize();
-            let (w, h) = (visible.width, ideal(content).h.max(visible.height));
-            if doc.frame().size != NSSize::new(w, h) {
-                doc.setFrameSize(NSSize::new(w, h));
-            }
+            let visible = Native::place_scroll(scroll, snapped(ix, iy, iw, ih, snap));
+            let (w, h) = (visible.w, ideal(content).h.max(visible.h));
+            Native::set_size(doc, Size { w, h });
             place(content, 0.0, 0.0, w, h, snap);
         }
         Kind::Split { split, panes, position } => {
-            let (x0, y0) = (snap.r(ix), snap.r(iy));
-            let r = NSRect::new(NSPoint::new(x0, y0), NSSize::new(snap.r(ix + iw) - x0, snap.r(iy + ih) - y0));
-            if split.frame() != r {
-                split.setFrame(r);
-                split.adjustSubviews();
-            }
+            Native::place_split(split, snapped(ix, iy, iw, ih, snap));
             if let Some(p) = position.take() {
-                split.setPosition_ofDividerAtIndex(p, 0);
+                Native::set_divider(split, p);
             }
             for (pane, child) in panes {
-                let b = pane.bounds().size;
-                place(child, 0.0, 0.0, b.width, b.height, snap);
+                let b = Native::size(pane);
+                place(child, 0.0, 0.0, b.w, b.h, snap);
             }
         }
         Kind::Group(g) => place_stack(&g.borrow(), Axis::Vertical, 0.0, None, [ix, iy, iw, ih], snap),

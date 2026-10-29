@@ -85,7 +85,8 @@ pub fn batch<R>(f: impl FnOnce() -> R) -> R {
     if DEPTH.with(Cell::get) > 0 {
         return nested(f);
     }
-    objc2::rc::autoreleasepool(|_| nested(f))
+    use crate::platform::{Native, Platform};
+    Native::scope(|| nested(f))
 }
 
 fn nested<R>(f: impl FnOnce() -> R) -> R {
