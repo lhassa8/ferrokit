@@ -1,18 +1,41 @@
-//! A native macOS UI framework for Rust: every view is a real AppKit view.
-//! Phase 2, unreleased. So far: the app, its windows, the run loop, the
-//! default menu bar and appearance tracking (F1.1); signals, batching and
-//! background work (F1.2); views, identity and teardown (F1.3); layout with
-//! stacks, grids, alignment and subtree-only relayout (F1.4); text fields,
-//! secure fields, toggles and checkboxes bound to signals (F1.5); pickers,
-//! sliders, steppers, progress, SF Symbols, dividers and scroll views (F1.6);
-//! the native table (F2.1); outlines and the source-list sidebar (F2.2); the
-//! text editor (F2.3); split views, toolbars and context menus (F2.4); sheets,
-//! alerts and file panels (F2.5); the app's menus, its Settings window,
-//! stored settings and window restoration (F3.1); undo, one history per
-//! window (F3.2); drag and drop, copy and paste of table rows (F3.3);
-//! per-frame callbacks for live data (F3.5).
+//! A native macOS UI framework for Rust: every view is a real AppKit view
+//! (`NSTableView`, `NSTextView`, `NSSplitView`…), built once and updated in
+//! place by fine-grained signals. No virtual DOM, no diffing, no web view.
 //!
-//! Main thread only.
+//! ```no_run
+//! use appkit_ui::*;
+//!
+//! let count = Signal::new(0);
+//! let (c1, c2) = (count.clone(), count.clone());
+//! App::new("Counter")
+//!     .window(Window::new("Counter").size(320.0, 140.0).view(
+//!         vstack((
+//!             label(move || format!("Clicked {} times", c1.get())),
+//!             button("Click me", move || c2.update(|n| *n += 1)),
+//!         ))
+//!         .padding(20.0),
+//!     ))
+//!     .run();
+//! ```
+//!
+//! - **State:** [`Signal`], [`Memo`], [`Effect`], [`batch`], [`spawn`] for
+//!   background work, [`stored`] for settings that persist.
+//! - **Views and layout:** [`vstack`], [`hstack`], [`grid`], [`spacer`],
+//!   [`scroll`], [`for_each`] (keyed lists), [`dynamic`], and the
+//!   [`ViewExt`] modifiers (padding, sizes, context menus, accessibility
+//!   labels).
+//! - **Controls:** [`text_field`], [`toggle`], [`checkbox`], [`picker`],
+//!   [`slider`], [`stepper`], [`progress`], [`image`], [`button`].
+//! - **Deep widgets:** [`table`] (millions of rows, sorting, editing, drag
+//!   and drop), [`outline`] and [`sidebar`], [`text_editor`].
+//! - **App shell:** menus ([`App::menu`]), toolbars, [`split`] views,
+//!   [`sheet`]s, [`alert`]s, open and save panels, a Settings window,
+//!   window restoration, undo ([`undoable`]), [`on_frame`] for live data.
+//! - **Testing:** [`testing`] (self-checks, accessibility audits, window
+//!   captures).
+//!
+//! The guide (`crates/appkit-ui/guide`) walks through all of it; its
+//! examples are compiled as doc tests. macOS 15 or later. Main thread only.
 
 #![warn(missing_docs)]
 
@@ -36,10 +59,9 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use objc2::rc::Retained;
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSResponder, NSView, NSWindow, NSWindowStyleMask,
+    NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSResponder, NSView, NSWindowStyleMask,
 };
 use objc2_foundation::NSObject;
 
@@ -63,6 +85,10 @@ pub use outline::{Outline, TreeNode, outline, sidebar};
 pub use appkit_host::table::{Column, ColumnState, Sort, TableModel};
 pub use appkit_host::text::TextModel;
 pub use appkit_host::ViewId;
+/// The AppKit window type the window functions take and return.
+pub use objc2_app_kit::NSWindow;
+/// The owning pointer to an AppKit object (as returned by [`open`]).
+pub use objc2::rc::Retained;
 pub use view::{
     Align, AnyView, Axis, Button, Cx, Divider, Dynamic, ForEach, Grid, Identifiable, Label, Modified, Node, Scroll, Size,
     Spacer, Stack, Text, View, ViewExt, Views, button, divider, dynamic, for_each, grid, hstack, label, live_nodes, scroll,
@@ -572,4 +598,27 @@ pub fn spawn<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static, then:
             }
         }));
     });
+}
+
+/// The guide's chapters, compiled as doc tests so their examples stay right.
+#[cfg(doctest)]
+mod guide {
+    #[doc = include_str!("../README.md")]
+    mod readme {}
+    #[doc = include_str!("../guide/01-getting-started.md")]
+    mod getting_started {}
+    #[doc = include_str!("../guide/02-state.md")]
+    mod state {}
+    #[doc = include_str!("../guide/03-views-and-layout.md")]
+    mod views_and_layout {}
+    #[doc = include_str!("../guide/04-controls-and-forms.md")]
+    mod controls_and_forms {}
+    #[doc = include_str!("../guide/05-tables-outlines-editors.md")]
+    mod tables_outlines_editors {}
+    #[doc = include_str!("../guide/06-app-shell.md")]
+    mod app_shell {}
+    #[doc = include_str!("../guide/07-live-data.md")]
+    mod live_data {}
+    #[doc = include_str!("../guide/08-testing-and-shipping.md")]
+    mod testing_and_shipping {}
 }
