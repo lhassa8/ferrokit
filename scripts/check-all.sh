@@ -124,6 +124,7 @@ suite log_viewer CHECK=all "$ex/log_viewer"
 suite hands_on CHECK=drop "$ex/hands_on"
 suite notes CHECK=all "$ex/notes"
 suite gallery CHECK=all "$ex/gallery"
+suite sql_browser CHECK=all "$ex/sql_browser"
 if [ -n "$iced" ]; then
   step iced_bundle scripts/bundle-example.sh checklist
   suite iced_checklist CHECK=all target/checklist.app/Contents/MacOS/checklist

@@ -19,7 +19,7 @@ use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{NSApplication, NSApplicationDelegate, NSApplicationTerminateReply, NSWindow};
 use objc2_foundation::{NSString, NSURL, NSUserDefaults};
 
-use crate::chrome::{MenuItem, Modifier, dynamic_submenu, menu_item, menu_separator};
+use crate::chrome::{MenuItem, Modifier, ToolbarItem, dynamic_submenu, menu_item, menu_separator};
 use crate::dialogs::{Alert, OpenOptions, alert, open_panel, save_panel};
 use crate::signal::Owner;
 use crate::signal::{Effect, Signal, batch, untrack};
@@ -29,6 +29,7 @@ use crate::{Window, mtm};
 type Reader<T> = Rc<dyn Fn(&Path) -> std::io::Result<T>>;
 type Writer<T> = Rc<dyn Fn(&T, &Path) -> std::io::Result<()>>;
 type DocView<T> = Rc<dyn Fn(&Document<T>) -> AnyView>;
+type DocToolbar<T> = Rc<dyn Fn(&Document<T>) -> Vec<ToolbarItem>>;
 
 /// One kind of document: its file extensions, how to make an empty one,
 /// read and write it, and the view of its window.
@@ -38,6 +39,7 @@ pub struct DocumentType<T: 'static> {
     read: Option<Reader<T>>,
     write: Option<Writer<T>>,
     view: DocView<T>,
+    toolbar: Option<DocToolbar<T>>,
     size: (f64, f64),
 }
 
@@ -54,6 +56,7 @@ impl<T: Clone + PartialEq + 'static> DocumentType<T> {
             read: None,
             write: None,
             view: Rc::new(move |d| AnyView::new(view(d))),
+            toolbar: None,
             size: (640.0, 480.0),
         }
     }
@@ -68,6 +71,12 @@ impl<T: Clone + PartialEq + 'static> DocumentType<T> {
     /// documents are read-only (a viewer).
     pub fn write(mut self, f: impl Fn(&T, &Path) -> std::io::Result<()> + 'static) -> Self {
         self.write = Some(Rc::new(f));
+        self
+    }
+
+    /// A toolbar for each document window, built with the window's view.
+    pub fn toolbar(mut self, items: impl Fn(&Document<T>) -> Vec<ToolbarItem> + 'static) -> Self {
+        self.toolbar = Some(Rc::new(items));
         self
     }
 
@@ -262,7 +271,11 @@ fn show<T: Clone + PartialEq + 'static>(kind: Rc<DocumentType<T>>, content: T, p
         edited_signal.set_if_changed(differs);
     });
     let view = owner.with(|| (kind.view)(&doc));
-    let window = crate::open(Window::new(&untrack(|| doc.title())).size(kind.size.0, kind.size.1).view(view));
+    let mut spec = Window::new(&untrack(|| doc.title())).size(kind.size.0, kind.size.1).view(view);
+    if let Some(toolbar) = &kind.toolbar {
+        spec = spec.toolbar(owner.with(|| toolbar(&doc)));
+    }
+    let window = crate::open(spec);
     *doc.0.window.borrow_mut() = Weak::from_retained(&window);
     // The title bar follows the file and the edited state (the dot in the
     // close button, the proxy icon of the file).

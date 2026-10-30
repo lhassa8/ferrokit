@@ -736,9 +736,6 @@ impl Source {
                 let f = NSTextField::labelWithString(&NSString::new(), mtm);
                 f.setIdentifier(Some(&ident));
                 f.setLineBreakMode(NSLineBreakMode::ByTruncatingTail);
-                if let Kind::Number { .. } = kind {
-                    f.setAlignment(NSTextAlignment::Right);
-                }
                 if self.data().is_some_and(|d| d.editable(&ident.to_string())) {
                     // A borderless editable label: NSTableView starts editing
                     // on double-click (or a click on the selected row), and
@@ -754,6 +751,8 @@ impl Source {
                 f
             }
         };
+        // Set on reuse too: a column's kind can change (`set_columns`).
+        field.setAlignment(if let Kind::Number { .. } = kind { NSTextAlignment::Right } else { NSTextAlignment::Natural });
         field.setStringValue(&NSString::from_str(&display(kind, &value)));
         Some(Retained::into_super(Retained::into_super(field)))
     }
@@ -808,7 +807,7 @@ impl Source {
 
 struct Inner<T: 'static> {
     id: ViewId,
-    columns: Vec<Column<T>>,
+    columns: RefCell<Vec<Column<T>>>,
     rows: RefCell<Vec<T>>,
     /// View position → model index (identity when unsorted); a group
     /// header's slot is `HEADER | group`.
@@ -834,7 +833,8 @@ impl<T: 'static> Data for Inner<T> {
     }
 
     fn cell(&self, view_row: usize, column: &str) -> Option<(Kind, Value)> {
-        let column = self.columns.iter().find(|c| c.id == column)?;
+        let columns = self.columns.borrow();
+        let column = columns.iter().find(|c| c.id == column)?;
         let index = self.model_row(view_row)?;
         let rows = self.rows.borrow();
         Some((column.kind, (column.value)(rows.get(index)?)))
@@ -850,22 +850,23 @@ impl<T: 'static> Data for Inner<T> {
     }
 
     fn icon(&self, view_row: usize, column: &str) -> Option<CellImage> {
-        let column = self.columns.iter().find(|c| c.id == column)?;
+        let columns = self.columns.borrow();
+        let column = columns.iter().find(|c| c.id == column)?;
         let index = self.model_row(view_row)?;
         let rows = self.rows.borrow();
         column.icon.as_ref().and_then(|f| f(rows.get(index)?))
     }
 
     fn has_icon(&self, column: &str) -> bool {
-        self.columns.iter().any(|c| c.id == column && c.icon.is_some())
+        self.columns.borrow().iter().any(|c| c.id == column && c.icon.is_some())
     }
 
     fn editable(&self, column: &str) -> bool {
-        self.columns.iter().any(|c| c.id == column && c.editable && c.kind != Kind::Check)
+        self.columns.borrow().iter().any(|c| c.id == column && c.editable && c.kind != Kind::Check)
     }
 
     fn title(&self, column: &str) -> Option<String> {
-        self.columns.iter().find(|c| c.id == column).map(|c| c.title.clone())
+        self.columns.borrow().iter().find(|c| c.id == column).map(|c| c.title.clone())
     }
 
     fn sort_changed(&self, sort: Option<Sort>) {
@@ -902,7 +903,8 @@ impl<T: 'static> Data for Inner<T> {
     }
 
     fn rows_text(&self, view_rows: &[usize], columns: &[String]) -> String {
-        let columns: Vec<&Column<T>> = columns.iter().filter_map(|id| self.columns.iter().find(|c| &c.id == id)).collect();
+        let all = self.columns.borrow();
+        let columns: Vec<&Column<T>> = columns.iter().filter_map(|id| all.iter().find(|c| &c.id == id)).collect();
         let order = self.order.borrow();
         let rows = self.rows.borrow();
         let clean = |s: String| s.replace(['\t', '\n', '\r'], " ");
@@ -922,7 +924,8 @@ impl<T: 'static> Inner<T> {
         let rows = self.rows.borrow();
         let mut order: Vec<usize> = (0..rows.len()).collect();
         let sort = self.sort.borrow().clone();
-        if let Some(column) = sort.as_ref().and_then(|s| self.columns.iter().find(|c| c.id == s.column)) {
+        let columns = self.columns.borrow();
+        if let Some(column) = sort.as_ref().and_then(|s| columns.iter().find(|c| c.id == s.column)) {
             // One key per row, built once: text becomes a natural-order key
             // compared bytewise (comparing with case folding on every
             // comparison took 160 ms for 100k rows).
@@ -978,7 +981,7 @@ impl<T: 'static> Inner<T> {
     /// 2,000 rows), measured in the table's font.
     fn fit_columns(&self) {
         let rows = self.rows.borrow();
-        for column in self.columns.iter().filter(|c| c.fit) {
+        for column in self.columns.borrow().iter().filter(|c| c.fit) {
             let Some(native) = self.table.tableColumnWithIdentifier(&NSString::from_str(&column.id)) else { continue };
             let mut texts: Vec<String> = rows.iter().map(|r| display(column.kind, &(column.value)(r))).collect();
             if texts.len() > 2_000 {
@@ -1120,6 +1123,22 @@ fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     }
 }
 
+/// Adds a native column for each of `columns`.
+fn add_columns<T>(table: &NSTableView, columns: &[Column<T>]) {
+    for c in columns {
+        let column = NSTableColumn::initWithIdentifier(NSTableColumn::alloc(mtm()), &NSString::from_str(&c.id));
+        column.setTitle(&NSString::from_str(&c.title));
+        column.setWidth(c.width);
+        column.setMinWidth(c.min_width);
+        column.setResizingMask(NSTableColumnResizingOptions::UserResizingMask);
+        if c.sortable {
+            let descriptor = NSSortDescriptor::sortDescriptorWithKey_ascending(Some(&NSString::from_str(&c.id)), true);
+            column.setSortDescriptorPrototype(Some(&descriptor));
+        }
+        table.addTableColumn(&column);
+    }
+}
+
 /// A native table backed by rows of `T`. See the module docs.
 pub struct TableModel<T: 'static> {
     inner: Rc<Inner<T>>,
@@ -1153,18 +1172,7 @@ impl<T: 'static> TableModel<T> {
         table.setAllowsMultipleSelection(true);
         table.setAllowsColumnReordering(true);
         table.setAllowsColumnResizing(true);
-        for c in &columns {
-            let column = NSTableColumn::initWithIdentifier(NSTableColumn::alloc(mtm), &NSString::from_str(&c.id));
-            column.setTitle(&NSString::from_str(&c.title));
-            column.setWidth(c.width);
-            column.setMinWidth(c.min_width);
-            column.setResizingMask(NSTableColumnResizingOptions::UserResizingMask);
-            if c.sortable {
-                let descriptor = NSSortDescriptor::sortDescriptorWithKey_ascending(Some(&NSString::from_str(&c.id)), true);
-                column.setSortDescriptorPrototype(Some(&descriptor));
-            }
-            table.addTableColumn(&column);
-        }
+        add_columns(&table, &columns);
         let scroll = NSScrollView::new(mtm);
         scroll.setHasVerticalScroller(true);
         scroll.setHasHorizontalScroller(true);
@@ -1173,7 +1181,7 @@ impl<T: 'static> TableModel<T> {
 
         let inner = Rc::new(Inner {
             id,
-            columns,
+            columns: RefCell::new(columns),
             rows: RefCell::new(Vec::new()),
             order: RefCell::new(Vec::new()),
             groups: RefCell::new(Vec::new()),
@@ -1216,6 +1224,26 @@ impl<T: 'static> TableModel<T> {
         }
     }
 
+    /// Replaces the columns, keeping the same native table (a query
+    /// browser's results change shape with every query). The sort is
+    /// cleared. Call [`set_rows`](Self::set_rows) after it when the rows
+    /// change too: nothing is drawn in between.
+    pub fn set_columns(&self, columns: Vec<Column<T>>) {
+        let table = &self.inner.table;
+        *self.inner.sort.borrow_mut() = None;
+        self.inner.quiet.set(true);
+        table.setSortDescriptors(&NSArray::new());
+        let old: Vec<_> = table.tableColumns().iter().collect();
+        for column in old {
+            table.removeTableColumn(&column);
+        }
+        add_columns(table, &columns);
+        *self.inner.columns.borrow_mut() = columns;
+        self.inner.compute_order();
+        table.reloadData();
+        self.inner.quiet.set(false);
+    }
+
     /// Replaces all rows (the current sort is applied). Clears the selection.
     pub fn set_rows(&self, rows: Vec<T>) {
         *self.inner.rows.borrow_mut() = rows;
@@ -1255,7 +1283,7 @@ impl<T: 'static> TableModel<T> {
             return;
         }
         let Some(view_row) = self.inner.order.borrow().iter().position(|&m| m == index) else { return };
-        let columns = NSIndexSet::indexSetWithIndexesInRange(objc2_foundation::NSRange::new(0, self.inner.columns.len()));
+        let columns = NSIndexSet::indexSetWithIndexesInRange(objc2_foundation::NSRange::new(0, self.inner.columns.borrow().len()));
         self.inner.table.reloadDataForRowIndexes_columnIndexes(&NSIndexSet::indexSetWithIndex(view_row), &columns);
     }
 

@@ -89,12 +89,17 @@ pub(crate) fn ideal(node: &Node) -> Size {
         Kind::Spacer => Size::default(),
         Kind::Group(g) => stack_ideal(&g.borrow(), Axis::Vertical, 0.0),
         Kind::Stack { axis, spacing, children, .. } => stack_ideal(children, *axis, *spacing),
-        Kind::Split { panes, .. } => {
+        Kind::Split { panes, stacked, .. } => {
             let (mut w, mut h) = (0.0f64, 0.0f64);
             for (_, n) in panes {
                 let s = ideal(n);
-                w += s.w + 1.0;
-                h = h.max(s.h);
+                if *stacked {
+                    h += s.h + 1.0;
+                    w = w.max(s.w);
+                } else {
+                    w += s.w + 1.0;
+                    h = h.max(s.h);
+                }
             }
             Size { w, h }
         }
@@ -224,7 +229,7 @@ pub(crate) fn place(node: &Node, x: f64, y: f64, w: f64, h: f64, snap: &Snap) {
             }
             place(content, 0.0, 0.0, size.w, size.h, snap);
         }
-        Kind::Split { split, panes, position } => {
+        Kind::Split { split, panes, position, .. } => {
             Native::place_split(split, snapped(ix, iy, iw, ih, snap));
             if let Some(p) = position.take() {
                 Native::set_divider(split, p);

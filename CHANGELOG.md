@@ -8,7 +8,14 @@
 - After its owner is gone, reading a signal panics with a message saying so, and setting it does nothing. New: `Signal::try_get`, `Signal::is_alive`, and `live_signals()` for leak checks.
 - **Async resources:** `Resource::new(source, fetch)` loads a value on a background thread from the signals `source` reads, and again when they change. A new load cancels the running one (`Cancel::is_cancelled` lets long work stop) and stale results are never shown; the last value stays while the next loads. `get`, `loading`, `error`, `state` (`Load::Loading/Ready/Failed`), `refetch`. Owned like a signal: closing its window cancels the load.
 - **Commands and focus:** `Command::new(name)`, handled by views (`ViewExt::on_command`, `on_command_when`), windows (`Window::on_command`) and the app (`App::on_command`). `menu_command` and `toolbar_command` run the handler nearest the focused view (then its ancestors, the window, the app) and are enabled only while one answers. `ViewExt::focused_value` / `focused_value::<T>()` publish and read values the same way. `perform`, `can_perform`, `perform_in`, `focused_window`.
+- **Stacked splits:** `Split::stacked()` puts panes top to bottom (an editor over its results); `position` and `remember` measure from the top.
+- **Document toolbars:** `DocumentType::toolbar(|doc| items)` gives each document window a toolbar.
+- New example: `sql_browser`, a SQLite browser (the H4 flagship, step 1) with `CHECK=all` self-checks.
 - Existing code still compiles; `.clone()` on a signal is now a copy (clippy's `clone_on_copy` points them out). `Signal` compares by identity (`PartialEq`, `Eq`).
+
+### appkit-host (additive)
+
+- `TableModel::set_columns(columns)` replaces a table's columns in place (same native table; the sort is cleared). Text cells now set their alignment on reuse too, so a column whose kind changes aligns correctly.
 
 ## appkit-host 0.2.1, iced-appkit 0.2.1, appkit-ui 0.2.0 (2026-10-29)
 

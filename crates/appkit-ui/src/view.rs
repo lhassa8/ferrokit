@@ -189,6 +189,8 @@ pub(crate) enum Kind {
         panes: Vec<(NativeView, Node)>,
         /// Initial divider position, applied at the first layout.
         position: Cell<Option<f64>>,
+        /// Panes top to bottom (dividers across) instead of side by side.
+        stacked: bool,
     },
 }
 

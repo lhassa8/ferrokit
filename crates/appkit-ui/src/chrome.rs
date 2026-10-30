@@ -74,8 +74,11 @@ define_class!(
             // programmatic move outside layout) is the user's choice.
             let (Some(key), false) = (self.ivars(), crate::in_layout()) else { return };
             let split = notification.object().and_then(|o| o.downcast::<NSSplitView>().ok());
-            if let Some(first) = split.and_then(|s| s.arrangedSubviews().firstObject()) {
-                NSUserDefaults::standardUserDefaults().setDouble_forKey(first.frame().size.width, key);
+            if let Some(split) = split
+                && let Some(first) = split.arrangedSubviews().firstObject()
+            {
+                let size = first.frame().size;
+                NSUserDefaults::standardUserDefaults().setDouble_forKey(if split.isVertical() { size.width } else { size.height }, key);
             }
         }
     }
@@ -83,15 +86,24 @@ define_class!(
 
 /// Side-by-side panes with draggable dividers (`NSSplitView`). The first
 /// pane keeps its width when the window resizes (a sidebar); the others
-/// share the change.
+/// share the change. [`stacked`](Self::stacked) puts them top to bottom.
 pub struct Split {
     panes: Vec<AnyView>,
     position: Option<f64>,
     remember: Option<String>,
+    stacked: bool,
 }
 
 impl Split {
-    /// Initial position of the first divider, in points from the left.
+    /// Panes top to bottom, with dividers across (an editor over its
+    /// results). The first pane keeps its height when the window resizes.
+    pub fn stacked(mut self) -> Self {
+        self.stacked = true;
+        self
+    }
+
+    /// Initial position of the first divider, in points from the left (from
+    /// the top when [`stacked`](Self::stacked)).
     pub fn position(mut self, points: f64) -> Self {
         self.position = Some(points);
         self
@@ -115,7 +127,7 @@ impl View for Split {
     fn build(self, cx: &mut Cx) -> Node {
         let mtm = cx.mtm;
         let split = NSSplitView::new(mtm);
-        split.setVertical(true);
+        split.setVertical(!self.stacked);
         split.setDividerStyle(NSSplitViewDividerStyle::Thin);
         let key = self.remember.as_deref().map(split_key);
         let defaults = NSUserDefaults::standardUserDefaults();
@@ -140,6 +152,7 @@ impl View for Split {
             split,
             panes,
             position: std::cell::Cell::new(saved.or(self.position)),
+            stacked: self.stacked,
         });
         node.keep(Retained::into_super(delegate));
         // Each pane re-lays out its subtree when AppKit resizes it.
@@ -152,7 +165,7 @@ impl View for Split {
 
 /// Panes side by side with draggable dividers (see [`Split`]).
 pub fn split(panes: impl crate::view::Views) -> Split {
-    Split { panes: panes.into_views(), position: None, remember: None }
+    Split { panes: panes.into_views(), position: None, remember: None, stacked: false }
 }
 
 // ---- context menus ----
