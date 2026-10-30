@@ -1,6 +1,6 @@
 [package]
 name = "appkit-host"
-version.workspace = true
+version = "0.2.2"
 readme = "README.md"
 description = "Host-agnostic layer for placing real AppKit views inside a GPU-rendered window"
 edition.workspace = true

@@ -28,13 +28,13 @@ jobs:
       - name: Unit tests
         run: cargo test --workspace
       - name: Docs
-        run: cargo doc --no-deps -p appkit-host -p iced-appkit -p appkit-ui
+        run: cargo doc --no-deps -p appkit-host -p iced-appkit -p appkit-ui -p cargo-ferrokit
         env:
           RUSTDOCFLAGS: -D warnings
       - name: Suites (unattended, every app's CHECK=all)
         continue-on-error: true
         run: scripts/check-all.sh --no-lint
-        timeout-minutes: 25
+        timeout-minutes: 35
         env:
           CHECK_ALL_LOGS: ${{ runner.temp }}/check-all
       - name: Upload suite logs
