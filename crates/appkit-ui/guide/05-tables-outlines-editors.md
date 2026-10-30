@@ -188,3 +188,47 @@ let editor = text_editor(&notes)
 Positions are UTF-8 byte offsets. Each editor has its own undo history;
 `.shared_undo()` puts its typing in the window's history instead, between
 your app's own undoable changes (see [The app shell](06-app-shell.md)).
+
+### Styled text and syntax highlighting
+
+The text stays plain, but runs of it can be coloured and emphasised.
+`.syntax(...)` highlights a language; `Syntax::sql()` and `Syntax::rust()`
+are presets, and `Syntax::new()` builds others from keywords, strings,
+comments and numbers.
+
+```rust,no_run
+use appkit_ui::*;
+
+let query = TextModel::new(ViewId(3), "SELECT * FROM orders -- all of them");
+query.set_font(Some("Menlo"), 12.0);
+let editor = text_editor(&query).syntax(Syntax::sql()).accessibility_label("Query");
+# let _ = editor;
+```
+
+For anything else, `.highlight(|text| runs)` returns UTF-8 byte ranges and
+their `TextStyle`s (a `TextColor`, a background, bold, italic, underline).
+The colours are the system's, so they follow Dark Mode. Styles are applied
+after every edit, before it's drawn, and only where they changed. If the
+function reads signals, it runs again when they change, here to mark a
+search term:
+
+```rust,no_run
+use appkit_ui::*;
+
+let doc = TextModel::new(ViewId(4), "");
+let term = Signal::new(String::from("TODO"));
+let rust = Syntax::rust();
+let editor = text_editor(&doc).highlight(move |text| {
+    let mut runs = rust.highlight(text);
+    let t = term.get();
+    if !t.is_empty() {
+        let mark = TextStyle::new().background(TextColor::Yellow);
+        runs.extend(text.match_indices(t.as_str()).map(|(at, m)| (at..at + m.len(), mark)));
+    }
+    runs
+});
+# let _ = editor;
+```
+
+Styles aren't part of the text: typing, pasting and undo work on characters
+only, and the highlighter restyles what changed.

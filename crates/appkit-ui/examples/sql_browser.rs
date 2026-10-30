@@ -324,10 +324,10 @@ fn columns(r: &Arc<Results>) -> Vec<Column<u32>> {
 fn database_view(doc: &Document<Db>) -> impl View + use<> {
     let db = doc.content().get_untracked();
     let b = Browser::new(&db);
-    BROWSERS.with_borrow_mut(|all| all.push(b));
     let editor = TextModel::new(ViewId(1), "");
     editor.set_font(Some("Menlo"), 12.0);
     editor.set_spell_checking(false);
+    BROWSERS.with_borrow_mut(|all| all.push((b, editor.clone())));
     let model = std::rc::Rc::new(TableModel::new(ViewId(2), Vec::new()));
     let m = model.clone();
     // A new result replaces the columns and rows of the same native table.
@@ -362,7 +362,7 @@ fn database_view(doc: &Document<Db>) -> impl View + use<> {
             .icon(|i: &Item| i.icon.map(String::from))
             .selection(&b.selected),
         split((
-            text_editor(&editor).bind(&b.query).accessibility_label("Query"),
+            text_editor(&editor).bind(&b.query).syntax(Syntax::sql()).accessibility_label("Query"),
             vstack((
                 table(&model).accessibility_label("Results"),
                 label(move || b.status()).padding(6.0),
@@ -385,7 +385,7 @@ fn find<'a>(nodes: &'a [TreeNode<Item>], id: &str) -> Option<&'a Item> {
 
 thread_local! {
     /// Every window's state, for the self-checks.
-    static BROWSERS: std::cell::RefCell<Vec<Browser>> = const { std::cell::RefCell::new(Vec::new()) };
+    static BROWSERS: std::cell::RefCell<Vec<(Browser, TextModel)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 fn database() -> DocumentType<Db> {
@@ -607,7 +607,7 @@ mod self_checks {
         let opened = open_document(&path);
         check("open-database", opened.is_ok(), format!("{:?}", opened.as_ref().err()));
         let w = opened.unwrap();
-        let b = BROWSERS.with_borrow(|all| *all.last().unwrap());
+        let b = BROWSERS.with_borrow(|all| all.last().unwrap().0);
         let w2 = w.clone();
         when(move || untrack(|| b.schema.get().is_some()) && idle(b)() && results(&w2).numberOfRows() > 0, 5000, move |ms| {
             let side = sidebar_titles(&b);
@@ -619,6 +619,10 @@ mod self_checks {
                 w.title().to_string() == "sample.sqlite" && untrack(|| b.query.get()) == "SELECT * FROM \"customers\";" && t.numberOfRows() == 10_000 && titles(&t) == ["id", "name", "city", "since"],
                 format!("title {:?}; query {:?}; {} rows, columns {:?} after {ms:.0} ms", w.title(), untrack(|| b.query.get()), t.numberOfRows(), titles(&t)),
             );
+            let editor = BROWSERS.with_borrow(|all| all.last().unwrap().1.clone());
+            let keyword = TextStyle::new().color(TextColor::Pink).bold();
+            let (select, name) = (editor.style_at(0), editor.style_at(15));
+            check("sql-highlight", select == keyword && name == TextStyle::new(), format!("SELECT {select:?}; the quoted \"customers\" {name:?}"));
             let problems = ax_audit(&w);
             check("accessibility-audit", problems.is_empty(), format!("{problems:?}"));
             let stacked = all(&w).into_iter().filter_map(|v| v.downcast::<NSSplitView>().ok()).any(|s| !s.isVertical());
@@ -720,7 +724,7 @@ mod self_checks {
 
     fn scratch(w: Retained<NSWindow>, dir: PathBuf) {
         let s = new_document().unwrap();
-        let b = BROWSERS.with_borrow(|all| *all.last().unwrap());
+        let b = BROWSERS.with_borrow(|all| all.last().unwrap().0);
         run_query(&s, b, "CREATE TABLE t (x); INSERT INTO t VALUES (1), (2.5), ('three'); SELECT x, typeof(x) AS type FROM t;");
         let s2 = s.clone();
         when(move || idle(b)() && results(&s2).numberOfRows() == 3, 5000, move |_| {

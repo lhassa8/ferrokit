@@ -57,6 +57,7 @@ mod platform;
 mod resource;
 mod signal;
 mod store;
+mod syntax;
 mod undo;
 pub mod testing;
 mod view;
@@ -97,7 +98,8 @@ pub use models::{Table, TextEditor, table, text_editor};
 pub use outline::{Outline, TreeNode, outline, sidebar};
 pub use collection::{Collection, CollectionItem, ItemImage, collection, collection_cells_made};
 pub use appkit_host::table::{CellImage, Column, ColumnState, Sort, TableModel};
-pub use appkit_host::text::TextModel;
+pub use appkit_host::text::{TextColor, TextModel, TextStyle};
+pub use syntax::Syntax;
 pub use appkit_host::ViewId;
 /// The AppKit window type the window functions take and return.
 pub use objc2_app_kit::NSWindow;

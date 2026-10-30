@@ -8,6 +8,7 @@
 - After its owner is gone, reading a signal panics with a message saying so, and setting it does nothing. New: `Signal::try_get`, `Signal::is_alive`, and `live_signals()` for leak checks.
 - **Async resources:** `Resource::new(source, fetch)` loads a value on a background thread from the signals `source` reads, and again when they change. A new load cancels the running one (`Cancel::is_cancelled` lets long work stop) and stale results are never shown; the last value stays while the next loads. `get`, `loading`, `error`, `state` (`Load::Loading/Ready/Failed`), `refetch`. Owned like a signal: closing its window cancels the load.
 - **Commands and focus:** `Command::new(name)`, handled by views (`ViewExt::on_command`, `on_command_when`), windows (`Window::on_command`) and the app (`App::on_command`). `menu_command` and `toolbar_command` run the handler nearest the focused view (then its ancestors, the window, the app) and are enabled only while one answers. `ViewExt::focused_value` / `focused_value::<T>()` publish and read values the same way. `perform`, `can_perform`, `perform_in`, `focused_window`.
+- **Styled text and syntax highlighting:** `TextEditor::highlight(|text| runs)` styles runs of the text (`TextStyle`: a `TextColor`, background, bold, italic, underline). It runs after every edit, before it's drawn, restyling only the span that changed, and again when signals it reads change. `TextEditor::syntax(Syntax)` with a small tokenizer: `Syntax::sql()`, `Syntax::rust()`, or `Syntax::new()` with keywords, strings, comments and numbers. The SQL browser's editor highlights its queries.
 - **Stacked splits:** `Split::stacked()` puts panes top to bottom (an editor over its results); `position` and `remember` measure from the top.
 - **Document toolbars:** `DocumentType::toolbar(|doc| items)` gives each document window a toolbar.
 - New example: `sql_browser`, a SQLite browser (the H4 flagship, step 1) with `CHECK=all` self-checks.
@@ -15,6 +16,7 @@
 
 ### appkit-host (additive)
 
+- `TextModel::set_highlighter`, `restyle` and `style_at`, with `TextStyle` and `TextColor` (system colours that follow Dark Mode): styled runs over plain text, applied before an edit is drawn and kept out of undo.
 - `TableModel::set_columns(columns)` replaces a table's columns in place (same native table; the sort is cleared). Text cells now set their alignment on reuse too, so a column whose kind changes aligns correctly.
 
 ## appkit-host 0.2.1, iced-appkit 0.2.1, appkit-ui 0.2.0 (2026-10-29)

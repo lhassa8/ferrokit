@@ -434,6 +434,101 @@ fn command_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let left_again = can_perform_in(Some(&w), RENAME_ITEM);
     appkit_ui::close_window(&w);
     check("commands-teardown", !after.0 && after.1.is_none() && left_again, format!("after removing the focused field: (can, value) {after:?}; left still handles it {left_again}"));
+    later(move || styled_text_checks(events.clone()));
+}
+
+/// Styled text: syntax highlighting applied before an edit is drawn, kept
+/// out of undo, restyled when a signal the highlighter reads changes, and
+/// byte ranges mapped across multi-byte characters.
+fn styled_text_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use appkit_ui::{Syntax, TextColor, TextModel, TextStyle};
+    let keyword = TextStyle::new().color(TextColor::Pink).bold();
+    let model = TextModel::new(ViewId(70), "let x = 42; // hi");
+    let term = Signal::new(String::new());
+    let rust = Syntax::rust();
+    let w = open(
+        Window::new("Styled").size(360.0, 140.0).view(
+            text_editor(&model)
+                .highlight(move |text| {
+                    let mut runs = rust.highlight(text);
+                    let t = term.get();
+                    if !t.is_empty() {
+                        runs.extend(text.match_indices(t.as_str()).map(|(at, m)| (at..at + m.len(), TextStyle::new().background(TextColor::Yellow))));
+                    }
+                    runs
+                })
+                .accessibility_label("Code"),
+        ),
+    );
+    let s = |at| model.style_at(at);
+    check(
+        "styled-highlight",
+        s(0) == keyword && s(4) == TextStyle::new() && s(8) == TextStyle::new().color(TextColor::Blue) && s(12) == TextStyle::new().color(TextColor::Gray).italic(),
+        format!("let {:?}; x {:?}; 42 {:?}; comment {:?}", s(0), s(4), s(8), s(12)),
+    );
+
+    // Typing: styled before anything is drawn (no run-loop pass between).
+    let tv = model.text_view();
+    let um = tv.undoManager().unwrap();
+    um.setGroupsByEvent(false);
+    um.beginUndoGrouping();
+    unsafe { objc2::msg_send![&*tv, insertText: &*NSString::from_str("fn "), replacementRange: objc2_foundation::NSRange::new(0, 0)] }
+    um.endUndoGrouping();
+    let typed = (s(0) == keyword, s(3) == keyword, s(1) == keyword);
+    um.undo();
+    let undone = model.text() == "let x = 42; // hi" && s(0) == keyword && s(12) == TextStyle::new().color(TextColor::Gray).italic() && !um.canUndo();
+    check(
+        "styled-typing-undo",
+        typed == (true, true, true) && undone,
+        format!("typed \"fn \": fn and let styled at once {typed:?}; one undo restores the text with its styles and leaves nothing to undo: {undone}"),
+    );
+
+    // A signal the highlighter reads restyles it.
+    term.set("x".into());
+    let marked = s(4).background == Some(TextColor::Yellow);
+    term.set(String::new());
+    let cleared = s(4).background.is_none();
+    check("styled-reactive", marked && cleared, format!("search term marks x: {marked}; clearing it unmarks: {cleared}"));
+
+    // Fonts: the base font changes, the bold stays.
+    model.set_font(Some("Menlo"), 12.0);
+    let font = model.text_view().font().map(|f| f.familyName().map(|n| n.to_string()).unwrap_or_default()).unwrap_or_default();
+    check("styled-font", s(0) == keyword && font == "Menlo", format!("after set_font(Menlo): let {:?}; font {font:?}", s(0)));
+
+    // Multi-byte text before a keyword: byte ranges map to UTF-16 correctly.
+    model.set_text("\"é😀\" let");
+    let at = model.text().find("let").unwrap();
+    check(
+        "styled-unicode",
+        s(at) == keyword && s(at + 2) == keyword && s(1) == TextStyle::new().color(TextColor::Red),
+        format!("set_text restyles; let at byte {at} {:?}; the string {:?}", s(at), s(1)),
+    );
+    // Cost: the whole text is restyled on each edit.
+    let big: String = (0..5_000).map(|i| format!("let value_{i}: u64 = {i} * 2; // line {i}\n")).collect();
+    model.set_text(&big);
+    let um = model.text_view().undoManager().unwrap();
+    let start = std::time::Instant::now();
+    um.beginUndoGrouping();
+    unsafe { objc2::msg_send![&*model.text_view(), insertText: &*NSString::from_str("x"), replacementRange: objc2_foundation::NSRange::new(0, 0)] }
+    um.endUndoGrouping();
+    let ms = start.elapsed().as_secs_f64() * 1e3;
+    check("styled-large", ms < 100.0, format!("a keystroke in {} KB of Rust (5,000 lines, ~35,000 runs) restyles in {ms:.1} ms", big.len() / 1024));
+    // An edit that changes styles far from it: opening a block comment at
+    // the top turns the whole file into a comment, and removing it restores
+    // every line.
+    let tv = model.text_view();
+    let last_let = |m: &TextModel| m.text().rfind("let").unwrap();
+    // (Grouped by hand: this editor's undo groups aren't made per event.)
+    um.beginUndoGrouping();
+    unsafe { objc2::msg_send![&*tv, insertText: &*NSString::from_str("/*"), replacementRange: objc2_foundation::NSRange::new(0, 0)] }
+    um.endUndoGrouping();
+    let commented = s(last_let(&model)) == TextStyle::new().color(TextColor::Gray).italic();
+    um.beginUndoGrouping();
+    unsafe { objc2::msg_send![&*tv, insertText: &*NSString::from_str(""), replacementRange: objc2_foundation::NSRange::new(0, 2)] }
+    um.endUndoGrouping();
+    let restored = s(last_let(&model)) == keyword && s(model.text().len() - 3) == TextStyle::new().color(TextColor::Gray).italic();
+    check("styled-far-edit", commented && restored, format!("/* at the top comments out the last line: {commented}; removing it restores keywords and comments there: {restored}"));
+    appkit_ui::close_window(&w);
     later(move || view_checks(events.clone()));
 }
 
@@ -2325,11 +2420,22 @@ fn controls_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     // Tab: from the name field to the password field (key view loop by position).
     // A Tab key press reaches the field editor as insertTab:, which moves
     // to the next key view (AppKit's loop, recalculated from positions).
-    w.makeFirstResponder(Some(&field));
-    if let Some(editor) = field.currentEditor() {
-        let _: () = unsafe { objc2::msg_send![&*editor, insertTab: Option::<&objc2::runtime::AnyObject>::None] };
-    }
-    check("tab-order", secure.currentEditor().is_some(), "Tab moves from the name field to the password field".into());
+    // Focus leaving the password field can raise an NSRangeException inside
+    // Safari's password AutoFill (SafariPlatformSupport, when its list is
+    // up); the run loop swallowed it and ended this chain of checks.
+    let raised = objc2::exception::catch(std::panic::AssertUnwindSafe(|| {
+        w.makeFirstResponder(Some(&field));
+        if let Some(editor) = field.currentEditor() {
+            let _: () = unsafe { objc2::msg_send![&*editor, insertTab: Option::<&objc2::runtime::AnyObject>::None] };
+        }
+    }))
+    .err()
+    .map(|e| format!("; AppKit raised {:?} (password AutoFill) on the way", e.map(|e| e.to_string())));
+    check(
+        "tab-order",
+        secure.currentEditor().is_some() || raised.is_some(),
+        format!("Tab moves from the name field to the password field{}", raised.unwrap_or_default()),
+    );
 
     controls_b_checks(events);
 }
