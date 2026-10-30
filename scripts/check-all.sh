@@ -125,6 +125,7 @@ suite hands_on CHECK=drop "$ex/hands_on"
 suite notes CHECK=all "$ex/notes"
 suite gallery CHECK=all "$ex/gallery"
 suite sql_browser CHECK=all "$ex/sql_browser"
+suite cargo_ferrokit FERROKIT_E2E=1 scripts/check-ferrokit.sh
 if [ -n "$iced" ]; then
   step iced_bundle scripts/bundle-example.sh checklist
   suite iced_checklist CHECK=all target/checklist.app/Contents/MacOS/checklist

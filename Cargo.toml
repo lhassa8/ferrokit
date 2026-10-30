@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/appkit-host", "crates/iced-appkit", "crates/appkit-ui"]
+members = ["crates/appkit-host", "crates/iced-appkit", "crates/appkit-ui", "crates/cargo-ferrokit"]
 exclude = ["spike"]
 
 [workspace.package]

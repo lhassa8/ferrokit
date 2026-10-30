@@ -1,11 +1,32 @@
 # Getting started
 
 `appkit-ui` needs macOS 15 or later and a stable Rust toolchain. Nothing
-else: no Xcode project, no Swift, no build script. Add it to a binary crate:
+else: no Xcode project, no Swift, no build script.
+
+The quickest start is `cargo ferrokit`, which makes a working app with
+self-checks, then runs, checks and bundles it:
+
+```bash
+cargo install cargo-ferrokit
+```
+
+```bash
+cargo ferrokit new my-app
+```
+
+```bash
+cd my-app && cargo ferrokit run
+```
+
+`--document` makes a document app instead (New, Open…, Save, Recent,
+one window per file). [Testing and shipping](08-testing-and-shipping.md)
+covers `check`, `bundle` and `notarize`.
+
+By hand, add `appkit-ui` to a binary crate:
 
 ```toml
 [dependencies]
-appkit-ui = { path = "…/crates/appkit-ui" }
+appkit-ui = "0.3"
 ```
 
 ## A first app

@@ -45,18 +45,44 @@ apps need a person.
 In this repository, `scripts/check-all.sh` builds everything, runs clippy,
 the unit and doc tests, and every app's suite, and prints a summary.
 
-## Packaging
+## Packaging: `cargo ferrokit`
 
-`scripts/package-app.sh` builds a release binary and wraps it in a signed
-`.app` (Info.plist from your flags and `Cargo.toml`, an icon from a PNG,
-the hardened runtime):
+`cargo ferrokit` (install it with `cargo install cargo-ferrokit`) does the
+packaging. The app's settings live in its `Cargo.toml`:
 
-```bash
-scripts/package-app.sh -p my-app --bin my-app --name "My App" --icon icon.png --zip
+```toml
+[package.metadata.ferrokit]
+name = "My App"            # in the menu bar, Finder and Dock
+id = "com.example.myapp"   # the bundle identifier
+icon = "icon.png"          # a square PNG (1024 px) or .icns
+min-macos = "15.0"
+[[package.metadata.ferrokit.documents]]  # files the app opens
+name = "Text"
+extensions = ["txt", "md"]
 ```
 
-Add `--universal` for Apple silicon and Intel (after `rustup target add
-x86_64-apple-darwin`).
+```bash
+cargo ferrokit run
+```
+
+```bash
+cargo ferrokit check
+```
+
+```bash
+cargo ferrokit bundle --zip
+```
+
+- `run` bundles a debug build and runs it, so it has its name, icon and
+  identity, with its output in the terminal.
+- `check` runs clippy (warnings are errors) and the tests, bundles, runs
+  the self-checks (the app with `CHECK=all`, as above) and verifies the
+  signature.
+- `bundle` makes a signed `My App.app` with the hardened runtime: ad hoc,
+  or with `sign` from `Cargo.toml`. `--universal` builds for Apple silicon
+  and Intel (after `rustup target add x86_64-apple-darwin`).
+
+In this repository, `scripts/package-app.sh` does the same for examples.
 
 ## Notarisation
 
@@ -69,10 +95,13 @@ developer account):
 xcrun notarytool store-credentials my-profile --apple-id you@example.com --team-id TEAMID
 ```
 
-Then one command builds, signs, notarises, staples and zips:
+Set `sign = "Developer ID Application: Your Name (TEAMID)"` and
+`notary-profile = "my-profile"` in `[package.metadata.ferrokit]`. Then one
+command builds, signs, notarises, staples and zips (`--dry-run` stops
+before the upload):
 
 ```bash
-scripts/package-app.sh -p my-app --bin my-app --name "My App" --sign "Developer ID Application: Your Name (TEAMID)" --notarize my-profile
+cargo ferrokit notarize
 ```
 
 The zip opens on any Mac running macOS 15 or later with no Gatekeeper

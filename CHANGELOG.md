@@ -2,6 +2,12 @@
 
 ## Unreleased (toward appkit-ui 0.3.0)
 
+### cargo-ferrokit 0.1.0 (new)
+
+- `cargo ferrokit new <path> [--document]`: a working app (a to-do list, or a text document app) with self-checks, depending on `appkit-ui` 0.3 (or a local checkout with `--appkit-ui-path`).
+- `run`, `check` (clippy with warnings as errors, tests, a bundle, the app's `CHECK=all` self-checks, the signature), `bundle` (signed `.app`, hardened runtime, icon from a PNG, document types, `--universal`, `--zip`), `notarize` (Developer ID, notary service, stapling; `--dry-run`).
+- Settings in `[package.metadata.ferrokit]`.
+
 ### appkit-ui
 
 - **`Copy` signals:** `Signal` and `Memo` are now `Copy` handles into a per-thread arena, so closures capture them without `.clone()`. Each belongs to the owner current when it was made and is freed with it: a window's view tree (including signals made by its buttons' actions), a `dynamic` branch, a `for_each` row, or a document. Signals made outside any owner (in `main`) live for the app.
