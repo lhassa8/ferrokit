@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### appkit-host
+
+- **Fixed: typing over a selection in a highlighted editor could crash the app.** Restyling set the editor's typing attributes in the middle of the edit, while the text view still held the old selection; AppKit read attributes past the end of the shorter text and threw, which left TextKit 2's layout behind the text, so the typed text didn't show and the next redraw aborted. Typing attributes are now left alone during an edit, and highlighting runs in `willProcessEditing` as part of the edit itself.
+
+### appkit-ui
+
+- **Fixed: canvas colours lost their own transparency.** Drawing replaced a colour's alpha with the painter's opacity instead of multiplying them, so partly transparent system colours such as `TextColor::Separator` drew solid (the SQL browser's `results.csv` chip was a black box).
+
 ## appkit-ui 0.3.0, appkit-host 0.2.2, cargo-ferrokit 0.1.0 (2026-10-30)
 
 `appkit-ui` 0.3 makes signals `Copy`, adds async data, commands, styled text, popovers, inspectors, a canvas with charts, the clipboard and drag and drop, and localisation. Its flagship example is a SQLite browser. `cargo-ferrokit` is new: it makes, runs, checks, bundles and notarizes apps. `appkit-host` only gains API (a patch release). `iced-appkit` is unchanged and stays at 0.2.1, whose `appkit-host` requirement 0.2.2 satisfies.

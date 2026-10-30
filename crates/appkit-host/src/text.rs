@@ -131,18 +131,27 @@ define_class!(
     // Every character edit, including undo and redo (for which AppKit sends
     // no textDidChange:), reaches the text storage.
     unsafe impl NSTextStorageDelegate for Delegate {
-        #[unsafe(method(textStorage:didProcessEditing:range:changeInLength:))]
-        fn did_process_editing(&self, _storage: &NSTextStorage, edited: NSTextStorageEditActions, range: NSRange, _delta: isize) {
+        // Restyling happens here, inside the edit, so new text never shows
+        // in the previous run's style. Changing attributes after the edit
+        // (in didProcessEditing, in an edit of its own) left TextKit 2's
+        // layout behind the text: typed text didn't show, and the next
+        // redraw read past the end of the string and aborted.
+        #[unsafe(method(textStorage:willProcessEditing:range:changeInLength:))]
+        fn will_process_editing(&self, _storage: &NSTextStorage, edited: NSTextStorageEditActions, range: NSRange, _delta: isize) {
             if !edited.contains(NSTextStorageEditActions::EditedCharacters) {
                 return;
             }
             let Some(data) = self.data().filter(|d| !d.composing()) else { return };
-            // Restyle before the layout manager hears of the edit, so new
-            // text never shows in the previous run's style.
             data.highlight(Some(range));
-            if !data.quiet() {
-                data.push(TextEvent::Changed);
+        }
+
+        #[unsafe(method(textStorage:didProcessEditing:range:changeInLength:))]
+        fn did_process_editing(&self, _storage: &NSTextStorage, edited: NSTextStorageEditActions, _range: NSRange, _delta: isize) {
+            if !edited.contains(NSTextStorageEditActions::EditedCharacters) {
+                return;
             }
+            let Some(data) = self.data().filter(|d| !d.composing() && !d.quiet()) else { return };
+            data.push(TextEvent::Changed);
         }
     }
 
@@ -403,6 +412,8 @@ impl Inner {
     /// Styles the text with `runs`: what differs from the runs shown before
     /// (and the `edited` UTF-16 range) is reset to the editor's font and
     /// colour, then given its runs' styles. `None` restyles everything.
+    /// With an `edited` range it runs inside the storage's own edit
+    /// (willProcessEditing), so it opens no edit of its own.
     fn apply_styles(&self, runs: Vec<(Range<usize>, TextStyle)>, edited: Option<NSRange>) {
         // SAFETY: the text view's own storage, on the main thread.
         let Some(storage) = (unsafe { self.view.textStorage() }) else { return };
@@ -436,7 +447,9 @@ impl Inner {
         // colours, an NSNumber for the underline style), in range.
         unsafe {
             use objc2_app_kit::{NSBackgroundColorAttributeName, NSFontAttributeName, NSForegroundColorAttributeName, NSUnderlineStyleAttributeName};
-            storage.beginEditing();
+            if edited.is_none() {
+                storage.beginEditing();
+            }
             let base = objc2_foundation::NSDictionary::from_retained_objects(
                 &[NSFontAttributeName, NSForegroundColorAttributeName],
                 &[Retained::into_super(Retained::into_super(font.clone())), Retained::into_super(Retained::into_super(NSColor::textColor()))],
@@ -469,11 +482,22 @@ impl Inner {
                     storage.addAttribute_value_range(NSUnderlineStyleAttributeName, &objc2_foundation::NSNumber::new_isize(1), r);
                 }
             }
-            storage.endEditing();
+            if edited.is_none() {
+                storage.endEditing();
+            }
         }
         self.styling.set(false);
         *self.shown.borrow_mut() = Some((text.len(), runs));
         // What's typed next starts plain (the highlighter restyles it).
+        // Not during an edit: the text view still has the selection from
+        // before it, and setting typing attributes reads the attributes
+        // there, past the end of shorter text (an NSRangeException that
+        // stopped the edit halfway and left TextKit 2's layout behind the
+        // text). After an edit the text view takes them from the text
+        // around the caret, which is already styled.
+        if edited.is_some() {
+            return;
+        }
         // SAFETY: a dictionary of standard attributes.
         unsafe {
             use objc2_app_kit::{NSFontAttributeName, NSForegroundColorAttributeName};

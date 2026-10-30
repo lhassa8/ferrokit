@@ -528,6 +528,48 @@ fn styled_text_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     um.endUndoGrouping();
     let restored = s(last_let(&model)) == keyword && s(model.text().len() - 3) == TextStyle::new().color(TextColor::Gray).italic();
     check("styled-far-edit", commented && restored, format!("/* at the top comments out the last line: {commented}; removing it restores keywords and comments there: {restored}"));
+    // Typing over a selection of everything, as key presses, drawing after
+    // each. Restyling used to set typing attributes mid-edit, which read the
+    // old selection past the end of the new text: the exception stopped the
+    // edit halfway, TextKit 2's layout fell behind the text, and the next
+    // draw aborted the app.
+    let all = tv.string().length();
+    tv.window().map(|w| w.makeFirstResponder(Some(&tv)));
+    tv.setSelectedRange(objc2_foundation::NSRange::new(0, all));
+    // (Key presses group their own undo, as in an app.)
+    um.setGroupsByEvent(true);
+    let drawn = objc2::exception::catch(std::panic::AssertUnwindSafe(|| {
+        for c in ["f", "n", " ", "x"] {
+            let chars = NSString::from_str(c);
+            let event = objc2_app_kit::NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+                objc2_app_kit::NSEventType::KeyDown,
+                objc2_foundation::NSPoint::ZERO,
+                NSEventModifierFlags::empty(),
+                0.0,
+                tv.window().map_or(0, |w| w.windowNumber()),
+                None,
+                &chars,
+                &chars,
+                false,
+                0,
+            );
+            if let Some(event) = event {
+                tv.keyDown(&event);
+            }
+            if let Some(window) = tv.window() {
+                window.displayIfNeeded();
+            }
+        }
+    }));
+    if let Err(Some(e)) = &drawn {
+        eprintln!("styled-replace-draw exception: {e:?}");
+    }
+    let laid_out = objc2::exception::catch(std::panic::AssertUnwindSafe(|| laid_out_length(&tv))).ok().flatten();
+    check(
+        "styled-replace-draw",
+        drawn.is_ok() && laid_out == Some(4) && s(0) == keyword,
+        format!("typed \"fn x\" over {all} selected characters, drawing after each key: drawn without an exception {}; layout covers {laid_out:?} characters (4); fn styled {}", drawn.is_ok(), s(0) == keyword),
+    );
     appkit_ui::close_window(&w);
     later(move || popover_teardown_check(events.clone()));
 }
@@ -3938,4 +3980,24 @@ fn main() {
             }
         })
         .run();
+}
+
+/// How many characters a text view's TextKit 2 layout covers, after laying
+/// it all out.
+fn laid_out_length(tv: &objc2_app_kit::NSTextView) -> Option<usize> {
+    use objc2::rc::Retained;
+    use objc2::runtime::AnyObject;
+    use objc2::msg_send;
+    // SAFETY: TextKit 2 objects of a text view, read on the main thread.
+    unsafe {
+        let tlm: Option<Retained<AnyObject>> = msg_send![tv, textLayoutManager];
+        let tlm = tlm?;
+        let cm: Retained<AnyObject> = msg_send![&*tlm, textContentManager];
+        let doc: Retained<AnyObject> = msg_send![&*tlm, documentRange];
+        let _: () = msg_send![&*tlm, ensureLayoutForRange: &*doc];
+        let start: Retained<AnyObject> = msg_send![&*doc, location];
+        let end: Retained<AnyObject> = msg_send![&*doc, endLocation];
+        let n: isize = msg_send![&*cm, offsetFromLocation: &*start, toLocation: &*end];
+        usize::try_from(n).ok()
+    }
 }

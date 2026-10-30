@@ -17,7 +17,7 @@ use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send};
 use objc2::AnyThread;
 use objc2::runtime::{NSObjectProtocol, ProtocolObject};
 use objc2_app_kit::{
-    NSAccessibility, NSBezierPath, NSDragOperation, NSDraggingContext, NSDraggingItem, NSDraggingSession, NSDraggingSource, NSEvent, NSFont, NSImage,
+    NSAccessibility, NSBezierPath, NSDragOperation, NSDraggingContext, NSDraggingItem, NSDraggingSession, NSDraggingSource, NSEvent, NSFont, NSImage, NSColor, NSColorSpace,
     NSResponder, NSTrackingArea, NSTrackingAreaOptions, NSView,
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
@@ -149,7 +149,7 @@ fn attributes(size: f64, bold: bool, color: Option<(TextColor, f64)>) -> Retaine
     unsafe {
         match color {
             Some((c, opacity)) => {
-                let c: Retained<AnyObject> = Retained::into_super(Retained::into_super(c.ns().colorWithAlphaComponent(opacity)));
+                let c: Retained<AnyObject> = Retained::into_super(Retained::into_super(faded(c, opacity)));
                 objc2_foundation::NSDictionary::from_retained_objects(&[NSFontAttributeName, NSForegroundColorAttributeName], &[font, c])
             }
             None => objc2_foundation::NSDictionary::from_retained_objects(&[NSFontAttributeName], &[font]),
@@ -188,15 +188,28 @@ fn path(shape: &Shape) -> Retained<NSBezierPath> {
     }
 }
 
+/// The colour at `opacity`, on top of its own alpha: system colours such as
+/// the separator are partly transparent, and `colorWithAlphaComponent`
+/// alone would make them solid. Resolved in the current drawing appearance.
+fn faded(color: TextColor, opacity: f64) -> Retained<NSColor> {
+    let c = color.ns();
+    if opacity >= 1.0 {
+        return c;
+    }
+    let c = c.colorUsingColorSpace(&NSColorSpace::sRGBColorSpace()).unwrap_or(c);
+    let alpha = c.alphaComponent() * opacity;
+    c.colorWithAlphaComponent(alpha)
+}
+
 fn replay(ops: &[Op]) {
     for op in ops {
         match op {
             Op::Fill { shape, color, opacity } => {
-                color.ns().colorWithAlphaComponent(*opacity).setFill();
+                faded(*color, *opacity).setFill();
                 path(shape).fill();
             }
             Op::Stroke { shape, color, opacity, width } => {
-                color.ns().colorWithAlphaComponent(*opacity).setStroke();
+                faded(*color, *opacity).setStroke();
                 let p = path(shape);
                 p.setLineWidth(*width);
                 p.setLineJoinStyle(objc2_app_kit::NSLineJoinStyle::Round);
