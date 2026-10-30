@@ -1,6 +1,6 @@
 # Changelog
 
-## appkit-ui 0.3.0, appkit-host 0.2.2, cargo-ferrokit 0.1.0 (unreleased: versions set, not yet published)
+## appkit-ui 0.3.0, appkit-host 0.2.2, cargo-ferrokit 0.1.0 (2026-10-30)
 
 `appkit-ui` 0.3 makes signals `Copy`, adds async data, commands, styled text, popovers, inspectors, a canvas with charts, the clipboard and drag and drop, and localisation. Its flagship example is a SQLite browser. `cargo-ferrokit` is new: it makes, runs, checks, bundles and notarizes apps. `appkit-host` only gains API (a patch release). `iced-appkit` is unchanged and stays at 0.2.1, whose `appkit-host` requirement 0.2.2 satisfies.
 
@@ -45,6 +45,8 @@ Fixed:
 
 - A collapsible pane no longer collapses itself at the first layout.
 - Popovers reopen after an animated close in an app that isn't active.
+
+Known issue (fixed in the repository, no crate change needed): the `sql_browser` example didn't link on macOS 15, whose system SQLite is too old for rusqlite 0.41. The example now compiles SQLite in.
 
 ### appkit-host 0.2.2 (additive; semver-checks: no update required)
 

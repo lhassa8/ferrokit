@@ -23,7 +23,9 @@ objc2-core-foundation = { version = "0.3", default-features = false, features = 
 objc2-uniform-type-identifiers = { version = "0.3", default-features = false, features = ["std", "UTType"] }
 
 [dev-dependencies]
-# The SQL browser example (H4); links the system's SQLite.
-rusqlite = { version = "0.41", features = ["hooks"] }
+# The SQL browser example (H4). SQLite is compiled in ("bundled"): macOS
+# 15's own is too old for rusqlite's progress handler (it lacks
+# sqlite3_set_clientdata, from SQLite 3.44).
+rusqlite = { version = "0.41", features = ["hooks", "bundled"] }
 # ui_checklist catches an exception AppKit's password AutoFill can raise.
 objc2 = { version = "0.6", features = ["exception"] }
