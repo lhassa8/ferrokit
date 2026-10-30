@@ -154,10 +154,141 @@ fn run_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                     worker != main_thread && on_main && result.get_untracked() == "sum 500500" && runs_seen.get() == 2,
                     format!("worker off main: {}, continuation on main: {on_main}, value {:?}, watcher runs {}", worker != main_thread, result.get_untracked(), runs_seen.get()),
                 );
-                view_checks(events.clone());
+                resource_checks(events.clone());
             });
         },
     );
+}
+
+/// Runs `f` on the main thread after `ms` milliseconds.
+fn wait(ms: u64, f: impl FnOnce() + 'static) {
+    spawn(move || std::thread::sleep(std::time::Duration::from_millis(ms)), move |()| f());
+}
+
+/// Resources: loading off the main thread, a stale load overtaken by a newer
+/// one (cancelled, never shown), errors keeping the last value, refetch, and
+/// the running load cancelled when its window closes.
+fn resource_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use appkit_ui::{Cancel, Load, Resource};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    let main_thread = std::thread::current().id();
+    let q = Signal::new(1i64);
+    let fetches = Arc::new(AtomicUsize::new(0));
+    let stale_saw_cancel = Arc::new(AtomicBool::new(false));
+    let off_main = Arc::new(AtomicBool::new(true));
+    let (f, sc, om) = (fetches.clone(), stale_saw_cancel.clone(), off_main.clone());
+    let r = Resource::new(move || q.get(), move |q: i64, cancel: &Cancel| {
+        f.fetch_add(1, Ordering::Relaxed);
+        if std::thread::current().id() == main_thread {
+            om.store(false, Ordering::Relaxed);
+        }
+        if q < 0 {
+            return Err("negative");
+        }
+        // Query 2 is slow: it's overtaken by 3 and should see the cancel.
+        let ms = if q == 2 { 300 } else { 20 };
+        for _ in 0..ms / 10 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            if cancel.is_cancelled() {
+                sc.store(q == 2, Ordering::Relaxed);
+                break;
+            }
+        }
+        Ok(q * 10)
+    });
+    let shown = Rc::new(RefCell::new(Vec::new()));
+    let sh = shown.clone();
+    let watcher = Effect::new(move || {
+        if let Some(v) = r.get() {
+            sh.borrow_mut().push(v);
+        }
+    });
+    let first = (r.state(), r.loading());
+    wait(150, move || {
+        let loaded = (r.get(), r.loading(), r.state());
+        check(
+            "resource-load",
+            first == (Load::Loading, true) && loaded == (Some(10), false, Load::Ready(10)) && off_main.load(Ordering::Relaxed),
+            format!("before: {first:?}; after: {loaded:?}; fetched off main {}", off_main.load(Ordering::Relaxed)),
+        );
+        // Separate passes: this continuation is itself a batch, so two sets
+        // here would coalesce into one load.
+        q.set(2);
+        wait(50, move || {
+            let reloading = (r.get(), r.loading());
+            q.set(3);
+            wait(450, move || {
+                let seen = shown.borrow().clone();
+                check(
+                    "resource-stale",
+                    reloading == (Some(10), true) && seen == [10, 30] && r.get() == Some(30) && !r.loading() && stale_saw_cancel.load(Ordering::Relaxed),
+                    format!("while reloading: {reloading:?}; values shown {seen:?}; slow load saw its cancel {}", stale_saw_cancel.load(Ordering::Relaxed)),
+                );
+                q.set(-1);
+                wait(150, move || {
+                    let failed = (r.state(), r.get(), r.error());
+                    let before = fetches.load(Ordering::Relaxed);
+                    q.set(4);
+                    wait(150, move || {
+                        r.refetch();
+                        wait(150, move || {
+                            let _ = &watcher;
+                            let refetched = fetches.load(Ordering::Relaxed) - before;
+                            check(
+                                "resource-error",
+                                failed == (Load::Failed("negative".into()), Some(30), Some("negative".into())) && r.state() == Load::Ready(40) && r.error().is_none(),
+                                format!("failed: {failed:?}; after the next load: {:?}", r.state()),
+                            );
+                            check("resource-refetch", refetched == 2 && r.get() == Some(40), format!("{refetched} fetches for a change and a refetch; value {:?}", r.get()));
+                            resource_owner_check(events.clone());
+                        });
+                    });
+                });
+            });
+        });
+    });
+}
+
+/// A resource made in a window's view tree: closing the window cancels its
+/// running load, and the result is dropped (no panic, nothing shown).
+fn resource_owner_check(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use appkit_ui::{Cancel, Resource};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let saw_cancel = Arc::new(AtomicBool::new(false));
+    let finished = Arc::new(AtomicBool::new(false));
+    let (sc, fin) = (saw_cancel.clone(), finished.clone());
+    let signals = appkit_ui::live_signals();
+    let w = open(Window::new("Resource Owner").size(200.0, 80.0).view(dynamic(move || {
+        let (sc, fin) = (sc.clone(), fin.clone());
+        let r = Resource::new(|| (), move |(), cancel: &Cancel| {
+            for _ in 0..30 {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                if cancel.is_cancelled() {
+                    sc.store(true, Ordering::Relaxed);
+                    break;
+                }
+            }
+            fin.store(true, Ordering::Relaxed);
+            Ok::<_, String>(1)
+        });
+        label(move || if r.loading() { "loading".into() } else { "done".into() })
+    })));
+    wait(50, move || {
+        appkit_ui::close_window(&w);
+        wait(400, move || {
+            let left = appkit_ui::live_signals() as i64 - signals as i64;
+            check(
+                "resource-owner",
+                saw_cancel.load(Ordering::Relaxed) && finished.load(Ordering::Relaxed) && left == 0,
+                format!("closing the window cancelled the load: {}; signals left {left}", saw_cancel.load(Ordering::Relaxed)),
+            );
+            // Outside this continuation's batch, as view_checks expects.
+            let events = events.clone();
+            later(move || view_checks(events.clone()));
+        });
+    });
 }
 
 #[derive(Clone)]

@@ -434,6 +434,15 @@ thread_local! {
     static ROOT_EFFECTS: RefCell<Vec<Effect>> = const { RefCell::new(Vec::new()) };
 }
 
+/// Keeps `effect` running for as long as the current owner (or the app,
+/// outside one).
+pub(crate) fn keep_with_owner(effect: Effect) {
+    OWNER.with_borrow(|o| match o {
+        Some(o) => o.effects.borrow_mut().push(effect),
+        None => ROOT_EFFECTS.with_borrow_mut(|r| r.push(effect)),
+    });
+}
+
 impl<T: PartialEq + Clone + 'static> Memo<T> {
     /// A value computed by `f` from other signals.
     pub fn new(f: impl Fn() -> T + 'static) -> Self {
@@ -447,12 +456,7 @@ impl<T: PartialEq + Clone + 'static> Memo<T> {
             }
         });
         let signal = cell.get().expect("memo computed");
-        // The effect lives with the memo's owner (or the app).
-        let owned = OWNER.with_borrow(|o| o.as_ref().map(|o| o.effects.borrow_mut().push(Effect(effect.0.clone()))).is_some());
-        if !owned {
-            ROOT_EFFECTS.with_borrow_mut(|r| r.push(Effect(effect.0.clone())));
-        }
-        std::mem::forget(effect);
+        keep_with_owner(effect);
         Memo { signal }
     }
 

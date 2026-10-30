@@ -19,7 +19,8 @@
 //!
 //! - **State:** [`Signal`] and [`Memo`] (`Copy` handles, freed with the
 //!   window, row or document that made them), [`Effect`], [`batch`],
-//!   [`spawn`] for background work, [`stored`] for settings that persist.
+//!   [`spawn`] and [`Resource`] for background work and loading,
+//!   [`stored`] for settings that persist.
 //! - **Views and layout:** [`vstack`], [`hstack`], [`grid`], [`spacer`],
 //!   [`scroll`], [`for_each`] (keyed lists), [`dynamic`], and the
 //!   [`ViewExt`] modifiers (padding, sizes, context menus, accessibility
@@ -51,6 +52,7 @@ mod menu;
 mod models;
 mod outline;
 mod platform;
+mod resource;
 mod signal;
 mod store;
 mod undo;
@@ -75,6 +77,7 @@ pub use appkit_host::{is_dark, system_colors};
 pub use frame::{FrameLoop, on_frame};
 pub use store::{Stored, stored};
 pub use undo::{set_undoable, undoable, undoable_in};
+pub use resource::{Cancel, Load, Resource};
 pub use signal::{Effect, Memo, Signal, after_batch, batch, effect_runs, live_signals, untrack};
 pub use controls::{
     Color, ColorWell, ComboBox, DatePicker, SearchField, Segmented, color_well, combo_box, date_picker, search_field, segmented,

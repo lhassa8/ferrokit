@@ -6,6 +6,7 @@
 
 - **`Copy` signals:** `Signal` and `Memo` are now `Copy` handles into a per-thread arena, so closures capture them without `.clone()`. Each belongs to the owner current when it was made and is freed with it: a window's view tree (including signals made by its buttons' actions), a `dynamic` branch, a `for_each` row, or a document. Signals made outside any owner (in `main`) live for the app.
 - After its owner is gone, reading a signal panics with a message saying so, and setting it does nothing. New: `Signal::try_get`, `Signal::is_alive`, and `live_signals()` for leak checks.
+- **Async resources:** `Resource::new(source, fetch)` loads a value on a background thread from the signals `source` reads, and again when they change. A new load cancels the running one (`Cancel::is_cancelled` lets long work stop) and stale results are never shown; the last value stays while the next loads. `get`, `loading`, `error`, `state` (`Load::Loading/Ready/Failed`), `refetch`. Owned like a signal: closing its window cancels the load.
 - Existing code still compiles; `.clone()` on a signal is now a copy (clippy's `clone_on_copy` points them out). `Signal` compares by identity (`PartialEq`, `Eq`).
 
 ## appkit-host 0.2.1, iced-appkit 0.2.1, appkit-ui 0.2.0 (2026-10-29)

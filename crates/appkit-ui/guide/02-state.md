@@ -102,6 +102,50 @@ spawn(
 
 `later(f)` runs `f` on the next pass of the main run loop.
 
+## Loading data: `Resource`
+
+A resource loads a value on a background thread from the signals it reads,
+and loads again when they change. It's made for search-as-you-type:
+
+- Starting a new load cancels the one running. Its result is dropped, so an
+  older query's rows never replace a newer one's.
+- The last value stays readable while the next loads, so a table doesn't
+  flash empty between keystrokes.
+
+```rust,no_run
+use appkit_ui::*;
+
+let query = Signal::new(String::new());
+let results = Resource::new(move || query.get(), |q: String, cancel: &Cancel| {
+    let mut rows = Vec::new();
+    for i in 0..1_000_000u32 {
+        if i % 10_000 == 0 && cancel.is_cancelled() {
+            break; // the user typed again; this result won't be shown
+        }
+        if i.to_string().contains(&q) {
+            rows.push(i);
+        }
+    }
+    Ok::<_, String>(rows)
+});
+let view = vstack((
+    search_field(&query),
+    label(move || match results.state() {
+        Load::Loading => "Searching…".into(),
+        Load::Ready(rows) => format!("{} matches", rows.len()),
+        Load::Failed(error) => format!("Search failed: {error}"),
+    }),
+));
+# let _ = view;
+```
+
+- `get()` is the latest value (`None` before the first load); `loading()`
+  is whether a load is running; `error()` is the latest failure's text.
+  `state()` combines them.
+- An error keeps the last value: `get()` still returns it.
+- `refetch()` loads again with the same inputs.
+- A resource is owned like a signal: closing its window cancels its load.
+
 ## Stored settings
 
 `stored(key, default)` is a signal backed by the user's defaults: it starts
