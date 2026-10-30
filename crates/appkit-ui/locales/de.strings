@@ -1,0 +1,46 @@
+/* appkit-ui's own strings in German: the menus it makes, document
+   alerts, "Untitled". Keys are the English text. An app's own tables
+   (App::translations) override these. */
+
+"Settings…" = "Einstellungen …";
+"About {name}" = "Über {name}";
+"Hide {name}" = "{name} ausblenden";
+"Hide Others" = "Andere ausblenden";
+"Show All" = "Alle einblenden";
+"Quit {name}" = "{name} beenden";
+"File" = "Ablage";
+"Close" = "Schließen";
+"Edit" = "Bearbeiten";
+"Undo" = "Widerrufen";
+"Redo" = "Wiederholen";
+"Cut" = "Ausschneiden";
+"Copy" = "Kopieren";
+"Paste" = "Einsetzen";
+"Delete" = "Löschen";
+"Select All" = "Alles auswählen";
+"Window" = "Fenster";
+"Minimize" = "Im Dock ablegen";
+"Zoom" = "Zoomen";
+"Bring All to Front" = "Alle nach vorne bringen";
+"Help" = "Hilfe";
+"Untitled" = "Ohne Titel";
+"Untitled {n}" = "Ohne Titel {n}";
+"New" = "Neu";
+"Open…" = "Öffnen …";
+"Open Recent" = "Benutzte Dokumente öffnen";
+"Clear Menu" = "Einträge löschen";
+"Save" = "Sichern";
+"Save As…" = "Sichern unter …";
+"Revert to Saved" = "Zurück zur gesicherten Version";
+"Revert" = "Zurücksetzen";
+"Cancel" = "Abbrechen";
+"Don't Save" = "Nicht sichern";
+"The document “{name}” couldn't be opened." = "Das Dokument „{name}“ konnte nicht geöffnet werden.";
+"The document “{name}” couldn't be saved." = "Das Dokument „{name}“ konnte nicht gesichert werden.";
+"Revert to the saved version of “{name}”?" = "Zur gesicherten Version von „{name}“ zurückkehren?";
+"Your current changes will be lost." = "Deine aktuellen Änderungen gehen verloren.";
+"Do you want to save the changes made to the document “{name}”?" = "Möchtest du die Änderungen am Dokument „{name}“ sichern?";
+"Your changes will be lost if you don't save them." = "Deine Änderungen gehen verloren, wenn du sie nicht sicherst.";
+"No data" = "Keine Daten";
+"Copy Image" = "Bild kopieren";
+"Save Image…" = "Bild sichern …";

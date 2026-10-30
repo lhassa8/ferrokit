@@ -51,6 +51,7 @@ mod controls;
 mod dialogs;
 mod documents;
 mod frame;
+mod l10n;
 mod layout;
 mod menu;
 mod models;
@@ -108,6 +109,7 @@ pub use syntax::Syntax;
 pub use popover::Edge;
 pub use canvas::{Canvas, Painter, canvas};
 pub use transfer::{Clipboard, DragItem, WriteFile};
+pub use l10n::{format_number, format_number_for, language, parse_strings, plural_category, set_language, t, t_plural, t_with};
 pub use charts::{Series, bar_chart, line_chart};
 pub use appkit_host::ViewId;
 /// The AppKit window type the window functions take and return.
@@ -531,6 +533,15 @@ impl App {
     /// Opens `window` at launch. Call more than once for several windows.
     pub fn window(mut self, window: Window) -> Self {
         self.windows.push(window);
+        self
+    }
+
+    /// The app's translations: `(language, .strings text)` pairs, e.g.
+    /// `("de", include_str!("../locales/de.strings"))`. The languages here
+    /// are the ones the app speaks; see [`t`] and the [`l10n`](crate::t)
+    /// functions.
+    pub fn translations(self, tables: &[(&str, &str)]) -> Self {
+        l10n::add_translations(tables);
         self
     }
 

@@ -45,6 +45,7 @@ Settings, in the app's Cargo.toml:
     icon = \"icon.png\"          # square PNG (1024 px) or .icns
     min-macos = \"15.0\"
     category = \"public.app-category.productivity\"
+    languages = [\"de\", \"fr\"]     # its translations (see appkit-ui's App::translations)
     sign = \"Developer ID Application: …\"
     notary-profile = \"…\"       # xcrun notarytool store-credentials …
     [[package.metadata.ferrokit.documents]]
@@ -183,6 +184,8 @@ struct Project {
     min_macos: String,
     category: Option<String>,
     documents: Vec<(String, Vec<String>)>,
+    /// Languages the app speaks besides English (its translations).
+    languages: Vec<String>,
     sign: Option<String>,
     notary_profile: Option<String>,
 }
@@ -227,7 +230,9 @@ impl Project {
                 (d["name"].as_str().unwrap_or("Document").to_string(), exts)
             })
             .collect();
+        let languages = m["languages"].as_array().into_iter().flatten().filter_map(|l| l.as_str().map(String::from)).filter(|l| l != "en").collect();
         Ok(Project {
+            languages,
             version: package["version"].as_str().unwrap_or("0.1.0").to_string(),
             target_dir: PathBuf::from(meta["target_directory"].as_str().unwrap_or("target")),
             display: text("name").unwrap_or_else(|| bin.clone()),
@@ -384,6 +389,11 @@ fn bundle(p: &Project, o: &BundleOptions) -> Result<PathBuf> {
     std::fs::write(app.join("Contents/Info.plist"), info_plist(p, icon)).map_err(|e| e.to_string())?;
     sh("plutil", &["-lint", "-s", &app.join("Contents/Info.plist").to_string_lossy()], None)?;
     std::fs::write(app.join("Contents/PkgInfo"), "APPL????").map_err(|e| e.to_string())?;
+    // An .lproj folder per language: how macOS learns the app is localised.
+    for lang in std::iter::once("en").chain(p.languages.iter().map(String::as_str)).filter(|_| !p.languages.is_empty()) {
+        let dir = resources.join(format!("{lang}.lproj"));
+        std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(dir.join("InfoPlist.strings"), "")).map_err(|e| e.to_string())?;
+    }
 
     step(if o.sign == "-" { "Signing (ad hoc)" } else { "Signing" });
     let app_s = app.to_string_lossy().into_owned();
@@ -423,6 +433,12 @@ fn info_plist(p: &Project, icon: bool) -> String {
     }
     if let Some(c) = &p.category {
         s += &key("LSApplicationCategoryType", c);
+    }
+    if !p.languages.is_empty() {
+        // Its languages, so macOS shows it (and AppKit's own panels and
+        // menu items) in the user's language when it has it.
+        let langs: String = std::iter::once("en").chain(p.languages.iter().map(String::as_str)).map(|l| format!("<string>{}</string>", xml(l))).collect();
+        s += &format!("  <key>CFBundleLocalizations</key><array>{langs}</array>\n");
     }
     if !p.documents.is_empty() {
         // Editor role, Alternate rank: offered for these files, never made
@@ -631,6 +647,7 @@ mod tests {
             min_macos: "15.0".into(),
             category: None,
             documents: vec![("Text".into(), vec!["txt".into(), "md".into()])],
+            languages: vec!["de".into()],
             sign: None,
             notary_profile: None,
         };
@@ -639,5 +656,6 @@ mod tests {
         assert!(plist.contains("<key>CFBundleShortVersionString</key><string>1.2.0</string>"));
         assert!(plist.contains("<array><string>txt</string><string>md</string></array>"));
         assert!(plist.contains("<key>CFBundleIconFile</key><string>AppIcon</string>"));
+        assert!(plist.contains("<key>CFBundleLocalizations</key><array><string>en</string><string>de</string></array>"));
     }
 }

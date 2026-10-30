@@ -2,6 +2,7 @@
 //! standard items go to AppKit's actions through the responder chain (nil
 //! targets); the app's items have their own targets.
 
+use crate::l10n::{t, t_with};
 use objc2::rc::Retained;
 use objc2::runtime::Sel;
 use objc2::{MainThreadMarker, MainThreadOnly, sel};
@@ -57,13 +58,13 @@ pub(crate) fn install(
     let mut keep = Vec::new();
 
     let settings_item = settings.map(|target| {
-        let i = item(mtm, "Settings…", Some(sel!(fire:)), ",");
+        let i = item(mtm, &t("Settings…"), Some(sel!(fire:)), ",");
         // SAFETY: the target is returned to the caller, who keeps it.
         unsafe { i.setTarget(Some(&target)) };
         keep.push(target);
         i
     });
-    let mut app_items = vec![Some(item(mtm, &format!("About {name}"), Some(sel!(orderFrontStandardAboutPanel:)), "")), None];
+    let mut app_items = vec![Some(item(mtm, &t_with("About {name}", &[("name", &name)]), Some(sel!(orderFrontStandardAboutPanel:)), "")), None];
     if let Some(i) = settings_item {
         app_items.extend([Some(i), None]);
     }
@@ -71,11 +72,11 @@ pub(crate) fn install(
         mtm,
         name,
         app_items.into_iter().chain([
-            Some(item(mtm, &format!("Hide {name}"), Some(sel!(hide:)), "h")),
-            Some(with_modifiers(item(mtm, "Hide Others", Some(sel!(hideOtherApplications:)), "h"), opt_cmd)),
-            Some(item(mtm, "Show All", Some(sel!(unhideAllApplications:)), "")),
+            Some(item(mtm, &t_with("Hide {name}", &[("name", &name)]), Some(sel!(hide:)), "h")),
+            Some(with_modifiers(item(mtm, &t("Hide Others"), Some(sel!(hideOtherApplications:)), "h"), opt_cmd)),
+            Some(item(mtm, &t("Show All"), Some(sel!(unhideAllApplications:)), "")),
             None,
-            Some(item(mtm, &format!("Quit {name}"), Some(sel!(terminate:)), "q")),
+            Some(item(mtm, &t_with("Quit {name}", &[("name", &name)]), Some(sel!(terminate:)), "q")),
         ])
         .collect(),
     );
@@ -85,12 +86,12 @@ pub(crate) fn install(
     let mut menus = menus;
     let file_items = menus.iter().position(|(t, _)| t == "File").map(|i| menus.remove(i).1).unwrap_or_default();
     let has_own = !file_items.is_empty();
-    let (file_menu, targets) = build_titled_menu(mtm, "File", file_items);
+    let (file_menu, targets) = build_titled_menu(mtm, &t("File"), file_items);
     keep.extend(targets);
     if has_own {
         file_menu.addItem(&NSMenuItem::separatorItem(mtm));
     }
-    file_menu.addItem(&item(mtm, "Close", Some(sel!(performClose:)), "w"));
+    file_menu.addItem(&item(mtm, &t("Close"), Some(sel!(performClose:)), "w"));
     // A document app's Save, Save As… and Revert to Saved.
     if !file_after_close.is_empty() {
         let (after, targets) = build_titled_menu(mtm, "", file_after_close);
@@ -100,24 +101,24 @@ pub(crate) fn install(
             file_menu.addItem(&i);
         }
     }
-    let file_item = item(mtm, "File", None, "");
+    let file_item = item(mtm, &t("File"), None, "");
     file_item.setSubmenu(Some(&file_menu));
     bar.addItem(&file_item);
 
     let (edit_item, _) = submenu(
         mtm,
-        "Edit",
+        &t("Edit"),
         vec![
-            Some(item(mtm, "Undo", Some(sel!(undo:)), "z")),
+            Some(item(mtm, &t("Undo"), Some(sel!(undo:)), "z")),
             // Shift is implied by the uppercase key (AppKit's convention); a
             // lowercase "z" with an explicit Shift mask doesn't match ⇧⌘Z.
-            Some(item(mtm, "Redo", Some(sel!(redo:)), "Z")),
+            Some(item(mtm, &t("Redo"), Some(sel!(redo:)), "Z")),
             None,
-            Some(item(mtm, "Cut", Some(sel!(cut:)), "x")),
-            Some(item(mtm, "Copy", Some(sel!(copy:)), "c")),
-            Some(item(mtm, "Paste", Some(sel!(paste:)), "v")),
-            Some(item(mtm, "Delete", Some(sel!(delete:)), "")),
-            Some(item(mtm, "Select All", Some(sel!(selectAll:)), "a")),
+            Some(item(mtm, &t("Cut"), Some(sel!(cut:)), "x")),
+            Some(item(mtm, &t("Copy"), Some(sel!(copy:)), "c")),
+            Some(item(mtm, &t("Paste"), Some(sel!(paste:)), "v")),
+            Some(item(mtm, &t("Delete"), Some(sel!(delete:)), "")),
+            Some(item(mtm, &t("Select All"), Some(sel!(selectAll:)), "a")),
         ],
     );
     bar.addItem(&edit_item);
@@ -132,18 +133,18 @@ pub(crate) fn install(
 
     let (window_item, window_menu) = submenu(
         mtm,
-        "Window",
+        &t("Window"),
         vec![
-            Some(item(mtm, "Minimize", Some(sel!(performMiniaturize:)), "m")),
-            Some(item(mtm, "Zoom", Some(sel!(performZoom:)), "")),
+            Some(item(mtm, &t("Minimize"), Some(sel!(performMiniaturize:)), "m")),
+            Some(item(mtm, &t("Zoom"), Some(sel!(performZoom:)), "")),
             None,
-            Some(item(mtm, "Bring All to Front", Some(sel!(arrangeInFront:)), "")),
+            Some(item(mtm, &t("Bring All to Front"), Some(sel!(arrangeInFront:)), "")),
         ],
     );
     bar.addItem(&window_item);
 
     // The Help menu's search field is added by AppKit.
-    let (help_item, help_menu) = submenu(mtm, "Help", vec![]);
+    let (help_item, help_menu) = submenu(mtm, &t("Help"), vec![]);
     bar.addItem(&help_item);
 
     app.setMainMenu(Some(&bar));

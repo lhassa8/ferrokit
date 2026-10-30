@@ -85,7 +85,9 @@ define_class!(
             for (i, collapsed) in self.ivars().collapsible.iter().filter(|_| !self.ivars().applying.get()) {
                 if let Some(pane) = (*i < panes.count()).then(|| panes.objectAtIndex(*i)) {
                     let size = if split.isVertical() { pane.frame().size.width } else { pane.frame().size.height };
-                    collapsed.set_if_changed(split.isSubviewCollapsed(&pane) || pane.isHidden() || size < 1.0);
+                    // Zero size counts only outside layout: a pane is zero
+                    // wide in the first tiling, before its size is set.
+                    collapsed.set_if_changed(split.isSubviewCollapsed(&pane) || pane.isHidden() || (size < 1.0 && !crate::in_layout()));
                 }
             }
             // Layout passes place the divider themselves; only a drag (or a

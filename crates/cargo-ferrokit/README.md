@@ -32,6 +32,7 @@ id = "com.example.myapp"
 icon = "icon.png"          # square PNG (1024 px) or .icns
 min-macos = "15.0"
 category = "public.app-category.productivity"
+languages = ["de", "fr"]   # its translations, besides English
 sign = "Developer ID Application: Your Name (TEAMID)"
 notary-profile = "my-profile"   # xcrun notarytool store-credentials my-profile …
 

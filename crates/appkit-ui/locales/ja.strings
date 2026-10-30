@@ -1,0 +1,46 @@
+/* appkit-ui's own strings in Japanese: the menus it makes, document
+   alerts, "Untitled". Keys are the English text. An app's own tables
+   (App::translations) override these. */
+
+"Settings…" = "設定…";
+"About {name}" = "{name}について";
+"Hide {name}" = "{name}を非表示";
+"Hide Others" = "ほかを非表示";
+"Show All" = "すべてを表示";
+"Quit {name}" = "{name}を終了";
+"File" = "ファイル";
+"Close" = "閉じる";
+"Edit" = "編集";
+"Undo" = "取り消す";
+"Redo" = "やり直す";
+"Cut" = "カット";
+"Copy" = "コピー";
+"Paste" = "ペースト";
+"Delete" = "削除";
+"Select All" = "すべてを選択";
+"Window" = "ウインドウ";
+"Minimize" = "しまう";
+"Zoom" = "拡大/縮小";
+"Bring All to Front" = "すべてを手前に移動";
+"Help" = "ヘルプ";
+"Untitled" = "名称未設定";
+"Untitled {n}" = "名称未設定 {n}";
+"New" = "新規";
+"Open…" = "開く…";
+"Open Recent" = "最近使った項目を開く";
+"Clear Menu" = "メニューを消去";
+"Save" = "保存";
+"Save As…" = "別名で保存…";
+"Revert to Saved" = "保存済みのバージョンに戻す";
+"Revert" = "戻す";
+"Cancel" = "キャンセル";
+"Don't Save" = "保存しない";
+"The document “{name}” couldn't be opened." = "書類“{name}”を開けませんでした。";
+"The document “{name}” couldn't be saved." = "書類“{name}”を保存できませんでした。";
+"Revert to the saved version of “{name}”?" = "“{name}”を保存済みのバージョンに戻しますか?";
+"Your current changes will be lost." = "現在の変更内容は失われます。";
+"Do you want to save the changes made to the document “{name}”?" = "書類“{name}”に加えた変更を保存しますか?";
+"Your changes will be lost if you don't save them." = "保存しないと、変更内容は失われます。";
+"No data" = "データなし";
+"Copy Image" = "イメージをコピー";
+"Save Image…" = "イメージを保存…";

@@ -19,6 +19,7 @@ use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{NSApplication, NSApplicationDelegate, NSApplicationTerminateReply, NSWindow};
 use objc2_foundation::{NSString, NSURL, NSUserDefaults};
 
+use crate::l10n::{t, t_with};
 use crate::chrome::{MenuItem, Modifier, ToolbarItem, dynamic_submenu, menu_item, menu_separator};
 use crate::dialogs::{Alert, OpenOptions, alert, open_panel, save_panel};
 use crate::signal::Owner;
@@ -134,8 +135,8 @@ impl<T: Clone + PartialEq + 'static> Document<T> {
     pub fn title(&self) -> String {
         match self.0.path.get() {
             Some(p) => p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
-            None if self.0.untitled <= 1 => "Untitled".into(),
-            None => format!("Untitled {}", self.0.untitled),
+            None if self.0.untitled <= 1 => t("Untitled"),
+            None => t_with("Untitled {n}", &[("n", &self.0.untitled)]),
         }
     }
 
@@ -418,13 +419,13 @@ fn clear_recents() {
 /// The File menu's document items: those above Close, and those after it.
 pub(crate) fn file_items() -> (Vec<MenuItem>, Vec<MenuItem>) {
     let can_open = || OPENER.with_borrow(|o| o.as_ref().is_some_and(|o| o.can_open()));
-    let mut above = vec![menu_item("New", || {
+    let mut above = vec![menu_item(&t("New"), || {
         new_document();
     })
     .key("n")];
     if can_open() {
-        above.push(menu_item("Open…", choose_and_open).key("o"));
-        above.push(dynamic_submenu("Open Recent", || {
+        above.push(menu_item(&t("Open…"), choose_and_open).key("o"));
+        above.push(dynamic_submenu(&t("Open Recent"), || {
             let mut items: Vec<MenuItem> = recent_documents()
                 .into_iter()
                 .map(|p| {
@@ -436,27 +437,27 @@ pub(crate) fn file_items() -> (Vec<MenuItem>, Vec<MenuItem>) {
             if any {
                 items.push(menu_separator());
             }
-            items.push(menu_item("Clear Menu", clear_recents).enabled_when(move || any));
+            items.push(menu_item(&t("Clear Menu"), clear_recents).enabled_when(move || any));
             items
         }));
     }
     let writable = || current().is_some_and(|d| d.writable());
     let after = vec![
-        menu_item("Save", || {
+        menu_item(&t("Save"), || {
             if let Some(d) = current() {
                 save_flow(d, |_| {});
             }
         })
         .key("s")
         .enabled_when(writable),
-        menu_item("Save As…", || {
+        menu_item(&t("Save As…"), || {
             if let Some(d) = current() {
                 save_as_flow(d, |_| {});
             }
         })
         .key_with("s", &[Modifier::Shift])
         .enabled_when(writable),
-        menu_item("Revert to Saved", confirm_revert).enabled_when(|| current().is_some_and(|d| d.edited() && d.path().is_some())),
+        menu_item(&t("Revert to Saved"), confirm_revert).enabled_when(|| current().is_some_and(|d| d.edited() && d.path().is_some())),
     ];
     (above, after)
 }
@@ -477,7 +478,7 @@ fn choose_and_open() {
 fn open_reporting(path: &Path) {
     if let Err(e) = open_document(path) {
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        report(None, &format!("The document “{name}” couldn't be opened."), &e.to_string());
+        report(None, &t_with("The document “{name}” couldn't be opened.", &[("name", &name)]), &e.to_string());
     }
 }
 
@@ -495,7 +496,7 @@ fn report(window: Option<&NSWindow>, title: &str, message: &str) {
 fn save_flow(doc: Rc<dyn AnyDoc>, done: impl FnOnce(bool) + 'static) {
     match doc.path() {
         Some(path) => {
-            let ok = doc.save_to(&path).map_err(|e| report(doc.window().as_deref(), &format!("The document “{}” couldn't be saved.", doc.title()), &e.to_string()));
+            let ok = doc.save_to(&path).map_err(|e| report(doc.window().as_deref(), &t_with("The document “{name}” couldn't be saved.", &[("name", &doc.title())]), &e.to_string()));
             done(ok.is_ok());
         }
         None => save_as_flow(doc, done),
@@ -512,7 +513,7 @@ fn save_as_flow(doc: Rc<dyn AnyDoc>, done: impl FnOnce(bool) + 'static) {
     let dir = doc.path().and_then(|p| p.parent().map(Path::to_path_buf));
     save_panel(&window, &name, dir.as_deref(), move |path| match path {
         Some(path) => {
-            let ok = doc.save_to(&path).map_err(|e| report(doc.window().as_deref(), &format!("The document “{}” couldn't be saved.", doc.title()), &e.to_string()));
+            let ok = doc.save_to(&path).map_err(|e| report(doc.window().as_deref(), &t_with("The document “{name}” couldn't be saved.", &[("name", &doc.title())]), &e.to_string()));
             done(ok.is_ok());
         }
         None => done(false),
@@ -522,9 +523,9 @@ fn save_as_flow(doc: Rc<dyn AnyDoc>, done: impl FnOnce(bool) + 'static) {
 fn confirm_revert() {
     let Some(doc) = current() else { return };
     let Some(window) = doc.window() else { return };
-    let question = Alert::new(&format!("Revert to the saved version of “{}”?", doc.title()), "Your current changes will be lost.")
-        .button("Revert")
-        .button("Cancel");
+    let question = Alert::new(&t_with("Revert to the saved version of “{name}”?", &[("name", &doc.title())]), &t("Your current changes will be lost."))
+        .button(&t("Revert"))
+        .button(&t("Cancel"));
     alert(&window, question, move |i| {
         if i == 0
             && let Err(e) = doc.revert()
@@ -552,10 +553,10 @@ pub(crate) fn window_should_close(window: &NSWindow) -> bool {
 fn close_flow(doc: Rc<dyn AnyDoc>, done: impl FnOnce(bool) + 'static) {
     let Some(window) = doc.window() else { return done(true) };
     window.makeKeyAndOrderFront(None);
-    let question = Alert::new(&format!("Do you want to save the changes made to the document “{}”?", doc.title()), "Your changes will be lost if you don't save them.")
-        .button("Save")
-        .button("Cancel")
-        .button("Don't Save");
+    let question = Alert::new(&t_with("Do you want to save the changes made to the document “{name}”?", &[("name", &doc.title())]), &t("Your changes will be lost if you don't save them."))
+        .button(&t("Save"))
+        .button(&t("Cancel"))
+        .button(&t("Don't Save"));
     let close = move |doc: &Rc<dyn AnyDoc>| {
         doc.closing().set(true);
         if let Some(w) = doc.window() {

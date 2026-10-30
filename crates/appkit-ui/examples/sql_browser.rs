@@ -305,28 +305,20 @@ impl Browser {
 
     fn status(&self) -> String {
         if self.results.loading() {
-            return "Running…".into();
+            return t("Running…");
         }
         match self.results.state() {
-            Load::Loading => "Running…".into(),
-            Load::Failed(e) => format!("Error: {e}"),
-            Load::Ready(r) if r.names.is_empty() && r.changed > 0 => format!("{} rows changed · {:.0} ms", r.changed, r.ms),
-            Load::Ready(r) if r.names.is_empty() => format!("Done · {:.0} ms", r.ms),
-            Load::Ready(r) => format!("{} rows · query {:.0} ms · table {:.0} ms", thousands(r.rows), r.ms, self.fill_ms.get()),
+            Load::Loading => t("Running…"),
+            Load::Failed(e) => t_with("Error: {message}", &[("message", &e)]),
+            Load::Ready(r) if r.names.is_empty() && r.changed > 0 => format!("{} · {:.0} ms", t_plural(r.changed as i64, "{n} row changed", "{n} rows changed"), r.ms),
+            Load::Ready(r) if r.names.is_empty() => format!("{} · {:.0} ms", t("Done"), r.ms),
+            Load::Ready(r) => format!(
+                "{} · {}",
+                t_plural(r.rows as i64, "{n} row", "{n} rows"),
+                t_with("query {query} ms · table {table} ms", &[("query", &format!("{:.0}", r.ms)), ("table", &format!("{:.0}", self.fill_ms.get()))])
+            ),
         }
     }
-}
-
-fn thousands(n: usize) -> String {
-    let s = n.to_string();
-    let mut out = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
 }
 
 /// The table's columns for a result. Rows are row numbers into it.
@@ -385,7 +377,9 @@ fn database_view(doc: &Document<Db>) -> impl View + use<> {
         }
     });
     split((
-        sidebar(move || b.schema.get().unwrap_or_default(), |i: &Item| i.title.clone())
+        // (Section names are translated here: the schema is read off the
+        // main thread, where the app's tables aren't.)
+        sidebar(move || b.schema.get().unwrap_or_default(), |i: &Item| if i.icon.is_none() && i.source.is_none() && !i.id.contains('.') { t(&i.title) } else { i.title.clone() })
             .icon(|i: &Item| i.icon.map(String::from))
             .selection(&b.selected),
         split((
@@ -399,7 +393,7 @@ fn database_view(doc: &Document<Db>) -> impl View + use<> {
                     label(move || b.status()),
                     spacer(),
                     csv_chip(b),
-                    button("History", move || b.history_shown.set(true)).popover(&b.history_shown, move || history(b)),
+                    button(&t("History"), move || b.history_shown.set(true)).popover(&b.history_shown, move || history(b)),
                 ))
                 .padding(6.0),
                 fill,
@@ -478,7 +472,7 @@ fn chart(b: Browser) -> impl View {
                 })
                 .exportable("chart"),
             ),
-            _ => AnyView::new(text("Charts need a first column and a number column after it").padding(12.0)),
+            _ => AnyView::new(text(t("Charts need a first column and a number column after it")).padding(12.0)),
         }
     })
 }
@@ -559,7 +553,7 @@ fn csv_chip(b: Browser) -> impl View {
         let r = b.results.get_untracked()?;
         (!r.names.is_empty()).then(|| DragItem::promise("results.csv", move |path| save_csv(&r, path)))
     })
-    .description(|| "results.csv: drag out the results as a CSV file".into())
+    .description(|| t("results.csv: drag out the results as a CSV file"))
     .min_size(84.0, 20.0)
     .frame(84.0, 20.0)
 }
@@ -568,13 +562,13 @@ fn csv_chip(b: Browser) -> impl View {
 fn inspector(b: Browser) -> impl View {
     dynamic(move || {
         let (Some(row), Some(r)) = (b.row.get(), b.results.get()) else {
-            return AnyView::new(text("No row selected").padding(12.0));
+            return AnyView::new(text(t("No row selected")).padding(12.0));
         };
         if row as usize >= r.rows {
-            return AnyView::new(text("No row selected").padding(12.0));
+            return AnyView::new(text(t("No row selected")).padding(12.0));
         }
         let fields: Vec<_> = r.names.iter().enumerate().map(|(i, name)| (text(name.clone()), text(r.text(row, i)))).collect();
-        AnyView::new(scroll(vstack((text(format!("Row {}", row + 1)), grid(fields).align_column(0, Align::End))).padding(12.0)))
+        AnyView::new(scroll(vstack((text(t_with("Row {n}", &[("n", &(row + 1))])), grid(fields).align_column(0, Align::End))).padding(12.0)))
     })
 }
 
@@ -582,7 +576,7 @@ fn inspector(b: Browser) -> impl View {
 fn history(b: Browser) -> impl View {
     let queries = b.history.get_untracked();
     if queries.is_empty() {
-        return AnyView::new(text("No queries yet").padding(12.0));
+        return AnyView::new(text(t("No queries yet")).padding(12.0));
     }
     let items: Vec<AnyView> = queries
         .into_iter()
@@ -601,7 +595,7 @@ fn history(b: Browser) -> impl View {
 /// "Show Sidebar" or "Hide Sidebar", for the focused window.
 fn shown_title(what: &str, hidden: fn(&Browser) -> Signal<bool>) -> String {
     let hidden = focused_value::<Browser>("browser").is_some_and(|b| hidden(&b).get_untracked());
-    format!("{} {what}", if hidden { "Show" } else { "Hide" })
+    t(&format!("{} {what}", if hidden { "Show" } else { "Hide" }))
 }
 
 fn find<'a>(nodes: &'a [TreeNode<Item>], id: &str) -> Option<&'a Item> {
@@ -618,10 +612,10 @@ fn database() -> DocumentType<Db> {
         .read(Db::open)
         .toolbar(|_| {
             vec![
-                toolbar_command("run", "Run", "play.fill", RUN),
+                toolbar_command("run", &t("Run"), "play.fill", RUN),
                 toolbar_space(),
-                toolbar_command("chart", "Chart", "chart.xyaxis.line", TOGGLE_CHART),
-                toolbar_command("inspector", "Inspector", "sidebar.right", TOGGLE_INSPECTOR),
+                toolbar_command("chart", &t("Chart"), "chart.xyaxis.line", TOGGLE_CHART),
+                toolbar_command("inspector", &t("Inspector"), "sidebar.right", TOGGLE_INSPECTOR),
             ]
         })
         .size(1100.0, 700.0)
@@ -629,21 +623,25 @@ fn database() -> DocumentType<Db> {
 
 fn main() {
     let check = std::env::var("CHECK").unwrap_or_default();
-    let file = std::env::args().nth(1).map(std::path::PathBuf::from);
+    // A file to open (not AppKit's options, like `-AppleLanguages "(de)"`).
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let option_value = |i: usize| i > 0 && args[i - 1].starts_with('-');
+    let file = args.iter().enumerate().find(|(i, a)| !(a.starts_with('-') || option_value(*i))).map(|(_, a)| std::path::PathBuf::from(a));
     App::new("SQL Browser")
+        .translations(&[("de", include_str!("sql_browser.de.strings"))])
         .documents(database())
-        .menu("File", vec![menu_separator(), menu_command("Export Results as CSV…", EXPORT_CSV).key("E")])
-        .menu("Query", vec![menu_command("Run Query", RUN).key("r"), menu_command("Copy Results as CSV", COPY_CSV)])
+        .menu("File", vec![menu_separator(), menu_command(&t("Export Results as CSV…"), EXPORT_CSV).key("E")])
+        .menu(&t("Query"), vec![menu_command(&t("Run Query"), RUN).key("r"), menu_command(&t("Copy Results as CSV"), COPY_CSV)])
         .menu(
-            "View",
+            &t("View"),
             vec![
-                menu_command("Hide Sidebar", TOGGLE_SIDEBAR)
+                menu_command(&t("Hide Sidebar"), TOGGLE_SIDEBAR)
                     .key_with("s", &[Modifier::Control])
                     .title_when(|| shown_title("Sidebar", |b| b.no_sidebar)),
-                menu_command("Hide Inspector", TOGGLE_INSPECTOR)
+                menu_command(&t("Hide Inspector"), TOGGLE_INSPECTOR)
                     .key_with("i", &[Modifier::Option])
                     .title_when(|| shown_title("Inspector", |b| b.no_inspector)),
-                menu_command("Show Chart", TOGGLE_CHART)
+                menu_command(&t("Show Chart"), TOGGLE_CHART)
                     .key_with("k", &[Modifier::Option])
                     .title_when(|| shown_title("Chart", |b| b.no_chart)),
             ],
@@ -651,6 +649,11 @@ fn main() {
         .on_launch(move || {
             if check == "all" {
                 self_checks::run();
+                return;
+            }
+            if check == "l10n" {
+                // Run with -AppleLanguages "(de)": the app in German.
+                self_checks::l10n();
                 return;
             }
             let open = |path: &Path| {
@@ -834,6 +837,61 @@ mod self_checks {
     fn run_query(w: &NSWindow, b: Browser, sql: &str) {
         b.query.set(sql.into());
         perform_in(Some(w), RUN);
+    }
+
+    fn menu_titles(menu: &objc2_app_kit::NSMenu) -> Vec<String> {
+        (0..menu.numberOfItems()).map(|i| menu.itemAtIndex(i).unwrap().title().to_string()).collect()
+    }
+
+    /// The app in German (launched with `-AppleLanguages "(de)"`): its own
+    /// strings from its table, the framework's from appkit-ui's, plurals.
+    pub fn l10n() {
+        let app = objc2_app_kit::NSApplication::sharedApplication(objc2::MainThreadMarker::new().unwrap());
+        let bar = app.mainMenu().unwrap();
+        let menus = menu_titles(&bar);
+        check("l10n-language", language() == "de", format!("language {:?}", language()));
+        check(
+            "l10n-menu-bar",
+            menus[1..] == ["Ablage", "Bearbeiten", "Abfrage", "Darstellung", "Fenster", "Hilfe"].map(String::from),
+            format!("{menus:?}"),
+        );
+        let file = bar.itemAtIndex(1).unwrap().submenu().unwrap();
+        file.update();
+        let items = menu_titles(&file);
+        let want = ["Neu", "Öffnen …", "Benutzte Dokumente öffnen", "Schließen", "Sichern", "Sichern unter …", "Zurück zur gesicherten Version", "Ergebnisse als CSV exportieren …"];
+        check("l10n-file-menu", want.iter().all(|w| items.contains(&w.to_string())), format!("{items:?}"));
+        let app_menu = menu_titles(&bar.itemAtIndex(0).unwrap().submenu().unwrap());
+        check(
+            "l10n-app-menu",
+            app_menu.first().map(String::as_str) == Some("Über SQL Browser") && app_menu.last().map(String::as_str) == Some("SQL Browser beenden"),
+            format!("{app_menu:?}"),
+        );
+        let w = windows().into_iter().find(|w| w.isVisible()).unwrap();
+        let toolbar: Vec<String> = w.toolbar().map(|t| t.items().iter().map(|i| i.label().to_string()).filter(|l| !l.is_empty()).collect()).unwrap_or_default();
+        check("l10n-window", w.title().to_string() == "Ohne Titel" && toolbar == ["Ausführen", "Diagramm", "Inspektor"], format!("title {:?}; toolbar {toolbar:?}", w.title()));
+        let b = BROWSERS.with_borrow(|all| all.last().unwrap().0);
+        let view = bar.itemAtIndex(4).unwrap().submenu().unwrap();
+        view.update();
+        let view_items = menu_titles(&view);
+        check(
+            "l10n-view-menu",
+            view_items == ["Seitenleiste ausblenden", "Inspektor ausblenden", "Diagramm einblenden"],
+            format!("{view_items:?} (a new window shows its sidebar and inspector, not its chart)"),
+        );
+        run_query(&w, b, "SELECT 1 AS a");
+        let w2 = w.clone();
+        when(move || idle(b)() && results(&w2).numberOfRows() == 1, 5000, move |_| {
+            let one = untrack(|| b.status());
+            run_query(&w, b, "SELECT 1 AS a UNION ALL SELECT 2");
+            let w3 = w.clone();
+            when(move || idle(b)() && results(&w3).numberOfRows() == 2, 5000, move |_| {
+                let two = untrack(|| b.status());
+                check("l10n-plural-status", one.starts_with("1 Zeile · Abfrage") && two.starts_with("2 Zeilen · Abfrage"), format!("{one:?}; {two:?}"));
+                let failed = FAILED.with(Cell::get);
+                eprintln!("[check] done, {failed} failed");
+                std::process::exit(if failed == 0 { 0 } else { 1 });
+            });
+        });
     }
 
     pub fn run() {

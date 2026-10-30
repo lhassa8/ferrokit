@@ -133,7 +133,7 @@ fn tooltip(p: &mut Painter, x: f64, y: f64, lines: &[String]) {
 }
 
 fn no_data(p: &mut Painter) {
-    p.text(p.width() / 2.0, p.height() / 2.0 - FONT, "No data", FONT + 2.0, TextColor::Secondary, Align::Center);
+    p.text(p.width() / 2.0, p.height() / 2.0 - FONT, &crate::t("No data"), FONT + 2.0, TextColor::Secondary, Align::Center);
 }
 
 /// Keeps `data()` in a signal, recomputed when what it reads changes (so

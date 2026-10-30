@@ -49,7 +49,8 @@ mod self_checks {
             failed += u32::from(!pass);
         };
         let window = windows()[0].clone();
-        check("untitled-window", window.title().to_string() == "Untitled", format!("{:?}", window.title()));
+        // (t: "Untitled" in the user's language.)
+        check("untitled-window", window.title().to_string() == t("Untitled"), format!("{:?}", window.title()));
         let problems = ax_audit(&window);
         check("accessibility", problems.is_empty(), format!("{problems:?}"));
         // Save and open a file through the document machinery.

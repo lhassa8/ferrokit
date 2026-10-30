@@ -18,6 +18,8 @@ id = "{{id}}"
 # icon = "icon.png"
 min-macos = "15.0"
 # category = "public.app-category.productivity"
+# Languages it's translated into (App::translations), besides English:
+# languages = ["de", "fr"]
 # For distribution (ad hoc signing without it), then `cargo ferrokit notarize`:
 # sign = "Developer ID Application: Your Name (TEAMID)"
 # notary-profile = "my-profile"  # made once: xcrun notarytool store-credentials my-profile …

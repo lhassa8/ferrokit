@@ -275,3 +275,44 @@ window). Closing a window clears its history.
   the system setting. `App::on_event` delivers `AppEvent::AppearanceChanged`.
 - `quit()` ends the app, as ⌘Q does (starting on the next run-loop pass, so
   a document app's save prompts don't block the UI).
+
+## Languages
+
+Strings the user reads go through `t`, with the English text as the key.
+The app's translations are `.strings` tables, one per language:
+
+```rust,no_run
+use appkit_ui::*;
+
+App::new("Notes")
+    .translations(&[("de", "\"Run Query\" = \"Abfrage ausführen\";\n\"{n} row\" = \"{n} Zeile\";\n\"{n} rows\" = \"{n} Zeilen\";")])
+    .menu(&t("Query"), vec![menu_item(&t("Run Query"), || {})])
+    .window(Window::new(&t("Notes")).view(label(|| t_plural(3, "{n} row", "{n} rows"))))
+    .run();
+```
+
+In a real app the table is a file, `include_str!("../locales/de.strings")`:
+
+```text
+"Run Query" = "Abfrage ausführen";
+"{n} row" = "{n} Zeile";
+"{n} rows" = "{n} Zeilen";
+```
+
+- The language is the first of the user's preferred languages (System
+  Settings, or the app's own setting there) that the app has a table for.
+  Strings without a translation stay in English.
+- The framework's own strings (the standard menus, document alerts,
+  "Untitled") come in German, French and Japanese. An app's table can
+  override them.
+- `t_with("Open “{file}”", &[("file", &name)])` fills named placeholders,
+  which a translation can reorder.
+- `t_plural(n, "{n} row", "{n} rows")` picks the language's plural form.
+  For languages with more than two (Russian, Polish), the table gives
+  `"{n} rows#one"`, `"#few"`, `"#many"` and `"#other"`. `{n}` is formatted
+  for the user's region, as is `format_number(value, decimals)`.
+- Try another language without changing the system:
+  `my-app -AppleLanguages "(de)"`.
+- In the bundle, list the languages under `languages` in
+  `[package.metadata.ferrokit]`. macOS then shows AppKit's own panels and
+  menu items (Close All, the Open panel) in that language too.

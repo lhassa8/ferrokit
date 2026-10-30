@@ -726,8 +726,43 @@ fn clipboard_drop_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         appkit_ui::close_window(&w);
         appkit_ui::close_window(&any);
         let _ = std::fs::remove_dir_all(&dir2);
-        later(move || view_checks(events.clone()));
+        later(move || l10n_checks(events.clone()));
     });
+}
+
+/// Localisation: the app's tables over the framework's, untranslated keys,
+/// placeholders, plural rules, numbers by region.
+fn l10n_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use appkit_ui::{format_number_for, language, set_language, t, t_plural, t_with};
+    let system = language();
+    set_language(Some("de"));
+    let de = (t("Rename Item"), t("Save"), t("Open…"), t("Not in any table"), t_with("Quit {name}", &[("name", &"Checklist")]));
+    let de_plural = (t_plural(1, "{n} file", "{n} files"), t_plural(1_000, "{n} file", "{n} files"));
+    set_language(Some("fr"));
+    let fr = (t("Rename Item"), t("Save"), t_with("The document “{name}” couldn't be saved.", &[("name", &"a.txt")]));
+    set_language(Some("ru"));
+    let ru: Vec<String> = [1, 2, 5, 21, 112].iter().map(|&n| t_plural(n, "{n} file", "{n} files")).collect();
+    set_language(None);
+    let back = (language(), t("Save"));
+    check(
+        "l10n-lookup",
+        de == ("Objekt umbenennen".into(), "Speichern (App)".into(), "Öffnen …".into(), "Not in any table".into(), "Checklist beenden".into())
+            && fr == ("Rename Item".into(), "Enregistrer".into(), "Le document « a.txt » n’a pas pu être enregistré.".into())
+            && back.0 == system,
+        format!("de {de:?}; fr (no app table: framework strings only) {fr:?}; back to {back:?}"),
+    );
+    let numbers = (format_number_for(1_234_567.5, 1, "en_US"), format_number_for(1_234_567.5, 1, "de_DE"), format_number_for(1_234_567.5, 1, "fr_FR"));
+    check(
+        "l10n-plurals-numbers",
+        de_plural.0 == "1 Datei"
+            && de_plural.1.ends_with(" Dateien")
+            && ru.iter().map(|s| s.split(' ').nth(1).unwrap_or_default()).collect::<Vec<_>>() == ["файл", "файла", "файлов", "файл", "файлов"]
+            && numbers.0 == "1,234,567.5"
+            && numbers.1 == "1.234.567,5"
+            && numbers.2.replace(['\u{202f}', '\u{a0}'], " ") == "1 234 567,5",
+        format!("de {de_plural:?}; ru {ru:?}; numbers en/de/fr {numbers:?}"),
+    );
+    later(move || view_checks(events.clone()));
 }
 
 fn settings_window() -> Window {
@@ -3874,6 +3909,12 @@ fn main() {
     let checks = std::env::var("CHECK").is_ok_and(|v| v == "all");
     let e2 = events.clone();
     App::new("Checklist")
+        // Tables for the l10n checks (the checklist itself stays in the
+        // system's language: these don't include English Macs' "en").
+        .translations(&[
+            ("de", "\"Rename Item\" = \"Objekt umbenennen\";\n\"Save\" = \"Speichern (App)\";\n\"{n} file\" = \"{n} Datei\";\n\"{n} files\" = \"{n} Dateien\";"),
+            ("ru", "\"{n} files#one\" = \"{n} файл\";\n\"{n} files#few\" = \"{n} файла\";\n\"{n} files#many\" = \"{n} файлов\";"),
+        ])
         .window(Window::new("First").size(480.0, 200.0).content(|| field("hello world")))
         .window(Window::new("Second").size(360.0, 160.0))
         .window(Window::new("Views").size(320.0, 420.0).view(views_window()))
