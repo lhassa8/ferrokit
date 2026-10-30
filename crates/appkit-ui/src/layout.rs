@@ -234,7 +234,9 @@ pub(crate) fn place(node: &Node, x: f64, y: f64, w: f64, h: f64, snap: &Snap) {
             if let Some(p) = position.take() {
                 Native::set_divider(split, 0, p);
             }
-            if let Some(t) = trailing.take().filter(|_| panes.len() >= 2) {
+            // Not into a hidden (collapsed) last pane: moving its divider
+            // would open it. It opens at this size when shown.
+            if let Some(t) = trailing.take().filter(|_| panes.len() >= 2 && !panes.last().is_some_and(|(p, _)| Native::is_hidden(p))) {
                 let along = if *stacked { ih } else { iw };
                 Native::set_divider(split, panes.len() - 2, along - t - 1.0);
             }

@@ -82,7 +82,7 @@ define_class!(
             let Some(split) = notification.object().and_then(|o| o.downcast::<NSSplitView>().ok()) else { return };
             // A pane the user dragged shut (or open) updates its signal.
             let panes = split.arrangedSubviews();
-            for (i, collapsed) in &self.ivars().collapsible {
+            for (i, collapsed) in self.ivars().collapsible.iter().filter(|_| !self.ivars().applying.get()) {
                 if let Some(pane) = (*i < panes.count()).then(|| panes.objectAtIndex(*i)) {
                     let size = if split.isVertical() { pane.frame().size.width } else { pane.frame().size.height };
                     collapsed.set_if_changed(split.isSubviewCollapsed(&pane) || pane.isHidden() || size < 1.0);
@@ -105,6 +105,9 @@ pub(crate) struct SplitInfo {
     key: Option<Retained<NSString>>,
     /// Pane indices that collapse, with their signals.
     collapsible: Vec<(usize, Signal<bool>)>,
+    /// Set while a signal's change is applied (the resizes it causes aren't
+    /// the user's).
+    applying: std::cell::Cell<bool>,
 }
 
 /// Side-by-side panes with draggable dividers (`NSSplitView`). The first
@@ -187,7 +190,7 @@ impl View for Split {
         let key = self.remember.as_deref().map(split_key);
         let defaults = NSUserDefaults::standardUserDefaults();
         let saved = key.as_ref().filter(|k| defaults.objectForKey(k).is_some()).map(|k| defaults.doubleForKey(k));
-        let delegate = SplitDelegate::alloc(mtm).set_ivars(SplitInfo { key, collapsible: self.collapsible.clone() });
+        let delegate = SplitDelegate::alloc(mtm).set_ivars(SplitInfo { key, collapsible: self.collapsible.clone(), applying: std::cell::Cell::new(false) });
         // SAFETY: NSObject's designated initialiser.
         let delegate: Retained<SplitDelegate> = unsafe { msg_send![super(delegate), init] };
         // Weak in AppKit; the node keeps the delegate.
@@ -210,7 +213,7 @@ impl View for Split {
             trailing: std::cell::Cell::new(self.trailing),
             stacked: self.stacked,
         });
-        node.keep(Retained::into_super(delegate));
+        node.keep(Retained::into_super(delegate.clone()));
         // Collapsible panes follow their signals, reopening at the size they
         // had (or the size given for them).
         let count = typed.len();
@@ -220,9 +223,11 @@ impl View for Split {
             let given = if i == 0 { self.position } else if i + 1 == count { self.trailing } else { None };
             let size = std::cell::Cell::new(given.unwrap_or(220.0));
             let stacked = self.stacked;
+            let delegate = delegate.clone();
             node.own(Effect::new(move || {
                 let hide = collapsed.get();
                 if pane.isHidden() != hide {
+                    delegate.ivars().applying.set(true);
                     let along = |r: objc2_foundation::NSRect| if stacked { r.size.height } else { r.size.width };
                     if hide && along(pane.frame()) > 20.0 {
                         size.set(along(pane.frame()));
@@ -240,6 +245,7 @@ impl View for Split {
                             }
                         }
                     }
+                    delegate.ivars().applying.set(false);
                     if let Some(meta) = meta.upgrade() {
                         meta.mark();
                     }

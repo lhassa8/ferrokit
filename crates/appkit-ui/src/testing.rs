@@ -423,3 +423,10 @@ pub fn heap_in_use_mb() -> f64 {
     unsafe { malloc_zone_statistics(std::ptr::null_mut(), &mut stats) };
     stats.size_in_use as f64 / (1024.0 * 1024.0)
 }
+
+/// What a [`canvas`](crate::canvas) (or chart) drew last, one line per
+/// operation (`fill rect 10,20 30x40 Blue`, `text "Jan" 11pt`); `None` if
+/// `view` isn't one.
+pub fn canvas_drawing(view: &objc2_app_kit::NSView) -> Option<Vec<String>> {
+    crate::canvas::describe(view)
+}

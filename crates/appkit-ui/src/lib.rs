@@ -42,6 +42,8 @@
 #![warn(missing_docs)]
 
 mod appkit_views;
+mod canvas;
+mod charts;
 mod chrome;
 mod collection;
 mod commands;
@@ -102,6 +104,8 @@ pub use appkit_host::table::{CellImage, Column, ColumnState, Sort, TableModel};
 pub use appkit_host::text::{TextColor, TextModel, TextStyle};
 pub use syntax::Syntax;
 pub use popover::Edge;
+pub use canvas::{Canvas, Painter, canvas};
+pub use charts::{Series, bar_chart, line_chart};
 pub use appkit_host::ViewId;
 /// The AppKit window type the window functions take and return.
 pub use objc2_app_kit::NSWindow;
@@ -277,6 +281,23 @@ define_class!(
         fn set_frame_size(&self, size: NSSize) {
             let _: () = unsafe { msg_send![super(self), setFrameSize: size] };
             relayout(self);
+        }
+
+        // Escape in a popover's content closes it: the popover's window
+        // answers `cancelOperation:`, but a plain view never turns the key
+        // into it (only text views interpret keys).
+        #[unsafe(method(keyDown:))]
+        fn key_down(&self, event: &objc2_app_kit::NSEvent) {
+            let window = self.window();
+            let escape = event.keyCode() == 53;
+            match window.filter(|w| escape && popover::is_popover_window(w)) {
+                Some(w) => {
+                    let _: () = unsafe { msg_send![&*w, cancelOperation: Option::<&objc2::runtime::AnyObject>::None] };
+                }
+                None => {
+                    let _: () = unsafe { msg_send![super(self), keyDown: event] };
+                }
+            }
         }
     }
 );

@@ -232,3 +232,44 @@ let editor = text_editor(&doc).highlight(move |text| {
 
 Styles aren't part of the text: typing, pasting and undo work on characters
 only, and the highlighter restyles what changed.
+
+## Drawing and charts
+
+`canvas(|p| …)` draws with a `Painter`: rectangles, circles, lines,
+polygons and text, in points from the top-left corner, in `TextColor`s
+(the system's follow Dark Mode). The drawing is recorded and replayed by
+a native view. It's recorded again when signals it reads change or the
+canvas resizes, so a canvas is as reactive as a label.
+
+```rust,no_run
+use appkit_ui::*;
+
+let level = Signal::new(0.4);
+let meter = canvas(move |p| {
+    p.fill_rounded_rect(0.0, 0.0, p.width(), p.height(), 6.0, TextColor::Separator);
+    p.fill_rounded_rect(0.0, 0.0, p.width() * level.get(), p.height(), 6.0, TextColor::Green);
+})
+.on_click(move |x, _y| println!("clicked at {x}"))
+.description(move || format!("Level {:.0}%", level.get() * 100.0))
+.min_size(200.0, 24.0);
+# let _ = meter;
+```
+
+VoiceOver sees a canvas as an image. `.description(…)` is what it reads,
+kept current.
+
+Charts are canvases. `bar_chart(|| vec![(label, value)…])` draws bars
+for categories. `line_chart(|| vec![Series::new(name, points)…])` draws
+lines through numeric points. Both give round-number axes and gridlines,
+show values under the pointer, and describe themselves to VoiceOver ("Bar
+chart, 72 bars, from … to …"). A line keeps at most a few points per
+pixel column (the first, lowest, highest and last), so a million rows draw
+in a few milliseconds and spikes still show.
+
+```rust,no_run
+use appkit_ui::*;
+
+let prices = Signal::new(vec![(1.0, 10.0), (2.0, 12.5), (3.0, 11.0)]);
+let chart = line_chart(move || vec![Series::new("price", prices.get())]);
+# let _ = chart;
+```

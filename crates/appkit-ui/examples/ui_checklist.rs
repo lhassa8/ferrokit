@@ -568,9 +568,88 @@ fn popover_teardown_check(events: Rc<RefCell<Vec<AppEvent>>>) {
                 format!("shown {shown} (its content's signal alive {inside}); anchor removed → closed {closed}, content freed {freed}, signal {}", open_pop.get()),
             );
             appkit_ui::close_window(&w);
-            later(move || view_checks(events.clone()));
+            later(move || canvas_checks(events.clone()));
         });
     });
+}
+
+/// The canvas: redrawn when a signal it reads changes and when it resizes,
+/// drawn pixels, clicks in its own coordinates, and VoiceOver's view of it.
+fn canvas_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use appkit_ui::testing::canvas_drawing;
+    use appkit_ui::{Align, TextColor, canvas};
+    use objc2_app_kit::NSAccessibility;
+    let level = Signal::new(0.5);
+    let clicks = Rc::new(RefCell::new(Vec::new()));
+    let c = clicks.clone();
+    let w = open(Window::new("Canvas").size(300.0, 200.0).view(
+        canvas(move |p| {
+            p.fill_rect(0.0, 0.0, p.width() * level.get(), p.height(), TextColor::Rgb(1.0, 0.0, 0.0));
+            p.text(4.0, 4.0, &format!("{:.0}%", level.get() * 100.0), 12.0, TextColor::Primary, Align::Start);
+        })
+        .on_click(move |x, y| c.borrow_mut().push((x.round(), y.round())))
+        .description(move || format!("Level {:.0}%", level.get() * 100.0)),
+    ));
+    let view = || {
+        let mut all = Vec::new();
+        fn walk(v: &NSView, out: &mut Vec<Retained<NSView>>) {
+            for s in v.subviews().iter() {
+                out.push(s.clone());
+                walk(&s, out);
+            }
+        }
+        walk(&w.contentView().unwrap(), &mut all);
+        all.into_iter().find(|v| canvas_drawing(v).is_some()).unwrap()
+    };
+    let v = view();
+    let first = canvas_drawing(&v).unwrap();
+    level.set(0.25);
+    let second = canvas_drawing(&v).unwrap();
+    check(
+        "canvas-reactive",
+        first == ["fill rect 0,0 150x200 Rgb(1.0, 0.0, 0.0)", "text \"50%\" 12pt"] && second[0] == "fill rect 0,0 75x200 Rgb(1.0, 0.0, 0.0)",
+        format!("{first:?} → after the signal changes {second:?}"),
+    );
+    // Resizing the window redraws at the new size.
+    w.setContentSize(objc2_foundation::NSSize::new(400.0, 200.0));
+    let resized = canvas_drawing(&v).unwrap();
+    check("canvas-resize", resized[0] == "fill rect 0,0 100x200 Rgb(1.0, 0.0, 0.0)", format!("at 400 points wide: {:?}", resized[0]));
+    // What AppKit draws: red at the left, not at the right.
+    let rep = v.bitmapImageRepForCachingDisplayInRect(v.bounds()).unwrap();
+    v.cacheDisplayInRect_toBitmapImageRep(v.bounds(), &rep);
+    let scale = rep.pixelsWide() as f64 / v.bounds().size.width;
+    // (Pure sRGB red reads about (0.92, 0.2, 0.15) in the bitmap's space.)
+    let px = |x: f64, y: f64| rep.colorAtX_y((x * scale) as isize, (y * scale) as isize).map(|c| (c.redComponent(), c.greenComponent(), c.alphaComponent()));
+    let (left, right) = (px(50.0, 100.0), px(300.0, 100.0));
+    check(
+        "canvas-pixels",
+        left.is_some_and(|(r, g, a)| r > 0.85 && g < 0.3 && a > 0.99) && right.is_some_and(|(_, _, a)| a < 0.01),
+        format!("(r, g, alpha) at x=50: {left:?}; at x=300 (nothing drawn): {right:?}"),
+    );
+    // A click arrives in the canvas's coordinates (top-left origin).
+    let at = v.convertPoint_toView(objc2_foundation::NSPoint::new(30.0, 20.0), None);
+    let down = objc2_app_kit::NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+        objc2_app_kit::NSEventType::LeftMouseDown,
+        at,
+        NSEventModifierFlags::empty(),
+        0.0,
+        w.windowNumber(),
+        None,
+        0,
+        1,
+        1.0,
+    )
+    .unwrap();
+    let _: () = unsafe { objc2::msg_send![&*v, mouseDown: &*down] };
+    let label = v.accessibilityLabel().map(|l| l.to_string());
+    let role = v.accessibilityRole().map(|r| r.to_string());
+    check(
+        "canvas-click-ax",
+        *clicks.borrow() == [(30.0, 20.0)] && label.as_deref() == Some("Level 25%") && role.as_deref() == Some("AXImage"),
+        format!("click → {:?}; VoiceOver: {role:?} {label:?}", clicks.borrow()),
+    );
+    appkit_ui::close_window(&w);
+    later(move || view_checks(events.clone()));
 }
 
 fn settings_window() -> Window {

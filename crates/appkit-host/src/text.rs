@@ -268,12 +268,16 @@ pub enum TextColor {
     Brown,
     /// System gray.
     Gray,
+    /// The background of content (text, tables): white, or dark in Dark Mode.
+    Background,
+    /// Separator lines and grids.
+    Separator,
     /// A fixed sRGB colour (components 0–1; the same in light and dark).
     Rgb(f64, f64, f64),
 }
 
 impl TextColor {
-    const NAMED: [TextColor; 17] = [
+    const NAMED: [TextColor; 19] = [
         TextColor::Primary,
         TextColor::Secondary,
         TextColor::Tertiary,
@@ -291,9 +295,12 @@ impl TextColor {
         TextColor::Pink,
         TextColor::Brown,
         TextColor::Gray,
+        TextColor::Background,
+        TextColor::Separator,
     ];
 
-    fn ns(self) -> Retained<NSColor> {
+    /// The `NSColor` (dynamic for the named colours).
+    pub fn ns(self) -> Retained<NSColor> {
         match self {
             TextColor::Primary => NSColor::textColor(),
             TextColor::Secondary => NSColor::secondaryLabelColor(),
@@ -312,6 +319,8 @@ impl TextColor {
             TextColor::Pink => NSColor::systemPinkColor(),
             TextColor::Brown => NSColor::systemBrownColor(),
             TextColor::Gray => NSColor::systemGrayColor(),
+            TextColor::Background => NSColor::textBackgroundColor(),
+            TextColor::Separator => NSColor::separatorColor(),
             TextColor::Rgb(r, g, b) => NSColor::colorWithSRGBRed_green_blue_alpha(r, g, b, 1.0),
         }
     }

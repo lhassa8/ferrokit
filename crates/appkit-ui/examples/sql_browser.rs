@@ -19,6 +19,7 @@ use rusqlite::types::ValueRef;
 const RUN: Command = Command::new("run-query");
 const TOGGLE_SIDEBAR: Command = Command::new("toggle-sidebar");
 const TOGGLE_INSPECTOR: Command = Command::new("toggle-inspector");
+const TOGGLE_CHART: Command = Command::new("toggle-chart");
 
 /// An open database: one connection, used by one query at a time from
 /// background threads.
@@ -249,6 +250,7 @@ struct Browser {
     row: Signal<Option<u32>>,
     no_sidebar: Signal<bool>,
     no_inspector: Signal<bool>,
+    no_chart: Signal<bool>,
     /// Queries run, newest first.
     history: Signal<Vec<String>>,
     history_shown: Signal<bool>,
@@ -268,6 +270,7 @@ impl Browser {
             row: Signal::new(None),
             no_sidebar: Signal::new(false),
             no_inspector: Signal::new(false),
+            no_chart: Signal::new(true),
             history: Signal::new(Vec::new()),
             history_shown: Signal::new(false),
         }
@@ -386,7 +389,10 @@ fn database_view(doc: &Document<Db>) -> impl View + use<> {
         split((
             text_editor(&editor).bind(&b.query).syntax(Syntax::sql()).accessibility_label("Query"),
             vstack((
-                table(&model).on_select(move |rows| b.row.set(rows.first().map(|&r| r as u32))).accessibility_label("Results"),
+                split((table(&model).on_select(move |rows| b.row.set(rows.first().map(|&r| r as u32))).accessibility_label("Results"), chart(b)))
+                    .stacked()
+                    .collapsible(1, &b.no_chart)
+                    .trailing(240.0),
                 hstack((
                     label(move || b.status()),
                     spacer(),
@@ -410,7 +416,60 @@ fn database_view(doc: &Document<Db>) -> impl View + use<> {
     .on_command(RUN, move || b.run())
     .on_command(TOGGLE_SIDEBAR, move || b.no_sidebar.update(|h| *h = !*h))
     .on_command(TOGGLE_INSPECTOR, move || b.no_inspector.update(|h| *h = !*h))
+    .on_command(TOGGLE_CHART, move || b.no_chart.update(|h| *h = !*h))
     .focused_value("browser", b)
+}
+
+/// What the chart shows for a result: the first column across, the first
+/// numeric column after it up. A numeric first column makes a line (every
+/// row); text makes bars (the first 200 rows).
+enum Plot {
+    Line(String, Vec<(f64, f64)>),
+    Bars(Vec<(String, f64)>),
+    Nothing,
+}
+
+fn plot(r: &Results) -> Plot {
+    let numeric = |k: ColKind| matches!(k, ColKind::Int | ColKind::Real(_));
+    let Some(y) = (1..r.names.len()).find(|&i| numeric(r.kinds[i])) else {
+        return Plot::Nothing;
+    };
+    if numeric(r.kinds[0]) {
+        Plot::Line(r.names[y].clone(), (0..r.rows as u32).map(|row| (r.number(row, 0), r.number(row, y))).collect())
+    } else {
+        Plot::Bars((0..r.rows.min(200) as u32).map(|row| (r.text(row, 0), r.number(row, y))).collect())
+    }
+}
+
+/// The results as a chart (only computed while it's shown).
+fn chart(b: Browser) -> impl View {
+    // Rebuilt only when the kind of chart changes, not for every result.
+    let shape = Memo::new(move || {
+        let numeric = |k: ColKind| matches!(k, ColKind::Int | ColKind::Real(_));
+        b.results.with(|r| match r {
+            Some(r) if (1..r.names.len()).any(|i| numeric(r.kinds[i])) => if numeric(r.kinds[0]) { 1 } else { 2 },
+            _ => 0,
+        })
+    });
+    dynamic(move || {
+        let shape = shape.get();
+        let data = move || if b.no_chart.get() { None } else { b.results.get().map(|r| plot(&r)) };
+        match shape {
+            1 => AnyView::new(
+                line_chart(move || match data() {
+                    Some(Plot::Line(name, points)) => vec![Series::new(&name, points)],
+                    _ => Vec::new(),
+                }),
+            ),
+            2 => AnyView::new(
+                bar_chart(move || match data() {
+                    Some(Plot::Bars(bars)) => bars,
+                    _ => Vec::new(),
+                }),
+            ),
+            _ => AnyView::new(text("Charts need a first column and a number column after it").padding(12.0)),
+        }
+    })
 }
 
 /// The selected row, one field per line.
@@ -465,7 +524,14 @@ thread_local! {
 fn database() -> DocumentType<Db> {
     DocumentType::new(&["sqlite", "db", "sqlite3"], Db::scratch, database_view)
         .read(Db::open)
-        .toolbar(|_| vec![toolbar_command("run", "Run", "play.fill", RUN), toolbar_space(), toolbar_command("inspector", "Inspector", "sidebar.right", TOGGLE_INSPECTOR)])
+        .toolbar(|_| {
+            vec![
+                toolbar_command("run", "Run", "play.fill", RUN),
+                toolbar_space(),
+                toolbar_command("chart", "Chart", "chart.xyaxis.line", TOGGLE_CHART),
+                toolbar_command("inspector", "Inspector", "sidebar.right", TOGGLE_INSPECTOR),
+            ]
+        })
         .size(1100.0, 700.0)
 }
 
@@ -484,6 +550,9 @@ fn main() {
                 menu_command("Hide Inspector", TOGGLE_INSPECTOR)
                     .key_with("i", &[Modifier::Option])
                     .title_when(|| shown_title("Inspector", |b| b.no_inspector)),
+                menu_command("Show Chart", TOGGLE_CHART)
+                    .key_with("k", &[Modifier::Option])
+                    .title_when(|| shown_title("Chart", |b| b.no_chart)),
             ],
         )
         .on_launch(move || {
@@ -587,10 +656,10 @@ mod self_checks {
     use std::path::PathBuf;
     use std::time::Instant;
 
-    use appkit_ui::testing::{ax_audit, capture_window, footprint_mb, menu_key, snapshot_windows};
+    use appkit_ui::testing::{ax_audit, canvas_drawing, capture_window, footprint_mb, menu_key, snapshot_windows};
     use appkit_ui::*;
     use objc2::rc::Retained;
-    use objc2_app_kit::{NSEventModifierFlags, NSOutlineView, NSSplitView, NSTableView, NSView};
+    use objc2_app_kit::{NSAccessibility, NSEventModifierFlags, NSOutlineView, NSSplitView, NSTableView, NSView};
     use objc2_foundation::{NSArray, NSSortDescriptor};
 
     use super::{BROWSERS, Browser, RUN};
@@ -817,7 +886,7 @@ mod self_checks {
 
     /// Runs `f` once, after the run loop has handled pending work.
     fn then(f: impl FnOnce() + 'static) {
-        spawn(|| std::thread::sleep(std::time::Duration::from_millis(100)), move |()| f());
+        spawn(|| std::thread::sleep(std::time::Duration::from_millis(300)), move |()| f());
     }
 
     /// The window's three-pane split (sidebar, query and results, inspector).
@@ -957,19 +1026,122 @@ mod self_checks {
                 );
                 // Escape closes it too, clearing the signal.
                 b.history_shown.set(true);
-                when(|| !popover_windows().is_empty(), 3000, move |_| {
+                // (Escape once it has finished opening: during its animation
+                // it can be ignored.)
+                when(|| !popover_windows().is_empty(), 3000, move |_| then(move || {
                     let pop = popover_windows().pop();
-                    if let Some(p) = &pop
-                        && let Some(content) = p.contentView()
-                    {
-                        let _: () = unsafe { objc2::msg_send![&*content, cancelOperation: Option::<&objc2::runtime::AnyObject>::None] };
+                    // An Escape key press in the popover.
+                    if let Some(p) = &pop {
+                        let esc = objc2_app_kit::NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+                            objc2_app_kit::NSEventType::KeyDown,
+                            objc2_foundation::NSPoint::ZERO,
+                            NSEventModifierFlags::empty(),
+                            0.0,
+                            p.windowNumber(),
+                            None,
+                            &objc2_foundation::NSString::from_str("\u{1b}"),
+                            &objc2_foundation::NSString::from_str("\u{1b}"),
+                            false,
+                            53,
+                        )
+                        .unwrap();
+                        // Handed to the popover's content, as its window does
+                        // with a key press there (a background app gets none).
+                        let root = p.contentView().into_iter().chain(all(p)).find(|v| v.class().name().to_string_lossy() == "AppKitUiRootView");
+                        if let Some(root) = root {
+                            let _: () = unsafe { objc2::msg_send![&*root, keyDown: &*esc] };
+                        }
                     }
                     when(|| popover_windows().is_empty(), 3000, move |_| {
                         check("popover-escape", !untrack(|| b.history_shown.get()) && popover_windows().is_empty(), format!("Escape closed it: signal {}", untrack(|| b.history_shown.get())));
-                        scratch(w2, dir);
+                        chart_checks(w2, b, dir);
                     });
+                }));
+            });
+        });
+    }
+
+    /// The chart pane's canvas, while it's shown.
+    fn chart_view(w: &NSWindow) -> Option<Retained<NSView>> {
+        all(w).into_iter().find(|v| canvas_drawing(v).is_some())
+    }
+
+    fn drawing(w: &NSWindow) -> Vec<String> {
+        chart_view(w).and_then(|v| canvas_drawing(&v)).unwrap_or_default()
+    }
+
+    /// A mouse event over the chart at `x, y` (its own coordinates).
+    fn mouse(view: &NSView, kind: objc2_app_kit::NSEventType, x: f64, y: f64) -> Retained<objc2_app_kit::NSEvent> {
+        let at = view.convertPoint_toView(objc2_foundation::NSPoint::new(x, y), None);
+        objc2_app_kit::NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+            kind,
+            at,
+            NSEventModifierFlags::empty(),
+            0.0,
+            view.window().unwrap().windowNumber(),
+            None,
+            0,
+            0,
+            0.0,
+        )
+        .unwrap()
+    }
+
+    /// Bars of a grouped query, a line through a million rows, the values
+    /// on hover, and VoiceOver's summary.
+    fn chart_checks(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
+        perform_in(Some(&w), super::TOGGLE_CHART);
+        run_query(&w, b, "SELECT substr(ordered_at, 1, 7) AS month, round(sum(total)) AS sales FROM orders GROUP BY month ORDER BY month");
+        let w2 = w.clone();
+        when(move || idle(b)() && drawing(&w2).iter().filter(|d| d.starts_with("fill rect") && d.ends_with("Blue")).count() == 72, 10_000, move |ms| {
+            let d = drawing(&w);
+            let bars = d.iter().filter(|d| d.starts_with("fill rect") && d.ends_with("Blue")).count();
+            let label = chart_view(&w).and_then(|v| v.accessibilityLabel()).map(|l| l.to_string()).unwrap_or_default();
+            check(
+                "chart-bars",
+                bars == 72 && untrack(|| !b.no_chart.get()) && d.iter().any(|t| t == "text \"2020-01\" 11pt") && label.starts_with("Bar chart, 72 bars, from "),
+                format!("{bars} bars {ms:.0} ms after Run; VoiceOver: {label:?}; drew {:?}", d.iter().take(6).collect::<Vec<_>>()),
+            );
+            // Hovering a bar highlights it and shows its value.
+            let view = chart_view(&w).unwrap();
+            let size = view.frame().size;
+            let _: () = unsafe { objc2::msg_send![&*view, mouseMoved: &*mouse(&view, objc2_app_kit::NSEventType::MouseMoved, size.width * 0.5, size.height * 0.5)] };
+            let w2 = w.clone();
+            then(move || {
+                let d = drawing(&w2);
+                let lit = d.iter().filter(|t| t.ends_with("Indigo")).count();
+                let tip = d.iter().find(|t| t.starts_with("text \"202")  && t.contains(": ")).cloned();
+                let _: () = unsafe { objc2::msg_send![&*view, mouseExited: &*mouse(&view, objc2_app_kit::NSEventType::MouseMoved, -5.0, -5.0)] };
+                let w3 = w2.clone();
+                then(move || {
+                    let gone = !drawing(&w3).iter().any(|t| t.ends_with("Indigo"));
+                    check("chart-hover", lit == 1 && tip.is_some() && gone, format!("hovering: {lit} bar highlighted, readout {tip:?}; leaving clears it: {gone}"));
+                    if let Ok(snap) = std::env::var("SNAP") {
+                        save_capture(&w3, &format!("{snap}/sql_browser-chart.png"));
+                    }
+                    line_check(w3, b, dir);
                 });
             });
+        });
+    }
+
+    fn line_check(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
+        run_query(&w, b, "SELECT id, total FROM orders");
+        let w2 = w.clone();
+        let start = Instant::now();
+        when(move || idle(b)() && drawing(&w2).iter().any(|d| d.starts_with("stroke path") && d.ends_with("Blue")), 20_000, move |ms| {
+            let d = drawing(&w);
+            let points: usize = d.iter().filter(|t| t.starts_with("stroke path") && t.ends_with("Blue")).filter_map(|t| t.split(' ').nth(2)?.parse::<usize>().ok()).sum();
+            let width = chart_view(&w).map(|v| v.frame().size.width).unwrap_or(0.0);
+            let label = chart_view(&w).and_then(|v| v.accessibilityLabel()).map(|l| l.to_string()).unwrap_or_default();
+            let _ = start;
+            check(
+                "chart-line-million",
+                points > 100 && (points as f64) <= width * 4.0 + 8.0 && label.starts_with("Line chart of total, 1000000 points"),
+                format!("1,000,000 rows drawn as a {points}-point line ({width:.0} pt wide) {ms:.0} ms after Run; VoiceOver: {label:?}"),
+            );
+            perform_in(Some(&w), super::TOGGLE_CHART);
+            scratch(w, dir);
         });
     }
 
