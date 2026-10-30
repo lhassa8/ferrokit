@@ -15,7 +15,11 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject};
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send};
 use objc2::AnyThread;
-use objc2_app_kit::{NSAccessibility, NSBezierPath, NSEvent, NSFont, NSResponder, NSTrackingArea, NSTrackingAreaOptions, NSView};
+use objc2::runtime::{NSObjectProtocol, ProtocolObject};
+use objc2_app_kit::{
+    NSAccessibility, NSBezierPath, NSDragOperation, NSDraggingContext, NSDraggingItem, NSDraggingSession, NSDraggingSource, NSEvent, NSFont, NSImage,
+    NSResponder, NSTrackingArea, NSTrackingAreaOptions, NSView,
+};
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
 use crate::signal::{Effect, Signal, untrack};
@@ -220,11 +224,18 @@ type Draw = Rc<dyn Fn(&mut Painter)>;
 type Hover = Rc<dyn Fn(Option<(f64, f64)>)>;
 type Click = Rc<dyn Fn(f64, f64)>;
 
+type Drag = Rc<dyn Fn() -> Option<crate::DragItem>>;
+
 pub(crate) struct CanvasState {
     ops: RefCell<Vec<Op>>,
     size: Cell<Option<Signal<(f64, f64)>>>,
     hover: RefCell<Option<Hover>>,
     click: RefCell<Option<Click>>,
+    drag: RefCell<Option<Drag>>,
+    /// Where the mouse went down, until a drag starts.
+    down: Cell<Option<NSPoint>>,
+    /// Drawing for an image: on the content background, not transparent.
+    opaque: Cell<bool>,
 }
 
 define_class!(
@@ -243,6 +254,10 @@ define_class!(
 
         #[unsafe(method(drawRect:))]
         fn draw_rect(&self, _dirty: NSRect) {
+            if self.ivars().opaque.get() {
+                TextColor::Background.ns().setFill();
+                NSBezierPath::fillRect(self.bounds());
+            }
             replay(&self.ivars().ops.borrow());
         }
 
@@ -280,9 +295,24 @@ define_class!(
         #[unsafe(method(mouseDown:))]
         fn mouse_down(&self, event: &NSEvent) {
             let p = self.convertPoint_fromView(event.locationInWindow(), None);
+            self.ivars().down.set(Some(p));
             let click = self.ivars().click.borrow().clone();
             if let Some(f) = click {
                 crate::signal::batch(|| f(p.x, p.y));
+            }
+        }
+
+        #[unsafe(method(mouseDragged:))]
+        fn mouse_dragged(&self, event: &NSEvent) {
+            let p = self.convertPoint_fromView(event.locationInWindow(), None);
+            let Some(start) = self.ivars().down.get() else { return };
+            if (p.x - start.x).hypot(p.y - start.y) < 4.0 {
+                return;
+            }
+            self.ivars().down.set(None);
+            let drag = self.ivars().drag.borrow().clone();
+            if let Some(item) = drag.and_then(|f| f()) {
+                self.begin_drag(&item, event);
             }
         }
 
@@ -296,7 +326,42 @@ define_class!(
             true
         }
     }
+
+    unsafe impl NSObjectProtocol for CanvasView {}
+
+    unsafe impl NSDraggingSource for CanvasView {
+        #[unsafe(method(draggingSession:sourceOperationMaskForDraggingContext:))]
+        fn operation_mask(&self, _session: &NSDraggingSession, _context: NSDraggingContext) -> NSDragOperation {
+            NSDragOperation::Copy
+        }
+    }
 );
+
+impl CanvasView {
+    fn begin_drag(&self, item: &crate::DragItem, event: &NSEvent) {
+        let dragging = NSDraggingItem::initWithPasteboardWriter(NSDraggingItem::alloc(), &item.writer());
+        // The drag shows the canvas as it looks.
+        let image = png(self).and_then(|png| NSImage::initWithData(NSImage::alloc(), &objc2_foundation::NSData::with_bytes(&png)));
+        // SAFETY: an image (or none) as the dragged item's picture.
+        unsafe { dragging.setDraggingFrame_contents(self.bounds(), image.as_deref().map(|i| i.as_ref())) };
+        let items = objc2_foundation::NSArray::from_retained_slice(&[dragging]);
+        self.beginDraggingSessionWithItems_event_source(&items, event, ProtocolObject::from_ref(self));
+    }
+}
+
+/// The canvas as a PNG, on the content background (2× on Retina).
+pub(crate) fn png(view: &NSView) -> Option<Vec<u8>> {
+    let canvas = view.downcast_ref::<CanvasView>()?;
+    canvas.ivars().opaque.set(true);
+    let rep = view.bitmapImageRepForCachingDisplayInRect(view.bounds());
+    if let Some(rep) = &rep {
+        view.cacheDisplayInRect_toBitmapImageRep(view.bounds(), rep);
+    }
+    canvas.ivars().opaque.set(false);
+    // SAFETY: encoding a bitmap as PNG with no options.
+    let data = unsafe { rep?.representationUsingType_properties(objc2_app_kit::NSBitmapImageFileType::PNG, &objc2_foundation::NSDictionary::new()) }?;
+    Some(data.to_vec())
+}
 
 /// A drawing canvas, made by [`canvas`].
 pub struct Canvas {
@@ -305,6 +370,8 @@ pub struct Canvas {
     click: Option<Click>,
     description: Option<Rc<dyn Fn() -> String>>,
     min: Size,
+    drag: Option<Drag>,
+    export: Option<String>,
 }
 
 impl Canvas {
@@ -325,6 +392,21 @@ impl Canvas {
     /// date as the signals `f` reads change.
     pub fn description(mut self, f: impl Fn() -> String + 'static) -> Self {
         self.description = Some(Rc::new(f));
+        self
+    }
+
+    /// Dragging the canvas carries what `f` returns (nothing if `None`):
+    /// text, an image, a file, or a file written where it's dropped.
+    pub fn draggable(mut self, f: impl Fn() -> Option<crate::DragItem> + 'static) -> Self {
+        self.drag = Some(Rc::new(f));
+        self
+    }
+
+    /// The canvas as an image: a right-click menu with Copy Image and Save
+    /// Image…, and dragging it out gives `name`.png (to the Finder, Mail,
+    /// a document). Charts use this for exporting.
+    pub fn exportable(mut self, name: &str) -> Self {
+        self.export = Some(name.into());
         self
     }
 
@@ -353,7 +435,7 @@ impl Canvas {
 /// # let _ = meter;
 /// ```
 pub fn canvas(draw: impl Fn(&mut Painter) + 'static) -> Canvas {
-    Canvas { draw: Rc::new(draw), hover: None, click: None, description: None, min: Size { w: 200.0, h: 120.0 } }
+    Canvas { draw: Rc::new(draw), hover: None, click: None, description: None, min: Size { w: 200.0, h: 120.0 }, drag: None, export: None }
 }
 
 impl View for Canvas {
@@ -365,6 +447,9 @@ impl View for Canvas {
             size: Cell::new(Some(size)),
             hover: RefCell::new(self.hover.clone()),
             click: RefCell::new(self.click),
+            drag: RefCell::new(self.drag),
+            down: Cell::new(None),
+            opaque: Cell::new(false),
         });
         // SAFETY: NSView's designated initialiser.
         let view: Retained<CanvasView> = unsafe { msg_send![super(view), initWithFrame: NSRect::new(NSPoint::ZERO, NSSize::new(self.min.w, self.min.h))] };
@@ -400,6 +485,9 @@ impl View for Canvas {
                 v.setNeedsDisplay(true);
             });
         }));
+        if let Some(name) = self.export {
+            export(&mut node, &view, &name, cx.mtm);
+        }
         if let Some(describe) = self.description {
             let v = view.clone();
             node.own(Effect::new(move || {
@@ -409,6 +497,49 @@ impl View for Canvas {
         }
         node
     }
+}
+
+/// Copy Image / Save Image… and dragging out `name`.png.
+fn export(node: &mut Node, view: &Retained<CanvasView>, name: &str, mtm: objc2::MainThreadMarker) {
+    let file = format!("{name}.png");
+    if view.ivars().drag.borrow().is_none() {
+        let (v, file) = (objc2::rc::Weak::from_retained(view), file.clone());
+        *view.ivars().drag.borrow_mut() = Some(Rc::new(move || {
+            // Rendered now (main thread); written when the drop lands.
+            let view = v.load()?;
+            let png = std::sync::Arc::new(png(&view)?);
+            Some(crate::DragItem::promise(&file, move |path| std::fs::write(path, &*png)))
+        }));
+    }
+    let (copy, save) = (objc2::rc::Weak::from_retained(view), objc2::rc::Weak::from_retained(view));
+    let items = vec![
+        crate::chrome::menu_item("Copy Image", move || {
+            if let Some(png) = copy.load().and_then(|v| png(&v)) {
+                crate::Clipboard::general().set_png(&png);
+            }
+        }),
+        crate::chrome::menu_item("Save Image…", move || {
+            let Some(v) = save.load() else { return };
+            let (Some(png), Some(window)) = (png(&v), v.window()) else { return };
+            crate::dialogs::save_panel(&window, &file, None, move |path| {
+                if let Some(path) = path
+                    && let Err(e) = std::fs::write(&path, &png)
+                {
+                    eprintln!("appkit-ui: couldn't save {}: {e}", path.display());
+                }
+            });
+        }),
+    ];
+    let ns: Retained<NSView> = Retained::into_super(view.clone());
+    for t in <crate::platform::Native as crate::platform::Platform>::set_context_menu(mtm, &[ns], items) {
+        node.keep(t);
+    }
+}
+
+/// What dragging a canvas would carry now (for checks).
+pub(crate) fn drag_item(view: &NSView) -> Option<crate::DragItem> {
+    let drag = view.downcast_ref::<CanvasView>()?.ivars().drag.borrow().clone()?;
+    drag()
 }
 
 /// What a canvas drew last, one line per operation: `fill rect 10,20 30x40

@@ -271,7 +271,15 @@ fn show<T: Clone + PartialEq + 'static>(kind: Rc<DocumentType<T>>, content: T, p
         edited_signal.set_if_changed(differs);
     });
     let view = owner.with(|| (kind.view)(&doc));
-    let mut spec = Window::new(&untrack(|| doc.title())).size(kind.size.0, kind.size.1).view(view);
+    // Files of the app's kinds dropped on a document window open.
+    let extensions: Vec<&str> = kind.extensions.iter().map(String::as_str).collect();
+    let mut spec = Window::new(&untrack(|| doc.title())).size(kind.size.0, kind.size.1).view(view).on_drop_files(&extensions, |paths| {
+        for path in paths {
+            if let Err(e) = open_document(&path) {
+                eprintln!("appkit-ui: couldn't open {}: {e}", path.display());
+            }
+        }
+    });
     if let Some(toolbar) = &kind.toolbar {
         spec = spec.toolbar(owner.with(|| toolbar(&doc)));
     }

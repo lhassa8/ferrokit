@@ -61,6 +61,7 @@ mod resource;
 mod signal;
 mod store;
 mod syntax;
+mod transfer;
 mod undo;
 pub mod testing;
 mod view;
@@ -70,6 +71,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use objc2::runtime::ProtocolObject;
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSResponder, NSView, NSWindowStyleMask,
@@ -105,6 +107,7 @@ pub use appkit_host::text::{TextColor, TextModel, TextStyle};
 pub use syntax::Syntax;
 pub use popover::Edge;
 pub use canvas::{Canvas, Painter, canvas};
+pub use transfer::{Clipboard, DragItem, WriteFile};
 pub use charts::{Series, bar_chart, line_chart};
 pub use appkit_host::ViewId;
 /// The AppKit window type the window functions take and return.
@@ -131,9 +134,71 @@ pub struct Window {
     autosave: Option<String>,
     fixed: bool,
     responds: commands::Responds,
+    drops: Option<FileDrop>,
+}
+
+/// What a window takes when files are dropped on it.
+struct FileDrop {
+    /// Extensions it takes (lowercase; empty: any file).
+    extensions: Vec<String>,
+    action: Rc<dyn Fn(Vec<std::path::PathBuf>)>,
+}
+
+impl FileDrop {
+    fn accepted(&self, pasteboard: &objc2_app_kit::NSPasteboard) -> Vec<std::path::PathBuf> {
+        transfer::files_on(pasteboard)
+            .into_iter()
+            .filter(|p| {
+                self.extensions.is_empty()
+                    || p.extension().is_some_and(|e| self.extensions.contains(&e.to_string_lossy().to_lowercase()))
+            })
+            .collect()
+    }
+}
+
+thread_local! {
+    /// Window roots that take dropped files, and what they do with them.
+    static DROPS: RefCell<Vec<(usize, Rc<FileDrop>)>> = const { RefCell::new(Vec::new()) };
+}
+
+fn drop_operation(root: &RootView, info: &ProtocolObject<dyn objc2_app_kit::NSDraggingInfo>) -> objc2_app_kit::NSDragOperation {
+    use objc2_app_kit::NSDraggingInfo;
+    let takes = file_drop(root).is_some_and(|d| !d.accepted(&info.draggingPasteboard()).is_empty());
+    if takes { objc2_app_kit::NSDragOperation::Copy } else { objc2_app_kit::NSDragOperation::None }
+}
+
+fn perform_drop(root: &RootView, info: &ProtocolObject<dyn objc2_app_kit::NSDraggingInfo>) -> bool {
+    use objc2_app_kit::NSDraggingInfo;
+    let Some(drop) = file_drop(root) else { return false };
+    let paths = drop.accepted(&info.draggingPasteboard());
+    if paths.is_empty() {
+        return false;
+    }
+    // After AppKit's drag ends: the action may open windows.
+    let action = drop.action.clone();
+    let paths = RefCell::new(Some(paths));
+    later(move || {
+        if let Some(paths) = paths.borrow_mut().take() {
+            batch(|| action(paths));
+        }
+    });
+    true
+}
+
+fn file_drop(root: &RootView) -> Option<Rc<FileDrop>> {
+    DROPS.with_borrow(|d| d.iter().find(|(k, _)| *k == root as *const RootView as usize).map(|(_, f)| f.clone()))
 }
 
 impl Window {
+    /// Files dropped anywhere on the window (that its views don't take
+    /// themselves) go to `action`: those with one of `extensions`, or any
+    /// file if it's empty. The pointer shows a copy badge over the window
+    /// while they're dragged.
+    pub fn on_drop_files(mut self, extensions: &[&str], action: impl Fn(Vec<std::path::PathBuf>) + 'static) -> Self {
+        self.drops = Some(FileDrop { extensions: extensions.iter().map(|e| e.to_lowercase()).collect(), action: Rc::new(action) });
+        self
+    }
+
     /// A titled, resizable window of 800 × 600 points.
     pub fn new(title: &str) -> Self {
         Window {
@@ -145,6 +210,7 @@ impl Window {
             autosave: None,
             fixed: false,
             responds: commands::Responds::default(),
+            drops: None,
         }
     }
 
@@ -238,6 +304,11 @@ impl Window {
                 r.values.splice(0..0, self.responds.values);
             }
             ROOTS.with_borrow_mut(|r| r.push((root.clone(), node)));
+            if let Some(drop) = self.drops {
+                // SAFETY: AppKit's pasteboard type constant.
+                root.registerForDraggedTypes(&objc2_foundation::NSArray::from_slice(&[unsafe { objc2_app_kit::NSPasteboardTypeFileURL }]));
+                DROPS.with_borrow_mut(|d| d.push((Retained::as_ptr(&root) as usize, Rc::new(drop))));
+            }
             window.setContentView(Some(&root));
             relayout_all();
         }
@@ -281,6 +352,21 @@ define_class!(
         fn set_frame_size(&self, size: NSSize) {
             let _: () = unsafe { msg_send![super(self), setFrameSize: size] };
             relayout(self);
+        }
+
+        #[unsafe(method(draggingEntered:))]
+        fn dragging_entered(&self, info: &ProtocolObject<dyn objc2_app_kit::NSDraggingInfo>) -> objc2_app_kit::NSDragOperation {
+            drop_operation(self, info)
+        }
+
+        #[unsafe(method(draggingUpdated:))]
+        fn dragging_updated(&self, info: &ProtocolObject<dyn objc2_app_kit::NSDraggingInfo>) -> objc2_app_kit::NSDragOperation {
+            drop_operation(self, info)
+        }
+
+        #[unsafe(method(performDragOperation:))]
+        fn perform_drag(&self, info: &ProtocolObject<dyn objc2_app_kit::NSDraggingInfo>) -> objc2::runtime::Bool {
+            objc2::runtime::Bool::new(perform_drop(self, info))
         }
 
         // Escape in a popover's content closes it: the popover's window
@@ -349,6 +435,8 @@ pub(crate) fn root_meta(window: &NSWindow) -> Option<Rc<view::Meta>> {
 /// effects stop, native views go).
 pub(crate) fn drop_root(window: &NSWindow) {
     let Some(content) = window.contentView() else { return };
+    let key = Retained::as_ptr(&content) as usize;
+    DROPS.with_borrow_mut(|d| d.retain(|(k, _)| *k != key));
     let node = ROOTS.with_borrow_mut(|r| {
         let i = r.iter().position(|(v, _)| std::ptr::eq(&***v as *const NSView, &*content as *const NSView))?;
         Some(r.remove(i))

@@ -649,7 +649,85 @@ fn canvas_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         format!("click → {:?}; VoiceOver: {role:?} {label:?}", clicks.borrow()),
     );
     appkit_ui::close_window(&w);
-    later(move || view_checks(events.clone()));
+    later(move || clipboard_drop_checks(events.clone()));
+}
+
+/// The clipboard (a private pasteboard: the real one is never touched),
+/// drag items, and files dropped on a window.
+fn clipboard_drop_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use appkit_ui::testing::{canvas_drag, canvas_drawing, drop_on_view};
+    use appkit_ui::{Clipboard, DragItem, TextColor, canvas};
+    let dir = std::env::temp_dir().join(format!("appkit-ui-transfer-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let clip = Clipboard::private();
+    clip.set_text("héllo, 世界");
+    let back = clip.text();
+    let png: Vec<u8> = b"\x89PNG\r\n\x1a\nnot really".to_vec();
+    clip.set_png(&png);
+    let png_back = clip.png();
+    let (a, b) = (dir.join("a.txt"), dir.join("b.csv"));
+    std::fs::write(&a, "a").unwrap();
+    std::fs::write(&b, "b").unwrap();
+    clip.set_files(&[a.clone(), b.clone()]);
+    let files: Vec<_> = clip.files().iter().map(|p| p.canonicalize().unwrap()).collect();
+    clip.set(&DragItem::promise("made.txt", |path| std::fs::write(path, "made on demand")));
+    let promised = clip.files().first().and_then(|p| std::fs::read_to_string(p).ok());
+    check(
+        "clipboard-roundtrip",
+        back.as_deref() == Some("héllo, 世界") && png_back.as_deref() == Some(&png[..]) && files == [a.canonicalize().unwrap(), b.canonicalize().unwrap()] && promised.as_deref() == Some("made on demand"),
+        format!("text {back:?}; png back: {}; files {}; a promised file written and put on: {promised:?}", png_back.is_some(), files.len()),
+    );
+
+    // Files dropped on a window: only the extensions it takes; any file
+    // when it names none.
+    let got: Rc<RefCell<Vec<String>>> = Rc::default();
+    let g = got.clone();
+    let w = open(
+        Window::new("Drops")
+            .size(300.0, 160.0)
+            .on_drop_files(&["CSV"], move |paths| g.borrow_mut().extend(paths.iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned())))
+            .view(
+                canvas(|p| p.fill_rect(0.0, 0.0, p.width(), p.height(), TextColor::Separator))
+                    .draggable(|| Some(DragItem::Text("dragged text".into())))
+                    .min_size(100.0, 40.0),
+            ),
+    );
+    let any = open(Window::new("Any drop").size(200.0, 100.0).on_drop_files(&[], |_| {}).view(text("any")));
+    let content = w.contentView().unwrap();
+    let drop_files = |view: &NSView, paths: &[std::path::PathBuf]| {
+        let c = Clipboard::private();
+        c.set_files(paths);
+        drop_on_view(view, c.pasteboard())
+    };
+    let txt_refused = !drop_files(&content, std::slice::from_ref(&a));
+    let csv_taken = drop_files(&content, &[a.clone(), b.clone()]);
+    let any_taken = drop_files(&any.contentView().unwrap(), std::slice::from_ref(&a));
+    let mut views = Vec::new();
+    fn walk(v: &NSView, out: &mut Vec<Retained<NSView>>) {
+        for s in v.subviews().iter() {
+            out.push(s.clone());
+            walk(&s, out);
+        }
+    }
+    walk(&content, &mut views);
+    let dragged = views.iter().find(|v| canvas_drawing(v).is_some()).and_then(|v| canvas_drag(v));
+    let dragged_text = match dragged {
+        Some(DragItem::Text(t)) => Some(t),
+        _ => None,
+    };
+    let dir2 = dir.clone();
+    wait(100, move || {
+        let got = got.borrow().clone();
+        check(
+            "window-drop-files",
+            txt_refused && csv_taken && got == ["b.csv"] && any_taken && dragged_text.as_deref() == Some("dragged text"),
+            format!("a .txt refused {txt_refused}; a .txt and a .csv: taken {csv_taken}, the action got {got:?} (extensions match in any case); a window taking any file: {any_taken}; a canvas drags {dragged_text:?}"),
+        );
+        appkit_ui::close_window(&w);
+        appkit_ui::close_window(&any);
+        let _ = std::fs::remove_dir_all(&dir2);
+        later(move || view_checks(events.clone()));
+    });
 }
 
 fn settings_window() -> Window {

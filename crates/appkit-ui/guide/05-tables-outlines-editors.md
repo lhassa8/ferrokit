@@ -273,3 +273,35 @@ let prices = Signal::new(vec![(1.0, 10.0), (2.0, 12.5), (3.0, 11.0)]);
 let chart = line_chart(move || vec![Series::new("price", prices.get())]);
 # let _ = chart;
 ```
+
+## Clipboard, dragging out, dropping in
+
+`Clipboard::general()` is the system clipboard: `set_text`, `set_png`,
+`set_files`, and reading each back. Tables and text already handle ⌘C and
+⌘V themselves. `Clipboard::private()` is a pasteboard of the app's own,
+handy in tests.
+
+A canvas can be dragged out. `.draggable(|| Some(item))` gives a
+`DragItem`: text, a PNG, a file, or a file *promised* by name and written
+where it's dropped (the Finder, Mail, another app). The write runs off the
+main thread, and only if the drag lands. `.exportable("chart")` makes a
+canvas an image: right-click for Copy Image and Save Image…, or drag out
+`chart.png`.
+
+```rust,no_run
+use appkit_ui::*;
+
+let rows = Signal::new(vec![("a".to_string(), 1.0), ("b".to_string(), 2.0)]);
+let chip = canvas(|p| p.text(4.0, 3.0, "data.csv", 11.0, TextColor::Secondary, Align::Start))
+    .draggable(move || {
+        let csv: String = rows.get_untracked().iter().map(|(k, v)| format!("{k},{v}\n")).collect();
+        Some(DragItem::promise("data.csv", move |path| std::fs::write(path, &csv)))
+    })
+    .frame(80.0, 20.0);
+let chart = bar_chart(move || rows.get()).exportable("chart");
+# let _ = (chip, chart);
+```
+
+Files dropped on a window go to `Window::on_drop_files(extensions,
+action)` (any file if the list is empty). In a document app, files of the
+app's kinds dropped on a window open as documents, with no code.

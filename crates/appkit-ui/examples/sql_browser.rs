@@ -20,6 +20,8 @@ const RUN: Command = Command::new("run-query");
 const TOGGLE_SIDEBAR: Command = Command::new("toggle-sidebar");
 const TOGGLE_INSPECTOR: Command = Command::new("toggle-inspector");
 const TOGGLE_CHART: Command = Command::new("toggle-chart");
+const EXPORT_CSV: Command = Command::new("export-csv");
+const COPY_CSV: Command = Command::new("copy-csv");
 
 /// An open database: one connection, used by one query at a time from
 /// background threads.
@@ -396,6 +398,7 @@ fn database_view(doc: &Document<Db>) -> impl View + use<> {
                 hstack((
                     label(move || b.status()),
                     spacer(),
+                    csv_chip(b),
                     button("History", move || b.history_shown.set(true)).popover(&b.history_shown, move || history(b)),
                 ))
                 .padding(6.0),
@@ -417,6 +420,12 @@ fn database_view(doc: &Document<Db>) -> impl View + use<> {
     .on_command(TOGGLE_SIDEBAR, move || b.no_sidebar.update(|h| *h = !*h))
     .on_command(TOGGLE_INSPECTOR, move || b.no_inspector.update(|h| *h = !*h))
     .on_command(TOGGLE_CHART, move || b.no_chart.update(|h| *h = !*h))
+    .on_command_when(EXPORT_CSV, move || b.results.with(|r| r.is_some_and(|r| !r.names.is_empty())), move || export_csv(b))
+    .on_command_when(COPY_CSV, move || b.results.with(|r| r.is_some_and(|r| !r.names.is_empty())), move || {
+        if let Some(r) = b.results.get() {
+            Clipboard::general().set_text(&csv(&r));
+        }
+    })
     .focused_value("browser", b)
 }
 
@@ -459,17 +468,100 @@ fn chart(b: Browser) -> impl View {
                 line_chart(move || match data() {
                     Some(Plot::Line(name, points)) => vec![Series::new(&name, points)],
                     _ => Vec::new(),
-                }),
+                })
+                .exportable("chart"),
             ),
             2 => AnyView::new(
                 bar_chart(move || match data() {
                     Some(Plot::Bars(bars)) => bars,
                     _ => Vec::new(),
-                }),
+                })
+                .exportable("chart"),
             ),
             _ => AnyView::new(text("Charts need a first column and a number column after it").padding(12.0)),
         }
     })
+}
+
+/// A result as CSV (RFC 4180): a header line, then the rows; fields with
+/// commas, quotes or line breaks are quoted, NULL is empty.
+fn csv(r: &Results) -> String {
+    let mut out = String::new();
+    write_csv(r, &mut out).expect("writing to a string");
+    out
+}
+
+fn write_csv(r: &Results, out: &mut impl std::fmt::Write) -> std::fmt::Result {
+    let field = |out: &mut dyn std::fmt::Write, s: &str| {
+        if s.contains([',', '"', '\n', '\r']) { write!(out, "\"{}\"", s.replace('"', "\"\"")) } else { out.write_str(s) }
+    };
+    for (i, name) in r.names.iter().enumerate() {
+        if i > 0 {
+            out.write_char(',')?;
+        }
+        field(out, name)?;
+    }
+    out.write_char('\n')?;
+    for row in 0..r.rows as u32 {
+        for i in 0..r.names.len() {
+            if i > 0 {
+                out.write_char(',')?;
+            }
+            match r.cell(row, i) {
+                Cell::Null => {}
+                _ => field(out, &r.text(row, i))?,
+            }
+        }
+        out.write_char('\n')?;
+    }
+    Ok(())
+}
+
+/// Writes the result as CSV at `path` (off the main thread for a million rows).
+fn save_csv(r: &Results, path: &std::path::Path) -> std::io::Result<()> {
+    struct Out<W: std::io::Write>(W, Option<std::io::Error>);
+    impl<W: std::io::Write> std::fmt::Write for Out<W> {
+        fn write_str(&mut self, s: &str) -> std::fmt::Result {
+            self.0.write_all(s.as_bytes()).map_err(|e| {
+                self.1 = Some(e);
+                std::fmt::Error
+            })
+        }
+    }
+    let mut out = Out(std::io::BufWriter::new(std::fs::File::create(path)?), None);
+    if write_csv(r, &mut out).is_err() {
+        return Err(out.1.unwrap_or_else(|| std::io::Error::other("couldn't write the CSV")));
+    }
+    std::io::Write::flush(&mut out.0)
+}
+
+/// File ▸ Export Results as CSV…: a Save panel, then written in the background.
+fn export_csv(b: Browser) {
+    let (Some(r), Some(window)) = (b.results.get_untracked(), focused_window()) else { return };
+    save_panel(&window, "results.csv", None, move |path| {
+        let Some(path) = path else { return };
+        spawn(move || save_csv(&r, &path), |result| {
+            if let Err(e) = result {
+                eprintln!("Couldn't export: {e}");
+            }
+        });
+    });
+}
+
+/// A "results.csv" chip: drag it to the Finder (or Mail) for the results as
+/// a CSV file, written where it's dropped.
+fn csv_chip(b: Browser) -> impl View {
+    canvas(|p| {
+        p.fill_rounded_rect(0.0, 0.0, p.width(), p.height(), 5.0, TextColor::Separator);
+        p.text(p.width() / 2.0, 3.0, "results.csv", 11.0, TextColor::Secondary, Align::Center);
+    })
+    .draggable(move || {
+        let r = b.results.get_untracked()?;
+        (!r.names.is_empty()).then(|| DragItem::promise("results.csv", move |path| save_csv(&r, path)))
+    })
+    .description(|| "results.csv: drag out the results as a CSV file".into())
+    .min_size(84.0, 20.0)
+    .frame(84.0, 20.0)
 }
 
 /// The selected row, one field per line.
@@ -540,7 +632,8 @@ fn main() {
     let file = std::env::args().nth(1).map(std::path::PathBuf::from);
     App::new("SQL Browser")
         .documents(database())
-        .menu("Query", vec![menu_command("Run Query", RUN).key("r")])
+        .menu("File", vec![menu_separator(), menu_command("Export Results as CSV…", EXPORT_CSV).key("E")])
+        .menu("Query", vec![menu_command("Run Query", RUN).key("r"), menu_command("Copy Results as CSV", COPY_CSV)])
         .menu(
             "View",
             vec![
@@ -656,7 +749,7 @@ mod self_checks {
     use std::path::PathBuf;
     use std::time::Instant;
 
-    use appkit_ui::testing::{ax_audit, canvas_drawing, capture_window, footprint_mb, menu_key, snapshot_windows};
+    use appkit_ui::testing::{ax_audit, canvas_drag, canvas_drawing, canvas_png, capture_window, drop_on_view, footprint_mb, fulfil, menu_key, snapshot_windows};
     use appkit_ui::*;
     use objc2::rc::Retained;
     use objc2_app_kit::{NSAccessibility, NSEventModifierFlags, NSOutlineView, NSSplitView, NSTableView, NSView};
@@ -1140,7 +1233,108 @@ mod self_checks {
                 points > 100 && (points as f64) <= width * 4.0 + 8.0 && label.starts_with("Line chart of total, 1000000 points"),
                 format!("1,000,000 rows drawn as a {points}-point line ({width:.0} pt wide) {ms:.0} ms after Run; VoiceOver: {label:?}"),
             );
-            perform_in(Some(&w), super::TOGGLE_CHART);
+            transfer_checks(w, b, dir);
+        });
+    }
+
+    fn png_size(png: &[u8]) -> Option<(u32, u32)> {
+        (png.len() > 24 && png.starts_with(b"\x89PNG")).then(|| (u32::from_be_bytes(png[16..20].try_into().unwrap()), u32::from_be_bytes(png[20..24].try_into().unwrap())))
+    }
+
+    /// Exporting: the chart as an image (copied, dragged out as a file),
+    /// the results as CSV (quoting, a million rows, the dragged chip), and
+    /// a database dropped on the window opening.
+    fn transfer_checks(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
+        // The line chart of a million rows, as a PNG and as a dragged file.
+        let chart = chart_view(&w).unwrap();
+        let png = canvas_png(&chart).unwrap_or_default();
+        let size = png_size(&png);
+        let dragged = canvas_drag(&chart).map(|item| fulfil(&item, &dir));
+        let file = dragged.as_ref().and_then(|r| r.as_ref().ok()).cloned();
+        let on_disk = file.as_ref().and_then(|f| std::fs::read(f).ok()).unwrap_or_default();
+        let clip = Clipboard::private();
+        clip.set_png(&png);
+        check(
+            "chart-export",
+            size.is_some_and(|(pw, ph)| pw as f64 >= chart.frame().size.width && ph as f64 >= chart.frame().size.height)
+                && file.as_ref().is_some_and(|f| f.ends_with("chart.png"))
+                && on_disk == png
+                && clip.png().as_deref() == Some(&png[..]),
+            format!("PNG {size:?} ({} KB) for a {:.0}×{:.0} chart; dragged out as {:?}; on a pasteboard and back: {}", png.len() / 1024, chart.frame().size.width, chart.frame().size.height, file.as_ref().map(|f| f.file_name().unwrap().to_owned()), clip.png().is_some()),
+        );
+        perform_in(Some(&w), super::TOGGLE_CHART);
+        // CSV quoting.
+        run_query(&w, b, "SELECT 1 AS n, 'x,y' AS comma, 'say \"hi\"' AS quote, NULL AS empty, 'two\nlines' AS multi");
+        let w2 = w.clone();
+        when(move || idle(b)() && titles(&results(&w2)).len() == 5, 5000, move |_| {
+            let r = untrack(|| b.results.get()).unwrap();
+            let text = super::csv(&r);
+            check(
+                "csv-quoting",
+                text == "n,comma,quote,empty,multi\n1,\"x,y\",\"say \"\"hi\"\"\",,\"two\nlines\"\n",
+                format!("{text:?}"),
+            );
+            run_query(&w, b, "SELECT * FROM orders");
+            let w3 = w.clone();
+            when(move || idle(b)() && results(&w3).numberOfRows() == 1_000_000, 20_000, move |_| {
+                let r = untrack(|| b.results.get()).unwrap();
+                let path = dir.join("orders.csv");
+                let t = Instant::now();
+                let saved = super::save_csv(&r, &path);
+                let ms = t.elapsed().as_secs_f64() * 1e3;
+                let text = std::fs::read_to_string(&path).unwrap_or_default();
+                let lines = text.lines().count();
+                check(
+                    "csv-export-million",
+                    saved.is_ok() && lines == 1_000_001 && text.starts_with("id,customer_id,product_id,quantity,total,ordered_at\n1,"),
+                    format!("1,000,000 rows written in {ms:.0} ms ({} MB, {lines} lines)", text.len() / 1_000_000),
+                );
+                // The chip: a promised results.csv with the same content.
+                let chip = all(&w).into_iter().find(|v| canvas_drag(v).is_some_and(|d| matches!(&d, DragItem::Promise { name, .. } if name == "results.csv")));
+                let promised = chip.as_ref().and_then(|c| canvas_drag(c)).map(|item| {
+                    let sub = dir.join("drop");
+                    let _ = std::fs::create_dir_all(&sub);
+                    fulfil(&item, &sub)
+                });
+                let same = promised.as_ref().and_then(|r| r.as_ref().ok()).and_then(|p| std::fs::read_to_string(p).ok()).is_some_and(|t| t == text);
+                check("csv-drag-chip", chip.is_some() && same, format!("the chip drags out results.csv, written on drop with the same {} MB", text.len() / 1_000_000));
+                drop_checks(w, b, dir);
+            });
+        });
+    }
+
+    /// Files dropped on a document window: a database opens, other files
+    /// aren't taken.
+    fn drop_checks(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
+        let other = dir.join("other.sqlite");
+        {
+            let conn = rusqlite::Connection::open(&other).unwrap();
+            conn.execute_batch("CREATE TABLE things (id INTEGER PRIMARY KEY, name TEXT); INSERT INTO things (name) VALUES ('one');").unwrap();
+        }
+        let text_file = dir.join("readme.txt");
+        std::fs::write(&text_file, "hello").unwrap();
+        let content = w.contentView().unwrap();
+        let refused = {
+            let clip = Clipboard::private();
+            clip.set_files(&[text_file]);
+            !drop_on_view(&content, clip.pasteboard())
+        };
+        let taken = {
+            let clip = Clipboard::private();
+            clip.set_files(std::slice::from_ref(&other));
+            drop_on_view(&content, clip.pasteboard())
+        };
+        when(|| windows().iter().any(|x| x.title().to_string() == "other.sqlite"), 3000, move |ms| {
+            let opened = windows().into_iter().find(|x| x.title().to_string() == "other.sqlite");
+            check(
+                "drop-opens-database",
+                refused && taken && opened.is_some(),
+                format!("a .txt refused: {refused}; other.sqlite taken: {taken} and opened in its own window after {ms:.0} ms: {}", opened.is_some()),
+            );
+            if let Some(o) = opened {
+                close_window(&o);
+            }
+            let _ = b;
             scratch(w, dir);
         });
     }

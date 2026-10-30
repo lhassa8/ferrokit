@@ -155,6 +155,11 @@ impl<T: Clone + 'static> Resource<T> {
         self.value.get()
     }
 
+    /// The latest value, without subscribing (for event handlers).
+    pub fn get_untracked(&self) -> Option<T> {
+        self.value.get_untracked()
+    }
+
     /// Reads the latest value through `f` without copying it.
     pub fn with<R>(&self, f: impl FnOnce(Option<&T>) -> R) -> R {
         self.value.with(|v| f(v.as_ref()))
