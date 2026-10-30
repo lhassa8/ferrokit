@@ -358,7 +358,7 @@ impl<T: Identifiable + Clone + 'static> Collection<T> {
 
     /// Two-way selection by item id (one item; see [`multiple`](Self::multiple)).
     pub fn selection(mut self, selected: &Signal<Vec<T::Id>>) -> Self {
-        self.selection = Some(selected.clone());
+        self.selection = Some(*selected);
         self
     }
 
@@ -411,7 +411,7 @@ impl<T: Identifiable + Clone + 'static> View for Collection<T> {
         // The items (typed) and their ids, index-aligned with the entries.
         let values: Rc<RefCell<Vec<T>>> = Rc::default();
         if let Some(sel) = &self.selection {
-            let (sel, values) = (sel.clone(), values.clone());
+            let (sel, values) = (*sel, values.clone());
             state.borrow_mut().on_select = Some(Box::new(move |rows| {
                 let v = values.borrow();
                 sel.set(rows.iter().filter_map(|&i| v.get(i).map(Identifiable::id)).collect());
@@ -435,7 +435,7 @@ impl<T: Identifiable + Clone + 'static> View for Collection<T> {
         // Selects the items whose ids the signal holds (quietly): when the
         // signal changes, and after a reload (which clears the selection).
         let restore: Rc<dyn Fn()> = {
-            let (st, values, cv, sel) = (state.clone(), values.clone(), cv.clone(), self.selection.clone());
+            let (st, values, cv, sel) = (state.clone(), values.clone(), cv.clone(), self.selection);
             Rc::new(move || {
                 let Some(sel) = &sel else { return };
                 let want = sel.get();

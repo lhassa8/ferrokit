@@ -1,6 +1,6 @@
 [package]
 name = "appkit-host"
-version.workspace = true
+version = "0.2.2"
 readme = "README.md"
 description = "Host-agnostic layer for placing real AppKit views inside a GPU-rendered window"
 edition.workspace = true
@@ -17,7 +17,7 @@ targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
 [dependencies]
 raw-window-handle = "0.6"
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSArray", "NSAttributedString", "NSDictionary", "NSGeometry", "NSIndexSet", "NSKeyValueObserving", "NSRange", "NSSortDescriptor", "NSUndoManager", "NSNotification", "NSObject", "NSOperation", "NSString", "NSURL"] }
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-core-foundation", "objc2-quartz-core", "NSAppearance", "NSApplication", "NSBitmapImageRep", "NSButton", "NSCell", "NSColor", "NSColorSpace", "NSControl", "NSEvent", "NSGraphics", "NSGraphicsContext", "NSImageRep", "NSMenu", "NSMenuItem", "NSParagraphStyle", "NSResponder", "NSScrollView", "NSTableColumn", "NSTableView", "NSFont", "NSText", "NSTextContainer", "NSTextField", "NSTextInputClient", "NSTextStorage", "NSTextView", "NSUserInterfaceItemIdentification", "NSView", "NSWindow", "NSPasteboard", "NSPasteboardItem", "NSDragging", "NSProgressIndicator", "NSTableCellView", "NSImageView", "NSImage", "NSWorkspace", "NSAttributedString", "NSStringDrawing", "NSControl"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "NSArray", "NSAttributedString", "NSDictionary", "NSGeometry", "NSIndexSet", "NSKeyValueObserving", "NSRange", "NSSortDescriptor", "NSUndoManager", "NSNotification", "NSObject", "NSOperation", "NSString", "NSURL", "NSValue"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-core-foundation", "objc2-quartz-core", "NSAppearance", "NSApplication", "NSBitmapImageRep", "NSButton", "NSCell", "NSColor", "NSColorSpace", "NSControl", "NSEvent", "NSGraphics", "NSGraphicsContext", "NSImageRep", "NSMenu", "NSMenuItem", "NSParagraphStyle", "NSResponder", "NSScrollView", "NSTableColumn", "NSTableView", "NSFont", "NSText", "NSTextContainer", "NSTextField", "NSTextInputClient", "NSTextStorage", "NSTextView", "NSUserInterfaceItemIdentification", "NSView", "NSWindow", "NSPasteboard", "NSPasteboardItem", "NSDragging", "NSProgressIndicator", "NSTableCellView", "NSImageView", "NSImage", "NSWorkspace", "NSAttributedString", "NSStringDrawing", "NSControl", "NSFontManager"] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "CFRunLoop", "CFDate"] }
 block2 = "0.6"

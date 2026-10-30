@@ -423,3 +423,33 @@ pub fn heap_in_use_mb() -> f64 {
     unsafe { malloc_zone_statistics(std::ptr::null_mut(), &mut stats) };
     stats.size_in_use as f64 / (1024.0 * 1024.0)
 }
+
+/// What a [`canvas`](crate::canvas) (or chart) drew last, one line per
+/// operation (`fill rect 10,20 30x40 Blue`, `text "Jan" 11pt`); `None` if
+/// `view` isn't one.
+pub fn canvas_drawing(view: &objc2_app_kit::NSView) -> Option<Vec<String>> {
+    crate::canvas::describe(view)
+}
+
+/// A canvas as a PNG, on the content background: what its Copy Image puts
+/// on the clipboard. `None` if `view` isn't a canvas.
+pub fn canvas_png(view: &objc2_app_kit::NSView) -> Option<Vec<u8>> {
+    crate::canvas::png(view)
+}
+
+/// What dragging a canvas would carry now (its `draggable`, or the image
+/// of an `exportable` one), without a drag session.
+pub fn canvas_drag(view: &objc2_app_kit::NSView) -> Option<crate::DragItem> {
+    crate::canvas::drag_item(view)
+}
+
+/// Writes a promised file into `dir` as a drop there would; the path.
+pub fn fulfil(item: &crate::DragItem, dir: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+    crate::transfer::fulfil(item, dir)
+}
+
+/// Drops whatever is on `pasteboard` onto `view` as AppKit does at the end
+/// of a drag (entered, then perform). Whether it was taken.
+pub fn drop_on_view(view: &objc2_app_kit::NSView, pasteboard: &objc2_app_kit::NSPasteboard) -> bool {
+    appkit_host::testing::drop_on_view(view, pasteboard)
+}

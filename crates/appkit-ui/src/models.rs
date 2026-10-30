@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 
 use appkit_host::table::{ColumnState, Sort, TableEvent, TableModel};
-use appkit_host::text::{TextEvent, TextModel};
+use appkit_host::text::{TextEvent, TextModel, TextStyle};
 use objc2::rc::Retained;
 
 use crate::signal::{Effect, Signal, batch, untrack};
@@ -226,7 +226,10 @@ pub struct TextEditor {
     on_selection: Callback<std::ops::Range<usize>>,
     on_composition: Callback<Option<String>>,
     shared_undo: bool,
+    highlight: Option<Rc<Highlight>>,
 }
+
+type Highlight = dyn Fn(&str) -> Vec<(std::ops::Range<usize>, TextStyle)>;
 
 impl TextEditor {
     /// Records edits in the window's undo history, with its text fields and
@@ -242,7 +245,7 @@ impl TextEditor {
     /// method is composing); setting it replaces the editor's text (clearing
     /// undo, like [`TextModel::set_text`]) unless it already matches.
     pub fn bind(mut self, text: &Signal<String>) -> Self {
-        self.bound = Some(text.clone());
+        self.bound = Some(*text);
         self
     }
 
@@ -263,6 +266,20 @@ impl TextEditor {
         self.on_composition = Some(Box::new(f));
         self
     }
+
+    /// Styles the text: `f` gets the text and returns runs (UTF-8 byte
+    /// ranges) with their [`TextStyle`]s. It runs after every edit, before
+    /// it's drawn, and again when signals it reads change (a search term to
+    /// mark, say). See [`TextModel::set_highlighter`].
+    pub fn highlight(mut self, f: impl Fn(&str) -> Vec<(std::ops::Range<usize>, TextStyle)> + 'static) -> Self {
+        self.highlight = Some(Rc::new(f));
+        self
+    }
+
+    /// Syntax highlighting with `syntax` (e.g. [`Syntax::sql`](crate::Syntax::sql)).
+    pub fn syntax(self, syntax: crate::Syntax) -> Self {
+        self.highlight(move |text| syntax.highlight(text))
+    }
 }
 
 impl View for TextEditor {
@@ -275,9 +292,19 @@ impl View for TextEditor {
         if self.shared_undo {
             self.model.share_undo(crate::undo::manager_for(&cx.container).as_deref());
         }
+        if let Some(f) = self.highlight.clone() {
+            let g = f.clone();
+            self.model.set_highlighter(Some(move |text: &str| g(text)));
+            // Restyle when signals the highlighter reads change.
+            let model = self.model.clone();
+            node.own(Effect::new(move || {
+                let _ = f(&untrack(|| model.text()));
+                untrack(|| model.restyle());
+            }));
+        }
         if let Some(bound) = &self.bound {
             // Signal → editor (skipped when equal: the editor is the source).
-            let (bound, model) = (bound.clone(), self.model.clone());
+            let (bound, model) = (*bound, self.model.clone());
             node.own(Effect::new(move || {
                 let want = bound.get();
                 untrack(|| {
@@ -312,5 +339,5 @@ impl View for TextEditor {
 
 /// A native text editor showing `model` (see [`TextEditor`]).
 pub fn text_editor(model: &TextModel) -> TextEditor {
-    TextEditor { model: model.clone(), bound: None, on_change: None, on_selection: None, on_composition: None, shared_undo: false }
+    TextEditor { model: model.clone(), bound: None, on_change: None, on_selection: None, on_composition: None, shared_undo: false, highlight: None }
 }

@@ -73,10 +73,15 @@ pub(crate) trait Platform {
     fn visible_size(scroll: &Self::Scroll) -> Size;
     /// Places a split view and re-tiles its panes.
     fn place_split(split: &Self::Split, rect: Rect);
-    /// Moves a split view's first divider.
-    fn set_divider(split: &Self::Split, position: f64);
+    /// Moves a split view's divider `index`.
+    fn set_divider(split: &Self::Split, index: usize, position: f64);
+    /// Whether a view is hidden (a collapsed split pane).
+    fn is_hidden(view: &Self::View) -> bool;
     /// A view's own size (a split pane, after tiling).
     fn size(view: &Self::View) -> Size;
+
+    /// A key identifying `view` while it exists (for finding the focus).
+    fn view_key(view: &Self::View) -> usize;
 
     /// Adds `view` to `container`.
     fn add_subview(container: &Self::View, view: &Self::View);
@@ -159,13 +164,21 @@ impl Platform for AppKit {
         }
     }
 
-    fn set_divider(split: &NSSplitView, position: f64) {
-        split.setPosition_ofDividerAtIndex(position, 0);
+    fn set_divider(split: &NSSplitView, index: usize, position: f64) {
+        split.setPosition_ofDividerAtIndex(position, index as isize);
+    }
+
+    fn is_hidden(view: &NSView) -> bool {
+        view.isHidden()
     }
 
     fn size(view: &NSView) -> Size {
         let b = view.bounds().size;
         Size { w: b.width, h: b.height }
+    }
+
+    fn view_key(view: &NSView) -> usize {
+        view as *const NSView as usize
     }
 
     fn add_subview(container: &NSView, view: &NSView) {

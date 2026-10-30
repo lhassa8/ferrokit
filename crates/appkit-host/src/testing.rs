@@ -187,7 +187,7 @@ use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{DefinedClass, MainThreadOnly, Message, define_class, msg_send};
 use objc2_app_kit::{
     NSDragOperation, NSDraggingInfo, NSPasteboard, NSPasteboardItem, NSPasteboardTypeFileURL, NSPasteboardTypeString,
-    NSPasteboardWriting, NSTableView, NSTableViewDropOperation,
+    NSPasteboardWriting, NSTableView, NSTableViewDropOperation, NSView,
 };
 use objc2_foundation::{NSArray, NSInteger, NSString, NSURL};
 
@@ -255,6 +255,25 @@ pub fn drop_on_table(table: &NSTableView, pasteboard: &NSPasteboard, row: usize,
             return false;
         }
         msg_send![&*ds, tableView: table, acceptDrop: info, row: row, dropOperation: NSTableViewDropOperation::Above]
+    }
+}
+
+/// Drops whatever is on `pasteboard` onto `view` (a drag destination) as
+/// AppKit does: `draggingEntered:`, then `performDragOperation:` if it
+/// offered an operation. Whether the drop was taken.
+pub fn drop_on_view(view: &NSView, pasteboard: &NSPasteboard) -> bool {
+    let drag = TestDrag::alloc(mtm()).set_ivars(DragIvars { pasteboard: pasteboard.retain(), source: None });
+    // SAFETY: NSObject's designated initialiser.
+    let drag: Retained<TestDrag> = unsafe { msg_send![super(drag), init] };
+    let info: &ProtocolObject<dyn NSDraggingInfo> = ProtocolObject::from_ref(&*drag);
+    // SAFETY: the view's NSDraggingDestination methods, with a drag
+    // stand-in that answers what they read.
+    unsafe {
+        let op: NSDragOperation = msg_send![view, draggingEntered: info];
+        if op == NSDragOperation::None {
+            return false;
+        }
+        msg_send![view, performDragOperation: info]
     }
 }
 

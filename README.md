@@ -7,17 +7,32 @@ Real AppKit controls for Rust apps on macOS. Not GPU-drawn imitations and not we
 | [`iced-appkit`](crates/iced-appkit) | Real AppKit views inside [Iced](https://iced.rs) 0.14 windows: a table that shows a million rows at 60 fps, and a plain-text editor with native text services. |
 | [`appkit-host`](crates/appkit-host) | The framework-agnostic layer underneath: places AppKit views inside a GPU-rendered window and keeps layout, clipping, focus, shortcuts and appearance in step. |
 | [`appkit-ui`](crates/appkit-ui) | A standalone native framework on `appkit-host`: whole Mac apps in Rust, every view a real AppKit view, updated in place by signals. See its [guide](crates/appkit-ui/guide/README.md). |
+| [`cargo-ferrokit`](crates/cargo-ferrokit) | `cargo ferrokit new`, `run`, `check`, `bundle` and `notarize` for `appkit-ui` apps. |
 
-Status: `iced-appkit` and `appkit-host` **0.2.1**, `appkit-ui` **0.2.0** (alpha). macOS 15 or later.
+Status: `appkit-ui` **0.3.0** (alpha), `appkit-host` **0.2.2**, `iced-appkit` **0.2.1**, `cargo-ferrokit` **0.1.0**. macOS 15 or later.
 
 ## Try it
 
+A SQLite browser built with `appkit-ui` (it opens a generated sample with a million orders):
+
 ```bash
-cargo run --release -p iced-appkit --example csv_browser
+cargo run --release -p appkit-ui --example sql_browser
+```
+
+Start an app of your own:
+
+```bash
+cargo install cargo-ferrokit
 ```
 
 ```bash
-cargo run --release -p appkit-ui --example native_csv
+cargo ferrokit new my-app && cd my-app && cargo ferrokit run
+```
+
+Iced with real AppKit views:
+
+```bash
+cargo run --release -p iced-appkit --example csv_browser
 ```
 
 `scripts/bundle-example.sh <example>` wraps an example in an `.app` bundle. The `checklist` example is the regression suite: every behaviour is on its Tests menu, and `CHECK=all` runs the unattended checks.

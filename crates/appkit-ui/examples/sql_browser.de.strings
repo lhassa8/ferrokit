@@ -1,0 +1,35 @@
+/* The SQL browser in German. Keys are the English text; the framework's
+   own strings (File menu, alerts) come from appkit-ui. Plurals: "{n} row"
+   is the one form, "{n} rows" the other (or "{n} rows#one", "#few"…). */
+
+"Running…" = "Läuft …";
+"Error: {message}" = "Fehler: {message}";
+"Done" = "Fertig";
+"{n} row" = "{n} Zeile";
+"{n} rows" = "{n} Zeilen";
+"{n} row changed" = "{n} Zeile geändert";
+"{n} rows changed" = "{n} Zeilen geändert";
+"query {query} ms · table {table} ms" = "Abfrage {query} ms · Tabelle {table} ms";
+"Tables" = "Tabellen";
+"Views" = "Ansichten";
+"Indexes" = "Indizes";
+"History" = "Verlauf";
+"No queries yet" = "Noch keine Abfragen";
+"No row selected" = "Keine Zeile ausgewählt";
+"Row {n}" = "Zeile {n}";
+"Charts need a first column and a number column after it" = "Ein Diagramm braucht eine erste Spalte und danach eine Zahlenspalte";
+"results.csv: drag out the results as a CSV file" = "results.csv: Die Ergebnisse als CSV-Datei herausziehen";
+"Run" = "Ausführen";
+"Chart" = "Diagramm";
+"Inspector" = "Inspektor";
+"Query" = "Abfrage";
+"Run Query" = "Abfrage ausführen";
+"Copy Results as CSV" = "Ergebnisse als CSV kopieren";
+"Export Results as CSV…" = "Ergebnisse als CSV exportieren …";
+"View" = "Darstellung";
+"Show Sidebar" = "Seitenleiste einblenden";
+"Hide Sidebar" = "Seitenleiste ausblenden";
+"Show Inspector" = "Inspektor einblenden";
+"Hide Inspector" = "Inspektor ausblenden";
+"Show Chart" = "Diagramm einblenden";
+"Hide Chart" = "Diagramm ausblenden";

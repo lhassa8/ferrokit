@@ -15,7 +15,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::{Rc, Weak};
 
 use crate::platform::{MainThread, Native, NativeObject, NativeScroll, NativeSplit, NativeView, Platform};
-use crate::signal::{Effect, untrack};
+use crate::signal::{Effect, Owner, Signal, untrack};
 
 /// Something that can be shown. Build-once: [`View::build`] creates native
 /// views and effects; it is never called again for the same place.
@@ -96,9 +96,15 @@ pub(crate) struct Meta {
     pub(crate) rect: Cell<Option<[f64; 4]>>,
     /// Something in this subtree changed since the last layout.
     pub(crate) dirty: Cell<bool>,
+    /// Commands this node handles and values it publishes to the focus.
+    pub(crate) responds: RefCell<crate::commands::Responds>,
 }
 
 impl Meta {
+    pub(crate) fn parent(&self) -> Option<Rc<Meta>> {
+        self.parent.borrow().upgrade()
+    }
+
     pub(crate) fn set_parent(&self, parent: &Rc<Meta>) {
         *self.parent.borrow_mut() = Rc::downgrade(parent);
     }
@@ -183,6 +189,10 @@ pub(crate) enum Kind {
         panes: Vec<(NativeView, Node)>,
         /// Initial divider position, applied at the first layout.
         position: Cell<Option<f64>>,
+        /// The last pane's initial size, applied at the first layout.
+        trailing: Cell<Option<f64>>,
+        /// Panes top to bottom (dividers across) instead of side by side.
+        stacked: bool,
     },
 }
 
@@ -198,6 +208,8 @@ pub struct Node {
     effects: Vec<Effect>,
     keep: Vec<NativeObject>,
     held: Vec<Rc<dyn std::any::Any>>,
+    /// Frees the signals made while building this subtree (dropped last).
+    owner: Option<Owner>,
 }
 
 impl Node {
@@ -215,6 +227,7 @@ impl Node {
             effects: Vec::new(),
             keep: Vec::new(),
             held: Vec::new(),
+            owner: None,
         };
         for c in node.children_static() {
             c.meta.set_parent(&node.meta);
@@ -237,9 +250,20 @@ impl Node {
         Native::add_subview(&cx.container, &view);
         let content = Rc::new(Cell::new(None));
         invalidate_layout();
+        let key = Native::view_key(&view);
         let node = Node::new(Kind::Leaf(Leaf { view, flex, min, content: content.clone(), cross_only: false }));
+        crate::commands::register_leaf(key, &node.meta);
         let handle = LeafHandle { content, meta: node.meta.clone() };
         (node, handle)
+    }
+
+    /// Builds `view` with a new owner, which the node keeps: signals made
+    /// while building (and by its effects) are freed with the node.
+    pub(crate) fn build_owned(view: AnyView, cx: &mut Cx) -> Node {
+        let owner = Owner::new();
+        let mut node = owner.with(|| view.build_node(cx));
+        node.owner = Some(owner);
+        node
     }
 
     pub(crate) fn own(&mut self, effect: Effect) {
@@ -281,6 +305,7 @@ impl Drop for Node {
             Native::remove(&Native::split_as_view(split));
         }
         if let Kind::Leaf(l) = &self.kind {
+            crate::commands::unregister_leaf(Native::view_key(&l.view));
             Native::remove(&l.view);
             if let Some(parent) = self.meta.parent.borrow().upgrade() {
                 parent.mark();
@@ -292,6 +317,23 @@ impl Drop for Node {
 
 /// Modifiers every view has.
 pub trait ViewExt: View + Sized {
+    /// Handles `command` while the focus is in this view (see
+    /// [`Command`](crate::Command)).
+    fn on_command(self, command: crate::Command, action: impl Fn() + 'static) -> Modified<Self> {
+        Modified::new(self).on_command(command, action)
+    }
+
+    /// Handles `command`, enabled only while `enabled` returns true.
+    fn on_command_when(self, command: crate::Command, enabled: impl Fn() -> bool + 'static, action: impl Fn() + 'static) -> Modified<Self> {
+        Modified::new(self).on_command_when(command, enabled, action)
+    }
+
+    /// Publishes `value` under `name` to the focus (see
+    /// [`focused_value`](crate::focused_value)).
+    fn focused_value<T: Clone + 'static>(self, name: &'static str, value: T) -> Modified<Self> {
+        Modified::new(self).focused_value(name, value)
+    }
+
     /// Inset on all sides, in points.
     fn padding(self, points: f64) -> Modified<Self> {
         Modified::new(self).padding(points)
@@ -322,6 +364,12 @@ pub trait ViewExt: View + Sized {
         Modified::new(self).fill_height()
     }
 
+    /// Shows `content` in a popover pointing at this view while `shown` is
+    /// true (see [`Modified::popover`]).
+    fn popover<P: View>(self, shown: &Signal<bool>, content: impl Fn() -> P + 'static) -> Modified<Self> {
+        Modified::new(self).popover(shown, content)
+    }
+
     /// A right-click menu on this view's native views.
     fn context_menu(self, items: Vec<crate::chrome::MenuItem>) -> Modified<Self> {
         Modified::new(self).context_menu(items)
@@ -346,11 +394,49 @@ pub struct Modified<V> {
     fill: (bool, bool),
     menu: Option<Vec<crate::chrome::MenuItem>>,
     label: Option<String>,
+    responds: crate::commands::Responds,
+    popover: Option<crate::popover::PopoverSpec>,
 }
 
 impl<V: View> Modified<V> {
     fn new(view: V) -> Self {
-        Modified { view, padding: None, width: None, height: None, fill: (false, false), menu: None, label: None }
+        Modified { view, padding: None, width: None, height: None, fill: (false, false), menu: None, label: None, responds: Default::default(), popover: None }
+    }
+
+    /// Shows `content` in a popover pointing at this view while `shown` is
+    /// true; closing it (Escape, a click outside) sets `shown` to false.
+    /// The content is built each time it opens and freed when it closes.
+    pub fn popover<P: View>(self, shown: &Signal<bool>, content: impl Fn() -> P + 'static) -> Self {
+        self.popover_on(crate::Edge::Below, shown, content)
+    }
+
+    /// [`popover`](Self::popover) on a given side of the view.
+    pub fn popover_on<P: View>(mut self, edge: crate::Edge, shown: &Signal<bool>, content: impl Fn() -> P + 'static) -> Self {
+        self.popover = Some(crate::popover::PopoverSpec { shown: *shown, content: Rc::new(move || AnyView::new(content())), edge });
+        self
+    }
+
+    /// Handles `command` while the focus is in this view (or nothing nearer
+    /// the focus handles it). See [`Command`](crate::Command).
+    pub fn on_command(mut self, command: crate::Command, action: impl Fn() + 'static) -> Self {
+        self.responds.commands.push((command, crate::commands::Handler::new(action, None)));
+        self
+    }
+
+    /// Handles `command` like [`on_command`](Self::on_command), enabled only
+    /// while `enabled` returns true (a disabled handler still answers: the
+    /// menu item is greyed out, and handlers further out aren't asked).
+    pub fn on_command_when(mut self, command: crate::Command, enabled: impl Fn() -> bool + 'static, action: impl Fn() + 'static) -> Self {
+        self.responds.commands.push((command, crate::commands::Handler::new(action, Some(Box::new(enabled)))));
+        self
+    }
+
+    /// Publishes `value` under `name` while the focus is in this view, for
+    /// [`focused_value`](crate::focused_value) (a signal, typically: the
+    /// list's selection, the editor's document).
+    pub fn focused_value<T: Clone + 'static>(mut self, name: &'static str, value: T) -> Self {
+        self.responds.values.push((name, Rc::new(value)));
+        self
     }
 
     /// The name VoiceOver reads for this view's native views.
@@ -416,6 +502,19 @@ impl<V: View> View for Modified<V> {
             node.leaf_views(&mut leaves);
             for v in leaves {
                 Native::set_accessibility_label(&v, label);
+            }
+        }
+        {
+            let mut r = node.meta.responds.borrow_mut();
+            r.commands.extend(self.responds.commands);
+            r.values.extend(self.responds.values);
+        }
+        if let Some(spec) = self.popover {
+            // It points at the view's first native view (a button, a field).
+            let mut leaves = Vec::new();
+            node.leaf_views(&mut leaves);
+            if let Some(anchor) = leaves.into_iter().next() {
+                crate::popover::attach(&mut node, anchor, spec);
             }
         }
         node
@@ -583,13 +682,16 @@ impl View for Dynamic {
         let container = cx.container.clone();
         let f = self.0;
         node.own(Effect::new(move || {
-            let view = f();
+            // Signals the branch makes belong to it (freed when it's replaced).
+            let owner = Owner::new();
+            let view = owner.with(&f);
             untrack(|| {
                 let current = children.borrow().first().and_then(|n| n.id);
                 if view.id.is_some() && view.id == current {
                     return;
                 }
-                let new = view.build_node(&mut Cx::new(container.clone()));
+                let mut new = owner.with(|| view.build_node(&mut Cx::new(container.clone())));
+                new.owner = Some(owner);
                 new.meta.set_parent(&meta);
                 // The old node (and its subtree) is dropped here: teardown.
                 *children.borrow_mut() = vec![new];
@@ -656,7 +758,7 @@ where
                     let n = match old.remove(&key) {
                         Some(n) => n,
                         None => {
-                            let n = AnyView::new(row(item)).build_node(&mut Cx::new(container.clone()));
+                            let n = Node::build_owned(AnyView::new(row(item)), &mut Cx::new(container.clone()));
                             n.meta.set_parent(&meta);
                             n
                         }

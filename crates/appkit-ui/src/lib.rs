@@ -6,24 +6,26 @@
 //! use appkit_ui::*;
 //!
 //! let count = Signal::new(0);
-//! let (c1, c2) = (count.clone(), count.clone());
 //! App::new("Counter")
 //!     .window(Window::new("Counter").size(320.0, 140.0).view(
 //!         vstack((
-//!             label(move || format!("Clicked {} times", c1.get())),
-//!             button("Click me", move || c2.update(|n| *n += 1)),
+//!             label(move || format!("Clicked {} times", count.get())),
+//!             button("Click me", move || count.update(|n| *n += 1)),
 //!         ))
 //!         .padding(20.0),
 //!     ))
 //!     .run();
 //! ```
 //!
-//! - **State:** [`Signal`], [`Memo`], [`Effect`], [`batch`], [`spawn`] for
-//!   background work, [`stored`] for settings that persist.
+//! - **State:** [`Signal`] and [`Memo`] (`Copy` handles, freed with the
+//!   window, row or document that made them), [`Effect`], [`batch`],
+//!   [`spawn`] and [`Resource`] for background work and loading,
+//!   [`stored`] for settings that persist.
 //! - **Views and layout:** [`vstack`], [`hstack`], [`grid`], [`spacer`],
 //!   [`scroll`], [`for_each`] (keyed lists), [`dynamic`], and the
 //!   [`ViewExt`] modifiers (padding, sizes, context menus, accessibility
-//!   labels).
+//!   labels), and [`ViewExt::on_command`] for menu [`Command`]s that act
+//!   on the focus.
 //! - **Controls:** [`text_field`], [`toggle`], [`checkbox`], [`picker`],
 //!   [`slider`], [`stepper`], [`progress`], [`image`], [`button`].
 //! - **Deep widgets:** [`table`] (millions of rows, sorting, editing, drag
@@ -40,19 +42,27 @@
 #![warn(missing_docs)]
 
 mod appkit_views;
+mod canvas;
+mod charts;
 mod chrome;
 mod collection;
+mod commands;
 mod controls;
 mod dialogs;
 mod documents;
 mod frame;
+mod l10n;
 mod layout;
 mod menu;
 mod models;
 mod outline;
 mod platform;
+mod popover;
+mod resource;
 mod signal;
 mod store;
+mod syntax;
+mod transfer;
 mod undo;
 pub mod testing;
 mod view;
@@ -62,6 +72,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use objc2::runtime::ProtocolObject;
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSResponder, NSView, NSWindowStyleMask,
@@ -75,7 +86,9 @@ pub use appkit_host::{is_dark, system_colors};
 pub use frame::{FrameLoop, on_frame};
 pub use store::{Stored, stored};
 pub use undo::{set_undoable, undoable, undoable_in};
-pub use signal::{Effect, Memo, Signal, after_batch, batch, effect_runs, untrack};
+pub use commands::{Command, can_perform, can_perform_in, focused_value, focused_value_in, focused_window, menu_command, perform, perform_in, toolbar_command};
+pub use resource::{Cancel, Load, Resource};
+pub use signal::{Effect, Memo, Signal, after_batch, batch, effect_runs, live_signals, untrack};
 pub use controls::{
     Color, ColorWell, ComboBox, DatePicker, SearchField, Segmented, color_well, combo_box, date_picker, search_field, segmented,
     Checkbox, Image, Picker, Progress, Slider, Stepper, TextField, checkbox, image, picker, progress, secure_field, slider,
@@ -91,7 +104,13 @@ pub use models::{Table, TextEditor, table, text_editor};
 pub use outline::{Outline, TreeNode, outline, sidebar};
 pub use collection::{Collection, CollectionItem, ItemImage, collection, collection_cells_made};
 pub use appkit_host::table::{CellImage, Column, ColumnState, Sort, TableModel};
-pub use appkit_host::text::TextModel;
+pub use appkit_host::text::{TextColor, TextModel, TextStyle};
+pub use syntax::Syntax;
+pub use popover::Edge;
+pub use canvas::{Canvas, Painter, canvas};
+pub use transfer::{Clipboard, DragItem, WriteFile};
+pub use l10n::{format_number, format_number_for, language, parse_strings, plural_category, set_language, t, t_plural, t_with};
+pub use charts::{Series, bar_chart, line_chart};
 pub use appkit_host::ViewId;
 /// The AppKit window type the window functions take and return.
 pub use objc2_app_kit::NSWindow;
@@ -116,9 +135,72 @@ pub struct Window {
     toolbar: Vec<ToolbarItem>,
     autosave: Option<String>,
     fixed: bool,
+    responds: commands::Responds,
+    drops: Option<FileDrop>,
+}
+
+/// What a window takes when files are dropped on it.
+struct FileDrop {
+    /// Extensions it takes (lowercase; empty: any file).
+    extensions: Vec<String>,
+    action: Rc<dyn Fn(Vec<std::path::PathBuf>)>,
+}
+
+impl FileDrop {
+    fn accepted(&self, pasteboard: &objc2_app_kit::NSPasteboard) -> Vec<std::path::PathBuf> {
+        transfer::files_on(pasteboard)
+            .into_iter()
+            .filter(|p| {
+                self.extensions.is_empty()
+                    || p.extension().is_some_and(|e| self.extensions.contains(&e.to_string_lossy().to_lowercase()))
+            })
+            .collect()
+    }
+}
+
+thread_local! {
+    /// Window roots that take dropped files, and what they do with them.
+    static DROPS: RefCell<Vec<(usize, Rc<FileDrop>)>> = const { RefCell::new(Vec::new()) };
+}
+
+fn drop_operation(root: &RootView, info: &ProtocolObject<dyn objc2_app_kit::NSDraggingInfo>) -> objc2_app_kit::NSDragOperation {
+    use objc2_app_kit::NSDraggingInfo;
+    let takes = file_drop(root).is_some_and(|d| !d.accepted(&info.draggingPasteboard()).is_empty());
+    if takes { objc2_app_kit::NSDragOperation::Copy } else { objc2_app_kit::NSDragOperation::None }
+}
+
+fn perform_drop(root: &RootView, info: &ProtocolObject<dyn objc2_app_kit::NSDraggingInfo>) -> bool {
+    use objc2_app_kit::NSDraggingInfo;
+    let Some(drop) = file_drop(root) else { return false };
+    let paths = drop.accepted(&info.draggingPasteboard());
+    if paths.is_empty() {
+        return false;
+    }
+    // After AppKit's drag ends: the action may open windows.
+    let action = drop.action.clone();
+    let paths = RefCell::new(Some(paths));
+    later(move || {
+        if let Some(paths) = paths.borrow_mut().take() {
+            batch(|| action(paths));
+        }
+    });
+    true
+}
+
+fn file_drop(root: &RootView) -> Option<Rc<FileDrop>> {
+    DROPS.with_borrow(|d| d.iter().find(|(k, _)| *k == root as *const RootView as usize).map(|(_, f)| f.clone()))
 }
 
 impl Window {
+    /// Files dropped anywhere on the window (that its views don't take
+    /// themselves) go to `action`: those with one of `extensions`, or any
+    /// file if it's empty. The pointer shows a copy badge over the window
+    /// while they're dragged.
+    pub fn on_drop_files(mut self, extensions: &[&str], action: impl Fn(Vec<std::path::PathBuf>) + 'static) -> Self {
+        self.drops = Some(FileDrop { extensions: extensions.iter().map(|e| e.to_lowercase()).collect(), action: Rc::new(action) });
+        self
+    }
+
     /// A titled, resizable window of 800 × 600 points.
     pub fn new(title: &str) -> Self {
         Window {
@@ -129,6 +211,8 @@ impl Window {
             toolbar: Vec::new(),
             autosave: None,
             fixed: false,
+            responds: commands::Responds::default(),
+            drops: None,
         }
     }
 
@@ -147,6 +231,20 @@ impl Window {
     /// A unified toolbar with these items.
     pub fn toolbar(mut self, items: Vec<ToolbarItem>) -> Self {
         self.toolbar = items;
+        self
+    }
+
+    /// Handles `command` while this window is focused and nothing nearer the
+    /// focus handles it (see [`Command`]).
+    pub fn on_command(mut self, command: Command, action: impl Fn() + 'static) -> Self {
+        self.responds.commands.push((command, commands::Handler::new(action, None)));
+        self
+    }
+
+    /// Handles `command` like [`on_command`](Self::on_command), enabled only
+    /// while `enabled` returns true.
+    pub fn on_command_when(mut self, command: Command, enabled: impl Fn() -> bool + 'static, action: impl Fn() + 'static) -> Self {
+        self.responds.commands.push((command, commands::Handler::new(action, Some(Box::new(enabled)))));
         self
     }
 
@@ -199,8 +297,20 @@ impl Window {
         if let Some(view) = self.view {
             // SAFETY: NSView's designated initialiser.
             let root: Retained<RootView> = unsafe { msg_send![RootView::alloc(mtm), initWithFrame: rect] };
-            let node = undo::building(&undo, || batch(|| view.build(&mut Cx::new(Retained::into_super(root.clone())))));
+            // The window's tree owns the signals made while building it.
+            let node = undo::building(&undo, || batch(|| Node::build_owned(view, &mut Cx::new(Retained::into_super(root.clone())))));
+            {
+                // The window's handlers answer after its views'.
+                let mut r = node.meta.responds.borrow_mut();
+                r.commands.splice(0..0, self.responds.commands);
+                r.values.splice(0..0, self.responds.values);
+            }
             ROOTS.with_borrow_mut(|r| r.push((root.clone(), node)));
+            if let Some(drop) = self.drops {
+                // SAFETY: AppKit's pasteboard type constant.
+                root.registerForDraggedTypes(&objc2_foundation::NSArray::from_slice(&[unsafe { objc2_app_kit::NSPasteboardTypeFileURL }]));
+                DROPS.with_borrow_mut(|d| d.push((Retained::as_ptr(&root) as usize, Rc::new(drop))));
+            }
             window.setContentView(Some(&root));
             relayout_all();
         }
@@ -245,6 +355,38 @@ define_class!(
             let _: () = unsafe { msg_send![super(self), setFrameSize: size] };
             relayout(self);
         }
+
+        #[unsafe(method(draggingEntered:))]
+        fn dragging_entered(&self, info: &ProtocolObject<dyn objc2_app_kit::NSDraggingInfo>) -> objc2_app_kit::NSDragOperation {
+            drop_operation(self, info)
+        }
+
+        #[unsafe(method(draggingUpdated:))]
+        fn dragging_updated(&self, info: &ProtocolObject<dyn objc2_app_kit::NSDraggingInfo>) -> objc2_app_kit::NSDragOperation {
+            drop_operation(self, info)
+        }
+
+        #[unsafe(method(performDragOperation:))]
+        fn perform_drag(&self, info: &ProtocolObject<dyn objc2_app_kit::NSDraggingInfo>) -> objc2::runtime::Bool {
+            objc2::runtime::Bool::new(perform_drop(self, info))
+        }
+
+        // Escape in a popover's content closes it: the popover's window
+        // answers `cancelOperation:`, but a plain view never turns the key
+        // into it (only text views interpret keys).
+        #[unsafe(method(keyDown:))]
+        fn key_down(&self, event: &objc2_app_kit::NSEvent) {
+            let window = self.window();
+            let escape = event.keyCode() == 53;
+            match window.filter(|w| escape && popover::is_popover_window(w)) {
+                Some(w) => {
+                    let _: () = unsafe { msg_send![&*w, cancelOperation: Option::<&objc2::runtime::AnyObject>::None] };
+                }
+                None => {
+                    let _: () = unsafe { msg_send![super(self), keyDown: event] };
+                }
+            }
+        }
     }
 );
 
@@ -285,14 +427,52 @@ fn relayout(root: &RootView) {
     IN_LAYOUT.with(|l| l.set(false));
 }
 
+/// The root node of `window`'s view tree.
+pub(crate) fn root_meta(window: &NSWindow) -> Option<Rc<view::Meta>> {
+    let content = window.contentView()?;
+    ROOTS.with_borrow(|r| r.iter().find(|(v, _)| std::ptr::eq(&***v as *const NSView, &*content as *const NSView)).map(|(_, n)| n.meta.clone()))
+}
+
 /// Tears down the view tree of `window`'s content (its node is dropped:
 /// effects stop, native views go).
 pub(crate) fn drop_root(window: &NSWindow) {
     let Some(content) = window.contentView() else { return };
+    let key = Retained::as_ptr(&content) as usize;
+    DROPS.with_borrow_mut(|d| d.retain(|(k, _)| *k != key));
     let node = ROOTS.with_borrow_mut(|r| {
         let i = r.iter().position(|(v, _)| std::ptr::eq(&***v as *const NSView, &*content as *const NSView))?;
         Some(r.remove(i))
     });
+    drop(node);
+}
+
+/// Builds `view` (under its own owner) in a new root view of `size`
+/// points, laid out like a window's content: for content AppKit hosts in a
+/// window of its own (a popover). Returns the root and the view's ideal
+/// size. Release it with [`drop_hosted`].
+pub(crate) fn host_view(view: view::AnyView) -> (Retained<NSView>, NSSize) {
+    let mtm = mtm();
+    // SAFETY: NSView's designated initialiser.
+    let root: Retained<RootView> = unsafe { msg_send![RootView::alloc(mtm), initWithFrame: NSRect::new(NSPoint::ZERO, NSSize::new(100.0, 100.0))] };
+    let node = batch(|| Node::build_owned(view, &mut Cx::new(Retained::into_super(root.clone()))));
+    let size = layout::ideal(&node);
+    ROOTS.with_borrow_mut(|r| r.push((root.clone(), node)));
+    root.setFrameSize(NSSize::new(size.w.ceil(), size.h.ceil()));
+    (Retained::into_super(root), NSSize::new(size.w.ceil(), size.h.ceil()))
+}
+
+/// Drops the tree of a root made by [`host_view`].
+pub(crate) fn drop_hosted(root: &NSView) {
+    // `try_with`: this also runs while the window roots are being dropped
+    // at exit.
+    let node = ROOTS
+        .try_with(|r| {
+            let mut r = r.try_borrow_mut().ok()?;
+            let i = r.iter().position(|(v, _)| std::ptr::eq(&***v as *const NSView, root as *const NSView))?;
+            Some(r.remove(i))
+        })
+        .ok()
+        .flatten();
     drop(node);
 }
 
@@ -356,6 +536,15 @@ impl App {
         self
     }
 
+    /// The app's translations: `(language, .strings text)` pairs, e.g.
+    /// `("de", include_str!("../locales/de.strings"))`. The languages here
+    /// are the ones the app speaks; see [`t`] and the [`l10n`](crate::t)
+    /// functions.
+    pub fn translations(self, tables: &[(&str, &str)]) -> Self {
+        l10n::add_translations(tables);
+        self
+    }
+
     /// Adds a menu to the menu bar, between Edit and Window ("View", "Go"…).
     /// A menu titled "File" fills the standard File menu instead, above its
     /// Close item. Items run in a [`batch`]; their enabled and checked
@@ -386,6 +575,13 @@ impl App {
     /// Runs `f` on the first run-loop pass after the windows are on screen.
     pub fn on_launch(mut self, f: impl FnOnce() + 'static) -> Self {
         self.on_launch = Some(Box::new(f));
+        self
+    }
+
+    /// Handles `command` when nothing nearer the focus does (or no window is
+    /// open). See [`Command`].
+    pub fn on_command(self, command: Command, action: impl Fn() + 'static) -> Self {
+        commands::app_command(command, commands::Handler::new(action, None));
         self
     }
 

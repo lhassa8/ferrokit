@@ -1,6 +1,6 @@
 [package]
 name = "appkit-ui"
-version = "0.2.0"
+version = "0.3.0"
 description = "A native macOS UI framework for Rust: real AppKit views (tables, outlines, text) updated in place by fine-grained signals"
 edition.workspace = true
 license.workspace = true
@@ -14,10 +14,16 @@ categories = ["gui", "os::macos-apis"]
 default-target = "aarch64-apple-darwin"
 
 [dependencies]
-appkit-host = { path = "../appkit-host", version = "0.2.1" }
+appkit-host = { path = "../appkit-host", version = "0.2.2" }
 objc2 = "0.6"
 block2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSGeometry", "NSObject", "NSNotification", "NSArray", "NSDictionary", "NSData", "NSRange", "NSUndoManager", "NSIndexSet", "NSSortDescriptor", "NSURL", "NSUserDefaults", "NSRunLoop", "NSDate", "NSIndexPath", "NSSet"] }
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSWindow", "NSView", "NSMenu", "NSMenuItem", "NSEvent", "NSGraphics", "NSRunningApplication", "NSControl", "NSButton", "NSTextField", "NSLayoutConstraint", "NSSecureTextField", "NSSwitch", "NSCell", "NSText", "NSPopUpButton", "NSMenu", "NSMenuItem", "NSSlider", "NSStepper", "NSProgressIndicator", "NSImage", "NSImageView", "NSBox", "NSScrollView", "NSScroller", "NSClipView", "NSBitmapImageRep", "NSImageRep", "NSAppearance", "NSGraphicsContext", "NSTextView", "NSTextInputClient", "NSTableView", "NSTableColumn", "NSOutlineView", "NSTableCellView", "NSTableHeaderView", "NSUserInterfaceItemIdentification", "NSSpellChecker", "NSSplitView", "NSToolbar", "NSToolbarItem", "NSSearchToolbarItem", "NSSearchField", "NSLayoutConstraint", "NSAlert", "NSPanel", "NSSavePanel", "NSOpenPanel", "NSDatePicker", "NSDatePickerCell", "NSColorWell", "NSColor", "NSColorSpace", "NSSegmentedControl", "NSComboBox", "NSCollectionView", "NSCollectionViewFlowLayout", "NSCollectionViewLayout", "NSViewController", "NSWorkspace", "NSFont", "NSAccessibilityConstants", "NSAccessibilityProtocols", "objc2-uniform-type-identifiers"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSGeometry", "NSObject", "NSNotification", "NSArray", "NSDictionary", "NSData", "NSRange", "NSUndoManager", "NSIndexSet", "NSSortDescriptor", "NSURL", "NSUserDefaults", "NSRunLoop", "NSDate", "NSIndexPath", "NSSet", "NSError", "NSOperation", "NSBundle", "NSLocale", "NSFormatter", "NSNumberFormatter", "NSValue"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSWindow", "NSView", "NSMenu", "NSMenuItem", "NSEvent", "NSGraphics", "NSRunningApplication", "NSControl", "NSButton", "NSTextField", "NSLayoutConstraint", "NSSecureTextField", "NSSwitch", "NSCell", "NSText", "NSPopUpButton", "NSMenu", "NSMenuItem", "NSSlider", "NSStepper", "NSProgressIndicator", "NSImage", "NSImageView", "NSBox", "NSScrollView", "NSScroller", "NSClipView", "NSBitmapImageRep", "NSImageRep", "NSAppearance", "NSGraphicsContext", "NSTextView", "NSTextInputClient", "NSTableView", "NSTableColumn", "NSOutlineView", "NSTableCellView", "NSTableHeaderView", "NSUserInterfaceItemIdentification", "NSSpellChecker", "NSSplitView", "NSToolbar", "NSToolbarItem", "NSSearchToolbarItem", "NSSearchField", "NSLayoutConstraint", "NSAlert", "NSPanel", "NSSavePanel", "NSOpenPanel", "NSDatePicker", "NSDatePickerCell", "NSColorWell", "NSColor", "NSColorSpace", "NSSegmentedControl", "NSComboBox", "NSCollectionView", "NSCollectionViewFlowLayout", "NSCollectionViewLayout", "NSViewController", "NSPopover", "NSBezierPath", "NSStringDrawing", "NSTrackingArea", "NSAttributedString", "NSPasteboard", "NSPasteboardItem", "NSFilePromiseProvider", "NSDragging", "NSDraggingItem", "NSDraggingSession", "NSWorkspace", "NSFont", "NSAccessibilityConstants", "NSAccessibilityProtocols", "objc2-uniform-type-identifiers"] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "CFRunLoop"] }
 objc2-uniform-type-identifiers = { version = "0.3", default-features = false, features = ["std", "UTType"] }
+
+[dev-dependencies]
+# The SQL browser example (H4); links the system's SQLite.
+rusqlite = { version = "0.41", features = ["hooks"] }
+# ui_checklist catches an exception AppKit's password AutoFill can raise.
+objc2 = { version = "0.6", features = ["exception"] }

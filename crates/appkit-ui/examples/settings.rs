@@ -64,7 +64,7 @@ fn account(s: &Settings) -> impl View {
 }
 
 fn appearance(s: &Settings) -> impl View {
-    let theme = s.theme.clone();
+    let theme = s.theme;
     let options = vec![("System", Appearance::System), ("Light", Appearance::Light), ("Dark", Appearance::Dark)];
     vstack((
         text("Appearance"),
@@ -74,7 +74,7 @@ fn appearance(s: &Settings) -> impl View {
 }
 
 fn notifications(s: &Settings) -> impl View {
-    let days = s.keep_days.clone();
+    let days = s.keep_days;
     vstack((
         text("Notifications"),
         toggle("Show notifications", &s.notify),

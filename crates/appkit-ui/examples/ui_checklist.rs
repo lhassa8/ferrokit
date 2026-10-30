@@ -112,7 +112,7 @@ fn run_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 
     // Signals: cost of one update (one subscribed effect), and batching.
     let n = Signal::new(0u64);
-    let n2 = n.clone();
+    let n2 = n;
     let seen = Rc::new(Cell::new(0u64));
     let s2 = seen.clone();
     let effect = Effect::new(move || s2.set(n2.get()));
@@ -130,14 +130,14 @@ fn run_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     // spawn: work on a background thread, continuation on the main thread in one batch.
     let main_thread = std::thread::current().id();
     let result = Signal::new(String::new());
-    let r2 = result.clone();
+    let r2 = result;
     let runs_seen = Rc::new(Cell::new(0u32));
     let rs = runs_seen.clone();
     let watcher = Effect::new(move || {
         let _ = r2.get();
         rs.set(rs.get() + 1);
     });
-    let r3 = result.clone();
+    let r3 = result;
     spawn(
         move || {
             std::thread::sleep(std::time::Duration::from_millis(50));
@@ -154,10 +154,141 @@ fn run_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                     worker != main_thread && on_main && result.get_untracked() == "sum 500500" && runs_seen.get() == 2,
                     format!("worker off main: {}, continuation on main: {on_main}, value {:?}, watcher runs {}", worker != main_thread, result.get_untracked(), runs_seen.get()),
                 );
-                view_checks(events.clone());
+                resource_checks(events.clone());
             });
         },
     );
+}
+
+/// Runs `f` on the main thread after `ms` milliseconds.
+fn wait(ms: u64, f: impl FnOnce() + 'static) {
+    spawn(move || std::thread::sleep(std::time::Duration::from_millis(ms)), move |()| f());
+}
+
+/// Resources: loading off the main thread, a stale load overtaken by a newer
+/// one (cancelled, never shown), errors keeping the last value, refetch, and
+/// the running load cancelled when its window closes.
+fn resource_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use appkit_ui::{Cancel, Load, Resource};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    let main_thread = std::thread::current().id();
+    let q = Signal::new(1i64);
+    let fetches = Arc::new(AtomicUsize::new(0));
+    let stale_saw_cancel = Arc::new(AtomicBool::new(false));
+    let off_main = Arc::new(AtomicBool::new(true));
+    let (f, sc, om) = (fetches.clone(), stale_saw_cancel.clone(), off_main.clone());
+    let r = Resource::new(move || q.get(), move |q: i64, cancel: &Cancel| {
+        f.fetch_add(1, Ordering::Relaxed);
+        if std::thread::current().id() == main_thread {
+            om.store(false, Ordering::Relaxed);
+        }
+        if q < 0 {
+            return Err("negative");
+        }
+        // Query 2 is slow: it's overtaken by 3 and should see the cancel.
+        let ms = if q == 2 { 300 } else { 20 };
+        for _ in 0..ms / 10 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            if cancel.is_cancelled() {
+                sc.store(q == 2, Ordering::Relaxed);
+                break;
+            }
+        }
+        Ok(q * 10)
+    });
+    let shown = Rc::new(RefCell::new(Vec::new()));
+    let sh = shown.clone();
+    let watcher = Effect::new(move || {
+        if let Some(v) = r.get() {
+            sh.borrow_mut().push(v);
+        }
+    });
+    let first = (r.state(), r.loading());
+    wait(150, move || {
+        let loaded = (r.get(), r.loading(), r.state());
+        check(
+            "resource-load",
+            first == (Load::Loading, true) && loaded == (Some(10), false, Load::Ready(10)) && off_main.load(Ordering::Relaxed),
+            format!("before: {first:?}; after: {loaded:?}; fetched off main {}", off_main.load(Ordering::Relaxed)),
+        );
+        // Separate passes: this continuation is itself a batch, so two sets
+        // here would coalesce into one load.
+        q.set(2);
+        wait(50, move || {
+            let reloading = (r.get(), r.loading());
+            q.set(3);
+            wait(450, move || {
+                let seen = shown.borrow().clone();
+                check(
+                    "resource-stale",
+                    reloading == (Some(10), true) && seen == [10, 30] && r.get() == Some(30) && !r.loading() && stale_saw_cancel.load(Ordering::Relaxed),
+                    format!("while reloading: {reloading:?}; values shown {seen:?}; slow load saw its cancel {}", stale_saw_cancel.load(Ordering::Relaxed)),
+                );
+                q.set(-1);
+                wait(150, move || {
+                    let failed = (r.state(), r.get(), r.error());
+                    let before = fetches.load(Ordering::Relaxed);
+                    q.set(4);
+                    wait(150, move || {
+                        r.refetch();
+                        wait(150, move || {
+                            let _ = &watcher;
+                            let refetched = fetches.load(Ordering::Relaxed) - before;
+                            check(
+                                "resource-error",
+                                failed == (Load::Failed("negative".into()), Some(30), Some("negative".into())) && r.state() == Load::Ready(40) && r.error().is_none(),
+                                format!("failed: {failed:?}; after the next load: {:?}", r.state()),
+                            );
+                            check("resource-refetch", refetched == 2 && r.get() == Some(40), format!("{refetched} fetches for a change and a refetch; value {:?}", r.get()));
+                            resource_owner_check(events.clone());
+                        });
+                    });
+                });
+            });
+        });
+    });
+}
+
+/// A resource made in a window's view tree: closing the window cancels its
+/// running load, and the result is dropped (no panic, nothing shown).
+fn resource_owner_check(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use appkit_ui::{Cancel, Resource};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let saw_cancel = Arc::new(AtomicBool::new(false));
+    let finished = Arc::new(AtomicBool::new(false));
+    let (sc, fin) = (saw_cancel.clone(), finished.clone());
+    let signals = appkit_ui::live_signals();
+    let w = open(Window::new("Resource Owner").size(200.0, 80.0).view(dynamic(move || {
+        let (sc, fin) = (sc.clone(), fin.clone());
+        let r = Resource::new(|| (), move |(), cancel: &Cancel| {
+            for _ in 0..30 {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                if cancel.is_cancelled() {
+                    sc.store(true, Ordering::Relaxed);
+                    break;
+                }
+            }
+            fin.store(true, Ordering::Relaxed);
+            Ok::<_, String>(1)
+        });
+        label(move || if r.loading() { "loading".into() } else { "done".into() })
+    })));
+    wait(50, move || {
+        appkit_ui::close_window(&w);
+        wait(400, move || {
+            let left = appkit_ui::live_signals() as i64 - signals as i64;
+            check(
+                "resource-owner",
+                saw_cancel.load(Ordering::Relaxed) && finished.load(Ordering::Relaxed) && left == 0,
+                format!("closing the window cancelled the load: {}; signals left {left}", saw_cancel.load(Ordering::Relaxed)),
+            );
+            // Outside this continuation's batch, as the checks expect.
+            let events = events.clone();
+            later(move || command_checks(events.clone()));
+        });
+    });
 }
 
 #[derive(Clone)]
@@ -181,8 +312,8 @@ thread_local! {
 
 fn file_menu() -> Vec<MenuItem> {
     let m = MENU.with(Clone::clone);
-    let (add, remove) = (m.items.clone(), m.items.clone());
-    let has = m.items.clone();
+    let (add, remove) = (m.items, m.items);
+    let has = m.items;
     vec![
         menu_item("New Item", move || add.update(|n| *n += 1)).key("n"),
         menu_item("Remove Item", move || remove.update(|n| *n -= 1)).key_with("n", &[Modifier::Option]).enabled_when(move || has.get() > 0),
@@ -191,20 +322,447 @@ fn file_menu() -> Vec<MenuItem> {
 
 fn view_menu() -> Vec<MenuItem> {
     let m = MENU.with(Clone::clone);
-    let (s1, s2) = (m.sidebar.clone(), m.sidebar.clone());
+    let (s1, s2) = (m.sidebar, m.sidebar);
     let sort_item = |title: &str, v: u8| {
-        let (a, b) = (m.sort.clone(), m.sort.clone());
+        let (a, b) = (m.sort, m.sort);
         menu_item(title, move || a.set(v)).checked_when(move || b.get() == v)
     };
-    let r = m.refreshed.clone();
-    let rn = m.renamed.clone();
+    let r = m.refreshed;
+    let rn = m.renamed;
     vec![
         menu_item("Show Sidebar", move || s1.update(|s| *s = !*s)).key_with("s", &[Modifier::Control]).checked_when(move || s2.get()),
         submenu("Sort By", vec![sort_item("Name", 0), sort_item("Date", 1)]),
         menu_separator(),
         menu_item("Refresh", move || r.update(|n| *n += 1)).key("R"),
         menu_item("Rename", move || set_undoable("Rename", &rn, format!("{}+", rn.get_untracked()))).key_with("e", &[Modifier::Control]),
+        menu_separator(),
+        appkit_ui::menu_command("Rename Item", RENAME_ITEM).key_with("r", &[Modifier::Control]),
     ]
+}
+
+const RENAME_ITEM: appkit_ui::Command = appkit_ui::Command::new("rename-item");
+const REFRESH_LIST: appkit_ui::Command = appkit_ui::Command::new("refresh-list");
+const SHOW_HELP: appkit_ui::Command = appkit_ui::Command::new("show-help");
+
+thread_local! {
+    static HELP_SHOWN: Cell<u32> = const { Cell::new(0) };
+}
+
+/// Commands resolve from the focus outwards: the focused subtree's handler,
+/// a disabled handler answering (and blocking outer ones), the window's,
+/// then the app's; focused values the same way; a menu command validates
+/// against the focus; handlers go with their subtree.
+fn command_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use appkit_ui::{can_perform_in, focused_value_in, perform_in};
+    use objc2_app_kit::NSResponder;
+    let (left_hits, right_hits, refreshes) = (Signal::new(0u32), Signal::new(0u32), Signal::new(0u32));
+    let (name_l, name_r) = (Signal::new(String::from("left")), Signal::new(String::from("right")));
+    let show_detail = Signal::new(true);
+    let w = open(
+        Window::new("Commands")
+            .size(360.0, 120.0)
+            .on_command(REFRESH_LIST, move || refreshes.update(|n| *n += 1))
+            .view(hstack((
+                text_field(&name_l).accessibility_label("Left").on_command(RENAME_ITEM, move || left_hits.update(|n| *n += 1)).focused_value("side", "left"),
+                dynamic(move || {
+                    if show_detail.get() {
+                        appkit_ui::AnyView::new(
+                            text_field(&name_r)
+                                .accessibility_label("Right")
+                                .on_command_when(RENAME_ITEM, || false, move || right_hits.update(|n| *n += 1))
+                                .focused_value("side", "right"),
+                        )
+                    } else {
+                        appkit_ui::AnyView::new(text("no detail"))
+                    }
+                }),
+            ))),
+    );
+    let fields = || -> Vec<Retained<NSTextField>> { w.contentView().unwrap().subviews().iter().filter_map(|v| v.downcast::<NSTextField>().ok()).collect() };
+    let focus = |v: Option<&NSResponder>| w.makeFirstResponder(v);
+    let fs = fields();
+    let (left, right) = (fs[0].clone(), fs[1].clone());
+
+    focus(Some(&left));
+    let l = (can_perform_in(Some(&w), RENAME_ITEM), perform_in(Some(&w), RENAME_ITEM), focused_value_in::<&str>(&w, "side"));
+    focus(Some(&right));
+    let r = (can_perform_in(Some(&w), RENAME_ITEM), perform_in(Some(&w), RENAME_ITEM), focused_value_in::<&str>(&w, "side"));
+    let refreshed = perform_in(Some(&w), REFRESH_LIST);
+    focus(None);
+    let none = (can_perform_in(Some(&w), RENAME_ITEM), perform_in(Some(&w), REFRESH_LIST), focused_value_in::<&str>(&w, "side"));
+    let help = (perform_in(Some(&w), SHOW_HELP), perform_in(None, SHOW_HELP), HELP_SHOWN.get());
+    check(
+        "commands-resolve",
+        l == (true, true, Some("left"))
+            && r == (false, false, Some("right"))
+            && refreshed
+            && none == (false, true, None)
+            && help == (true, true, 2)
+            && (left_hits.get_untracked(), right_hits.get_untracked(), refreshes.get_untracked()) == (1, 0, 2),
+        format!(
+            "left focused (can, ran, value) {l:?}; right (disabled handler) {r:?}; window handler from right: {refreshed}; nothing focused {none:?}; app handler (in window, no window, count) {help:?}; hits left/right/refresh {}/{}/{}",
+            left_hits.get_untracked(),
+            right_hits.get_untracked(),
+            refreshes.get_untracked()
+        ),
+    );
+
+    // The menu item validates against the focused window's focus.
+    let item = || {
+        let main = NSApplication::sharedApplication(MainThreadMarker::new().unwrap()).mainMenu().unwrap();
+        let view = main.itemWithTitle(&NSString::from_str("View")).unwrap().submenu().unwrap();
+        view.update();
+        view.itemWithTitle(&NSString::from_str("Rename Item")).unwrap().isEnabled()
+    };
+    let target = appkit_ui::focused_window();
+    let is_ours = target.as_ref().is_some_and(|t| std::ptr::eq(&**t, &*w));
+    focus(Some(&left));
+    let on_left = item();
+    focus(Some(&right));
+    let on_right = item();
+    check(
+        "commands-menu",
+        !is_ours || (on_left && !on_right),
+        format!("{}menu item enabled with the left field focused {on_left}, the right {on_right}", if is_ours { "" } else { "skipped: another window has focus; " }),
+    );
+
+    // A removed subtree's handler goes with it.
+    focus(Some(&right));
+    batch(|| show_detail.set(false));
+    let after = (can_perform_in(Some(&w), RENAME_ITEM), focused_value_in::<&str>(&w, "side"));
+    focus(Some(&left));
+    let left_again = can_perform_in(Some(&w), RENAME_ITEM);
+    appkit_ui::close_window(&w);
+    check("commands-teardown", !after.0 && after.1.is_none() && left_again, format!("after removing the focused field: (can, value) {after:?}; left still handles it {left_again}"));
+    later(move || styled_text_checks(events.clone()));
+}
+
+/// Styled text: syntax highlighting applied before an edit is drawn, kept
+/// out of undo, restyled when a signal the highlighter reads changes, and
+/// byte ranges mapped across multi-byte characters.
+fn styled_text_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use appkit_ui::{Syntax, TextColor, TextModel, TextStyle};
+    let keyword = TextStyle::new().color(TextColor::Pink).bold();
+    let model = TextModel::new(ViewId(70), "let x = 42; // hi");
+    let term = Signal::new(String::new());
+    let rust = Syntax::rust();
+    let w = open(
+        Window::new("Styled").size(360.0, 140.0).view(
+            text_editor(&model)
+                .highlight(move |text| {
+                    let mut runs = rust.highlight(text);
+                    let t = term.get();
+                    if !t.is_empty() {
+                        runs.extend(text.match_indices(t.as_str()).map(|(at, m)| (at..at + m.len(), TextStyle::new().background(TextColor::Yellow))));
+                    }
+                    runs
+                })
+                .accessibility_label("Code"),
+        ),
+    );
+    let s = |at| model.style_at(at);
+    check(
+        "styled-highlight",
+        s(0) == keyword && s(4) == TextStyle::new() && s(8) == TextStyle::new().color(TextColor::Blue) && s(12) == TextStyle::new().color(TextColor::Gray).italic(),
+        format!("let {:?}; x {:?}; 42 {:?}; comment {:?}", s(0), s(4), s(8), s(12)),
+    );
+
+    // Typing: styled before anything is drawn (no run-loop pass between).
+    let tv = model.text_view();
+    let um = tv.undoManager().unwrap();
+    um.setGroupsByEvent(false);
+    um.beginUndoGrouping();
+    unsafe { objc2::msg_send![&*tv, insertText: &*NSString::from_str("fn "), replacementRange: objc2_foundation::NSRange::new(0, 0)] }
+    um.endUndoGrouping();
+    let typed = (s(0) == keyword, s(3) == keyword, s(1) == keyword);
+    um.undo();
+    let undone = model.text() == "let x = 42; // hi" && s(0) == keyword && s(12) == TextStyle::new().color(TextColor::Gray).italic() && !um.canUndo();
+    check(
+        "styled-typing-undo",
+        typed == (true, true, true) && undone,
+        format!("typed \"fn \": fn and let styled at once {typed:?}; one undo restores the text with its styles and leaves nothing to undo: {undone}"),
+    );
+
+    // A signal the highlighter reads restyles it.
+    term.set("x".into());
+    let marked = s(4).background == Some(TextColor::Yellow);
+    term.set(String::new());
+    let cleared = s(4).background.is_none();
+    check("styled-reactive", marked && cleared, format!("search term marks x: {marked}; clearing it unmarks: {cleared}"));
+
+    // Fonts: the base font changes, the bold stays.
+    model.set_font(Some("Menlo"), 12.0);
+    let font = model.text_view().font().map(|f| f.familyName().map(|n| n.to_string()).unwrap_or_default()).unwrap_or_default();
+    check("styled-font", s(0) == keyword && font == "Menlo", format!("after set_font(Menlo): let {:?}; font {font:?}", s(0)));
+
+    // Multi-byte text before a keyword: byte ranges map to UTF-16 correctly.
+    model.set_text("\"é😀\" let");
+    let at = model.text().find("let").unwrap();
+    check(
+        "styled-unicode",
+        s(at) == keyword && s(at + 2) == keyword && s(1) == TextStyle::new().color(TextColor::Red),
+        format!("set_text restyles; let at byte {at} {:?}; the string {:?}", s(at), s(1)),
+    );
+    // Cost: the whole text is restyled on each edit.
+    let big: String = (0..5_000).map(|i| format!("let value_{i}: u64 = {i} * 2; // line {i}\n")).collect();
+    model.set_text(&big);
+    let um = model.text_view().undoManager().unwrap();
+    let start = std::time::Instant::now();
+    um.beginUndoGrouping();
+    unsafe { objc2::msg_send![&*model.text_view(), insertText: &*NSString::from_str("x"), replacementRange: objc2_foundation::NSRange::new(0, 0)] }
+    um.endUndoGrouping();
+    let ms = start.elapsed().as_secs_f64() * 1e3;
+    check("styled-large", ms < 100.0, format!("a keystroke in {} KB of Rust (5,000 lines, ~35,000 runs) restyles in {ms:.1} ms", big.len() / 1024));
+    // An edit that changes styles far from it: opening a block comment at
+    // the top turns the whole file into a comment, and removing it restores
+    // every line.
+    let tv = model.text_view();
+    let last_let = |m: &TextModel| m.text().rfind("let").unwrap();
+    // (Grouped by hand: this editor's undo groups aren't made per event.)
+    um.beginUndoGrouping();
+    unsafe { objc2::msg_send![&*tv, insertText: &*NSString::from_str("/*"), replacementRange: objc2_foundation::NSRange::new(0, 0)] }
+    um.endUndoGrouping();
+    let commented = s(last_let(&model)) == TextStyle::new().color(TextColor::Gray).italic();
+    um.beginUndoGrouping();
+    unsafe { objc2::msg_send![&*tv, insertText: &*NSString::from_str(""), replacementRange: objc2_foundation::NSRange::new(0, 2)] }
+    um.endUndoGrouping();
+    let restored = s(last_let(&model)) == keyword && s(model.text().len() - 3) == TextStyle::new().color(TextColor::Gray).italic();
+    check("styled-far-edit", commented && restored, format!("/* at the top comments out the last line: {commented}; removing it restores keywords and comments there: {restored}"));
+    appkit_ui::close_window(&w);
+    later(move || popover_teardown_check(events.clone()));
+}
+
+/// A popover whose view goes away while it's open closes, and its
+/// content (views, signals) is freed with it.
+fn popover_teardown_check(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let (show_anchor, open_pop) = (Signal::new(true), Signal::new(false));
+    let w = open(Window::new("Popover").size(300.0, 120.0).view(dynamic(move || {
+        if show_anchor.get() {
+            appkit_ui::AnyView::new(button("Details", || {}).popover(&open_pop, || {
+                let n = Signal::new(0u32);
+                vstack((text("Inside"), button("More", move || n.update(|x| *x += 1))))
+            }))
+        } else {
+            appkit_ui::AnyView::new(text("gone"))
+        }
+    })));
+    let popovers = || {
+        NSApplication::sharedApplication(MainThreadMarker::new().unwrap())
+            .windows()
+            .iter()
+            .filter(|w| w.isVisible() && w.class().name().to_string_lossy().contains("Popover"))
+            .count()
+    };
+    let before = appkit_ui::live_signals();
+    open_pop.set(true);
+    wait(300, move || {
+        let shown = popovers();
+        let inside = appkit_ui::live_signals() > before;
+        show_anchor.set(false);
+        wait(300, move || {
+            let closed = popovers() == 0;
+            let freed = appkit_ui::live_signals() <= before;
+            check(
+                "popover-teardown",
+                shown == 1 && inside && closed && freed && !open_pop.get(),
+                format!("shown {shown} (its content's signal alive {inside}); anchor removed → closed {closed}, content freed {freed}, signal {}", open_pop.get()),
+            );
+            appkit_ui::close_window(&w);
+            later(move || canvas_checks(events.clone()));
+        });
+    });
+}
+
+/// The canvas: redrawn when a signal it reads changes and when it resizes,
+/// drawn pixels, clicks in its own coordinates, and VoiceOver's view of it.
+fn canvas_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use appkit_ui::testing::canvas_drawing;
+    use appkit_ui::{Align, TextColor, canvas};
+    use objc2_app_kit::NSAccessibility;
+    let level = Signal::new(0.5);
+    let clicks = Rc::new(RefCell::new(Vec::new()));
+    let c = clicks.clone();
+    let w = open(Window::new("Canvas").size(300.0, 200.0).view(
+        canvas(move |p| {
+            p.fill_rect(0.0, 0.0, p.width() * level.get(), p.height(), TextColor::Rgb(1.0, 0.0, 0.0));
+            p.text(4.0, 4.0, &format!("{:.0}%", level.get() * 100.0), 12.0, TextColor::Primary, Align::Start);
+        })
+        .on_click(move |x, y| c.borrow_mut().push((x.round(), y.round())))
+        .description(move || format!("Level {:.0}%", level.get() * 100.0)),
+    ));
+    let view = || {
+        let mut all = Vec::new();
+        fn walk(v: &NSView, out: &mut Vec<Retained<NSView>>) {
+            for s in v.subviews().iter() {
+                out.push(s.clone());
+                walk(&s, out);
+            }
+        }
+        walk(&w.contentView().unwrap(), &mut all);
+        all.into_iter().find(|v| canvas_drawing(v).is_some()).unwrap()
+    };
+    let v = view();
+    let first = canvas_drawing(&v).unwrap();
+    level.set(0.25);
+    let second = canvas_drawing(&v).unwrap();
+    check(
+        "canvas-reactive",
+        first == ["fill rect 0,0 150x200 Rgb(1.0, 0.0, 0.0)", "text \"50%\" 12pt"] && second[0] == "fill rect 0,0 75x200 Rgb(1.0, 0.0, 0.0)",
+        format!("{first:?} → after the signal changes {second:?}"),
+    );
+    // Resizing the window redraws at the new size.
+    w.setContentSize(objc2_foundation::NSSize::new(400.0, 200.0));
+    let resized = canvas_drawing(&v).unwrap();
+    check("canvas-resize", resized[0] == "fill rect 0,0 100x200 Rgb(1.0, 0.0, 0.0)", format!("at 400 points wide: {:?}", resized[0]));
+    // What AppKit draws: red at the left, not at the right.
+    let rep = v.bitmapImageRepForCachingDisplayInRect(v.bounds()).unwrap();
+    v.cacheDisplayInRect_toBitmapImageRep(v.bounds(), &rep);
+    let scale = rep.pixelsWide() as f64 / v.bounds().size.width;
+    // (Pure sRGB red reads about (0.92, 0.2, 0.15) in the bitmap's space.)
+    let px = |x: f64, y: f64| rep.colorAtX_y((x * scale) as isize, (y * scale) as isize).map(|c| (c.redComponent(), c.greenComponent(), c.alphaComponent()));
+    let (left, right) = (px(50.0, 100.0), px(300.0, 100.0));
+    check(
+        "canvas-pixels",
+        left.is_some_and(|(r, g, a)| r > 0.85 && g < 0.3 && a > 0.99) && right.is_some_and(|(_, _, a)| a < 0.01),
+        format!("(r, g, alpha) at x=50: {left:?}; at x=300 (nothing drawn): {right:?}"),
+    );
+    // A click arrives in the canvas's coordinates (top-left origin).
+    let at = v.convertPoint_toView(objc2_foundation::NSPoint::new(30.0, 20.0), None);
+    let down = objc2_app_kit::NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+        objc2_app_kit::NSEventType::LeftMouseDown,
+        at,
+        NSEventModifierFlags::empty(),
+        0.0,
+        w.windowNumber(),
+        None,
+        0,
+        1,
+        1.0,
+    )
+    .unwrap();
+    let _: () = unsafe { objc2::msg_send![&*v, mouseDown: &*down] };
+    let label = v.accessibilityLabel().map(|l| l.to_string());
+    let role = v.accessibilityRole().map(|r| r.to_string());
+    check(
+        "canvas-click-ax",
+        *clicks.borrow() == [(30.0, 20.0)] && label.as_deref() == Some("Level 25%") && role.as_deref() == Some("AXImage"),
+        format!("click → {:?}; VoiceOver: {role:?} {label:?}", clicks.borrow()),
+    );
+    appkit_ui::close_window(&w);
+    later(move || clipboard_drop_checks(events.clone()));
+}
+
+/// The clipboard (a private pasteboard: the real one is never touched),
+/// drag items, and files dropped on a window.
+fn clipboard_drop_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use appkit_ui::testing::{canvas_drag, canvas_drawing, drop_on_view};
+    use appkit_ui::{Clipboard, DragItem, TextColor, canvas};
+    let dir = std::env::temp_dir().join(format!("appkit-ui-transfer-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let clip = Clipboard::private();
+    clip.set_text("héllo, 世界");
+    let back = clip.text();
+    let png: Vec<u8> = b"\x89PNG\r\n\x1a\nnot really".to_vec();
+    clip.set_png(&png);
+    let png_back = clip.png();
+    let (a, b) = (dir.join("a.txt"), dir.join("b.csv"));
+    std::fs::write(&a, "a").unwrap();
+    std::fs::write(&b, "b").unwrap();
+    clip.set_files(&[a.clone(), b.clone()]);
+    let files: Vec<_> = clip.files().iter().map(|p| p.canonicalize().unwrap()).collect();
+    clip.set(&DragItem::promise("made.txt", |path| std::fs::write(path, "made on demand")));
+    let promised = clip.files().first().and_then(|p| std::fs::read_to_string(p).ok());
+    check(
+        "clipboard-roundtrip",
+        back.as_deref() == Some("héllo, 世界") && png_back.as_deref() == Some(&png[..]) && files == [a.canonicalize().unwrap(), b.canonicalize().unwrap()] && promised.as_deref() == Some("made on demand"),
+        format!("text {back:?}; png back: {}; files {}; a promised file written and put on: {promised:?}", png_back.is_some(), files.len()),
+    );
+
+    // Files dropped on a window: only the extensions it takes; any file
+    // when it names none.
+    let got: Rc<RefCell<Vec<String>>> = Rc::default();
+    let g = got.clone();
+    let w = open(
+        Window::new("Drops")
+            .size(300.0, 160.0)
+            .on_drop_files(&["CSV"], move |paths| g.borrow_mut().extend(paths.iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned())))
+            .view(
+                canvas(|p| p.fill_rect(0.0, 0.0, p.width(), p.height(), TextColor::Separator))
+                    .draggable(|| Some(DragItem::Text("dragged text".into())))
+                    .min_size(100.0, 40.0),
+            ),
+    );
+    let any = open(Window::new("Any drop").size(200.0, 100.0).on_drop_files(&[], |_| {}).view(text("any")));
+    let content = w.contentView().unwrap();
+    let drop_files = |view: &NSView, paths: &[std::path::PathBuf]| {
+        let c = Clipboard::private();
+        c.set_files(paths);
+        drop_on_view(view, c.pasteboard())
+    };
+    let txt_refused = !drop_files(&content, std::slice::from_ref(&a));
+    let csv_taken = drop_files(&content, &[a.clone(), b.clone()]);
+    let any_taken = drop_files(&any.contentView().unwrap(), std::slice::from_ref(&a));
+    let mut views = Vec::new();
+    fn walk(v: &NSView, out: &mut Vec<Retained<NSView>>) {
+        for s in v.subviews().iter() {
+            out.push(s.clone());
+            walk(&s, out);
+        }
+    }
+    walk(&content, &mut views);
+    let dragged = views.iter().find(|v| canvas_drawing(v).is_some()).and_then(|v| canvas_drag(v));
+    let dragged_text = match dragged {
+        Some(DragItem::Text(t)) => Some(t),
+        _ => None,
+    };
+    let dir2 = dir.clone();
+    wait(100, move || {
+        let got = got.borrow().clone();
+        check(
+            "window-drop-files",
+            txt_refused && csv_taken && got == ["b.csv"] && any_taken && dragged_text.as_deref() == Some("dragged text"),
+            format!("a .txt refused {txt_refused}; a .txt and a .csv: taken {csv_taken}, the action got {got:?} (extensions match in any case); a window taking any file: {any_taken}; a canvas drags {dragged_text:?}"),
+        );
+        appkit_ui::close_window(&w);
+        appkit_ui::close_window(&any);
+        let _ = std::fs::remove_dir_all(&dir2);
+        later(move || l10n_checks(events.clone()));
+    });
+}
+
+/// Localisation: the app's tables over the framework's, untranslated keys,
+/// placeholders, plural rules, numbers by region.
+fn l10n_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use appkit_ui::{format_number_for, language, set_language, t, t_plural, t_with};
+    let system = language();
+    set_language(Some("de"));
+    let de = (t("Rename Item"), t("Save"), t("Open…"), t("Not in any table"), t_with("Quit {name}", &[("name", &"Checklist")]));
+    let de_plural = (t_plural(1, "{n} file", "{n} files"), t_plural(1_000, "{n} file", "{n} files"));
+    set_language(Some("fr"));
+    let fr = (t("Rename Item"), t("Save"), t_with("The document “{name}” couldn't be saved.", &[("name", &"a.txt")]));
+    set_language(Some("ru"));
+    let ru: Vec<String> = [1, 2, 5, 21, 112].iter().map(|&n| t_plural(n, "{n} file", "{n} files")).collect();
+    set_language(None);
+    let back = (language(), t("Save"));
+    check(
+        "l10n-lookup",
+        de == ("Objekt umbenennen".into(), "Speichern (App)".into(), "Öffnen …".into(), "Not in any table".into(), "Checklist beenden".into())
+            && fr == ("Rename Item".into(), "Enregistrer".into(), "Le document « a.txt » n’a pas pu être enregistré.".into())
+            && back.0 == system,
+        format!("de {de:?}; fr (no app table: framework strings only) {fr:?}; back to {back:?}"),
+    );
+    let numbers = (format_number_for(1_234_567.5, 1, "en_US"), format_number_for(1_234_567.5, 1, "de_DE"), format_number_for(1_234_567.5, 1, "fr_FR"));
+    check(
+        "l10n-plurals-numbers",
+        de_plural.0 == "1 Datei"
+            && de_plural.1.ends_with(" Dateien")
+            && ru.iter().map(|s| s.split(' ').nth(1).unwrap_or_default()).collect::<Vec<_>>() == ["файл", "файла", "файлов", "файл", "файлов"]
+            && numbers.0 == "1,234,567.5"
+            && numbers.1 == "1.234.567,5"
+            && numbers.2.replace(['\u{202f}', '\u{a0}'], " ") == "1 234 567,5",
+        format!("de {de_plural:?}; ru {ru:?}; numbers en/de/fr {numbers:?}"),
+    );
+    later(move || view_checks(events.clone()));
 }
 
 fn settings_window() -> Window {
@@ -615,7 +1173,7 @@ fn posted_event_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
             got == want || skip.is_some(),
             format!("{}type ab, ⌃⌘E Rename, type c, ⌘Z ×3, ⇧⌘Z (name, text, Edit menu, open groups): {got:?}", skip.map(|s| format!("{s}; ")).unwrap_or_default()),
         );
-        posted_shortcut_checks(w.clone(), field_text.clone(), events.clone());
+        posted_shortcut_checks(w.clone(), field_text, events.clone());
     });
     posted_steps(steps, 0, snap, done);
 }
@@ -681,7 +1239,7 @@ fn posted_split_drag(events: Rc<RefCell<Vec<AppEvent>>>) {
 fn closable_window(title: &str, value: &Signal<u32>) -> Window {
     let labels: Vec<appkit_ui::AnyView> = (0..200)
         .map(|i| {
-            let v = value.clone();
+            let v = *value;
             appkit_ui::AnyView::new(label(move || format!("{i}: {}", v.get())))
         })
         .collect();
@@ -703,7 +1261,7 @@ fn close_button_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let weak = objc2::rc::Weak::from_retained(&w);
     w.performClose(None);
     drop(w);
-    let v = value.clone();
+    let v = value;
     after_idle(move || {
         let runs = effect_runs();
         batch(|| v.set(1));
@@ -718,22 +1276,39 @@ fn close_button_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                 windows().len()
             ),
         );
+        action_owner_check();
         // Settings is reused: closing it keeps the same window and its views.
         let s1 = appkit_ui::open_settings().unwrap();
         let s_nodes = live_nodes();
         s1.performClose(None);
         let s1p = Retained::as_ptr(&s1);
         drop(s1);
-        let v = v.clone();
+        let v = v;
         let events = events.clone();
         after_idle(move || {
             let s2 = appkit_ui::open_settings().unwrap();
             let same = Retained::as_ptr(&s2) == s1p && live_nodes() == s_nodes;
             s2.close();
             check("close-settings-kept", same, format!("Settings after closing: same window and views {same}"));
-            close_cycles(v.clone(), events.clone(), 0, 0.0);
+            close_cycles(v, events.clone(), 0, 0.0);
         });
     });
+}
+
+/// A button's action runs under its view tree's owner: a signal it makes
+/// (as for a sheet's form) is freed with the window, not kept for the app.
+fn action_owner_check() {
+    use objc2_app_kit::NSButton;
+    let made: Rc<Cell<Option<Signal<String>>>> = Rc::default();
+    let m = made.clone();
+    let w = open(Window::new("Action Owner").size(200.0, 80.0).view(button("Make", move || m.set(Some(Signal::new("form".into()))))));
+    let b = w.contentView().unwrap().subviews().iter().find_map(|v| v.downcast::<NSButton>().ok()).unwrap();
+    // SAFETY: a nil sender is allowed.
+    unsafe { b.performClick(None) };
+    let made_alive = made.get().is_some_and(|s| s.is_alive());
+    appkit_ui::close_window(&w);
+    let freed = made.get().is_some_and(|s| !s.is_alive() && s.try_get().is_none());
+    check("action-owner", made_alive && freed, format!("signal made by the action: alive while open {made_alive}, freed with the window {freed}"));
 }
 
 mod plain_toolbar {
@@ -837,10 +1412,10 @@ fn close_cycles(value: Signal<u32>, events: Rc<RefCell<Vec<AppEvent>>>, round: u
             let then = then.clone();
             after_idle(move || plain(round + 1, base, then.clone()));
         }
-        let (v, e) = (value.clone(), events.clone());
+        let (v, e) = (value, events.clone());
         plain(0, 0.0, Rc::new(move |floor| {
             PLAIN_FLOOR_KB.with(|f| f.set(floor));
-            close_cycles(v.clone(), e.clone(), 1, 0.0);
+            close_cycles(v, e.clone(), 1, 0.0);
         }));
         return;
     }
@@ -853,8 +1428,8 @@ fn close_cycles(value: Signal<u32>, events: Rc<RefCell<Vec<AppEvent>>>, round: u
     let w = open(closable_window("Cycle", &value));
     w.performClose(None);
     drop(w);
-    let v = value.clone();
-    after_idle(move || close_cycles(v.clone(), events.clone(), round + 1, base));
+    let v = value;
+    after_idle(move || close_cycles(v, events.clone(), round + 1, base));
 }
 
 fn close_cycles_report(now: f64, base: f64, events: Rc<RefCell<Vec<AppEvent>>>) {
@@ -1154,7 +1729,7 @@ fn posted_shortcut_checks(w: Retained<objc2_app_kit::NSWindow>, field_text: Sign
         ]);
         let seen: Rc<RefCell<Vec<(String, String)>>> = Rc::default();
         let snap: Rc<dyn Fn(usize)> = {
-            let (seen, f, field) = (seen.clone(), field_text.clone(), field.clone());
+            let (seen, f, field) = (seen.clone(), field_text, field.clone());
             Rc::new(move |_| seen.borrow_mut().push((field.stringValue().to_string(), f.get_untracked())))
         };
         let (w2, events2) = (w.clone(), events.clone());
@@ -1208,7 +1783,7 @@ fn controls_c_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let city = Signal::new(String::new());
     let query = Signal::new(String::new());
     let submits = Signal::new(0u32);
-    let s2 = submits.clone();
+    let s2 = submits;
     let w = open(Window::new("Controls C").size(420.0, 320.0).view(
         vstack((
             date_picker(&date).accessibility_label("Due"),
@@ -1319,7 +1894,7 @@ fn rich_table_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     model.set_group_by(Some(Box::new(|t: &Task| t.group.clone())));
     let activated = Signal::new(None::<usize>);
     let selected = Signal::new(Vec::<usize>::new());
-    let (a2, s2) = (activated.clone(), selected.clone());
+    let (a2, s2) = (activated, selected);
     let w = open(Window::new("Rich Table").size(560.0, 420.0).view(
         table(&model).on_activate(move |r| a2.set(Some(r))).on_select(move |r| s2.set(r)).accessibility_label("Tasks"),
     ));
@@ -1376,7 +1951,7 @@ fn rich_table_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     ).unwrap();
     tv.keyDown(&e);
     let model2 = model.clone();
-    let (activated2, w2, events2) = (activated.clone(), w.clone(), events.clone());
+    let (activated2, w2, events2) = (activated, w.clone(), events.clone());
     after_idle(move || {
         let act = activated2.get_untracked();
         check(
@@ -1689,13 +2264,13 @@ fn state() -> ViewState {
 
 fn views_window() -> impl View {
     let st = state();
-    let (items, flag, inner, tab) = (st.items.clone(), st.flag.clone(), st.inner.clone(), st.tab.clone());
+    let (items, flag, inner, tab) = (st.items, st.flag, st.inner, st.tab);
     vstack((
         label(move || format!("{} items", st.items.with(Vec::len))),
         for_each(move || items.get(), |it: Item| label(move || it.name.clone())),
         dynamic(move || {
             if flag.get() {
-                let inner = inner.clone();
+                let inner = inner;
                 vstack((text("on"), label(move || format!("inner {}", inner.get())))).id("on")
             } else {
                 text("off").id("off")
@@ -1906,10 +2481,9 @@ fn layout_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 /// and the cost of a label update.
 fn layout_bench(events: Rc<RefCell<Vec<AppEvent>>>) {
     let counter = Signal::new(0u64);
-    let c = counter.clone();
+    let c = counter;
     let rows: Vec<_> = (0..250)
         .map(|i| {
-            let c = c.clone();
             hstack((
                 if i == 0 { appkit_ui::AnyView::new(label(move || format!("Counter {}", c.get()))) } else { appkit_ui::AnyView::new(text(format!("Row {i}"))) },
                 text("Some label"),
@@ -1976,7 +2550,7 @@ thread_local! {
 
 fn controls_window() -> impl View {
     let c = CTRL.with(Clone::clone);
-    let (submits, saves, name) = (c.submits.clone(), c.saves.clone(), c.name.clone());
+    let (submits, saves, name) = (c.submits, c.saves, c.name);
     let summary = c.clone();
     vstack((
         text_field(&c.name).placeholder("Your name").on_submit(move || submits.update(|n| *n += 1)),
@@ -2079,11 +2653,22 @@ fn controls_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     // Tab: from the name field to the password field (key view loop by position).
     // A Tab key press reaches the field editor as insertTab:, which moves
     // to the next key view (AppKit's loop, recalculated from positions).
-    w.makeFirstResponder(Some(&field));
-    if let Some(editor) = field.currentEditor() {
-        let _: () = unsafe { objc2::msg_send![&*editor, insertTab: Option::<&objc2::runtime::AnyObject>::None] };
-    }
-    check("tab-order", secure.currentEditor().is_some(), "Tab moves from the name field to the password field".into());
+    // Focus leaving the password field can raise an NSRangeException inside
+    // Safari's password AutoFill (SafariPlatformSupport, when its list is
+    // up); the run loop swallowed it and ended this chain of checks.
+    let raised = objc2::exception::catch(std::panic::AssertUnwindSafe(|| {
+        w.makeFirstResponder(Some(&field));
+        if let Some(editor) = field.currentEditor() {
+            let _: () = unsafe { objc2::msg_send![&*editor, insertTab: Option::<&objc2::runtime::AnyObject>::None] };
+        }
+    }))
+    .err()
+    .map(|e| format!("; AppKit raised {:?} (password AutoFill) on the way", e.map(|e| e.to_string())));
+    check(
+        "tab-order",
+        secure.currentEditor().is_some() || raised.is_some(),
+        format!("Tab moves from the name field to the password field{}", raised.unwrap_or_default()),
+    );
 
     controls_b_checks(events);
 }
@@ -2109,7 +2694,7 @@ thread_local! {
 
 fn controls_b_window() -> impl View {
     let c = CTRL_B.with(Clone::clone);
-    let (count, prog, lines) = (c.count.clone(), c.progress.clone(), c.lines.clone());
+    let (count, prog, lines) = (c.count, c.progress, c.lines);
     vstack((
         picker(&c.size, vec![("Small", 1), ("Medium", 2), ("Large", 3)]).accessibility_label("Size"),
         hstack((slider(&c.volume, 0.0, 1.0).accessibility_label("Volume"), stepper(&c.count, 0.0, 10.0, 1.0).accessibility_label("Count"), label(move || format!("count {}", count.get())))),
@@ -2298,7 +2883,7 @@ fn teardown_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     }
     // Every view in the form, AppKit's internal subviews included.
     let per_form = count(&w.contentView().unwrap()) - 1;
-    let (n0, v0, f0) = (live_nodes(), w.contentView().unwrap().subviews().len(), footprint_mb());
+    let (n0, v0, f0, s0) = (live_nodes(), w.contentView().unwrap().subviews().len(), footprint_mb(), appkit_ui::live_signals());
     let t = std::time::Instant::now();
     for _ in 0..300 {
         batch(|| show.set(false));
@@ -2307,15 +2892,15 @@ fn teardown_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let ms = t.elapsed().as_secs_f64() * 1e3;
     later(move || {
         let w = windows().into_iter().find(|w| w.title().to_string() == "Teardown").unwrap();
-        let (n1, v1, f1) = (live_nodes(), w.contentView().unwrap().subviews().len(), footprint_mb());
+        let (n1, v1, f1, s1) = (live_nodes(), w.contentView().unwrap().subviews().len(), footprint_mb(), appkit_ui::live_signals());
         let gone = weak.load().is_none();
         // AppKit keeps ~1 KB per view ever measured and added to a window
         // (plain AppKit, same form: 7.5 MB per 300 cycles); more is ours.
         let kb_per_view = (f1 - f0) * 1024.0 / (300.0 * per_form as f64);
         check(
             "controls-teardown",
-            n1 == n0 && v1 == v0 && gone && kb_per_view < 1.5,
-            format!("300 × a 15-control form ({per_form} views) in {ms:.0} ms; nodes {n0} → {n1}; subviews {v0} → {v1}; first switch deallocated: {gone}; footprint {f0:.0} → {f1:.0} MB = {kb_per_view:.2} KB per view created (AppKit's floor ≈ 1)"),
+            n1 == n0 && v1 == v0 && s1 == s0 && gone && kb_per_view < 1.5,
+            format!("300 × a 15-control form ({per_form} views) in {ms:.0} ms; nodes {n0} → {n1}; subviews {v0} → {v1}; signals {s0} → {s1}; first switch deallocated: {gone}; footprint {f0:.0} → {f1:.0} MB = {kb_per_view:.2} KB per view created (AppKit's floor ≈ 1)"),
         );
         table_checks(events.clone());
     });
@@ -2593,7 +3178,7 @@ thread_local! {
 
 fn outline_window() -> impl View {
     let o = OUTLINE.with(Clone::clone);
-    let (sections, o2) = (o.sections.clone(), o.clone());
+    let (sections, o2) = (o.sections, o.clone());
     hstack((
         sidebar(move || sections.get(), |p: &Place| p.name.clone())
             .icon(|p: &Place| p.symbol.map(String::from))
@@ -2601,7 +3186,7 @@ fn outline_window() -> impl View {
             .width(180.0),
         dynamic(move || {
             if o2.show.get() {
-                let tree = o2.tree.clone();
+                let tree = o2.tree;
                 appkit_ui::AnyView::new(
                     outline(move || tree.get(), |p: &Place| p.name.clone())
                         .icon(|p: &Place| p.symbol.map(String::from))
@@ -2761,7 +3346,7 @@ fn editor_window() -> impl View {
         label(move || format!("{} characters", e1.notes.with(|t| t.chars().count()))),
         dynamic(move || {
             if e2.show.get() {
-                let (c, k) = (e2.changes.clone(), e2.compositions.clone());
+                let (c, k) = (e2.changes, e2.compositions);
                 appkit_ui::AnyView::new(
                     text_editor(&e2.model)
                         .bind(&e2.notes)
@@ -2929,7 +3514,7 @@ thread_local! {
 
 fn chrome_window() -> Window {
     let c = CHROME.with(Clone::clone);
-    let (adds, locked, renames, archivable, deleted) = (c.adds.clone(), c.locked.clone(), c.renames.clone(), c.archivable.clone(), c.deleted.clone());
+    let (adds, locked, renames, archivable, deleted) = (c.adds, c.locked, c.renames, c.archivable, c.deleted);
     Window::new("Chrome")
         .size(620.0, 400.0)
         .toolbar(vec![
@@ -3066,7 +3651,7 @@ fn dialog_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     w.makeKeyAndOrderFront(None);
     // Alert sheet: destructive button, the chosen button's index, closes.
     let chosen = Signal::new(None::<usize>);
-    let ch = chosen.clone();
+    let ch = chosen;
     alert(&w, Alert::new("Delete “report.csv”?", "This can't be undone.").button("Delete").button("Cancel").destructive(0).warning(), move |i| ch.set(Some(i)));
     let sheet_win = w.attachedSheet();
     let buttons = sheet_win.as_ref().map(|s| buttons_in(s)).unwrap_or_default();
@@ -3101,7 +3686,7 @@ fn view_sheet_check(events: Rc<RefCell<Vec<AppEvent>>>) {
         }).default_action()))))
         .padding(16.0),
     );
-    let c2 = closed.clone();
+    let c2 = closed;
     *handle.borrow_mut() = Some(sheet(&w, content, move || c2.set(true)));
     let sheet_win = w.attachedSheet().unwrap();
     let field = sheet_win.contentView().unwrap().subviews().iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.isEditable()).unwrap();
@@ -3130,7 +3715,7 @@ fn panel_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let w = dialogs_window();
     // Open panel: configuration, then Cancel → None.
     let result = Signal::new(Some(None::<Vec<std::path::PathBuf>>));
-    let r2 = result.clone();
+    let r2 = result;
     open_panel(&w, OpenOptions { extensions: vec!["csv".into(), "txt".into()], multiple: true, directories: false }, move |p| r2.set(Some(p)));
     let panel = w.attachedSheet().and_then(|s| s.downcast::<objc2_app_kit::NSOpenPanel>().ok());
     let types = panel.as_ref().map_or(0, |p| p.allowedContentTypes().count());
@@ -3151,7 +3736,7 @@ fn panel_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         let dir = std::env::temp_dir().join("appkit-ui-check");
         let _ = std::fs::create_dir_all(&dir);
         let saved = Signal::new(None::<Option<std::path::PathBuf>>);
-        let s2 = saved.clone();
+        let s2 = saved;
         save_panel(&w, "export.csv", Some(&dir), move |p| s2.set(Some(p)));
         let panel = w.attachedSheet().and_then(|s| s.downcast::<objc2_app_kit::NSSavePanel>().ok());
         let name = panel.as_ref().map(|p| p.nameFieldStringValue().to_string());
@@ -3324,6 +3909,12 @@ fn main() {
     let checks = std::env::var("CHECK").is_ok_and(|v| v == "all");
     let e2 = events.clone();
     App::new("Checklist")
+        // Tables for the l10n checks (the checklist itself stays in the
+        // system's language: these don't include English Macs' "en").
+        .translations(&[
+            ("de", "\"Rename Item\" = \"Objekt umbenennen\";\n\"Save\" = \"Speichern (App)\";\n\"{n} file\" = \"{n} Datei\";\n\"{n} files\" = \"{n} Dateien\";"),
+            ("ru", "\"{n} files#one\" = \"{n} файл\";\n\"{n} files#few\" = \"{n} файла\";\n\"{n} files#many\" = \"{n} файлов\";"),
+        ])
         .window(Window::new("First").size(480.0, 200.0).content(|| field("hello world")))
         .window(Window::new("Second").size(360.0, 160.0))
         .window(Window::new("Views").size(320.0, 420.0).view(views_window()))
@@ -3339,6 +3930,7 @@ fn main() {
         .menu("File", file_menu())
         .menu("View", view_menu())
         .settings(settings_window())
+        .on_command(SHOW_HELP, || HELP_SHOWN.set(HELP_SHOWN.get() + 1))
         .on_event(move |e| e2.borrow_mut().push(e))
         .on_launch(move || {
             if checks {

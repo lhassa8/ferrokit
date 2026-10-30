@@ -1,0 +1,26 @@
+# The Cargo.toml of a new app (named .in: cargo leaves folders with a
+# Cargo.toml out of the published crate). This comment isn't copied.
+[package]
+name = "{{name}}"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+appkit-ui = {{dep}}
+
+# How `cargo ferrokit bundle` makes the app.
+[package.metadata.ferrokit]
+# The app's name in the menu bar, the Finder and the Dock.
+name = "{{display}}"
+# Its bundle identifier: reverse DNS, yours.
+id = "{{id}}"
+# A square PNG (1024 px is best) or an .icns.
+# icon = "icon.png"
+min-macos = "15.0"
+# category = "public.app-category.productivity"
+# Languages it's translated into (App::translations), besides English:
+# languages = ["de", "fr"]
+# For distribution (ad hoc signing without it), then `cargo ferrokit notarize`:
+# sign = "Developer ID Application: Your Name (TEAMID)"
+# notary-profile = "my-profile"  # made once: xcrun notarytool store-credentials my-profile …
+{{documents}}

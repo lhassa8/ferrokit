@@ -19,8 +19,10 @@ use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{NSApplication, NSApplicationDelegate, NSApplicationTerminateReply, NSWindow};
 use objc2_foundation::{NSString, NSURL, NSUserDefaults};
 
-use crate::chrome::{MenuItem, Modifier, dynamic_submenu, menu_item, menu_separator};
+use crate::l10n::{t, t_with};
+use crate::chrome::{MenuItem, Modifier, ToolbarItem, dynamic_submenu, menu_item, menu_separator};
 use crate::dialogs::{Alert, OpenOptions, alert, open_panel, save_panel};
+use crate::signal::Owner;
 use crate::signal::{Effect, Signal, batch, untrack};
 use crate::view::{AnyView, View};
 use crate::{Window, mtm};
@@ -28,6 +30,7 @@ use crate::{Window, mtm};
 type Reader<T> = Rc<dyn Fn(&Path) -> std::io::Result<T>>;
 type Writer<T> = Rc<dyn Fn(&T, &Path) -> std::io::Result<()>>;
 type DocView<T> = Rc<dyn Fn(&Document<T>) -> AnyView>;
+type DocToolbar<T> = Rc<dyn Fn(&Document<T>) -> Vec<ToolbarItem>>;
 
 /// One kind of document: its file extensions, how to make an empty one,
 /// read and write it, and the view of its window.
@@ -37,6 +40,7 @@ pub struct DocumentType<T: 'static> {
     read: Option<Reader<T>>,
     write: Option<Writer<T>>,
     view: DocView<T>,
+    toolbar: Option<DocToolbar<T>>,
     size: (f64, f64),
 }
 
@@ -53,6 +57,7 @@ impl<T: Clone + PartialEq + 'static> DocumentType<T> {
             read: None,
             write: None,
             view: Rc::new(move |d| AnyView::new(view(d))),
+            toolbar: None,
             size: (640.0, 480.0),
         }
     }
@@ -67,6 +72,12 @@ impl<T: Clone + PartialEq + 'static> DocumentType<T> {
     /// documents are read-only (a viewer).
     pub fn write(mut self, f: impl Fn(&T, &Path) -> std::io::Result<()> + 'static) -> Self {
         self.write = Some(Rc::new(f));
+        self
+    }
+
+    /// A toolbar for each document window, built with the window's view.
+    pub fn toolbar(mut self, items: impl Fn(&Document<T>) -> Vec<ToolbarItem> + 'static) -> Self {
+        self.toolbar = Some(Rc::new(items));
         self
     }
 
@@ -99,6 +110,9 @@ struct DocInner<T: 'static> {
     /// Closing without asking (after the user chose).
     closing: Cell<bool>,
     effects: RefCell<Vec<Effect>>,
+    /// Owns the document's signals and those its view makes outside the
+    /// window's tree; they're freed with the document.
+    _owner: Owner,
 }
 
 impl<T: Clone + PartialEq + 'static> Document<T> {
@@ -121,8 +135,8 @@ impl<T: Clone + PartialEq + 'static> Document<T> {
     pub fn title(&self) -> String {
         match self.0.path.get() {
             Some(p) => p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
-            None if self.0.untitled <= 1 => "Untitled".into(),
-            None => format!("Untitled {}", self.0.untitled),
+            None if self.0.untitled <= 1 => t("Untitled"),
+            None => t_with("Untitled {n}", &[("n", &self.0.untitled)]),
         }
     }
 
@@ -235,30 +249,48 @@ thread_local! {
 
 /// Opens a window for a document with `content`.
 fn show<T: Clone + PartialEq + 'static>(kind: Rc<DocumentType<T>>, content: T, path: Option<PathBuf>, untitled: u32) -> Retained<NSWindow> {
+    let owner = Owner::new();
+    let (content_signal, edited_signal, path) = owner.with(|| (Signal::new(content.clone()), Signal::new(false), Signal::new(path)));
     let doc = Document(Rc::new(DocInner {
-        saved: RefCell::new(content.clone()),
-        content: Signal::new(content),
-        edited: Signal::new(false),
-        path: Signal::new(path),
+        saved: RefCell::new(content),
+        content: content_signal,
+        edited: edited_signal,
+        path,
         untitled,
         kind: kind.clone(),
         window: RefCell::new(Weak::default()),
         closing: Cell::new(false),
         effects: RefCell::default(),
+        _owner: owner.clone(),
     }));
-    // Edited while the content differs from the saved content.
-    let d = doc.clone();
+    // The document's own effects hold it weakly: it's freed (and its
+    // signals with it) once its window and the views' handles are gone.
+    let saved = Rc::downgrade(&doc.0);
     let edited = Effect::new(move || {
-        let differs = d.0.content.with(|c| *c != *d.0.saved.borrow());
-        d.0.edited.set_if_changed(differs);
+        let Some(d) = saved.upgrade() else { return };
+        let differs = content_signal.with(|c| *c != *d.saved.borrow());
+        edited_signal.set_if_changed(differs);
     });
-    let view = (kind.view)(&doc);
-    let window = crate::open(Window::new(&untrack(|| doc.title())).size(kind.size.0, kind.size.1).view(view));
+    let view = owner.with(|| (kind.view)(&doc));
+    // Files of the app's kinds dropped on a document window open.
+    let extensions: Vec<&str> = kind.extensions.iter().map(String::as_str).collect();
+    let mut spec = Window::new(&untrack(|| doc.title())).size(kind.size.0, kind.size.1).view(view).on_drop_files(&extensions, |paths| {
+        for path in paths {
+            if let Err(e) = open_document(&path) {
+                eprintln!("appkit-ui: couldn't open {}: {e}", path.display());
+            }
+        }
+    });
+    if let Some(toolbar) = &kind.toolbar {
+        spec = spec.toolbar(owner.with(|| toolbar(&doc)));
+    }
+    let window = crate::open(spec);
     *doc.0.window.borrow_mut() = Weak::from_retained(&window);
     // The title bar follows the file and the edited state (the dot in the
     // close button, the proxy icon of the file).
-    let (d, w) = (doc.clone(), Weak::from_retained(&window));
+    let (d, w) = (Rc::downgrade(&doc.0), Weak::from_retained(&window));
     let title = Effect::new(move || {
+        let Some(d) = d.upgrade().map(Document) else { return };
         let (name, path, edited) = (d.title(), d.path(), d.is_edited());
         if let Some(w) = w.load() {
             w.setTitle(&NSString::from_str(&name));
@@ -387,13 +419,13 @@ fn clear_recents() {
 /// The File menu's document items: those above Close, and those after it.
 pub(crate) fn file_items() -> (Vec<MenuItem>, Vec<MenuItem>) {
     let can_open = || OPENER.with_borrow(|o| o.as_ref().is_some_and(|o| o.can_open()));
-    let mut above = vec![menu_item("New", || {
+    let mut above = vec![menu_item(&t("New"), || {
         new_document();
     })
     .key("n")];
     if can_open() {
-        above.push(menu_item("Open…", choose_and_open).key("o"));
-        above.push(dynamic_submenu("Open Recent", || {
+        above.push(menu_item(&t("Open…"), choose_and_open).key("o"));
+        above.push(dynamic_submenu(&t("Open Recent"), || {
             let mut items: Vec<MenuItem> = recent_documents()
                 .into_iter()
                 .map(|p| {
@@ -405,27 +437,27 @@ pub(crate) fn file_items() -> (Vec<MenuItem>, Vec<MenuItem>) {
             if any {
                 items.push(menu_separator());
             }
-            items.push(menu_item("Clear Menu", clear_recents).enabled_when(move || any));
+            items.push(menu_item(&t("Clear Menu"), clear_recents).enabled_when(move || any));
             items
         }));
     }
     let writable = || current().is_some_and(|d| d.writable());
     let after = vec![
-        menu_item("Save", || {
+        menu_item(&t("Save"), || {
             if let Some(d) = current() {
                 save_flow(d, |_| {});
             }
         })
         .key("s")
         .enabled_when(writable),
-        menu_item("Save As…", || {
+        menu_item(&t("Save As…"), || {
             if let Some(d) = current() {
                 save_as_flow(d, |_| {});
             }
         })
         .key_with("s", &[Modifier::Shift])
         .enabled_when(writable),
-        menu_item("Revert to Saved", confirm_revert).enabled_when(|| current().is_some_and(|d| d.edited() && d.path().is_some())),
+        menu_item(&t("Revert to Saved"), confirm_revert).enabled_when(|| current().is_some_and(|d| d.edited() && d.path().is_some())),
     ];
     (above, after)
 }
@@ -446,7 +478,7 @@ fn choose_and_open() {
 fn open_reporting(path: &Path) {
     if let Err(e) = open_document(path) {
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        report(None, &format!("The document “{name}” couldn't be opened."), &e.to_string());
+        report(None, &t_with("The document “{name}” couldn't be opened.", &[("name", &name)]), &e.to_string());
     }
 }
 
@@ -464,7 +496,7 @@ fn report(window: Option<&NSWindow>, title: &str, message: &str) {
 fn save_flow(doc: Rc<dyn AnyDoc>, done: impl FnOnce(bool) + 'static) {
     match doc.path() {
         Some(path) => {
-            let ok = doc.save_to(&path).map_err(|e| report(doc.window().as_deref(), &format!("The document “{}” couldn't be saved.", doc.title()), &e.to_string()));
+            let ok = doc.save_to(&path).map_err(|e| report(doc.window().as_deref(), &t_with("The document “{name}” couldn't be saved.", &[("name", &doc.title())]), &e.to_string()));
             done(ok.is_ok());
         }
         None => save_as_flow(doc, done),
@@ -481,7 +513,7 @@ fn save_as_flow(doc: Rc<dyn AnyDoc>, done: impl FnOnce(bool) + 'static) {
     let dir = doc.path().and_then(|p| p.parent().map(Path::to_path_buf));
     save_panel(&window, &name, dir.as_deref(), move |path| match path {
         Some(path) => {
-            let ok = doc.save_to(&path).map_err(|e| report(doc.window().as_deref(), &format!("The document “{}” couldn't be saved.", doc.title()), &e.to_string()));
+            let ok = doc.save_to(&path).map_err(|e| report(doc.window().as_deref(), &t_with("The document “{name}” couldn't be saved.", &[("name", &doc.title())]), &e.to_string()));
             done(ok.is_ok());
         }
         None => done(false),
@@ -491,9 +523,9 @@ fn save_as_flow(doc: Rc<dyn AnyDoc>, done: impl FnOnce(bool) + 'static) {
 fn confirm_revert() {
     let Some(doc) = current() else { return };
     let Some(window) = doc.window() else { return };
-    let question = Alert::new(&format!("Revert to the saved version of “{}”?", doc.title()), "Your current changes will be lost.")
-        .button("Revert")
-        .button("Cancel");
+    let question = Alert::new(&t_with("Revert to the saved version of “{name}”?", &[("name", &doc.title())]), &t("Your current changes will be lost."))
+        .button(&t("Revert"))
+        .button(&t("Cancel"));
     alert(&window, question, move |i| {
         if i == 0
             && let Err(e) = doc.revert()
@@ -521,10 +553,10 @@ pub(crate) fn window_should_close(window: &NSWindow) -> bool {
 fn close_flow(doc: Rc<dyn AnyDoc>, done: impl FnOnce(bool) + 'static) {
     let Some(window) = doc.window() else { return done(true) };
     window.makeKeyAndOrderFront(None);
-    let question = Alert::new(&format!("Do you want to save the changes made to the document “{}”?", doc.title()), "Your changes will be lost if you don't save them.")
-        .button("Save")
-        .button("Cancel")
-        .button("Don't Save");
+    let question = Alert::new(&t_with("Do you want to save the changes made to the document “{name}”?", &[("name", &doc.title())]), &t("Your changes will be lost if you don't save them."))
+        .button(&t("Save"))
+        .button(&t("Cancel"))
+        .button(&t("Don't Save"));
     let close = move |doc: &Rc<dyn AnyDoc>| {
         doc.closing().set(true);
         if let Some(w) = doc.window() {

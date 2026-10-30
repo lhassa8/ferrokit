@@ -1,11 +1,32 @@
 # Getting started
 
 `appkit-ui` needs macOS 15 or later and a stable Rust toolchain. Nothing
-else: no Xcode project, no Swift, no build script. Add it to a binary crate:
+else: no Xcode project, no Swift, no build script.
+
+The quickest start is `cargo ferrokit`, which makes a working app with
+self-checks, then runs, checks and bundles it:
+
+```bash
+cargo install cargo-ferrokit
+```
+
+```bash
+cargo ferrokit new my-app
+```
+
+```bash
+cd my-app && cargo ferrokit run
+```
+
+`--document` makes a document app instead (New, Open…, Save, Recent,
+one window per file). [Testing and shipping](08-testing-and-shipping.md)
+covers `check`, `bundle` and `notarize`.
+
+By hand, add `appkit-ui` to a binary crate:
 
 ```toml
 [dependencies]
-appkit-ui = { path = "…/crates/appkit-ui" }
+appkit-ui = "0.3"
 ```
 
 ## A first app
@@ -15,13 +36,12 @@ use appkit_ui::*;
 
 fn main() {
     let count = Signal::new(0);
-    let (c1, c2) = (count.clone(), count.clone());
     App::new("Counter")
         .window(
             Window::new("Counter").size(320.0, 140.0).view(
                 vstack((
-                    label(move || format!("Clicked {} times", c1.get())),
-                    button("Click me", move || c2.update(|n| *n += 1)),
+                    label(move || format!("Clicked {} times", count.get())),
+                    button("Click me", move || count.update(|n| *n += 1)),
                 ))
                 .padding(20.0),
             ),

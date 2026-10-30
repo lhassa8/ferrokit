@@ -8,6 +8,11 @@
 //! use; they're converted from AppKit's UTF-16 ranges at the boundary.
 //! Like [`crate::table::TableModel`], user actions are queued on the model
 //! and announced with [`crate::request_redraw`].
+//!
+//! Styled text: [`TextModel::set_highlighter`] colours and emphasises runs
+//! of the text (syntax highlighting, search matches), re-run on every edit
+//! before it's drawn. The text stays plain: styles aren't typed, pasted,
+//! copied or undone.
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
@@ -18,7 +23,7 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send};
 use objc2_app_kit::{
-    NSFont, NSResponder, NSScrollView, NSText, NSTextDelegate, NSTextInputClient, NSTextStorage, NSTextStorageDelegate,
+    NSColor, NSFont, NSResponder, NSScrollView, NSText, NSTextDelegate, NSTextInputClient, NSTextStorage, NSTextStorageDelegate,
     NSTextStorageEditActions, NSTextView, NSTextViewDelegate, NSAutoresizingMaskOptions, NSView,
 };
 use objc2_foundation::{NSNotification, NSPoint, NSRange, NSRect, NSSize, NSString, NSUndoManager};
@@ -43,6 +48,7 @@ trait Data {
     fn quiet(&self) -> bool;
     fn composing(&self) -> bool;
     fn undo_manager(&self) -> Retained<NSUndoManager>;
+    fn highlight(&self, edited: Option<NSRange>);
 }
 
 struct ViewIvars {
@@ -126,10 +132,15 @@ define_class!(
     // no textDidChange:), reaches the text storage.
     unsafe impl NSTextStorageDelegate for Delegate {
         #[unsafe(method(textStorage:didProcessEditing:range:changeInLength:))]
-        fn did_process_editing(&self, _storage: &NSTextStorage, edited: NSTextStorageEditActions, _range: NSRange, _delta: isize) {
-            if edited.contains(NSTextStorageEditActions::EditedCharacters)
-                && let Some(data) = self.data().filter(|d| !d.quiet() && !d.composing())
-            {
+        fn did_process_editing(&self, _storage: &NSTextStorage, edited: NSTextStorageEditActions, range: NSRange, _delta: isize) {
+            if !edited.contains(NSTextStorageEditActions::EditedCharacters) {
+                return;
+            }
+            let Some(data) = self.data().filter(|d| !d.composing()) else { return };
+            // Restyle before the layout manager hears of the edit, so new
+            // text never shows in the previous run's style.
+            data.highlight(Some(range));
+            if !data.quiet() {
                 data.push(TextEvent::Changed);
             }
         }
@@ -206,6 +217,273 @@ struct Inner {
     scroll: Retained<NSScrollView>,
     view: Retained<HostTextView>,
     _delegate: Retained<Delegate>,
+    /// The font unstyled text uses (`set_font`).
+    font: RefCell<Retained<NSFont>>,
+    highlighter: RefCell<Option<Rc<Highlighter>>>,
+    /// Set while styles are applied (they re-enter the storage delegate).
+    styling: Cell<bool>,
+    /// The runs last applied and the text's length then, to restyle only
+    /// what an edit changed.
+    shown: RefCell<Option<(usize, Runs)>>,
+}
+
+type Highlighter = dyn Fn(&str) -> Runs;
+type Runs = Vec<(Range<usize>, TextStyle)>;
+
+/// A colour for styled text. The named ones are the system's colours: they
+/// follow Dark Mode and Increase Contrast.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TextColor {
+    /// The text colour (what unstyled text uses).
+    Primary,
+    /// Less prominent text.
+    Secondary,
+    /// Even less prominent text (comments, placeholders).
+    Tertiary,
+    /// Links.
+    Link,
+    /// System red.
+    Red,
+    /// System orange.
+    Orange,
+    /// System yellow.
+    Yellow,
+    /// System green.
+    Green,
+    /// System mint.
+    Mint,
+    /// System teal.
+    Teal,
+    /// System cyan.
+    Cyan,
+    /// System blue.
+    Blue,
+    /// System indigo.
+    Indigo,
+    /// System purple.
+    Purple,
+    /// System pink.
+    Pink,
+    /// System brown.
+    Brown,
+    /// System gray.
+    Gray,
+    /// The background of content (text, tables): white, or dark in Dark Mode.
+    Background,
+    /// Separator lines and grids.
+    Separator,
+    /// A fixed sRGB colour (components 0–1; the same in light and dark).
+    Rgb(f64, f64, f64),
+}
+
+impl TextColor {
+    const NAMED: [TextColor; 19] = [
+        TextColor::Primary,
+        TextColor::Secondary,
+        TextColor::Tertiary,
+        TextColor::Link,
+        TextColor::Red,
+        TextColor::Orange,
+        TextColor::Yellow,
+        TextColor::Green,
+        TextColor::Mint,
+        TextColor::Teal,
+        TextColor::Cyan,
+        TextColor::Blue,
+        TextColor::Indigo,
+        TextColor::Purple,
+        TextColor::Pink,
+        TextColor::Brown,
+        TextColor::Gray,
+        TextColor::Background,
+        TextColor::Separator,
+    ];
+
+    /// The `NSColor` (dynamic for the named colours).
+    pub fn ns(self) -> Retained<NSColor> {
+        match self {
+            TextColor::Primary => NSColor::textColor(),
+            TextColor::Secondary => NSColor::secondaryLabelColor(),
+            TextColor::Tertiary => NSColor::tertiaryLabelColor(),
+            TextColor::Link => NSColor::linkColor(),
+            TextColor::Red => NSColor::systemRedColor(),
+            TextColor::Orange => NSColor::systemOrangeColor(),
+            TextColor::Yellow => NSColor::systemYellowColor(),
+            TextColor::Green => NSColor::systemGreenColor(),
+            TextColor::Mint => NSColor::systemMintColor(),
+            TextColor::Teal => NSColor::systemTealColor(),
+            TextColor::Cyan => NSColor::systemCyanColor(),
+            TextColor::Blue => NSColor::systemBlueColor(),
+            TextColor::Indigo => NSColor::systemIndigoColor(),
+            TextColor::Purple => NSColor::systemPurpleColor(),
+            TextColor::Pink => NSColor::systemPinkColor(),
+            TextColor::Brown => NSColor::systemBrownColor(),
+            TextColor::Gray => NSColor::systemGrayColor(),
+            TextColor::Background => NSColor::textBackgroundColor(),
+            TextColor::Separator => NSColor::separatorColor(),
+            TextColor::Rgb(r, g, b) => NSColor::colorWithSRGBRed_green_blue_alpha(r, g, b, 1.0),
+        }
+    }
+
+    fn from_ns(color: &NSColor) -> Option<TextColor> {
+        Self::NAMED.into_iter().find(|c| c.ns().isEqual(Some(color))).or_else(|| {
+            let c = color.colorUsingColorSpace(&objc2_app_kit::NSColorSpace::sRGBColorSpace())?;
+            Some(TextColor::Rgb(c.redComponent(), c.greenComponent(), c.blueComponent()))
+        })
+    }
+}
+
+/// How a run of text looks. What it leaves unset stays as the editor's own
+/// (its font and text colour).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct TextStyle {
+    /// The text colour.
+    pub color: Option<TextColor>,
+    /// A background behind the run.
+    pub background: Option<TextColor>,
+    /// Bold (the font's bold face).
+    pub bold: bool,
+    /// Italic (the font's italic face, where it has one).
+    pub italic: bool,
+    /// Underlined.
+    pub underline: bool,
+}
+
+impl TextStyle {
+    /// A style that changes nothing.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// With this text colour.
+    pub fn color(mut self, color: TextColor) -> Self {
+        self.color = Some(color);
+        self
+    }
+
+    /// With this background.
+    pub fn background(mut self, color: TextColor) -> Self {
+        self.background = Some(color);
+        self
+    }
+
+    /// Bold.
+    pub fn bold(mut self) -> Self {
+        self.bold = true;
+        self
+    }
+
+    /// Italic.
+    pub fn italic(mut self) -> Self {
+        self.italic = true;
+        self
+    }
+
+    /// Underlined.
+    pub fn underline(mut self) -> Self {
+        self.underline = true;
+        self
+    }
+}
+
+/// UTF-16 offsets of every byte offset of `text` (inside a character: that
+/// character's start), plus the end.
+fn utf16_map(text: &str) -> Vec<usize> {
+    let mut map = Vec::with_capacity(text.len() + 1);
+    let mut units = 0;
+    for c in text.chars() {
+        map.extend(std::iter::repeat_n(units, c.len_utf8()));
+        units += c.len_utf16();
+    }
+    map.push(units);
+    map
+}
+
+impl Inner {
+    /// Styles the text with `runs`: what differs from the runs shown before
+    /// (and the `edited` UTF-16 range) is reset to the editor's font and
+    /// colour, then given its runs' styles. `None` restyles everything.
+    fn apply_styles(&self, runs: Vec<(Range<usize>, TextStyle)>, edited: Option<NSRange>) {
+        // SAFETY: the text view's own storage, on the main thread.
+        let Some(storage) = (unsafe { self.view.textStorage() }) else { return };
+        let text = storage.string().to_string();
+        let map = utf16_map(&text);
+        let len16 = *map.last().unwrap_or(&0);
+        let shown = self.shown.borrow_mut().take();
+        // The span whose runs changed: runs equal before it (a prefix) and,
+        // shifted by the edit, after it (a suffix) keep their styles.
+        let region = match (shown, edited) {
+            (Some((old_len, old)), Some(edited)) => {
+                let delta = text.len() as isize - old_len as isize;
+                let shift = |r: &Range<usize>| (r.start as isize + delta) as usize..(r.end as isize + delta) as usize;
+                let prefix = old.iter().zip(&runs).take_while(|(a, b)| a == b).count();
+                let suffix = old[prefix..]
+                    .iter()
+                    .rev()
+                    .zip(runs[prefix..].iter().rev())
+                    .take_while(|(a, b)| a.1 == b.1 && a.0.start as isize + delta >= 0 && shift(&a.0) == b.0)
+                    .count();
+                let lo = if prefix > 0 { runs[prefix - 1].0.end.min(text.len()) } else { 0 };
+                let hi = if suffix > 0 { runs[runs.len() - suffix].0.start.min(text.len()) } else { text.len() };
+                let (lo, hi) = (map[lo].min(edited.location), map[hi.max(lo)].max(edited.location + edited.length).min(len16));
+                lo..hi
+            }
+            _ => 0..len16,
+        };
+        let font = self.font.borrow().clone();
+        self.styling.set(true);
+        // SAFETY: attribute keys and values of the documented types (fonts,
+        // colours, an NSNumber for the underline style), in range.
+        unsafe {
+            use objc2_app_kit::{NSBackgroundColorAttributeName, NSFontAttributeName, NSForegroundColorAttributeName, NSUnderlineStyleAttributeName};
+            storage.beginEditing();
+            let base = objc2_foundation::NSDictionary::from_retained_objects(
+                &[NSFontAttributeName, NSForegroundColorAttributeName],
+                &[Retained::into_super(Retained::into_super(font.clone())), Retained::into_super(Retained::into_super(NSColor::textColor()))],
+            );
+            storage.setAttributes_range(Some(&base), NSRange::new(region.start, region.end - region.start));
+            let fonts = objc2_app_kit::NSFontManager::sharedFontManager(mtm());
+            for (range, style) in &runs {
+                let (start, end) = (map[range.start.min(text.len())].max(region.start), map[range.end.min(text.len())].min(region.end));
+                if start >= end {
+                    continue;
+                }
+                let r = NSRange::new(start, end - start);
+                if let Some(c) = style.color {
+                    storage.addAttribute_value_range(NSForegroundColorAttributeName, &c.ns(), r);
+                }
+                if let Some(c) = style.background {
+                    storage.addAttribute_value_range(NSBackgroundColorAttributeName, &c.ns(), r);
+                }
+                if style.bold || style.italic {
+                    let mut f = font.clone();
+                    if style.bold {
+                        f = fonts.convertFont_toHaveTrait(&f, objc2_app_kit::NSFontTraitMask::BoldFontMask);
+                    }
+                    if style.italic {
+                        f = fonts.convertFont_toHaveTrait(&f, objc2_app_kit::NSFontTraitMask::ItalicFontMask);
+                    }
+                    storage.addAttribute_value_range(NSFontAttributeName, &f, r);
+                }
+                if style.underline {
+                    storage.addAttribute_value_range(NSUnderlineStyleAttributeName, &objc2_foundation::NSNumber::new_isize(1), r);
+                }
+            }
+            storage.endEditing();
+        }
+        self.styling.set(false);
+        *self.shown.borrow_mut() = Some((text.len(), runs));
+        // What's typed next starts plain (the highlighter restyles it).
+        // SAFETY: a dictionary of standard attributes.
+        unsafe {
+            use objc2_app_kit::{NSFontAttributeName, NSForegroundColorAttributeName};
+            let typing = objc2_foundation::NSDictionary::from_retained_objects(
+                &[NSFontAttributeName, NSForegroundColorAttributeName],
+                &[Retained::into_super(Retained::into_super(font)), Retained::into_super(Retained::into_super(NSColor::textColor()))],
+            );
+            self.view.setTypingAttributes(&typing);
+        }
+    }
 }
 
 impl Data for Inner {
@@ -235,6 +513,15 @@ impl Data for Inner {
 
     fn undo_manager(&self) -> Retained<NSUndoManager> {
         self.undo.borrow().clone()
+    }
+
+    fn highlight(&self, edited: Option<NSRange>) {
+        if self.styling.get() {
+            return;
+        }
+        let Some(f) = self.highlighter.borrow().clone() else { return };
+        let runs = f(&self.view.string().to_string());
+        self.apply_styles(runs, edited);
     }
 }
 
@@ -328,6 +615,10 @@ impl TextModel {
             scroll,
             view: view.clone(),
             _delegate: delegate.clone(),
+            font: RefCell::new(NSFont::systemFontOfSize(13.0)),
+            highlighter: RefCell::new(None),
+            styling: Cell::new(false),
+            shown: RefCell::new(None),
         });
         let weak: Weak<dyn Data> = Rc::downgrade(&inner) as Weak<dyn Data>;
         *view.ivars().data.borrow_mut() = Some(weak.clone());
@@ -460,7 +751,57 @@ impl TextModel {
         };
         if let Some(font) = font {
             self.inner.view.setFont(Some(&font));
+            *self.inner.font.borrow_mut() = font;
+            self.inner.highlight(None);
         }
+    }
+
+    /// Styles the text with `f`: given the text, it returns runs (UTF-8
+    /// byte ranges) and their styles; the rest is plain. It runs now and
+    /// after every edit (typing, paste, undo, `set_text`), before the edit
+    /// is drawn, so keep it fast: it sees the whole text each time. `None`
+    /// makes the text plain again.
+    pub fn set_highlighter(&self, f: Option<impl Fn(&str) -> Vec<(Range<usize>, TextStyle)> + 'static>) {
+        *self.inner.highlighter.borrow_mut() = f.map(|f| Rc::new(f) as Rc<Highlighter>);
+        self.restyle();
+    }
+
+    /// Runs the highlighter again, for when what it depends on changed
+    /// other than the text (a search term, a theme).
+    pub fn restyle(&self) {
+        if self.inner.highlighter.borrow().is_some() {
+            self.inner.highlight(None);
+        } else {
+            self.inner.apply_styles(Vec::new(), None);
+        }
+    }
+
+    /// The style of the character at byte `offset`, as shown (for checks).
+    pub fn style_at(&self, offset: usize) -> TextStyle {
+        // SAFETY: the text view's own storage, on the main thread.
+        let Some(storage) = (unsafe { self.inner.view.textStorage() }) else { return TextStyle::default() };
+        let text = storage.string().to_string();
+        let Some(&index) = utf16_map(&text).get(offset).filter(|_| offset < text.len()) else { return TextStyle::default() };
+        let mut style = TextStyle::default();
+        // SAFETY: reading standard attributes at an index inside the text.
+        unsafe {
+            use objc2_app_kit::{NSBackgroundColorAttributeName, NSFontAttributeName, NSForegroundColorAttributeName, NSUnderlineStyleAttributeName};
+            let at = |key| storage.attribute_atIndex_effectiveRange(key, index, std::ptr::null_mut());
+            style.color = at(NSForegroundColorAttributeName)
+                .and_then(|c| c.downcast::<NSColor>().ok())
+                .and_then(|c| TextColor::from_ns(&c))
+                .filter(|c| *c != TextColor::Primary);
+            style.background = at(NSBackgroundColorAttributeName).and_then(|c| c.downcast::<NSColor>().ok()).and_then(|c| TextColor::from_ns(&c));
+            if let Some(font) = at(NSFontAttributeName).and_then(|f| f.downcast::<NSFont>().ok()) {
+                let traits = objc2_app_kit::NSFontManager::sharedFontManager(mtm()).traitsOfFont(&font);
+                style.bold = traits.contains(objc2_app_kit::NSFontTraitMask::BoldFontMask);
+                style.italic = traits.contains(objc2_app_kit::NSFontTraitMask::ItalicFontMask);
+            }
+            style.underline = at(NSUnderlineStyleAttributeName)
+                .and_then(|n| n.downcast::<objc2_foundation::NSNumber>().ok())
+                .is_some_and(|n| n.integerValue() != 0);
+        }
+        style
     }
 
     /// The current font size in points.

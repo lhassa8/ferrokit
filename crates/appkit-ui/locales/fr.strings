@@ -1,0 +1,46 @@
+/* appkit-ui's own strings in French: the menus it makes, document
+   alerts, "Untitled". Keys are the English text. An app's own tables
+   (App::translations) override these. */
+
+"Settings…" = "Réglages…";
+"About {name}" = "À propos de {name}";
+"Hide {name}" = "Masquer {name}";
+"Hide Others" = "Masquer les autres";
+"Show All" = "Tout afficher";
+"Quit {name}" = "Quitter {name}";
+"File" = "Fichier";
+"Close" = "Fermer";
+"Edit" = "Édition";
+"Undo" = "Annuler";
+"Redo" = "Rétablir";
+"Cut" = "Couper";
+"Copy" = "Copier";
+"Paste" = "Coller";
+"Delete" = "Supprimer";
+"Select All" = "Tout sélectionner";
+"Window" = "Fenêtre";
+"Minimize" = "Placer dans le Dock";
+"Zoom" = "Réduire/agrandir";
+"Bring All to Front" = "Tout ramener au premier plan";
+"Help" = "Aide";
+"Untitled" = "Sans titre";
+"Untitled {n}" = "Sans titre {n}";
+"New" = "Nouveau";
+"Open…" = "Ouvrir…";
+"Open Recent" = "Ouvrir l’élément récent";
+"Clear Menu" = "Effacer le menu";
+"Save" = "Enregistrer";
+"Save As…" = "Enregistrer sous…";
+"Revert to Saved" = "Revenir à la version enregistrée";
+"Revert" = "Revenir";
+"Cancel" = "Annuler";
+"Don't Save" = "Ne pas enregistrer";
+"The document “{name}” couldn't be opened." = "Le document « {name} » n’a pas pu être ouvert.";
+"The document “{name}” couldn't be saved." = "Le document « {name} » n’a pas pu être enregistré.";
+"Revert to the saved version of “{name}”?" = "Revenir à la version enregistrée de « {name} » ?";
+"Your current changes will be lost." = "Vos modifications actuelles seront perdues.";
+"Do you want to save the changes made to the document “{name}”?" = "Voulez-vous enregistrer les modifications apportées au document « {name} » ?";
+"Your changes will be lost if you don't save them." = "Vos modifications seront perdues si vous ne les enregistrez pas.";
+"No data" = "Aucune donnée";
+"Copy Image" = "Copier l’image";
+"Save Image…" = "Enregistrer l’image…";

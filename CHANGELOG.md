@@ -1,5 +1,63 @@
 # Changelog
 
+## appkit-ui 0.3.0, appkit-host 0.2.2, cargo-ferrokit 0.1.0 (unreleased: versions set, not yet published)
+
+`appkit-ui` 0.3 makes signals `Copy`, adds async data, commands, styled text, popovers, inspectors, a canvas with charts, the clipboard and drag and drop, and localisation. Its flagship example is a SQLite browser. `cargo-ferrokit` is new: it makes, runs, checks, bundles and notarizes apps. `appkit-host` only gains API (a patch release). `iced-appkit` is unchanged and stays at 0.2.1, whose `appkit-host` requirement 0.2.2 satisfies.
+
+### appkit-ui 0.3.0
+
+Changed (breaking; `cargo semver-checks`: `Signal` and `Memo` now implement `Copy`):
+
+- **`Copy` signals:** `Signal` and `Memo` are `Copy` handles into a per-thread arena, so closures capture them without `.clone()`. Existing code still compiles; clippy's `clone_on_copy` points out the clones left.
+  - Each signal belongs to the owner current when it was made, and is freed with it: a window's view tree (including signals made by its buttons' actions), a `dynamic` branch, a `for_each` row, or a document. Signals made outside any owner (in `main`) live for the app.
+  - Reading a signal after its owner is gone panics with a message saying so; setting it does nothing. New: `Signal::try_get`, `Signal::is_alive`, `live_signals()` for leak checks. `Signal` compares by identity.
+
+Added:
+
+- **Async data:** `Resource::new(source, fetch)` loads on a background thread from the signals `source` reads, and again when they change.
+  - A new load cancels the running one (`Cancel::is_cancelled`), so stale results are never shown, and the last value stays while the next loads.
+  - `get`, `get_untracked`, `loading`, `error`, `state` (`Load`), `refetch`. Closing its window cancels the load.
+- **Commands and focus:** `Command::new(name)`, handled by views (`ViewExt::on_command`, `on_command_when`), windows (`Window::on_command`) and the app (`App::on_command`).
+  - `menu_command` and `toolbar_command` run the handler nearest the focused view, and are enabled only while one answers.
+  - `ViewExt::focused_value` / `focused_value::<T>()`; `perform`, `can_perform`, `perform_in`, `focused_window`; `MenuItem::title_when`.
+- **Styled text and syntax highlighting:** `TextEditor::highlight(|text| runs)` (`TextStyle`: a `TextColor`, background, bold, italic, underline).
+  - It's applied after every edit, before it's drawn, restyling only the span that changed, and again when signals it reads change.
+  - `TextEditor::syntax(Syntax::sql() / Syntax::rust() / Syntax::new()…)`.
+- **Window furniture:**
+  - `Split::stacked()` and `Split::collapsible(index, &signal)` for sidebars and inspectors: they hide with a signal or a drag, keep their size, and reopen at it. `Split::trailing(points)`.
+  - `ViewExt::popover(&shown, || content)` / `popover_on(Edge, …)`: a native popover; Escape or a click outside closes it, and its content is freed.
+  - `DocumentType::toolbar`.
+- **Drawing and charts:** `canvas(|p: &mut Painter| …)`, redrawn when the signals it reads change or it resizes; `on_click`, `on_hover`, a VoiceOver `description`.
+  - `bar_chart` and `line_chart` (`Series`): round-number axes, values under the pointer, a VoiceOver summary, and decimation (a million points draw as a few thousand).
+- **Clipboard, drag and drop:**
+  - `Clipboard` (general or private): text, PNG, files.
+  - `DragItem`: text, PNG, a file, or a promised file written where it's dropped. `Canvas::draggable`, `Canvas::exportable` (Copy Image, Save Image…, drag out a PNG).
+  - `Window::on_drop_files(extensions, action)`; document apps open dropped files of their kinds.
+- **Localisation:** `t` (English keys) and `App::translations(&[(lang, .strings)])`, in the user's first preferred language the app has.
+  - `t_with` (named placeholders), `t_plural` (CLDR plural rules), `format_number`, `set_language`.
+  - The framework's own strings in German, French and Japanese.
+- **Test helpers:** `testing::canvas_drawing`, `canvas_png`, `canvas_drag`, `fulfil`, `drop_on_view`.
+- **New example, `sql_browser`:** a SQLite document app.
+  - Schema sidebar; a highlighted SQL editor over a million-row results table; queries that cancel stale ones.
+  - Row inspector, query history, charts, CSV export (drag `results.csv` to the Finder), German.
+
+Fixed:
+
+- A collapsible pane no longer collapses itself at the first layout.
+- Popovers reopen after an animated close in an app that isn't active.
+
+### appkit-host 0.2.2 (additive; semver-checks: no update required)
+
+- `TableModel::set_columns(columns)`: new columns in the same native table (the sort is cleared). Text cells set their alignment on reuse too.
+- `TextModel::set_highlighter`, `restyle`, `style_at`, with `TextStyle` and `TextColor` (system colours that follow Dark Mode, including `Background` and `Separator`; `TextColor::ns()`). Styled runs over plain text are applied before an edit is drawn and kept out of undo.
+- `testing::drop_on_view`.
+
+### cargo-ferrokit 0.1.0 (new)
+
+- `cargo ferrokit new <path> [--document]`: a working app (a to-do list, or a text document app) with self-checks, on `appkit-ui` 0.3 (or a local checkout: `--appkit-ui-path`).
+- `run`; `check` (clippy with warnings as errors, tests, a bundle, the app's `CHECK=all` self-checks, the signature); `bundle` (signed `.app`, hardened runtime, icon from a PNG, document types, languages, `--universal`, `--zip`); `notarize` (Developer ID, notary service, stapling; `--dry-run`).
+- Settings in `[package.metadata.ferrokit]`.
+
 ## appkit-host 0.2.1, iced-appkit 0.2.1, appkit-ui 0.2.0 (2026-10-29)
 
 `appkit-host` and `iced-appkit` only gain API (patch releases); `iced-appkit` re-exports the new `CellImage`, so it needs `appkit-host` 0.2.1. `appkit-ui` moves to 0.2.0: besides new features, some behaviour changed (see below).

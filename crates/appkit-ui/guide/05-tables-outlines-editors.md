@@ -145,8 +145,7 @@ impl Identifiable for File {
 
 let files = Signal::new(vec![File("/System/Applications/Calculator.app".into())]);
 let selected = Signal::new(Vec::<PathBuf>::new());
-let f = files.clone();
-let grid = collection(move || f.get(), |file: &File| {
+let grid = collection(move || files.get(), |file: &File| {
     let name = file.0.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     CollectionItem::new(name, ItemImage::FileIcon(file.0.clone()))
 })
@@ -189,3 +188,120 @@ let editor = text_editor(&notes)
 Positions are UTF-8 byte offsets. Each editor has its own undo history;
 `.shared_undo()` puts its typing in the window's history instead, between
 your app's own undoable changes (see [The app shell](06-app-shell.md)).
+
+### Styled text and syntax highlighting
+
+The text stays plain, but runs of it can be coloured and emphasised.
+`.syntax(...)` highlights a language; `Syntax::sql()` and `Syntax::rust()`
+are presets, and `Syntax::new()` builds others from keywords, strings,
+comments and numbers.
+
+```rust,no_run
+use appkit_ui::*;
+
+let query = TextModel::new(ViewId(3), "SELECT * FROM orders -- all of them");
+query.set_font(Some("Menlo"), 12.0);
+let editor = text_editor(&query).syntax(Syntax::sql()).accessibility_label("Query");
+# let _ = editor;
+```
+
+For anything else, `.highlight(|text| runs)` returns UTF-8 byte ranges and
+their `TextStyle`s (a `TextColor`, a background, bold, italic, underline).
+The colours are the system's, so they follow Dark Mode. Styles are applied
+after every edit, before it's drawn, and only where they changed. If the
+function reads signals, it runs again when they change, here to mark a
+search term:
+
+```rust,no_run
+use appkit_ui::*;
+
+let doc = TextModel::new(ViewId(4), "");
+let term = Signal::new(String::from("TODO"));
+let rust = Syntax::rust();
+let editor = text_editor(&doc).highlight(move |text| {
+    let mut runs = rust.highlight(text);
+    let t = term.get();
+    if !t.is_empty() {
+        let mark = TextStyle::new().background(TextColor::Yellow);
+        runs.extend(text.match_indices(t.as_str()).map(|(at, m)| (at..at + m.len(), mark)));
+    }
+    runs
+});
+# let _ = editor;
+```
+
+Styles aren't part of the text: typing, pasting and undo work on characters
+only, and the highlighter restyles what changed.
+
+## Drawing and charts
+
+`canvas(|p| …)` draws with a `Painter`: rectangles, circles, lines,
+polygons and text, in points from the top-left corner, in `TextColor`s
+(the system's follow Dark Mode). The drawing is recorded and replayed by
+a native view. It's recorded again when signals it reads change or the
+canvas resizes, so a canvas is as reactive as a label.
+
+```rust,no_run
+use appkit_ui::*;
+
+let level = Signal::new(0.4);
+let meter = canvas(move |p| {
+    p.fill_rounded_rect(0.0, 0.0, p.width(), p.height(), 6.0, TextColor::Separator);
+    p.fill_rounded_rect(0.0, 0.0, p.width() * level.get(), p.height(), 6.0, TextColor::Green);
+})
+.on_click(move |x, _y| println!("clicked at {x}"))
+.description(move || format!("Level {:.0}%", level.get() * 100.0))
+.min_size(200.0, 24.0);
+# let _ = meter;
+```
+
+VoiceOver sees a canvas as an image. `.description(…)` is what it reads,
+kept current.
+
+Charts are canvases. `bar_chart(|| vec![(label, value)…])` draws bars
+for categories. `line_chart(|| vec![Series::new(name, points)…])` draws
+lines through numeric points. Both give round-number axes and gridlines,
+show values under the pointer, and describe themselves to VoiceOver ("Bar
+chart, 72 bars, from … to …"). A line keeps at most a few points per
+pixel column (the first, lowest, highest and last), so a million rows draw
+in a few milliseconds and spikes still show.
+
+```rust,no_run
+use appkit_ui::*;
+
+let prices = Signal::new(vec![(1.0, 10.0), (2.0, 12.5), (3.0, 11.0)]);
+let chart = line_chart(move || vec![Series::new("price", prices.get())]);
+# let _ = chart;
+```
+
+## Clipboard, dragging out, dropping in
+
+`Clipboard::general()` is the system clipboard: `set_text`, `set_png`,
+`set_files`, and reading each back. Tables and text already handle ⌘C and
+⌘V themselves. `Clipboard::private()` is a pasteboard of the app's own,
+handy in tests.
+
+A canvas can be dragged out. `.draggable(|| Some(item))` gives a
+`DragItem`: text, a PNG, a file, or a file *promised* by name and written
+where it's dropped (the Finder, Mail, another app). The write runs off the
+main thread, and only if the drag lands. `.exportable("chart")` makes a
+canvas an image: right-click for Copy Image and Save Image…, or drag out
+`chart.png`.
+
+```rust,no_run
+use appkit_ui::*;
+
+let rows = Signal::new(vec![("a".to_string(), 1.0), ("b".to_string(), 2.0)]);
+let chip = canvas(|p| p.text(4.0, 3.0, "data.csv", 11.0, TextColor::Secondary, Align::Start))
+    .draggable(move || {
+        let csv: String = rows.get_untracked().iter().map(|(k, v)| format!("{k},{v}\n")).collect();
+        Some(DragItem::promise("data.csv", move |path| std::fs::write(path, &csv)))
+    })
+    .frame(80.0, 20.0);
+let chart = bar_chart(move || rows.get()).exportable("chart");
+# let _ = (chip, chart);
+```
+
+Files dropped on a window go to `Window::on_drop_files(extensions,
+action)` (any file if the list is empty). In a document app, files of the
+app's kinds dropped on a window open as documents, with no code.
