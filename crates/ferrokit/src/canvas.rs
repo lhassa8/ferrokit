@@ -249,6 +249,11 @@ pub(crate) struct CanvasState {
     down: Cell<Option<NSPoint>>,
     /// Drawing for an image: on the content background, not transparent.
     opaque: Cell<bool>,
+    /// Where the pointer is over the canvas (for its hover), if it is.
+    pointer: Cell<Option<NSPoint>>,
+    /// The drawing, for recording it again outside its effect (an export
+    /// inside a batch can't wait for the effect to run).
+    draw: RefCell<Option<Draw>>,
 }
 
 define_class!(
@@ -291,6 +296,7 @@ define_class!(
         #[unsafe(method(mouseMoved:))]
         fn mouse_moved(&self, event: &NSEvent) {
             let p = self.convertPoint_fromView(event.locationInWindow(), None);
+            self.ivars().pointer.set(Some(p));
             let hover = self.ivars().hover.borrow().clone();
             if let Some(f) = hover {
                 crate::signal::batch(|| f(Some((p.x, p.y))));
@@ -299,6 +305,7 @@ define_class!(
 
         #[unsafe(method(mouseExited:))]
         fn mouse_exited(&self, _event: &NSEvent) {
+            self.ivars().pointer.set(None);
             let hover = self.ivars().hover.borrow().clone();
             if let Some(f) = hover {
                 crate::signal::batch(|| f(None));
@@ -362,18 +369,40 @@ impl CanvasView {
     }
 }
 
-/// The canvas as a PNG, on the content background (2× on Retina).
+/// The canvas as a PNG, on the content background (2× on Retina), drawn as
+/// it looks without the pointer over it (no hover readout in an export).
 pub(crate) fn png(view: &NSView) -> Option<Vec<u8>> {
     let canvas = view.downcast_ref::<CanvasView>()?;
+    let hover = canvas.ivars().hover.borrow().clone().zip(canvas.ivars().pointer.get());
+    if let Some((f, _)) = &hover {
+        crate::signal::batch(|| f(None));
+        record(canvas);
+    }
     canvas.ivars().opaque.set(true);
     let rep = view.bitmapImageRepForCachingDisplayInRect(view.bounds());
     if let Some(rep) = &rep {
         view.cacheDisplayInRect_toBitmapImageRep(view.bounds(), rep);
     }
     canvas.ivars().opaque.set(false);
+    if let Some((f, p)) = &hover {
+        crate::signal::batch(|| f(Some((p.x, p.y))));
+        record(canvas);
+    }
     // SAFETY: encoding a bitmap as PNG with no options.
     let data = unsafe { rep?.representationUsingType_properties(objc2_app_kit::NSBitmapImageFileType::PNG, &objc2_foundation::NSDictionary::new()) }?;
     Some(data.to_vec())
+}
+
+/// Records the drawing again now, with the signals' current values.
+fn record(canvas: &CanvasView) {
+    let Some(draw) = canvas.ivars().draw.borrow().clone() else { return };
+    let size = canvas.bounds().size;
+    let mut painter = Painter::new(size.width, size.height);
+    if size.width > 0.0 && size.height > 0.0 {
+        untrack(|| draw(&mut painter));
+    }
+    *canvas.ivars().ops.borrow_mut() = painter.ops;
+    canvas.setNeedsDisplay(true);
 }
 
 /// A drawing canvas, made by [`canvas`].
@@ -463,6 +492,8 @@ impl View for Canvas {
             drag: RefCell::new(self.drag),
             down: Cell::new(None),
             opaque: Cell::new(false),
+            pointer: Cell::new(None),
+            draw: RefCell::new(Some(self.draw.clone())),
         });
         // SAFETY: NSView's designated initialiser.
         let view: Retained<CanvasView> = unsafe { msg_send![super(view), initWithFrame: NSRect::new(NSPoint::ZERO, NSSize::new(self.min.w, self.min.h))] };

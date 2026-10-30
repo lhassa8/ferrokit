@@ -165,6 +165,15 @@ fn wait(ms: u64, f: impl FnOnce() + 'static) {
     spawn(move || std::thread::sleep(std::time::Duration::from_millis(ms)), move |()| f());
 }
 
+/// Runs `f` once `ready` holds, or after `max_ms` if it never does (for
+/// what AppKit shows in its own time, like a popover).
+fn until(ready: impl Fn() -> bool + 'static, max_ms: u64, f: impl FnOnce() + 'static) {
+    if ready() || max_ms == 0 {
+        return f();
+    }
+    wait(50, move || until(ready, max_ms.saturating_sub(50), f));
+}
+
 /// Resources: loading off the main thread, a stale load overtaken by a newer
 /// one (cancelled, never shown), errors keeping the last value, refetch, and
 /// the running load cancelled when its window closes.
@@ -597,7 +606,7 @@ fn popover_teardown_check(events: Rc<RefCell<Vec<AppEvent>>>) {
     };
     let before = ferrokit::live_signals();
     open_pop.set(true);
-    wait(300, move || {
+    until(move || popovers() > 0, 3000, move || {
         let shown = popovers();
         let inside = ferrokit::live_signals() > before;
         show_anchor.set(false);

@@ -23,6 +23,9 @@ Also renamed, for anyone who relied on them: the Objective-C class prefixes (`Ap
 
 ### ferrokit (was appkit-ui)
 
+- **Fixed: an exported chart included the hover readout.** Copying, saving or dragging out a canvas while the pointer was over it captured the highlighted bar and its tooltip; images are now made as the canvas looks without the pointer over it, and the hover comes back on screen afterwards.
+- **Fixed: a document app's untouched Untitled window stayed open when a file was opened from code or File › Open….** Only files opened from the Finder closed it; now every way of opening a file does, as in TextEdit (the SQL browser opened its sample next to an empty Untitled window).
+- **Fixed: hiding a collapsible split pane could leave a line across the pane that took its room.** After the SQL browser's chart was shown and hidden, a 1-point line stayed across the results table where the chart's edge had been; the panes are now laid out again when one collapses or opens.
 - **Fixed: canvas colours lost their own transparency.** Drawing replaced a colour's alpha with the painter's opacity instead of multiplying them, so partly transparent system colours such as `TextColor::Separator` drew solid (the SQL browser's `results.csv` chip was a black box).
 
 ## appkit-ui 0.3.0, appkit-host 0.2.2, cargo-ferrokit 0.1.0 (2026-10-30)

@@ -909,8 +909,15 @@ mod self_checks {
 
     fn open_checks(dir: PathBuf, path: PathBuf) {
         let before = footprint_mb();
+        let untitled = windows().iter().map(|w| w.title().to_string()).collect::<Vec<_>>();
         let opened = open_document(&path);
-        check("open-database", opened.is_ok(), format!("{:?}", opened.as_ref().err()));
+        // The untouched Untitled window the app started with goes.
+        let left = windows().iter().filter(|w| w.isVisible()).map(|w| w.title().to_string()).collect::<Vec<_>>();
+        check(
+            "open-database",
+            opened.is_ok() && untitled == ["Untitled"] && left == ["sample.sqlite"],
+            format!("{:?}; windows before {untitled:?}, after {left:?}", opened.as_ref().err()),
+        );
         let w = opened.unwrap();
         let b = BROWSERS.with_borrow(|all| all.last().unwrap().0);
         let w2 = w.clone();
@@ -1262,11 +1269,21 @@ mod self_checks {
                 let d = drawing(&w2);
                 let lit = d.iter().filter(|t| t.ends_with("Indigo")).count();
                 let tip = d.iter().find(|t| t.starts_with("text \"202")  && t.contains(": ")).cloned();
+                // An export while hovering leaves the readout out, and the
+                // readout is back on screen afterwards.
+                let hovered_png = canvas_png(&view).unwrap_or_default();
+                let kept = drawing(&w2).iter().filter(|t| t.ends_with("Indigo")).count() == 1;
                 let _: () = unsafe { objc2::msg_send![&*view, mouseExited: &*mouse(&view, objc2_app_kit::NSEventType::MouseMoved, -5.0, -5.0)] };
                 let w3 = w2.clone();
                 then(move || {
                     let gone = !drawing(&w3).iter().any(|t| t.ends_with("Indigo"));
                     check("chart-hover", lit == 1 && tip.is_some() && gone, format!("hovering: {lit} bar highlighted, readout {tip:?}; leaving clears it: {gone}"));
+                    let plain_png = chart_view(&w3).and_then(|v| canvas_png(&v)).unwrap_or_default();
+                    check(
+                        "chart-export-no-hover",
+                        !hovered_png.is_empty() && hovered_png == plain_png && kept,
+                        format!("exported while hovering: {} bytes, the same as with no hover: {}; readout back on screen after: {kept}", hovered_png.len(), hovered_png == plain_png),
+                    );
                     if let Ok(snap) = std::env::var("SNAP") {
                         save_capture(&w3, &format!("{snap}/sql_browser-chart.png"));
                     }
@@ -1295,6 +1312,40 @@ mod self_checks {
         });
     }
 
+    /// The stacked split of the results table over the chart.
+    fn results_split(w: &NSWindow) -> Retained<NSSplitView> {
+        all(w).into_iter().filter_map(|v| v.downcast::<NSSplitView>().ok()).filter(|s| !s.isVertical() && s.arrangedSubviews().count() == 2).last().unwrap()
+    }
+
+    /// A thin horizontal line drawn across `view` within 6 pt of `y` (points
+    /// from its top) in a capture: a pixel row darker than the rows 3 px
+    /// above and below at most points across. Its position, if there is one.
+    fn thin_line(rep: &objc2_app_kit::NSBitmapImageRep, view: &NSView, y: f64) -> Option<f64> {
+        let window = view.window()?;
+        let scale = window.backingScaleFactor();
+        // (`y` from the top; the view may not be flipped.)
+        let y = if view.isFlipped() { y } else { view.bounds().size.height - y };
+        let r = view.convertRect_toView(objc2_foundation::NSRect::new(objc2_foundation::NSPoint::new(0.0, y - 6.0), objc2_foundation::NSSize::new(view.bounds().size.width, 12.0)), None);
+        let height = window.frame().size.height;
+        let (x0, x1) = ((r.origin.x * scale) as isize, ((r.origin.x + r.size.width) * scale) as isize);
+        let (y0, y1) = (((height - r.origin.y - r.size.height) * scale) as isize, ((height - r.origin.y) * scale) as isize);
+        let srgb = objc2_app_kit::NSColorSpace::sRGBColorSpace();
+        let row = |py: isize| -> Vec<f64> {
+            (x0 + 4..x1 - 4)
+                .step_by(8)
+                .filter_map(|x| rep.colorAtX_y(x, py).and_then(|c| c.colorUsingColorSpace(&srgb)))
+                .map(|c| c.redComponent() + c.greenComponent() + c.blueComponent())
+                .collect()
+        };
+        (y0.max(3)..y1.min(rep.pixelsHigh() - 3)).find_map(|py| {
+            let (here, above, below) = (row(py), row(py - 3), row(py + 3));
+            // Darker than just above and below at most points across (text
+            // crossing the line is darker anyway).
+            let darker = here.iter().zip(&above).zip(&below).filter(|((h, a), b)| **h < **a - 0.05 && **h < **b - 0.05).count();
+            (darker * 10 >= here.len() * 7).then(|| py as f64 / scale)
+        })
+    }
+
     fn png_size(png: &[u8]) -> Option<(u32, u32)> {
         (png.len() > 24 && png.starts_with(b"\x89PNG")).then(|| (u32::from_be_bytes(png[16..20].try_into().unwrap()), u32::from_be_bytes(png[20..24].try_into().unwrap())))
     }
@@ -1320,6 +1371,9 @@ mod self_checks {
                 && clip.png().as_deref() == Some(&png[..]),
             format!("PNG {size:?} ({} KB) for a {:.0}×{:.0} chart; dragged out as {:?}; on a pasteboard and back: {}", png.len() / 1024, chart.frame().size.width, chart.frame().size.height, file.as_ref().map(|f| f.file_name().unwrap().to_owned()), clip.png().is_some()),
         );
+        // Where the table pane ended while the chart was shown: hiding the
+        // chart used to leave a line across the table there.
+        let edge = results_split(&w).arrangedSubviews().objectAtIndex(0).frame().size.height;
         perform_in(Some(&w), super::TOGGLE_CHART);
         // CSV quoting.
         run_query(&w, b, "SELECT 1 AS n, 'x,y' AS comma, 'say \"hi\"' AS quote, NULL AS empty, 'two\nlines' AS multi");
@@ -1335,6 +1389,14 @@ mod self_checks {
             run_query(&w, b, "SELECT * FROM orders");
             let w3 = w.clone();
             when(move || idle(b)() && results(&w3).numberOfRows() == 1_000_000, 20_000, move |_| {
+                let pane = results_split(&w).arrangedSubviews().objectAtIndex(0);
+                match capture_window(&w) {
+                    Some(rep) => {
+                        let line = thin_line(&rep, &pane, edge);
+                        check("chart-hide-no-line", line.is_none(), format!("after hiding the chart, the table across its old edge ({edge:.0} pt): {}", line.map_or("clean".into(), |y| format!("a line {y:.1} pt from the window's top"))));
+                    }
+                    None => eprintln!("[check] chart-hide-no-line skipped: no screen-recording permission"),
+                }
                 let r = untrack(|| b.results.get()).unwrap();
                 let path = dir.join("orders.csv");
                 let t = Instant::now();

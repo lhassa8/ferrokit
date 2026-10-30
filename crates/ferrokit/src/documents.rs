@@ -356,7 +356,11 @@ pub fn open_document(path: &Path) -> std::io::Result<Retained<NSWindow>> {
         return Ok(w);
     }
     let opener = OPENER.with_borrow(Clone::clone).ok_or_else(|| std::io::Error::other("the app has no document type"))?;
-    opener.open(path)
+    let window = opener.open(path)?;
+    // However the file was opened (the Finder, Open…, the app's own code),
+    // the untouched untitled window the app started with goes.
+    close_auto_untitled();
+    Ok(window)
 }
 
 /// Saves the document in `window` to `path` (Save As… without the panel);
@@ -618,7 +622,6 @@ define_class!(
                 for p in &paths {
                     open_reporting(p);
                 }
-                close_auto_untitled();
             });
         }
 

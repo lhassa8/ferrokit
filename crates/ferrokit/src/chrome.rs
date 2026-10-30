@@ -248,6 +248,14 @@ impl View for Split {
                         }
                     }
                     delegate.ivars().applying.set(false);
+                    // The panes that grew or shrank keep a stale strip where
+                    // their old edge was (a line across a table) until they're
+                    // laid out again: AppKit's views inside (a scroll view's
+                    // background) don't follow the new size by themselves.
+                    // SAFETY: reading the view hierarchy on the main thread.
+                    if let Some(split) = unsafe { pane.superview() } {
+                        relayout_all(&split);
+                    }
                     if let Some(meta) = meta.upgrade() {
                         meta.mark();
                     }
@@ -260,6 +268,15 @@ impl View for Split {
             *pane.ivars().borrow_mut() = Rc::downgrade(&node.meta);
         }
         node
+    }
+}
+
+/// Marks `view` and everything inside it as needing layout and display.
+fn relayout_all(view: &NSView) {
+    view.setNeedsLayout(true);
+    view.setNeedsDisplay(true);
+    for sub in view.subviews().iter() {
+        relayout_all(&sub);
     }
 }
 
