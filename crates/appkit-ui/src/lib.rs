@@ -24,7 +24,8 @@
 //! - **Views and layout:** [`vstack`], [`hstack`], [`grid`], [`spacer`],
 //!   [`scroll`], [`for_each`] (keyed lists), [`dynamic`], and the
 //!   [`ViewExt`] modifiers (padding, sizes, context menus, accessibility
-//!   labels).
+//!   labels), and [`ViewExt::on_command`] for menu [`Command`]s that act
+//!   on the focus.
 //! - **Controls:** [`text_field`], [`toggle`], [`checkbox`], [`picker`],
 //!   [`slider`], [`stepper`], [`progress`], [`image`], [`button`].
 //! - **Deep widgets:** [`table`] (millions of rows, sorting, editing, drag
@@ -43,6 +44,7 @@
 mod appkit_views;
 mod chrome;
 mod collection;
+mod commands;
 mod controls;
 mod dialogs;
 mod documents;
@@ -77,6 +79,7 @@ pub use appkit_host::{is_dark, system_colors};
 pub use frame::{FrameLoop, on_frame};
 pub use store::{Stored, stored};
 pub use undo::{set_undoable, undoable, undoable_in};
+pub use commands::{Command, can_perform, can_perform_in, focused_value, focused_value_in, focused_window, menu_command, perform, perform_in, toolbar_command};
 pub use resource::{Cancel, Load, Resource};
 pub use signal::{Effect, Memo, Signal, after_batch, batch, effect_runs, live_signals, untrack};
 pub use controls::{
@@ -119,6 +122,7 @@ pub struct Window {
     toolbar: Vec<ToolbarItem>,
     autosave: Option<String>,
     fixed: bool,
+    responds: commands::Responds,
 }
 
 impl Window {
@@ -132,6 +136,7 @@ impl Window {
             toolbar: Vec::new(),
             autosave: None,
             fixed: false,
+            responds: commands::Responds::default(),
         }
     }
 
@@ -150,6 +155,20 @@ impl Window {
     /// A unified toolbar with these items.
     pub fn toolbar(mut self, items: Vec<ToolbarItem>) -> Self {
         self.toolbar = items;
+        self
+    }
+
+    /// Handles `command` while this window is focused and nothing nearer the
+    /// focus handles it (see [`Command`]).
+    pub fn on_command(mut self, command: Command, action: impl Fn() + 'static) -> Self {
+        self.responds.commands.push((command, commands::Handler::new(action, None)));
+        self
+    }
+
+    /// Handles `command` like [`on_command`](Self::on_command), enabled only
+    /// while `enabled` returns true.
+    pub fn on_command_when(mut self, command: Command, enabled: impl Fn() -> bool + 'static, action: impl Fn() + 'static) -> Self {
+        self.responds.commands.push((command, commands::Handler::new(action, Some(Box::new(enabled)))));
         self
     }
 
@@ -204,6 +223,12 @@ impl Window {
             let root: Retained<RootView> = unsafe { msg_send![RootView::alloc(mtm), initWithFrame: rect] };
             // The window's tree owns the signals made while building it.
             let node = undo::building(&undo, || batch(|| Node::build_owned(view, &mut Cx::new(Retained::into_super(root.clone())))));
+            {
+                // The window's handlers answer after its views'.
+                let mut r = node.meta.responds.borrow_mut();
+                r.commands.splice(0..0, self.responds.commands);
+                r.values.splice(0..0, self.responds.values);
+            }
             ROOTS.with_borrow_mut(|r| r.push((root.clone(), node)));
             window.setContentView(Some(&root));
             relayout_all();
@@ -287,6 +312,12 @@ fn relayout(root: &RootView) {
     });
     LAYOUT_PASSES.with(|n| n.set(n.get() + 1));
     IN_LAYOUT.with(|l| l.set(false));
+}
+
+/// The root node of `window`'s view tree.
+pub(crate) fn root_meta(window: &NSWindow) -> Option<Rc<view::Meta>> {
+    let content = window.contentView()?;
+    ROOTS.with_borrow(|r| r.iter().find(|(v, _)| std::ptr::eq(&***v as *const NSView, &*content as *const NSView)).map(|(_, n)| n.meta.clone()))
 }
 
 /// Tears down the view tree of `window`'s content (its node is dropped:
@@ -390,6 +421,13 @@ impl App {
     /// Runs `f` on the first run-loop pass after the windows are on screen.
     pub fn on_launch(mut self, f: impl FnOnce() + 'static) -> Self {
         self.on_launch = Some(Box::new(f));
+        self
+    }
+
+    /// Handles `command` when nothing nearer the focus does (or no window is
+    /// open). See [`Command`].
+    pub fn on_command(self, command: Command, action: impl Fn() + 'static) -> Self {
+        commands::app_command(command, commands::Handler::new(action, None));
         self
     }
 

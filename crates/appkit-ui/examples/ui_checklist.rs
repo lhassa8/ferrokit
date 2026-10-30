@@ -284,9 +284,9 @@ fn resource_owner_check(events: Rc<RefCell<Vec<AppEvent>>>) {
                 saw_cancel.load(Ordering::Relaxed) && finished.load(Ordering::Relaxed) && left == 0,
                 format!("closing the window cancelled the load: {}; signals left {left}", saw_cancel.load(Ordering::Relaxed)),
             );
-            // Outside this continuation's batch, as view_checks expects.
+            // Outside this continuation's batch, as the checks expect.
             let events = events.clone();
-            later(move || view_checks(events.clone()));
+            later(move || command_checks(events.clone()));
         });
     });
 }
@@ -335,7 +335,106 @@ fn view_menu() -> Vec<MenuItem> {
         menu_separator(),
         menu_item("Refresh", move || r.update(|n| *n += 1)).key("R"),
         menu_item("Rename", move || set_undoable("Rename", &rn, format!("{}+", rn.get_untracked()))).key_with("e", &[Modifier::Control]),
+        menu_separator(),
+        appkit_ui::menu_command("Rename Item", RENAME_ITEM).key_with("r", &[Modifier::Control]),
     ]
+}
+
+const RENAME_ITEM: appkit_ui::Command = appkit_ui::Command::new("rename-item");
+const REFRESH_LIST: appkit_ui::Command = appkit_ui::Command::new("refresh-list");
+const SHOW_HELP: appkit_ui::Command = appkit_ui::Command::new("show-help");
+
+thread_local! {
+    static HELP_SHOWN: Cell<u32> = const { Cell::new(0) };
+}
+
+/// Commands resolve from the focus outwards: the focused subtree's handler,
+/// a disabled handler answering (and blocking outer ones), the window's,
+/// then the app's; focused values the same way; a menu command validates
+/// against the focus; handlers go with their subtree.
+fn command_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use appkit_ui::{can_perform_in, focused_value_in, perform_in};
+    use objc2_app_kit::NSResponder;
+    let (left_hits, right_hits, refreshes) = (Signal::new(0u32), Signal::new(0u32), Signal::new(0u32));
+    let (name_l, name_r) = (Signal::new(String::from("left")), Signal::new(String::from("right")));
+    let show_detail = Signal::new(true);
+    let w = open(
+        Window::new("Commands")
+            .size(360.0, 120.0)
+            .on_command(REFRESH_LIST, move || refreshes.update(|n| *n += 1))
+            .view(hstack((
+                text_field(&name_l).accessibility_label("Left").on_command(RENAME_ITEM, move || left_hits.update(|n| *n += 1)).focused_value("side", "left"),
+                dynamic(move || {
+                    if show_detail.get() {
+                        appkit_ui::AnyView::new(
+                            text_field(&name_r)
+                                .accessibility_label("Right")
+                                .on_command_when(RENAME_ITEM, || false, move || right_hits.update(|n| *n += 1))
+                                .focused_value("side", "right"),
+                        )
+                    } else {
+                        appkit_ui::AnyView::new(text("no detail"))
+                    }
+                }),
+            ))),
+    );
+    let fields = || -> Vec<Retained<NSTextField>> { w.contentView().unwrap().subviews().iter().filter_map(|v| v.downcast::<NSTextField>().ok()).collect() };
+    let focus = |v: Option<&NSResponder>| w.makeFirstResponder(v);
+    let fs = fields();
+    let (left, right) = (fs[0].clone(), fs[1].clone());
+
+    focus(Some(&left));
+    let l = (can_perform_in(Some(&w), RENAME_ITEM), perform_in(Some(&w), RENAME_ITEM), focused_value_in::<&str>(&w, "side"));
+    focus(Some(&right));
+    let r = (can_perform_in(Some(&w), RENAME_ITEM), perform_in(Some(&w), RENAME_ITEM), focused_value_in::<&str>(&w, "side"));
+    let refreshed = perform_in(Some(&w), REFRESH_LIST);
+    focus(None);
+    let none = (can_perform_in(Some(&w), RENAME_ITEM), perform_in(Some(&w), REFRESH_LIST), focused_value_in::<&str>(&w, "side"));
+    let help = (perform_in(Some(&w), SHOW_HELP), perform_in(None, SHOW_HELP), HELP_SHOWN.get());
+    check(
+        "commands-resolve",
+        l == (true, true, Some("left"))
+            && r == (false, false, Some("right"))
+            && refreshed
+            && none == (false, true, None)
+            && help == (true, true, 2)
+            && (left_hits.get_untracked(), right_hits.get_untracked(), refreshes.get_untracked()) == (1, 0, 2),
+        format!(
+            "left focused (can, ran, value) {l:?}; right (disabled handler) {r:?}; window handler from right: {refreshed}; nothing focused {none:?}; app handler (in window, no window, count) {help:?}; hits left/right/refresh {}/{}/{}",
+            left_hits.get_untracked(),
+            right_hits.get_untracked(),
+            refreshes.get_untracked()
+        ),
+    );
+
+    // The menu item validates against the focused window's focus.
+    let item = || {
+        let main = NSApplication::sharedApplication(MainThreadMarker::new().unwrap()).mainMenu().unwrap();
+        let view = main.itemWithTitle(&NSString::from_str("View")).unwrap().submenu().unwrap();
+        view.update();
+        view.itemWithTitle(&NSString::from_str("Rename Item")).unwrap().isEnabled()
+    };
+    let target = appkit_ui::focused_window();
+    let is_ours = target.as_ref().is_some_and(|t| std::ptr::eq(&**t, &*w));
+    focus(Some(&left));
+    let on_left = item();
+    focus(Some(&right));
+    let on_right = item();
+    check(
+        "commands-menu",
+        !is_ours || (on_left && !on_right),
+        format!("{}menu item enabled with the left field focused {on_left}, the right {on_right}", if is_ours { "" } else { "skipped: another window has focus; " }),
+    );
+
+    // A removed subtree's handler goes with it.
+    focus(Some(&right));
+    batch(|| show_detail.set(false));
+    let after = (can_perform_in(Some(&w), RENAME_ITEM), focused_value_in::<&str>(&w, "side"));
+    focus(Some(&left));
+    let left_again = can_perform_in(Some(&w), RENAME_ITEM);
+    appkit_ui::close_window(&w);
+    check("commands-teardown", !after.0 && after.1.is_none() && left_again, format!("after removing the focused field: (can, value) {after:?}; left still handles it {left_again}"));
+    later(move || view_checks(events.clone()));
 }
 
 fn settings_window() -> Window {
@@ -3486,6 +3585,7 @@ fn main() {
         .menu("File", file_menu())
         .menu("View", view_menu())
         .settings(settings_window())
+        .on_command(SHOW_HELP, || HELP_SHOWN.set(HELP_SHOWN.get() + 1))
         .on_event(move |e| e2.borrow_mut().push(e))
         .on_launch(move || {
             if checks {

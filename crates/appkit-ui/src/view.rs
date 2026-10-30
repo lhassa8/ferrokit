@@ -96,9 +96,15 @@ pub(crate) struct Meta {
     pub(crate) rect: Cell<Option<[f64; 4]>>,
     /// Something in this subtree changed since the last layout.
     pub(crate) dirty: Cell<bool>,
+    /// Commands this node handles and values it publishes to the focus.
+    pub(crate) responds: RefCell<crate::commands::Responds>,
 }
 
 impl Meta {
+    pub(crate) fn parent(&self) -> Option<Rc<Meta>> {
+        self.parent.borrow().upgrade()
+    }
+
     pub(crate) fn set_parent(&self, parent: &Rc<Meta>) {
         *self.parent.borrow_mut() = Rc::downgrade(parent);
     }
@@ -240,7 +246,9 @@ impl Node {
         Native::add_subview(&cx.container, &view);
         let content = Rc::new(Cell::new(None));
         invalidate_layout();
+        let key = Native::view_key(&view);
         let node = Node::new(Kind::Leaf(Leaf { view, flex, min, content: content.clone(), cross_only: false }));
+        crate::commands::register_leaf(key, &node.meta);
         let handle = LeafHandle { content, meta: node.meta.clone() };
         (node, handle)
     }
@@ -293,6 +301,7 @@ impl Drop for Node {
             Native::remove(&Native::split_as_view(split));
         }
         if let Kind::Leaf(l) = &self.kind {
+            crate::commands::unregister_leaf(Native::view_key(&l.view));
             Native::remove(&l.view);
             if let Some(parent) = self.meta.parent.borrow().upgrade() {
                 parent.mark();
@@ -304,6 +313,23 @@ impl Drop for Node {
 
 /// Modifiers every view has.
 pub trait ViewExt: View + Sized {
+    /// Handles `command` while the focus is in this view (see
+    /// [`Command`](crate::Command)).
+    fn on_command(self, command: crate::Command, action: impl Fn() + 'static) -> Modified<Self> {
+        Modified::new(self).on_command(command, action)
+    }
+
+    /// Handles `command`, enabled only while `enabled` returns true.
+    fn on_command_when(self, command: crate::Command, enabled: impl Fn() -> bool + 'static, action: impl Fn() + 'static) -> Modified<Self> {
+        Modified::new(self).on_command_when(command, enabled, action)
+    }
+
+    /// Publishes `value` under `name` to the focus (see
+    /// [`focused_value`](crate::focused_value)).
+    fn focused_value<T: Clone + 'static>(self, name: &'static str, value: T) -> Modified<Self> {
+        Modified::new(self).focused_value(name, value)
+    }
+
     /// Inset on all sides, in points.
     fn padding(self, points: f64) -> Modified<Self> {
         Modified::new(self).padding(points)
@@ -358,11 +384,35 @@ pub struct Modified<V> {
     fill: (bool, bool),
     menu: Option<Vec<crate::chrome::MenuItem>>,
     label: Option<String>,
+    responds: crate::commands::Responds,
 }
 
 impl<V: View> Modified<V> {
     fn new(view: V) -> Self {
-        Modified { view, padding: None, width: None, height: None, fill: (false, false), menu: None, label: None }
+        Modified { view, padding: None, width: None, height: None, fill: (false, false), menu: None, label: None, responds: Default::default() }
+    }
+
+    /// Handles `command` while the focus is in this view (or nothing nearer
+    /// the focus handles it). See [`Command`](crate::Command).
+    pub fn on_command(mut self, command: crate::Command, action: impl Fn() + 'static) -> Self {
+        self.responds.commands.push((command, crate::commands::Handler::new(action, None)));
+        self
+    }
+
+    /// Handles `command` like [`on_command`](Self::on_command), enabled only
+    /// while `enabled` returns true (a disabled handler still answers: the
+    /// menu item is greyed out, and handlers further out aren't asked).
+    pub fn on_command_when(mut self, command: crate::Command, enabled: impl Fn() -> bool + 'static, action: impl Fn() + 'static) -> Self {
+        self.responds.commands.push((command, crate::commands::Handler::new(action, Some(Box::new(enabled)))));
+        self
+    }
+
+    /// Publishes `value` under `name` while the focus is in this view, for
+    /// [`focused_value`](crate::focused_value) (a signal, typically: the
+    /// list's selection, the editor's document).
+    pub fn focused_value<T: Clone + 'static>(mut self, name: &'static str, value: T) -> Self {
+        self.responds.values.push((name, Rc::new(value)));
+        self
     }
 
     /// The name VoiceOver reads for this view's native views.
@@ -429,6 +479,11 @@ impl<V: View> View for Modified<V> {
             for v in leaves {
                 Native::set_accessibility_label(&v, label);
             }
+        }
+        {
+            let mut r = node.meta.responds.borrow_mut();
+            r.commands.extend(self.responds.commands);
+            r.values.extend(self.responds.values);
         }
         node
     }

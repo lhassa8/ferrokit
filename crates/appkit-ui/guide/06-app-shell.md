@@ -33,6 +33,56 @@ shortcut is pressed. `dynamic_submenu(title, || items)` rebuilds its items
 each time it opens, for menus that list current things (servers, recent
 files).
 
+## Commands: menus that act on the focus
+
+A menu item made with `menu_command` doesn't run a fixed closure. It runs
+the `Command` handler **nearest the focus**:
+
+1. the focused view's handler, then each enclosing view's up to the window's root;
+2. then the window's;
+3. then the app's.
+
+The item is enabled only while some handler answers, as with AppKit's
+responder chain: below, ⌘K clears whichever field has focus, and is greyed
+out while the title field has focus and is already empty.
+
+```rust,no_run
+use appkit_ui::*;
+
+const CLEAR: Command = Command::new("clear");
+const REFRESH: Command = Command::new("refresh");
+
+let (title, tag) = (Signal::new(String::from("Groceries")), Signal::new(String::new()));
+let view = vstack((
+    text_field(&title)
+        .accessibility_label("Title")
+        .on_command_when(CLEAR, move || !title.with(String::is_empty), move || title.set(String::new()))
+        .focused_value("field", "title"),
+    text_field(&tag)
+        .accessibility_label("Tag")
+        .on_command(CLEAR, move || tag.set(String::new()))
+        .focused_value("field", "tag"),
+))
+.padding(20.0);
+App::new("Notes")
+    .menu("Note", vec![menu_command("Clear Field", CLEAR).key("k")])  // ⌘K clears the focused field
+    .on_command(REFRESH, || println!("refresh everything"))            // app-wide fallback
+    .window(Window::new("Notes").view(view).toolbar(vec![toolbar_command("refresh", "Refresh", "arrow.clockwise", REFRESH)]))
+    .run();
+```
+
+- `on_command_when(cmd, enabled, action)` answers but greys the item out
+  while `enabled` is false. Handlers further out aren't asked.
+- `Window::on_command` and `App::on_command` handle a command for the whole
+  window or app.
+- `.focused_value(name, value)` publishes a value to the focus (a
+  selection signal, say). `focused_value::<T>(name)` reads the nearest one,
+  for menu items that need to know what they act on.
+- `perform(cmd)` and `can_perform(cmd)` do the same from code;
+  `perform_in(window, cmd)` names the window.
+- Commands go to the key window, or, when the app isn't active, the most
+  recently opened visible window (`focused_window()`).
+
 ## Document apps
 
 `App::documents` makes an app document-based, like TextEdit or Numbers.

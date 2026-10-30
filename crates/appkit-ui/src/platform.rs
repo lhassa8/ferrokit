@@ -78,6 +78,9 @@ pub(crate) trait Platform {
     /// A view's own size (a split pane, after tiling).
     fn size(view: &Self::View) -> Size;
 
+    /// A key identifying `view` while it exists (for finding the focus).
+    fn view_key(view: &Self::View) -> usize;
+
     /// Adds `view` to `container`.
     fn add_subview(container: &Self::View, view: &Self::View);
     /// Takes `view` out of its container (teardown).
@@ -166,6 +169,10 @@ impl Platform for AppKit {
     fn size(view: &NSView) -> Size {
         let b = view.bounds().size;
         Size { w: b.width, h: b.height }
+    }
+
+    fn view_key(view: &NSView) -> usize {
+        view as *const NSView as usize
     }
 
     fn add_subview(container: &NSView, view: &NSView) {
