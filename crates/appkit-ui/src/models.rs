@@ -242,7 +242,7 @@ impl TextEditor {
     /// method is composing); setting it replaces the editor's text (clearing
     /// undo, like [`TextModel::set_text`]) unless it already matches.
     pub fn bind(mut self, text: &Signal<String>) -> Self {
-        self.bound = Some(text.clone());
+        self.bound = Some(*text);
         self
     }
 
@@ -277,7 +277,7 @@ impl View for TextEditor {
         }
         if let Some(bound) = &self.bound {
             // Signal → editor (skipped when equal: the editor is the source).
-            let (bound, model) = (bound.clone(), self.model.clone());
+            let (bound, model) = (*bound, self.model.clone());
             node.own(Effect::new(move || {
                 let want = bound.get();
                 untrack(|| {

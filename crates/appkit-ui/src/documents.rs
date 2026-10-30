@@ -21,6 +21,7 @@ use objc2_foundation::{NSString, NSURL, NSUserDefaults};
 
 use crate::chrome::{MenuItem, Modifier, dynamic_submenu, menu_item, menu_separator};
 use crate::dialogs::{Alert, OpenOptions, alert, open_panel, save_panel};
+use crate::signal::Owner;
 use crate::signal::{Effect, Signal, batch, untrack};
 use crate::view::{AnyView, View};
 use crate::{Window, mtm};
@@ -99,6 +100,9 @@ struct DocInner<T: 'static> {
     /// Closing without asking (after the user chose).
     closing: Cell<bool>,
     effects: RefCell<Vec<Effect>>,
+    /// Owns the document's signals and those its view makes outside the
+    /// window's tree; they're freed with the document.
+    _owner: Owner,
 }
 
 impl<T: Clone + PartialEq + 'static> Document<T> {
@@ -235,30 +239,36 @@ thread_local! {
 
 /// Opens a window for a document with `content`.
 fn show<T: Clone + PartialEq + 'static>(kind: Rc<DocumentType<T>>, content: T, path: Option<PathBuf>, untitled: u32) -> Retained<NSWindow> {
+    let owner = Owner::new();
+    let (content_signal, edited_signal, path) = owner.with(|| (Signal::new(content.clone()), Signal::new(false), Signal::new(path)));
     let doc = Document(Rc::new(DocInner {
-        saved: RefCell::new(content.clone()),
-        content: Signal::new(content),
-        edited: Signal::new(false),
-        path: Signal::new(path),
+        saved: RefCell::new(content),
+        content: content_signal,
+        edited: edited_signal,
+        path,
         untitled,
         kind: kind.clone(),
         window: RefCell::new(Weak::default()),
         closing: Cell::new(false),
         effects: RefCell::default(),
+        _owner: owner.clone(),
     }));
-    // Edited while the content differs from the saved content.
-    let d = doc.clone();
+    // The document's own effects hold it weakly: it's freed (and its
+    // signals with it) once its window and the views' handles are gone.
+    let saved = Rc::downgrade(&doc.0);
     let edited = Effect::new(move || {
-        let differs = d.0.content.with(|c| *c != *d.0.saved.borrow());
-        d.0.edited.set_if_changed(differs);
+        let Some(d) = saved.upgrade() else { return };
+        let differs = content_signal.with(|c| *c != *d.saved.borrow());
+        edited_signal.set_if_changed(differs);
     });
-    let view = (kind.view)(&doc);
+    let view = owner.with(|| (kind.view)(&doc));
     let window = crate::open(Window::new(&untrack(|| doc.title())).size(kind.size.0, kind.size.1).view(view));
     *doc.0.window.borrow_mut() = Weak::from_retained(&window);
     // The title bar follows the file and the edited state (the dot in the
     // close button, the proxy icon of the file).
-    let (d, w) = (doc.clone(), Weak::from_retained(&window));
+    let (d, w) = (Rc::downgrade(&doc.0), Weak::from_retained(&window));
     let title = Effect::new(move || {
+        let Some(d) = d.upgrade().map(Document) else { return };
         let (name, path, edited) = (d.title(), d.path(), d.is_edited());
         if let Some(w) = w.load() {
             w.setTitle(&NSString::from_str(&name));

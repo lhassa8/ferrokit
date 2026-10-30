@@ -19,6 +19,24 @@ let quiet = name.get_untracked();          // read without subscribing
 
 `set_if_changed` skips the notification when the value is equal.
 
+## Handles and owners
+
+`Signal` and `Memo` are `Copy` handles: closures capture them as they are,
+with no cloning. Each belongs to the **owner** that was current when it was
+made, and is freed with it:
+
+- **A window's view tree:** signals made while its view builds, by its
+  effects, and by its buttons' actions (a sheet's form, say) are freed when
+  the window closes.
+- **A `dynamic` branch or a `for_each` row:** freed when the branch is
+  replaced or the row removed.
+- **A document:** its content, path and edited state go with it.
+
+Signals made outside any owner, such as app state created in `main`, live as
+long as the app. Reading a freed signal panics with a message saying so;
+setting it does nothing, and `try_get` and `is_alive` check first.
+`live_signals()` counts the signals in existence, for leak checks.
+
 ## Memo: derived state
 
 A memo recomputes when its inputs change, and notifies its own readers only
@@ -28,8 +46,7 @@ when its value actually changes.
 use appkit_ui::*;
 
 let items = Signal::new(vec![3, 1, 4, 1, 5]);
-let i2 = items.clone();
-let total = Memo::new(move || i2.with(|v| v.iter().sum::<i32>()));
+let total = Memo::new(move || items.with(|v| v.iter().sum::<i32>()));
 let view = label(move || format!("Total: {}", total.get()));
 # let _ = view;
 ```
@@ -43,8 +60,7 @@ when its handle is dropped, so keep it.
 use appkit_ui::*;
 
 let theme = Signal::new(Appearance::System);
-let t = theme.clone();
-let _keep = Effect::new(move || set_appearance(t.get()));
+let _keep = Effect::new(move || set_appearance(theme.get()));
 ```
 
 Inside a view tree, `watch(…)` does the same and lives as long as its place
@@ -78,10 +94,9 @@ result on the main thread, inside a batch.
 use appkit_ui::*;
 
 let rows = Signal::new(Vec::<String>::new());
-let r = rows.clone();
 spawn(
     || std::fs::read_to_string("/etc/hosts").unwrap_or_default().lines().map(String::from).collect::<Vec<_>>(),
-    move |lines| r.set(lines),
+    move |lines| rows.set(lines),
 );
 ```
 

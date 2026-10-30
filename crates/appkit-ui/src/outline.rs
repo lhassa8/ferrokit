@@ -241,7 +241,7 @@ impl<T: Identifiable + 'static> Outline<T> {
 
     /// Two-way selection by item id.
     pub fn selection(mut self, selected: &Signal<Option<T::Id>>) -> Self {
-        self.selection = Some(selected.clone());
+        self.selection = Some(*selected);
         self
     }
 }
@@ -278,7 +278,7 @@ impl<T: Identifiable + 'static> View for Outline<T> {
         // Typed ids, index-aligned with the entries.
         let ids: Rc<RefCell<Vec<T::Id>>> = Rc::default();
         if let Some(sel) = &self.selection {
-            let (sel, ids) = (sel.clone(), ids.clone());
+            let (sel, ids) = (*sel, ids.clone());
             state.borrow_mut().on_select = Some(Box::new(move |i| {
                 sel.set(i.and_then(|i| ids.borrow().get(i).cloned()));
             }));
@@ -293,7 +293,7 @@ impl<T: Identifiable + 'static> View for Outline<T> {
         // used when the signal changes and after a reload, which clears
         // AppKit's selection.
         let restore: Rc<dyn Fn()> = {
-            let (st, ids, ov3, sel) = (state.clone(), ids.clone(), ov.clone(), self.selection.clone());
+            let (st, ids, ov3, sel) = (state.clone(), ids.clone(), ov.clone(), self.selection);
             Rc::new(move || {
                 let Some(sel) = &sel else { return };
                 let want = sel.get();

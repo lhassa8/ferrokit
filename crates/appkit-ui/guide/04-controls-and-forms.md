@@ -86,9 +86,8 @@ let form = vstack((
 use appkit_ui::*;
 
 let name = Signal::new(String::new());
-let n = name.clone();
 let save = button("Save", || println!("saved"))
-    .disabled(move || n.with(String::is_empty))  // re-evaluated when `name` changes
+    .disabled(move || name.with(String::is_empty))  // re-evaluated when `name` changes
     .default_action();                           // Return presses it
 # let _ = save;
 ```

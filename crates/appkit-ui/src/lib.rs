@@ -6,20 +6,20 @@
 //! use appkit_ui::*;
 //!
 //! let count = Signal::new(0);
-//! let (c1, c2) = (count.clone(), count.clone());
 //! App::new("Counter")
 //!     .window(Window::new("Counter").size(320.0, 140.0).view(
 //!         vstack((
-//!             label(move || format!("Clicked {} times", c1.get())),
-//!             button("Click me", move || c2.update(|n| *n += 1)),
+//!             label(move || format!("Clicked {} times", count.get())),
+//!             button("Click me", move || count.update(|n| *n += 1)),
 //!         ))
 //!         .padding(20.0),
 //!     ))
 //!     .run();
 //! ```
 //!
-//! - **State:** [`Signal`], [`Memo`], [`Effect`], [`batch`], [`spawn`] for
-//!   background work, [`stored`] for settings that persist.
+//! - **State:** [`Signal`] and [`Memo`] (`Copy` handles, freed with the
+//!   window, row or document that made them), [`Effect`], [`batch`],
+//!   [`spawn`] for background work, [`stored`] for settings that persist.
 //! - **Views and layout:** [`vstack`], [`hstack`], [`grid`], [`spacer`],
 //!   [`scroll`], [`for_each`] (keyed lists), [`dynamic`], and the
 //!   [`ViewExt`] modifiers (padding, sizes, context menus, accessibility
@@ -75,7 +75,7 @@ pub use appkit_host::{is_dark, system_colors};
 pub use frame::{FrameLoop, on_frame};
 pub use store::{Stored, stored};
 pub use undo::{set_undoable, undoable, undoable_in};
-pub use signal::{Effect, Memo, Signal, after_batch, batch, effect_runs, untrack};
+pub use signal::{Effect, Memo, Signal, after_batch, batch, effect_runs, live_signals, untrack};
 pub use controls::{
     Color, ColorWell, ComboBox, DatePicker, SearchField, Segmented, color_well, combo_box, date_picker, search_field, segmented,
     Checkbox, Image, Picker, Progress, Slider, Stepper, TextField, checkbox, image, picker, progress, secure_field, slider,
@@ -199,7 +199,8 @@ impl Window {
         if let Some(view) = self.view {
             // SAFETY: NSView's designated initialiser.
             let root: Retained<RootView> = unsafe { msg_send![RootView::alloc(mtm), initWithFrame: rect] };
-            let node = undo::building(&undo, || batch(|| view.build(&mut Cx::new(Retained::into_super(root.clone())))));
+            // The window's tree owns the signals made while building it.
+            let node = undo::building(&undo, || batch(|| Node::build_owned(view, &mut Cx::new(Retained::into_super(root.clone())))));
             ROOTS.with_borrow_mut(|r| r.push((root.clone(), node)));
             window.setContentView(Some(&root));
             relayout_all();

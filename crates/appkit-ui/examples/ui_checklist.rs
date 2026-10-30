@@ -112,7 +112,7 @@ fn run_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 
     // Signals: cost of one update (one subscribed effect), and batching.
     let n = Signal::new(0u64);
-    let n2 = n.clone();
+    let n2 = n;
     let seen = Rc::new(Cell::new(0u64));
     let s2 = seen.clone();
     let effect = Effect::new(move || s2.set(n2.get()));
@@ -130,14 +130,14 @@ fn run_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     // spawn: work on a background thread, continuation on the main thread in one batch.
     let main_thread = std::thread::current().id();
     let result = Signal::new(String::new());
-    let r2 = result.clone();
+    let r2 = result;
     let runs_seen = Rc::new(Cell::new(0u32));
     let rs = runs_seen.clone();
     let watcher = Effect::new(move || {
         let _ = r2.get();
         rs.set(rs.get() + 1);
     });
-    let r3 = result.clone();
+    let r3 = result;
     spawn(
         move || {
             std::thread::sleep(std::time::Duration::from_millis(50));
@@ -181,8 +181,8 @@ thread_local! {
 
 fn file_menu() -> Vec<MenuItem> {
     let m = MENU.with(Clone::clone);
-    let (add, remove) = (m.items.clone(), m.items.clone());
-    let has = m.items.clone();
+    let (add, remove) = (m.items, m.items);
+    let has = m.items;
     vec![
         menu_item("New Item", move || add.update(|n| *n += 1)).key("n"),
         menu_item("Remove Item", move || remove.update(|n| *n -= 1)).key_with("n", &[Modifier::Option]).enabled_when(move || has.get() > 0),
@@ -191,13 +191,13 @@ fn file_menu() -> Vec<MenuItem> {
 
 fn view_menu() -> Vec<MenuItem> {
     let m = MENU.with(Clone::clone);
-    let (s1, s2) = (m.sidebar.clone(), m.sidebar.clone());
+    let (s1, s2) = (m.sidebar, m.sidebar);
     let sort_item = |title: &str, v: u8| {
-        let (a, b) = (m.sort.clone(), m.sort.clone());
+        let (a, b) = (m.sort, m.sort);
         menu_item(title, move || a.set(v)).checked_when(move || b.get() == v)
     };
-    let r = m.refreshed.clone();
-    let rn = m.renamed.clone();
+    let r = m.refreshed;
+    let rn = m.renamed;
     vec![
         menu_item("Show Sidebar", move || s1.update(|s| *s = !*s)).key_with("s", &[Modifier::Control]).checked_when(move || s2.get()),
         submenu("Sort By", vec![sort_item("Name", 0), sort_item("Date", 1)]),
@@ -615,7 +615,7 @@ fn posted_event_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
             got == want || skip.is_some(),
             format!("{}type ab, ⌃⌘E Rename, type c, ⌘Z ×3, ⇧⌘Z (name, text, Edit menu, open groups): {got:?}", skip.map(|s| format!("{s}; ")).unwrap_or_default()),
         );
-        posted_shortcut_checks(w.clone(), field_text.clone(), events.clone());
+        posted_shortcut_checks(w.clone(), field_text, events.clone());
     });
     posted_steps(steps, 0, snap, done);
 }
@@ -681,7 +681,7 @@ fn posted_split_drag(events: Rc<RefCell<Vec<AppEvent>>>) {
 fn closable_window(title: &str, value: &Signal<u32>) -> Window {
     let labels: Vec<appkit_ui::AnyView> = (0..200)
         .map(|i| {
-            let v = value.clone();
+            let v = *value;
             appkit_ui::AnyView::new(label(move || format!("{i}: {}", v.get())))
         })
         .collect();
@@ -703,7 +703,7 @@ fn close_button_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let weak = objc2::rc::Weak::from_retained(&w);
     w.performClose(None);
     drop(w);
-    let v = value.clone();
+    let v = value;
     after_idle(move || {
         let runs = effect_runs();
         batch(|| v.set(1));
@@ -718,22 +718,39 @@ fn close_button_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                 windows().len()
             ),
         );
+        action_owner_check();
         // Settings is reused: closing it keeps the same window and its views.
         let s1 = appkit_ui::open_settings().unwrap();
         let s_nodes = live_nodes();
         s1.performClose(None);
         let s1p = Retained::as_ptr(&s1);
         drop(s1);
-        let v = v.clone();
+        let v = v;
         let events = events.clone();
         after_idle(move || {
             let s2 = appkit_ui::open_settings().unwrap();
             let same = Retained::as_ptr(&s2) == s1p && live_nodes() == s_nodes;
             s2.close();
             check("close-settings-kept", same, format!("Settings after closing: same window and views {same}"));
-            close_cycles(v.clone(), events.clone(), 0, 0.0);
+            close_cycles(v, events.clone(), 0, 0.0);
         });
     });
+}
+
+/// A button's action runs under its view tree's owner: a signal it makes
+/// (as for a sheet's form) is freed with the window, not kept for the app.
+fn action_owner_check() {
+    use objc2_app_kit::NSButton;
+    let made: Rc<Cell<Option<Signal<String>>>> = Rc::default();
+    let m = made.clone();
+    let w = open(Window::new("Action Owner").size(200.0, 80.0).view(button("Make", move || m.set(Some(Signal::new("form".into()))))));
+    let b = w.contentView().unwrap().subviews().iter().find_map(|v| v.downcast::<NSButton>().ok()).unwrap();
+    // SAFETY: a nil sender is allowed.
+    unsafe { b.performClick(None) };
+    let made_alive = made.get().is_some_and(|s| s.is_alive());
+    appkit_ui::close_window(&w);
+    let freed = made.get().is_some_and(|s| !s.is_alive() && s.try_get().is_none());
+    check("action-owner", made_alive && freed, format!("signal made by the action: alive while open {made_alive}, freed with the window {freed}"));
 }
 
 mod plain_toolbar {
@@ -837,10 +854,10 @@ fn close_cycles(value: Signal<u32>, events: Rc<RefCell<Vec<AppEvent>>>, round: u
             let then = then.clone();
             after_idle(move || plain(round + 1, base, then.clone()));
         }
-        let (v, e) = (value.clone(), events.clone());
+        let (v, e) = (value, events.clone());
         plain(0, 0.0, Rc::new(move |floor| {
             PLAIN_FLOOR_KB.with(|f| f.set(floor));
-            close_cycles(v.clone(), e.clone(), 1, 0.0);
+            close_cycles(v, e.clone(), 1, 0.0);
         }));
         return;
     }
@@ -853,8 +870,8 @@ fn close_cycles(value: Signal<u32>, events: Rc<RefCell<Vec<AppEvent>>>, round: u
     let w = open(closable_window("Cycle", &value));
     w.performClose(None);
     drop(w);
-    let v = value.clone();
-    after_idle(move || close_cycles(v.clone(), events.clone(), round + 1, base));
+    let v = value;
+    after_idle(move || close_cycles(v, events.clone(), round + 1, base));
 }
 
 fn close_cycles_report(now: f64, base: f64, events: Rc<RefCell<Vec<AppEvent>>>) {
@@ -1154,7 +1171,7 @@ fn posted_shortcut_checks(w: Retained<objc2_app_kit::NSWindow>, field_text: Sign
         ]);
         let seen: Rc<RefCell<Vec<(String, String)>>> = Rc::default();
         let snap: Rc<dyn Fn(usize)> = {
-            let (seen, f, field) = (seen.clone(), field_text.clone(), field.clone());
+            let (seen, f, field) = (seen.clone(), field_text, field.clone());
             Rc::new(move |_| seen.borrow_mut().push((field.stringValue().to_string(), f.get_untracked())))
         };
         let (w2, events2) = (w.clone(), events.clone());
@@ -1208,7 +1225,7 @@ fn controls_c_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let city = Signal::new(String::new());
     let query = Signal::new(String::new());
     let submits = Signal::new(0u32);
-    let s2 = submits.clone();
+    let s2 = submits;
     let w = open(Window::new("Controls C").size(420.0, 320.0).view(
         vstack((
             date_picker(&date).accessibility_label("Due"),
@@ -1319,7 +1336,7 @@ fn rich_table_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     model.set_group_by(Some(Box::new(|t: &Task| t.group.clone())));
     let activated = Signal::new(None::<usize>);
     let selected = Signal::new(Vec::<usize>::new());
-    let (a2, s2) = (activated.clone(), selected.clone());
+    let (a2, s2) = (activated, selected);
     let w = open(Window::new("Rich Table").size(560.0, 420.0).view(
         table(&model).on_activate(move |r| a2.set(Some(r))).on_select(move |r| s2.set(r)).accessibility_label("Tasks"),
     ));
@@ -1376,7 +1393,7 @@ fn rich_table_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     ).unwrap();
     tv.keyDown(&e);
     let model2 = model.clone();
-    let (activated2, w2, events2) = (activated.clone(), w.clone(), events.clone());
+    let (activated2, w2, events2) = (activated, w.clone(), events.clone());
     after_idle(move || {
         let act = activated2.get_untracked();
         check(
@@ -1689,13 +1706,13 @@ fn state() -> ViewState {
 
 fn views_window() -> impl View {
     let st = state();
-    let (items, flag, inner, tab) = (st.items.clone(), st.flag.clone(), st.inner.clone(), st.tab.clone());
+    let (items, flag, inner, tab) = (st.items, st.flag, st.inner, st.tab);
     vstack((
         label(move || format!("{} items", st.items.with(Vec::len))),
         for_each(move || items.get(), |it: Item| label(move || it.name.clone())),
         dynamic(move || {
             if flag.get() {
-                let inner = inner.clone();
+                let inner = inner;
                 vstack((text("on"), label(move || format!("inner {}", inner.get())))).id("on")
             } else {
                 text("off").id("off")
@@ -1906,10 +1923,9 @@ fn layout_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 /// and the cost of a label update.
 fn layout_bench(events: Rc<RefCell<Vec<AppEvent>>>) {
     let counter = Signal::new(0u64);
-    let c = counter.clone();
+    let c = counter;
     let rows: Vec<_> = (0..250)
         .map(|i| {
-            let c = c.clone();
             hstack((
                 if i == 0 { appkit_ui::AnyView::new(label(move || format!("Counter {}", c.get()))) } else { appkit_ui::AnyView::new(text(format!("Row {i}"))) },
                 text("Some label"),
@@ -1976,7 +1992,7 @@ thread_local! {
 
 fn controls_window() -> impl View {
     let c = CTRL.with(Clone::clone);
-    let (submits, saves, name) = (c.submits.clone(), c.saves.clone(), c.name.clone());
+    let (submits, saves, name) = (c.submits, c.saves, c.name);
     let summary = c.clone();
     vstack((
         text_field(&c.name).placeholder("Your name").on_submit(move || submits.update(|n| *n += 1)),
@@ -2109,7 +2125,7 @@ thread_local! {
 
 fn controls_b_window() -> impl View {
     let c = CTRL_B.with(Clone::clone);
-    let (count, prog, lines) = (c.count.clone(), c.progress.clone(), c.lines.clone());
+    let (count, prog, lines) = (c.count, c.progress, c.lines);
     vstack((
         picker(&c.size, vec![("Small", 1), ("Medium", 2), ("Large", 3)]).accessibility_label("Size"),
         hstack((slider(&c.volume, 0.0, 1.0).accessibility_label("Volume"), stepper(&c.count, 0.0, 10.0, 1.0).accessibility_label("Count"), label(move || format!("count {}", count.get())))),
@@ -2298,7 +2314,7 @@ fn teardown_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     }
     // Every view in the form, AppKit's internal subviews included.
     let per_form = count(&w.contentView().unwrap()) - 1;
-    let (n0, v0, f0) = (live_nodes(), w.contentView().unwrap().subviews().len(), footprint_mb());
+    let (n0, v0, f0, s0) = (live_nodes(), w.contentView().unwrap().subviews().len(), footprint_mb(), appkit_ui::live_signals());
     let t = std::time::Instant::now();
     for _ in 0..300 {
         batch(|| show.set(false));
@@ -2307,15 +2323,15 @@ fn teardown_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let ms = t.elapsed().as_secs_f64() * 1e3;
     later(move || {
         let w = windows().into_iter().find(|w| w.title().to_string() == "Teardown").unwrap();
-        let (n1, v1, f1) = (live_nodes(), w.contentView().unwrap().subviews().len(), footprint_mb());
+        let (n1, v1, f1, s1) = (live_nodes(), w.contentView().unwrap().subviews().len(), footprint_mb(), appkit_ui::live_signals());
         let gone = weak.load().is_none();
         // AppKit keeps ~1 KB per view ever measured and added to a window
         // (plain AppKit, same form: 7.5 MB per 300 cycles); more is ours.
         let kb_per_view = (f1 - f0) * 1024.0 / (300.0 * per_form as f64);
         check(
             "controls-teardown",
-            n1 == n0 && v1 == v0 && gone && kb_per_view < 1.5,
-            format!("300 × a 15-control form ({per_form} views) in {ms:.0} ms; nodes {n0} → {n1}; subviews {v0} → {v1}; first switch deallocated: {gone}; footprint {f0:.0} → {f1:.0} MB = {kb_per_view:.2} KB per view created (AppKit's floor ≈ 1)"),
+            n1 == n0 && v1 == v0 && s1 == s0 && gone && kb_per_view < 1.5,
+            format!("300 × a 15-control form ({per_form} views) in {ms:.0} ms; nodes {n0} → {n1}; subviews {v0} → {v1}; signals {s0} → {s1}; first switch deallocated: {gone}; footprint {f0:.0} → {f1:.0} MB = {kb_per_view:.2} KB per view created (AppKit's floor ≈ 1)"),
         );
         table_checks(events.clone());
     });
@@ -2593,7 +2609,7 @@ thread_local! {
 
 fn outline_window() -> impl View {
     let o = OUTLINE.with(Clone::clone);
-    let (sections, o2) = (o.sections.clone(), o.clone());
+    let (sections, o2) = (o.sections, o.clone());
     hstack((
         sidebar(move || sections.get(), |p: &Place| p.name.clone())
             .icon(|p: &Place| p.symbol.map(String::from))
@@ -2601,7 +2617,7 @@ fn outline_window() -> impl View {
             .width(180.0),
         dynamic(move || {
             if o2.show.get() {
-                let tree = o2.tree.clone();
+                let tree = o2.tree;
                 appkit_ui::AnyView::new(
                     outline(move || tree.get(), |p: &Place| p.name.clone())
                         .icon(|p: &Place| p.symbol.map(String::from))
@@ -2761,7 +2777,7 @@ fn editor_window() -> impl View {
         label(move || format!("{} characters", e1.notes.with(|t| t.chars().count()))),
         dynamic(move || {
             if e2.show.get() {
-                let (c, k) = (e2.changes.clone(), e2.compositions.clone());
+                let (c, k) = (e2.changes, e2.compositions);
                 appkit_ui::AnyView::new(
                     text_editor(&e2.model)
                         .bind(&e2.notes)
@@ -2929,7 +2945,7 @@ thread_local! {
 
 fn chrome_window() -> Window {
     let c = CHROME.with(Clone::clone);
-    let (adds, locked, renames, archivable, deleted) = (c.adds.clone(), c.locked.clone(), c.renames.clone(), c.archivable.clone(), c.deleted.clone());
+    let (adds, locked, renames, archivable, deleted) = (c.adds, c.locked, c.renames, c.archivable, c.deleted);
     Window::new("Chrome")
         .size(620.0, 400.0)
         .toolbar(vec![
@@ -3066,7 +3082,7 @@ fn dialog_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     w.makeKeyAndOrderFront(None);
     // Alert sheet: destructive button, the chosen button's index, closes.
     let chosen = Signal::new(None::<usize>);
-    let ch = chosen.clone();
+    let ch = chosen;
     alert(&w, Alert::new("Delete “report.csv”?", "This can't be undone.").button("Delete").button("Cancel").destructive(0).warning(), move |i| ch.set(Some(i)));
     let sheet_win = w.attachedSheet();
     let buttons = sheet_win.as_ref().map(|s| buttons_in(s)).unwrap_or_default();
@@ -3101,7 +3117,7 @@ fn view_sheet_check(events: Rc<RefCell<Vec<AppEvent>>>) {
         }).default_action()))))
         .padding(16.0),
     );
-    let c2 = closed.clone();
+    let c2 = closed;
     *handle.borrow_mut() = Some(sheet(&w, content, move || c2.set(true)));
     let sheet_win = w.attachedSheet().unwrap();
     let field = sheet_win.contentView().unwrap().subviews().iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.isEditable()).unwrap();
@@ -3130,7 +3146,7 @@ fn panel_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let w = dialogs_window();
     // Open panel: configuration, then Cancel → None.
     let result = Signal::new(Some(None::<Vec<std::path::PathBuf>>));
-    let r2 = result.clone();
+    let r2 = result;
     open_panel(&w, OpenOptions { extensions: vec!["csv".into(), "txt".into()], multiple: true, directories: false }, move |p| r2.set(Some(p)));
     let panel = w.attachedSheet().and_then(|s| s.downcast::<objc2_app_kit::NSOpenPanel>().ok());
     let types = panel.as_ref().map_or(0, |p| p.allowedContentTypes().count());
@@ -3151,7 +3167,7 @@ fn panel_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         let dir = std::env::temp_dir().join("appkit-ui-check");
         let _ = std::fs::create_dir_all(&dir);
         let saved = Signal::new(None::<Option<std::path::PathBuf>>);
-        let s2 = saved.clone();
+        let s2 = saved;
         save_panel(&w, "export.csv", Some(&dir), move |p| s2.set(Some(p)));
         let panel = w.attachedSheet().and_then(|s| s.downcast::<objc2_app_kit::NSSavePanel>().ok());
         let name = panel.as_ref().map(|p| p.nameFieldStringValue().to_string());

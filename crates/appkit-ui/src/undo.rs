@@ -155,6 +155,6 @@ pub fn set_undoable<T: Clone + PartialEq + 'static>(title: &str, signal: &Signal
     if old == value {
         return;
     }
-    let (s1, s2) = (signal.clone(), signal.clone());
+    let (s1, s2) = (*signal, *signal);
     undoable(title, move || s1.set(value.clone()), move || s2.set(old.clone()));
 }

@@ -68,7 +68,7 @@ pub fn stored<T: Stored>(key: &str, default: T) -> Signal<T> {
     let defaults = NSUserDefaults::standardUserDefaults();
     let key: Retained<NSString> = NSString::from_str(key);
     let signal = Signal::new(T::read(&defaults, &key).unwrap_or(default));
-    let s = signal.clone();
+    let s = signal;
     let mut first = true;
     let writer = Effect::new(move || {
         let value = s.get();

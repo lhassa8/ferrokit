@@ -200,7 +200,7 @@ define_class!(
 
 impl ActionTarget {
     pub(crate) fn new(mtm: MainThreadMarker, f: impl Fn() + 'static) -> Retained<Self> {
-        let this = Self::alloc(mtm).set_ivars(Box::new(f) as Box<dyn Fn()>);
+        let this = Self::alloc(mtm).set_ivars(Box::new(crate::signal::with_current_owner(f)) as Box<dyn Fn()>);
         // SAFETY: NSObject's designated initialiser.
         unsafe { msg_send![super(this), init] }
     }

@@ -15,7 +15,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::{Rc, Weak};
 
 use crate::platform::{MainThread, Native, NativeObject, NativeScroll, NativeSplit, NativeView, Platform};
-use crate::signal::{Effect, untrack};
+use crate::signal::{Effect, Owner, untrack};
 
 /// Something that can be shown. Build-once: [`View::build`] creates native
 /// views and effects; it is never called again for the same place.
@@ -198,6 +198,8 @@ pub struct Node {
     effects: Vec<Effect>,
     keep: Vec<NativeObject>,
     held: Vec<Rc<dyn std::any::Any>>,
+    /// Frees the signals made while building this subtree (dropped last).
+    owner: Option<Owner>,
 }
 
 impl Node {
@@ -215,6 +217,7 @@ impl Node {
             effects: Vec::new(),
             keep: Vec::new(),
             held: Vec::new(),
+            owner: None,
         };
         for c in node.children_static() {
             c.meta.set_parent(&node.meta);
@@ -240,6 +243,15 @@ impl Node {
         let node = Node::new(Kind::Leaf(Leaf { view, flex, min, content: content.clone(), cross_only: false }));
         let handle = LeafHandle { content, meta: node.meta.clone() };
         (node, handle)
+    }
+
+    /// Builds `view` with a new owner, which the node keeps: signals made
+    /// while building (and by its effects) are freed with the node.
+    pub(crate) fn build_owned(view: AnyView, cx: &mut Cx) -> Node {
+        let owner = Owner::new();
+        let mut node = owner.with(|| view.build_node(cx));
+        node.owner = Some(owner);
+        node
     }
 
     pub(crate) fn own(&mut self, effect: Effect) {
@@ -583,13 +595,16 @@ impl View for Dynamic {
         let container = cx.container.clone();
         let f = self.0;
         node.own(Effect::new(move || {
-            let view = f();
+            // Signals the branch makes belong to it (freed when it's replaced).
+            let owner = Owner::new();
+            let view = owner.with(&f);
             untrack(|| {
                 let current = children.borrow().first().and_then(|n| n.id);
                 if view.id.is_some() && view.id == current {
                     return;
                 }
-                let new = view.build_node(&mut Cx::new(container.clone()));
+                let mut new = owner.with(|| view.build_node(&mut Cx::new(container.clone())));
+                new.owner = Some(owner);
                 new.meta.set_parent(&meta);
                 // The old node (and its subtree) is dropped here: teardown.
                 *children.borrow_mut() = vec![new];
@@ -656,7 +671,7 @@ where
                     let n = match old.remove(&key) {
                         Some(n) => n,
                         None => {
-                            let n = AnyView::new(row(item)).build_node(&mut Cx::new(container.clone()));
+                            let n = Node::build_owned(AnyView::new(row(item)), &mut Cx::new(container.clone()));
                             n.meta.set_parent(&meta);
                             n
                         }

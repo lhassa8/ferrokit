@@ -443,7 +443,7 @@ pub fn toolbar_space() -> ToolbarItem {
 
 /// A toolbar search field bound two ways to `query`.
 pub fn toolbar_search(id: &str, query: &Signal<String>) -> ToolbarItem {
-    ToolbarItem::Search { id: id.into(), query: query.clone() }
+    ToolbarItem::Search { id: id.into(), query: *query }
 }
 
 pub(crate) struct ToolbarState {
@@ -519,7 +519,7 @@ impl ToolbarDelegate {
             ToolbarItem::Search { query, .. } => {
                 let si = NSSearchToolbarItem::initWithItemIdentifier(NSSearchToolbarItem::alloc(mtm), &ns_id);
                 let field = si.searchField();
-                let delegate = FieldDelegate::new(mtm, query.clone());
+                let delegate = FieldDelegate::new(mtm, query);
                 // SAFETY: the delegate is weak in AppKit; kept alive below.
                 unsafe { field.setDelegate(Some(ProtocolObject::from_ref(&*delegate))) };
                 state.effects.borrow_mut().push(Effect::new(move || {

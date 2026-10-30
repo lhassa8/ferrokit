@@ -11,14 +11,13 @@ use appkit_ui::*;
 
 fn main() {
     let name = Signal::new(String::new());
-    let n = name.clone();
     App::new("Form")
         .window(Window::new("Form").view(text_field(&name).accessibility_label("Name").padding(20.0)))
         .on_launch(move || {
             if std::env::var("CHECK").as_deref() != Ok("all") {
                 return;
             }
-            n.set("Ada".into());
+            name.set("Ada".into());
             let problems = testing::ax_audit(&windows()[0]);
             let ok = problems.is_empty();
             eprintln!("[check] accessibility {} {problems:?}", if ok { "PASS" } else { "FAIL" });

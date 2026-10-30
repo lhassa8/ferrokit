@@ -41,9 +41,9 @@ fn main() {
     let name = Signal::new(String::new());
     let notes = TextModel::new(ViewId(2), "Click here and type. Try Japanese input: toukyou → 東京.\n");
 
-    let (m1, l1, l2, l3, l4, l5, l6, l7) = (model.clone(), log.clone(), log.clone(), log.clone(), log.clone(), log.clone(), log.clone(), log.clone());
+    let (m1, l1, l2, l3, l4, l5, l6, l7) = (model.clone(), log, log, log, log, log, log, log);
     let (m2, m3) = (model.clone(), model.clone());
-    let n1 = name.clone();
+    let n1 = name;
     let content = vstack((
         text("1–3: the table. Drag rows to reorder, drag a .csv or .txt file from the Finder onto it, drag a row into TextEdit, ⌘C a selection, ⌘V text."),
         table(&model)
@@ -77,13 +77,13 @@ fn main() {
             }),
         hstack((
             button("Open…", move || {
-                let l = l4.clone();
+                let l = l4;
                 open_panel(&windows()[0], OpenOptions { extensions: vec![], multiple: false, directories: false }, move |p| {
                     record(&l, format!("Open panel → {p:?}"));
                 })
             }),
             button("Save…", move || {
-                let l = l5.clone();
+                let l = l5;
                 save_panel(&windows()[0], "Untitled.csv", None, move |p| record(&l, format!("Save panel → {p:?}")))
             }),
             button("Reset rows", move || {

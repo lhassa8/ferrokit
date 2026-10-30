@@ -10,19 +10,17 @@ use appkit_ui::*;
 
 let items = Signal::new(0);
 let show_sidebar = Signal::new(true);
-let (add, remove, has) = (items.clone(), items.clone(), items.clone());
-let (s1, s2) = (show_sidebar.clone(), show_sidebar.clone());
 App::new("Notes")
     .menu("File", vec![
-        menu_item("New Note", move || add.update(|n| *n += 1)).key("n"),                // ⌘N
-        menu_item("Delete Note", move || remove.update(|n| *n -= 1))
+        menu_item("New Note", move || items.update(|n| *n += 1)).key("n"),                // ⌘N
+        menu_item("Delete Note", move || items.update(|n| *n -= 1))
             .key_with("n", &[Modifier::Option])                                      // ⌥⌘N
-            .enabled_when(move || has.get() > 0),                                     // greyed out at 0
+            .enabled_when(move || items.get() > 0),                                     // greyed out at 0
     ])
     .menu("View", vec![
-        menu_item("Show Sidebar", move || s1.update(|s| *s = !*s))
+        menu_item("Show Sidebar", move || show_sidebar.update(|s| *s = !*s))
             .key_with("s", &[Modifier::Control])
-            .checked_when(move || s2.get()),                                         // ✓ when shown
+            .checked_when(move || show_sidebar.get()),                                         // ✓ when shown
         menu_separator(),
         submenu("Sort By", vec![menu_item("Name", || {}), menu_item("Date", || {})]),
     ])
@@ -157,8 +155,7 @@ let title = Signal::new(String::from("Draft"));
 set_undoable("Rename", &title, "Final".into());     // ⌘Z puts "Draft" back
 
 let count = Signal::new(0);
-let (a, b) = (count.clone(), count.clone());
-undoable("Add Item", move || a.update(|n| *n += 1), move || b.update(|n| *n -= 1));
+undoable("Add Item", move || count.update(|n| *n += 1), move || count.update(|n| *n -= 1));
 ```
 
 Steps go to the frontmost window's history (`undoable_in` names the

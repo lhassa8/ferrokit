@@ -29,7 +29,7 @@ define_class!(
         fn did_change(&self, notification: &NSNotification) {
             let Some(field) = notification.object().and_then(|o| o.downcast::<NSTextField>().ok()) else { return };
             let value = field.stringValue().to_string();
-            let signal = self.ivars().clone();
+            let signal = *self.ivars();
             batch(|| signal.set(value));
         }
     }
@@ -79,7 +79,7 @@ impl View for TextField {
         if let Some(p) = &self.placeholder {
             field.setPlaceholderString(Some(&NSString::from_str(p)));
         }
-        let delegate = FieldDelegate::new(mtm, self.value.clone());
+        let delegate = FieldDelegate::new(mtm, self.value);
         // SAFETY: the delegate is weak in AppKit; the node keeps it alive.
         unsafe { field.setDelegate(Some(ProtocolObject::from_ref(&*delegate))) };
         let (mut node, _) = Node::leaf(
@@ -111,12 +111,12 @@ impl View for TextField {
 
 /// A text field bound two ways to `value`.
 pub fn text_field(value: &Signal<String>) -> TextField {
-    TextField { value: value.clone(), placeholder: None, on_submit: None, secure: false }
+    TextField { value: *value, placeholder: None, on_submit: None, secure: false }
 }
 
 /// A password field (`NSSecureTextField`) bound two ways to `value`.
 pub fn secure_field(value: &Signal<String>) -> TextField {
-    TextField { value: value.clone(), placeholder: None, on_submit: None, secure: true }
+    TextField { value: *value, placeholder: None, on_submit: None, secure: true }
 }
 
 fn state_of(on: bool) -> isize {
@@ -126,7 +126,7 @@ fn state_of(on: bool) -> isize {
 /// Builds a two-state control: the user's clicks set `value`; setting it
 /// updates the control.
 fn bound_switch(cx: &mut Cx, control: Retained<NSView>, set_state: impl Fn(isize) + 'static, get_state: impl Fn() -> isize + 'static, value: Signal<bool>) -> (Node, Retained<NSObject>) {
-    let v = value.clone();
+    let v = value;
     let get = std::rc::Rc::new(get_state);
     let g = get.clone();
     let target = ActionTarget::new(cx.mtm, move || v.set(g() == NSControlStateValueOn));
@@ -171,7 +171,7 @@ impl View for Checkbox {
 
 /// A checkbox titled `title`, bound two ways to `value`.
 pub fn checkbox(title: &str, value: &Signal<bool>) -> Checkbox {
-    Checkbox { title: title.into(), value: value.clone() }
+    Checkbox { title: title.into(), value: *value }
 }
 
 /// The switch part of a [`toggle`].
@@ -201,7 +201,7 @@ impl View for SwitchView {
 /// A labelled switch (`NSSwitch`) bound two ways to `value`.
 pub fn toggle(title: &str, value: &Signal<bool>) -> impl View {
     // The switch itself is named too: VoiceOver reads it apart from the text.
-    hstack((text(title), SwitchView(value.clone()).accessibility_label(title)))
+    hstack((text(title), SwitchView(*value).accessibility_label(title)))
 }
 
 /// Wires `control` to call `f` (in a batch) when the user changes it.
@@ -228,7 +228,7 @@ impl<T: PartialEq + Clone + 'static> View for Picker<T> {
             popup.addItemWithTitle(&NSString::from_str(title));
         }
         let options = std::rc::Rc::new(self.options);
-        let (value, opts, p) = (self.value.clone(), options.clone(), popup.clone());
+        let (value, opts, p) = (self.value, options.clone(), popup.clone());
         let target = on_action(cx, &popup, move || {
             if let Some((_, v)) = usize::try_from(p.indexOfSelectedItem()).ok().and_then(|i| opts.get(i)) {
                 value.set(v.clone());
@@ -252,7 +252,7 @@ impl<T: PartialEq + Clone + 'static> View for Picker<T> {
 
 /// A pop-up menu bound two ways to `value`, offering `options` (title, value).
 pub fn picker<T: PartialEq + Clone + 'static>(value: &Signal<T>, options: Vec<(&str, T)>) -> Picker<T> {
-    Picker { value: value.clone(), options: options.into_iter().map(|(t, v)| (t.to_string(), v)).collect() }
+    Picker { value: *value, options: options.into_iter().map(|(t, v)| (t.to_string(), v)).collect() }
 }
 
 /// A continuous slider bound two ways to `value`.
@@ -267,7 +267,7 @@ impl View for Slider {
         slider.setMinValue(self.range.0);
         slider.setMaxValue(self.range.1);
         slider.setContinuous(true);
-        let (value, s) = (self.value.clone(), slider.clone());
+        let (value, s) = (self.value, slider.clone());
         let target = on_action(cx, &slider, move || value.set(s.doubleValue()));
         let (mut node, _) =
             Node::leaf(cx, Retained::into_super(Retained::into_super(slider.clone())), (true, false), Size { w: 100.0, h: 0.0 });
@@ -285,7 +285,7 @@ impl View for Slider {
 
 /// A slider over `min..=max`, bound two ways to `value`.
 pub fn slider(value: &Signal<f64>, min: f64, max: f64) -> Slider {
-    Slider { value: value.clone(), range: (min, max) }
+    Slider { value: *value, range: (min, max) }
 }
 
 /// Up/down arrows stepping `value` within a range.
@@ -302,7 +302,7 @@ impl View for Stepper {
         stepper.setMaxValue(self.range.1);
         stepper.setIncrement(self.step);
         stepper.setValueWraps(false);
-        let (value, s) = (self.value.clone(), stepper.clone());
+        let (value, s) = (self.value, stepper.clone());
         let target = on_action(cx, &stepper, move || value.set(s.doubleValue()));
         let (mut node, _) =
             Node::leaf(cx, Retained::into_super(Retained::into_super(stepper.clone())), (false, false), Size::default());
@@ -320,7 +320,7 @@ impl View for Stepper {
 
 /// A stepper over `min..=max` in steps of `step`, bound two ways to `value`.
 pub fn stepper(value: &Signal<f64>, min: f64, max: f64, step: f64) -> Stepper {
-    Stepper { value: value.clone(), range: (min, max), step }
+    Stepper { value: *value, range: (min, max), step }
 }
 
 /// A progress bar: `Some(fraction)` (0–1) or `None` for indeterminate.
@@ -454,7 +454,7 @@ impl View for DatePicker {
             picker.setMinDate(Some(&ns_date(min)));
             picker.setMaxDate(Some(&ns_date(max)));
         }
-        let (value, p) = (self.value.clone(), picker.clone());
+        let (value, p) = (self.value, picker.clone());
         let target = on_action(cx, &picker, move || value.set(system_time(&p.dateValue())));
         let (mut node, _) = Node::leaf(cx, Retained::into_super(Retained::into_super(picker.clone())), (false, false), Size::default());
         let value = self.value;
@@ -473,7 +473,7 @@ impl View for DatePicker {
 /// A date picker bound two ways to `value` (date only; see
 /// [`DatePicker::with_time`]).
 pub fn date_picker(value: &Signal<std::time::SystemTime>) -> DatePicker {
-    DatePicker { value: value.clone(), time: false, calendar: false, range: None }
+    DatePicker { value: *value, time: false, calendar: false, range: None }
 }
 
 /// An sRGB colour, components from 0 to 1.
@@ -516,7 +516,7 @@ pub struct ColorWell(Signal<Color>);
 impl View for ColorWell {
     fn build(self, cx: &mut Cx) -> Node {
         let well = objc2_app_kit::NSColorWell::new(cx.mtm);
-        let (value, w) = (self.0.clone(), well.clone());
+        let (value, w) = (self.0, well.clone());
         let target = on_action(cx, &well, move || {
             if let Some(c) = Color::from_ns(&w.color()) {
                 value.set(c);
@@ -540,7 +540,7 @@ impl View for ColorWell {
 
 /// A colour well bound two ways to `value`.
 pub fn color_well(value: &Signal<Color>) -> ColorWell {
-    ColorWell(value.clone())
+    ColorWell(*value)
 }
 
 /// A segmented control choosing one of several values.
@@ -560,7 +560,7 @@ impl<T: PartialEq + Clone + 'static> View for Segmented<T> {
             control.setWidth_forSegment(0.0, i as isize);
         }
         let options = std::rc::Rc::new(self.options);
-        let (value, opts, c) = (self.value.clone(), options.clone(), control.clone());
+        let (value, opts, c) = (self.value, options.clone(), control.clone());
         let target = on_action(cx, &control, move || {
             if let Some((_, v)) = usize::try_from(c.selectedSegment()).ok().and_then(|i| opts.get(i)) {
                 value.set(v.clone());
@@ -584,7 +584,7 @@ impl<T: PartialEq + Clone + 'static> View for Segmented<T> {
 /// A segmented control bound two ways to `value`, one segment per option
 /// (title, value). VoiceOver reads each segment's title.
 pub fn segmented<T: PartialEq + Clone + 'static>(value: &Signal<T>, options: Vec<(&str, T)>) -> Segmented<T> {
-    Segmented { value: value.clone(), options: options.into_iter().map(|(t, v)| (t.to_string(), v)).collect() }
+    Segmented { value: *value, options: options.into_iter().map(|(t, v)| (t.to_string(), v)).collect() }
 }
 
 define_class!(
@@ -602,7 +602,7 @@ define_class!(
         fn did_change(&self, notification: &NSNotification) {
             let Some(field) = notification.object().and_then(|o| o.downcast::<NSTextField>().ok()) else { return };
             let value = field.stringValue().to_string();
-            let signal = self.ivars().clone();
+            let signal = *self.ivars();
             batch(|| signal.set_if_changed(value));
         }
     }
@@ -617,7 +617,7 @@ define_class!(
             // the chosen item itself.
             let chosen = combo.objectValueOfSelectedItem().and_then(|o| o.downcast::<NSString>().ok()).map(|s| s.to_string());
             if let Some(value) = chosen {
-                let signal = self.ivars().clone();
+                let signal = *self.ivars();
                 batch(|| signal.set_if_changed(value));
             }
         }
@@ -639,7 +639,7 @@ impl View for ComboBox {
             unsafe { combo.addItemWithObjectValue(&NSString::from_str(s)) };
         }
         combo.setCompletes(true);
-        let delegate = ComboDelegate::alloc(cx.mtm).set_ivars(self.value.clone());
+        let delegate = ComboDelegate::alloc(cx.mtm).set_ivars(self.value);
         // SAFETY: NSObject's designated initialiser.
         let delegate: Retained<ComboDelegate> = unsafe { msg_send![super(delegate), init] };
         // SAFETY: the delegate is weak in AppKit; the node keeps it.
@@ -660,7 +660,7 @@ impl View for ComboBox {
 /// A text field bound two ways to `value`, with `suggestions` in a pop-up
 /// list (typing completes from them).
 pub fn combo_box(value: &Signal<String>, suggestions: Vec<&str>) -> ComboBox {
-    ComboBox { value: value.clone(), suggestions: suggestions.into_iter().map(String::from).collect() }
+    ComboBox { value: *value, suggestions: suggestions.into_iter().map(String::from).collect() }
 }
 
 /// A search field (rounded, with a clear button) bound to `value`.
@@ -692,12 +692,12 @@ impl View for SearchField {
         }
         // Each keystroke is a change (not only Return), like the toolbar's.
         field.setSendsSearchStringImmediately(true);
-        let delegate = FieldDelegate::new(cx.mtm, self.value.clone());
+        let delegate = FieldDelegate::new(cx.mtm, self.value);
         // SAFETY: the delegate is weak in AppKit; the node keeps it.
         unsafe { field.setDelegate(Some(ProtocolObject::from_ref(&*delegate))) };
         // The clear button sends the action with empty text, but no
         // change notification: the action reads the field too.
-        let (value, f, submit) = (self.value.clone(), field.clone(), self.on_submit);
+        let (value, f, submit) = (self.value, field.clone(), self.on_submit);
         let target = on_action(cx, &field, move || {
             let text = f.stringValue().to_string();
             if text.is_empty() || value.get_untracked() != text {
@@ -722,5 +722,5 @@ impl View for SearchField {
 
 /// A search field bound two ways to `value` (updated as the user types).
 pub fn search_field(value: &Signal<String>) -> SearchField {
-    SearchField { value: value.clone(), placeholder: None, on_submit: None }
+    SearchField { value: *value, placeholder: None, on_submit: None }
 }

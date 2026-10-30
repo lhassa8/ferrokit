@@ -145,8 +145,7 @@ impl Identifiable for File {
 
 let files = Signal::new(vec![File("/System/Applications/Calculator.app".into())]);
 let selected = Signal::new(Vec::<PathBuf>::new());
-let f = files.clone();
-let grid = collection(move || f.get(), |file: &File| {
+let grid = collection(move || files.get(), |file: &File| {
     let name = file.0.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     CollectionItem::new(name, ItemImage::FileIcon(file.0.clone()))
 })

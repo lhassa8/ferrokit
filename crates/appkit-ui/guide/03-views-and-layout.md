@@ -75,8 +75,7 @@ impl Identifiable for Task {
 }
 
 let tasks = Signal::new(vec![Task { id: 1, title: "Write docs".into() }]);
-let t = tasks.clone();
-let list = scroll(vstack((for_each(move || t.get(), |task: Task| text(task.title)),)));
+let list = scroll(vstack((for_each(move || tasks.get(), |task: Task| text(task.title)),)));
 tasks.update(|v| v.push(Task { id: 2, title: "Ship".into() })); // builds one row
 # let _ = list;
 ```
@@ -91,8 +90,7 @@ rebuilds while the key is the same.
 use appkit_ui::*;
 
 let signed_in = Signal::new(false);
-let s = signed_in.clone();
-let body = dynamic(move || if s.get() { AnyView::new(text("Welcome back")) } else { AnyView::new(button("Sign in", || {})) });
+let body = dynamic(move || if signed_in.get() { AnyView::new(text("Welcome back")) } else { AnyView::new(button("Sign in", || {})) });
 # let _ = body;
 ```
 

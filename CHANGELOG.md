@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased (toward appkit-ui 0.3.0)
+
+### appkit-ui
+
+- **`Copy` signals:** `Signal` and `Memo` are now `Copy` handles into a per-thread arena, so closures capture them without `.clone()`. Each belongs to the owner current when it was made and is freed with it: a window's view tree (including signals made by its buttons' actions), a `dynamic` branch, a `for_each` row, or a document. Signals made outside any owner (in `main`) live for the app.
+- After its owner is gone, reading a signal panics with a message saying so, and setting it does nothing. New: `Signal::try_get`, `Signal::is_alive`, and `live_signals()` for leak checks.
+- Existing code still compiles; `.clone()` on a signal is now a copy (clippy's `clone_on_copy` points them out). `Signal` compares by identity (`PartialEq`, `Eq`).
+
 ## appkit-host 0.2.1, iced-appkit 0.2.1, appkit-ui 0.2.0 (2026-10-29)
 
 `appkit-host` and `iced-appkit` only gain API (patch releases); `iced-appkit` re-exports the new `CellImage`, so it needs `appkit-host` 0.2.1. `appkit-ui` moves to 0.2.0: besides new features, some behaviour changed (see below).
