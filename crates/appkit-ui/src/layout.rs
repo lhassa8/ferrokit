@@ -229,10 +229,14 @@ pub(crate) fn place(node: &Node, x: f64, y: f64, w: f64, h: f64, snap: &Snap) {
             }
             place(content, 0.0, 0.0, size.w, size.h, snap);
         }
-        Kind::Split { split, panes, position, .. } => {
+        Kind::Split { split, panes, position, trailing, stacked } => {
             Native::place_split(split, snapped(ix, iy, iw, ih, snap));
             if let Some(p) = position.take() {
-                Native::set_divider(split, p);
+                Native::set_divider(split, 0, p);
+            }
+            if let Some(t) = trailing.take().filter(|_| panes.len() >= 2) {
+                let along = if *stacked { ih } else { iw };
+                Native::set_divider(split, panes.len() - 2, along - t - 1.0);
             }
             for (pane, child) in panes {
                 let b = Native::size(pane);

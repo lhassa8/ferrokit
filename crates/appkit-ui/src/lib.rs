@@ -54,6 +54,7 @@ mod menu;
 mod models;
 mod outline;
 mod platform;
+mod popover;
 mod resource;
 mod signal;
 mod store;
@@ -100,6 +101,7 @@ pub use collection::{Collection, CollectionItem, ItemImage, collection, collecti
 pub use appkit_host::table::{CellImage, Column, ColumnState, Sort, TableModel};
 pub use appkit_host::text::{TextColor, TextModel, TextStyle};
 pub use syntax::Syntax;
+pub use popover::Edge;
 pub use appkit_host::ViewId;
 /// The AppKit window type the window functions take and return.
 pub use objc2_app_kit::NSWindow;
@@ -330,6 +332,36 @@ pub(crate) fn drop_root(window: &NSWindow) {
         let i = r.iter().position(|(v, _)| std::ptr::eq(&***v as *const NSView, &*content as *const NSView))?;
         Some(r.remove(i))
     });
+    drop(node);
+}
+
+/// Builds `view` (under its own owner) in a new root view of `size`
+/// points, laid out like a window's content: for content AppKit hosts in a
+/// window of its own (a popover). Returns the root and the view's ideal
+/// size. Release it with [`drop_hosted`].
+pub(crate) fn host_view(view: view::AnyView) -> (Retained<NSView>, NSSize) {
+    let mtm = mtm();
+    // SAFETY: NSView's designated initialiser.
+    let root: Retained<RootView> = unsafe { msg_send![RootView::alloc(mtm), initWithFrame: NSRect::new(NSPoint::ZERO, NSSize::new(100.0, 100.0))] };
+    let node = batch(|| Node::build_owned(view, &mut Cx::new(Retained::into_super(root.clone()))));
+    let size = layout::ideal(&node);
+    ROOTS.with_borrow_mut(|r| r.push((root.clone(), node)));
+    root.setFrameSize(NSSize::new(size.w.ceil(), size.h.ceil()));
+    (Retained::into_super(root), NSSize::new(size.w.ceil(), size.h.ceil()))
+}
+
+/// Drops the tree of a root made by [`host_view`].
+pub(crate) fn drop_hosted(root: &NSView) {
+    // `try_with`: this also runs while the window roots are being dropped
+    // at exit.
+    let node = ROOTS
+        .try_with(|r| {
+            let mut r = r.try_borrow_mut().ok()?;
+            let i = r.iter().position(|(v, _)| std::ptr::eq(&***v as *const NSView, root as *const NSView))?;
+            Some(r.remove(i))
+        })
+        .ok()
+        .flatten();
     drop(node);
 }
 

@@ -15,7 +15,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::{Rc, Weak};
 
 use crate::platform::{MainThread, Native, NativeObject, NativeScroll, NativeSplit, NativeView, Platform};
-use crate::signal::{Effect, Owner, untrack};
+use crate::signal::{Effect, Owner, Signal, untrack};
 
 /// Something that can be shown. Build-once: [`View::build`] creates native
 /// views and effects; it is never called again for the same place.
@@ -189,6 +189,8 @@ pub(crate) enum Kind {
         panes: Vec<(NativeView, Node)>,
         /// Initial divider position, applied at the first layout.
         position: Cell<Option<f64>>,
+        /// The last pane's initial size, applied at the first layout.
+        trailing: Cell<Option<f64>>,
         /// Panes top to bottom (dividers across) instead of side by side.
         stacked: bool,
     },
@@ -362,6 +364,12 @@ pub trait ViewExt: View + Sized {
         Modified::new(self).fill_height()
     }
 
+    /// Shows `content` in a popover pointing at this view while `shown` is
+    /// true (see [`Modified::popover`]).
+    fn popover<P: View>(self, shown: &Signal<bool>, content: impl Fn() -> P + 'static) -> Modified<Self> {
+        Modified::new(self).popover(shown, content)
+    }
+
     /// A right-click menu on this view's native views.
     fn context_menu(self, items: Vec<crate::chrome::MenuItem>) -> Modified<Self> {
         Modified::new(self).context_menu(items)
@@ -387,11 +395,25 @@ pub struct Modified<V> {
     menu: Option<Vec<crate::chrome::MenuItem>>,
     label: Option<String>,
     responds: crate::commands::Responds,
+    popover: Option<crate::popover::PopoverSpec>,
 }
 
 impl<V: View> Modified<V> {
     fn new(view: V) -> Self {
-        Modified { view, padding: None, width: None, height: None, fill: (false, false), menu: None, label: None, responds: Default::default() }
+        Modified { view, padding: None, width: None, height: None, fill: (false, false), menu: None, label: None, responds: Default::default(), popover: None }
+    }
+
+    /// Shows `content` in a popover pointing at this view while `shown` is
+    /// true; closing it (Escape, a click outside) sets `shown` to false.
+    /// The content is built each time it opens and freed when it closes.
+    pub fn popover<P: View>(self, shown: &Signal<bool>, content: impl Fn() -> P + 'static) -> Self {
+        self.popover_on(crate::Edge::Below, shown, content)
+    }
+
+    /// [`popover`](Self::popover) on a given side of the view.
+    pub fn popover_on<P: View>(mut self, edge: crate::Edge, shown: &Signal<bool>, content: impl Fn() -> P + 'static) -> Self {
+        self.popover = Some(crate::popover::PopoverSpec { shown: *shown, content: Rc::new(move || AnyView::new(content())), edge });
+        self
     }
 
     /// Handles `command` while the focus is in this view (or nothing nearer
@@ -486,6 +508,14 @@ impl<V: View> View for Modified<V> {
             let mut r = node.meta.responds.borrow_mut();
             r.commands.extend(self.responds.commands);
             r.values.extend(self.responds.values);
+        }
+        if let Some(spec) = self.popover {
+            // It points at the view's first native view (a button, a field).
+            let mut leaves = Vec::new();
+            node.leaf_views(&mut leaves);
+            if let Some(anchor) = leaves.into_iter().next() {
+                crate::popover::attach(&mut node, anchor, spec);
+            }
         }
         node
     }

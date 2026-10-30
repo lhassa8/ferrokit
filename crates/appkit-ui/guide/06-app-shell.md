@@ -146,6 +146,62 @@ let window = Window::new("Library")
 `.remember(name)` keeps the divider's position across launches;
 `Window::remember_frame(name)` does the same for the window's frame.
 
+`.stacked()` puts the panes top to bottom (an editor over its results).
+
+### Sidebars and inspectors that collapse
+
+`.collapsible(index, &signal)` hides a pane while the signal is true and
+sets the signal when the user drags the pane shut. The first pane and
+collapsible ones keep their size as the window resizes, and a pane reopens
+at the size it had. `.trailing(points)` gives the last pane (an inspector)
+its first width. The menu items follow the Mac convention: ⌃⌘S and ⌥⌘I,
+titled "Hide…" or "Show…" through `title_when`:
+
+```rust,no_run
+use appkit_ui::*;
+
+let (no_sidebar, no_inspector) = (Signal::new(false), Signal::new(false));
+let app = App::new("Library")
+    .menu(
+        "View",
+        vec![
+            menu_item("Hide Sidebar", move || no_sidebar.update(|h| *h = !*h))
+                .key_with("s", &[Modifier::Control])
+                .title_when(move || format!("{} Sidebar", if no_sidebar.get() { "Show" } else { "Hide" })),
+            menu_item("Hide Inspector", move || no_inspector.update(|h| *h = !*h))
+                .key_with("i", &[Modifier::Option])
+                .title_when(move || format!("{} Inspector", if no_inspector.get() { "Show" } else { "Hide" })),
+        ],
+    )
+    .window(Window::new("Library").view(
+        split((text("Sidebar"), text("Content"), text("Inspector")))
+            .collapsible(0, &no_sidebar)
+            .collapsible(2, &no_inspector)
+            .position(220.0)
+            .trailing(260.0),
+    ));
+# let _ = app;
+```
+
+In a document app, make these commands (see above) so they act on the
+focused window: the SQL browser example does.
+
+### Popovers
+
+`.popover(&shown, || content)` shows content in a popover pointing at a
+view while `shown` is true. Escape or a click outside closes it and sets
+`shown` back to false. The content is built each time it opens and freed
+when it closes. `popover_on(Edge::Trailing, …)` picks the side.
+
+```rust,no_run
+use appkit_ui::*;
+
+let shown = Signal::new(false);
+let info = button("Info", move || shown.set(true))
+    .popover(&shown, || vstack((text("Version 1.0"), text("Made with appkit-ui"))).padding(12.0));
+# let _ = info;
+```
+
 ## Sheets, alerts and panels
 
 ```rust,no_run

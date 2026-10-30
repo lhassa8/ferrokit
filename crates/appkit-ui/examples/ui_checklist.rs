@@ -529,7 +529,48 @@ fn styled_text_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let restored = s(last_let(&model)) == keyword && s(model.text().len() - 3) == TextStyle::new().color(TextColor::Gray).italic();
     check("styled-far-edit", commented && restored, format!("/* at the top comments out the last line: {commented}; removing it restores keywords and comments there: {restored}"));
     appkit_ui::close_window(&w);
-    later(move || view_checks(events.clone()));
+    later(move || popover_teardown_check(events.clone()));
+}
+
+/// A popover whose view goes away while it's open closes, and its
+/// content (views, signals) is freed with it.
+fn popover_teardown_check(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let (show_anchor, open_pop) = (Signal::new(true), Signal::new(false));
+    let w = open(Window::new("Popover").size(300.0, 120.0).view(dynamic(move || {
+        if show_anchor.get() {
+            appkit_ui::AnyView::new(button("Details", || {}).popover(&open_pop, || {
+                let n = Signal::new(0u32);
+                vstack((text("Inside"), button("More", move || n.update(|x| *x += 1))))
+            }))
+        } else {
+            appkit_ui::AnyView::new(text("gone"))
+        }
+    })));
+    let popovers = || {
+        NSApplication::sharedApplication(MainThreadMarker::new().unwrap())
+            .windows()
+            .iter()
+            .filter(|w| w.isVisible() && w.class().name().to_string_lossy().contains("Popover"))
+            .count()
+    };
+    let before = appkit_ui::live_signals();
+    open_pop.set(true);
+    wait(300, move || {
+        let shown = popovers();
+        let inside = appkit_ui::live_signals() > before;
+        show_anchor.set(false);
+        wait(300, move || {
+            let closed = popovers() == 0;
+            let freed = appkit_ui::live_signals() <= before;
+            check(
+                "popover-teardown",
+                shown == 1 && inside && closed && freed && !open_pop.get(),
+                format!("shown {shown} (its content's signal alive {inside}); anchor removed → closed {closed}, content freed {freed}, signal {}", open_pop.get()),
+            );
+            appkit_ui::close_window(&w);
+            later(move || view_checks(events.clone()));
+        });
+    });
 }
 
 fn settings_window() -> Window {

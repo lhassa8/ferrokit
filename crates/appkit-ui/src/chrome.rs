@@ -56,7 +56,7 @@ define_class!(
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
     #[name = "AppKitUiSplitDelegate"]
-    #[ivars = Option<Retained<NSString>>]
+    #[ivars = SplitInfo]
     pub(crate) struct SplitDelegate;
 
     unsafe impl NSObjectProtocol for SplitDelegate {}
@@ -64,18 +64,34 @@ define_class!(
     unsafe impl NSSplitViewDelegate for SplitDelegate {
         #[unsafe(method(splitView:shouldAdjustSizeOfSubview:))]
         fn should_adjust(&self, split: &NSSplitView, view: &NSView) -> bool {
-            let first = split.arrangedSubviews().firstObject();
-            split.arrangedSubviews().count() < 2 || !first.is_some_and(|f| std::ptr::eq(&*f, view))
+            // The first pane (a sidebar) and collapsible ones (an inspector)
+            // keep their size; the others take the change.
+            let panes = split.arrangedSubviews();
+            let index = panes.iter().position(|p| std::ptr::eq(&*p, view));
+            panes.count() < 2 || !index.is_some_and(|i| i == 0 || self.ivars().collapsible.iter().any(|(c, _)| *c == i))
+        }
+
+        #[unsafe(method(splitView:canCollapseSubview:))]
+        fn can_collapse(&self, split: &NSSplitView, view: &NSView) -> bool {
+            let index = split.arrangedSubviews().iter().position(|p| std::ptr::eq(&*p, view));
+            index.is_some_and(|i| self.ivars().collapsible.iter().any(|(c, _)| *c == i))
         }
 
         #[unsafe(method(splitViewDidResizeSubviews:))]
         fn did_resize(&self, notification: &NSNotification) {
+            let Some(split) = notification.object().and_then(|o| o.downcast::<NSSplitView>().ok()) else { return };
+            // A pane the user dragged shut (or open) updates its signal.
+            let panes = split.arrangedSubviews();
+            for (i, collapsed) in &self.ivars().collapsible {
+                if let Some(pane) = (*i < panes.count()).then(|| panes.objectAtIndex(*i)) {
+                    let size = if split.isVertical() { pane.frame().size.width } else { pane.frame().size.height };
+                    collapsed.set_if_changed(split.isSubviewCollapsed(&pane) || pane.isHidden() || size < 1.0);
+                }
+            }
             // Layout passes place the divider themselves; only a drag (or a
             // programmatic move outside layout) is the user's choice.
-            let (Some(key), false) = (self.ivars(), crate::in_layout()) else { return };
-            let split = notification.object().and_then(|o| o.downcast::<NSSplitView>().ok());
-            if let Some(split) = split
-                && let Some(first) = split.arrangedSubviews().firstObject()
+            let (Some(key), false) = (&self.ivars().key, crate::in_layout()) else { return };
+            if let Some(first) = panes.firstObject().filter(|f| !f.isHidden())
             {
                 let size = first.frame().size;
                 NSUserDefaults::standardUserDefaults().setDouble_forKey(if split.isVertical() { size.width } else { size.height }, key);
@@ -84,17 +100,56 @@ define_class!(
     }
 );
 
+pub(crate) struct SplitInfo {
+    /// The defaults key the first divider's position is saved under.
+    key: Option<Retained<NSString>>,
+    /// Pane indices that collapse, with their signals.
+    collapsible: Vec<(usize, Signal<bool>)>,
+}
+
 /// Side-by-side panes with draggable dividers (`NSSplitView`). The first
 /// pane keeps its width when the window resizes (a sidebar); the others
 /// share the change. [`stacked`](Self::stacked) puts them top to bottom.
+/// [`collapsible`](Self::collapsible) panes (a sidebar, an inspector) hide
+/// and show with a signal, or when dragged shut.
 pub struct Split {
     panes: Vec<AnyView>,
     position: Option<f64>,
     remember: Option<String>,
     stacked: bool,
+    collapsible: Vec<(usize, Signal<bool>)>,
+    trailing: Option<f64>,
 }
 
 impl Split {
+    /// Pane `index` collapses while `collapsed` is true, and can be dragged
+    /// shut (which sets it). Like the first pane, it keeps its size when
+    /// the window resizes. For a sidebar (`0`) or an inspector (the last):
+    ///
+    /// ```no_run
+    /// use appkit_ui::*;
+    ///
+    /// let (no_sidebar, no_inspector) = (Signal::new(false), Signal::new(true));
+    /// let view = split((text("Sidebar"), text("Content"), text("Inspector")))
+    ///     .collapsible(0, &no_sidebar)
+    ///     .collapsible(2, &no_inspector)
+    ///     .position(200.0)
+    ///     .trailing(260.0);
+    /// let menu = menu_item("Toggle Sidebar", move || no_sidebar.update(|c| *c = !*c));
+    /// # let _ = (view, menu);
+    /// ```
+    pub fn collapsible(mut self, index: usize, collapsed: &Signal<bool>) -> Self {
+        self.collapsible.push((index, *collapsed));
+        self
+    }
+
+    /// The last pane's initial width (height when stacked), in points: an
+    /// inspector's.
+    pub fn trailing(mut self, points: f64) -> Self {
+        self.trailing = Some(points);
+        self
+    }
+
     /// Panes top to bottom, with dividers across (an editor over its
     /// results). The first pane keeps its height when the window resizes.
     pub fn stacked(mut self) -> Self {
@@ -132,7 +187,7 @@ impl View for Split {
         let key = self.remember.as_deref().map(split_key);
         let defaults = NSUserDefaults::standardUserDefaults();
         let saved = key.as_ref().filter(|k| defaults.objectForKey(k).is_some()).map(|k| defaults.doubleForKey(k));
-        let delegate = SplitDelegate::alloc(mtm).set_ivars(key);
+        let delegate = SplitDelegate::alloc(mtm).set_ivars(SplitInfo { key, collapsible: self.collapsible.clone() });
         // SAFETY: NSObject's designated initialiser.
         let delegate: Retained<SplitDelegate> = unsafe { msg_send![super(delegate), init] };
         // Weak in AppKit; the node keeps the delegate.
@@ -152,9 +207,46 @@ impl View for Split {
             split,
             panes,
             position: std::cell::Cell::new(saved.or(self.position)),
+            trailing: std::cell::Cell::new(self.trailing),
             stacked: self.stacked,
         });
         node.keep(Retained::into_super(delegate));
+        // Collapsible panes follow their signals, reopening at the size they
+        // had (or the size given for them).
+        let count = typed.len();
+        for (i, collapsed) in self.collapsible {
+            let Some(pane) = typed.get(i).cloned() else { continue };
+            let meta = Rc::downgrade(&node.meta);
+            let given = if i == 0 { self.position } else if i + 1 == count { self.trailing } else { None };
+            let size = std::cell::Cell::new(given.unwrap_or(220.0));
+            let stacked = self.stacked;
+            node.own(Effect::new(move || {
+                let hide = collapsed.get();
+                if pane.isHidden() != hide {
+                    let along = |r: objc2_foundation::NSRect| if stacked { r.size.height } else { r.size.width };
+                    if hide && along(pane.frame()) > 20.0 {
+                        size.set(along(pane.frame()));
+                    }
+                    pane.setHidden(hide);
+                    // SAFETY: reading the view hierarchy on the main thread.
+                    if let Some(split) = unsafe { pane.superview() }.and_then(|s| s.downcast::<NSSplitView>().ok()) {
+                        split.adjustSubviews();
+                        if !hide && along(pane.frame()) < 20.0 {
+                            if i == 0 {
+                                split.setPosition_ofDividerAtIndex(size.get(), 0);
+                            } else if i + 1 == count {
+                                let total = along(split.bounds());
+                                split.setPosition_ofDividerAtIndex(total - size.get() - split.dividerThickness(), (count - 2) as isize);
+                            }
+                        }
+                    }
+                    if let Some(meta) = meta.upgrade() {
+                        meta.mark();
+                    }
+                    crate::view::invalidate_layout();
+                }
+            }));
+        }
         // Each pane re-lays out its subtree when AppKit resizes it.
         for pane in typed {
             *pane.ivars().borrow_mut() = Rc::downgrade(&node.meta);
@@ -165,7 +257,7 @@ impl View for Split {
 
 /// Panes side by side with draggable dividers (see [`Split`]).
 pub fn split(panes: impl crate::view::Views) -> Split {
-    Split { panes: panes.into_views(), position: None, remember: None, stacked: false }
+    Split { panes: panes.into_views(), position: None, remember: None, stacked: false, collapsible: Vec::new(), trailing: None }
 }
 
 // ---- context menus ----
@@ -189,6 +281,9 @@ define_class!(
             if let Some(checked) = &self.ivars().checked {
                 item.setState(if checked() { NSControlStateValueOn } else { NSControlStateValueOff });
             }
+            if let Some(titled) = &self.ivars().titled {
+                item.setTitle(&NSString::from_str(&titled()));
+            }
             self.ivars().enabled.as_ref().is_none_or(|f| f())
         }
     }
@@ -198,6 +293,7 @@ pub(crate) struct MenuAction {
     action: Box<dyn Fn()>,
     enabled: Option<Box<dyn Fn() -> bool>>,
     checked: Option<Box<dyn Fn() -> bool>>,
+    titled: Option<Box<dyn Fn() -> String>>,
 }
 
 /// A modifier key of a menu item's shortcut (Command is always included).
@@ -221,6 +317,7 @@ enum Entry {
         action: Box<dyn Fn()>,
         enabled: Option<Box<dyn Fn() -> bool>>,
         checked: Option<Box<dyn Fn() -> bool>>,
+        titled: Option<Box<dyn Fn() -> String>>,
         key: Option<(String, NSEventModifierFlags)>,
     },
     Separator,
@@ -242,6 +339,16 @@ impl MenuItem {
     pub fn checked_when(mut self, f: impl Fn() -> bool + 'static) -> Self {
         if let Entry::Action { checked, .. } = &mut self.0 {
             *checked = Some(Box::new(f));
+        }
+        self
+    }
+
+    /// The title `f` returns, read when the menu opens ("Show Sidebar" /
+    /// "Hide Sidebar").
+    pub fn title_when(mut self, f: impl Fn() -> String + 'static) -> Self {
+        if let Entry::Action { title, titled, .. } = &mut self.0 {
+            *title = f();
+            *titled = Some(Box::new(f));
         }
         self
     }
@@ -270,7 +377,7 @@ impl MenuItem {
 
 /// A menu command.
 pub fn menu_item(title: &str, action: impl Fn() + 'static) -> MenuItem {
-    MenuItem(Entry::Action { title: title.into(), action: Box::new(action), enabled: None, checked: None, key: None })
+    MenuItem(Entry::Action { title: title.into(), action: Box::new(action), enabled: None, checked: None, titled: None, key: None })
 }
 
 /// A separator line.
@@ -359,8 +466,8 @@ pub(crate) fn build_titled_menu(mtm: MainThreadMarker, title: &str, items: Vec<M
                 menu.addItem(&holder);
                 keep.push(Retained::into_super(delegate));
             }
-            Entry::Action { title, action, enabled, checked, key } => {
-                let target = MenuTarget::alloc(mtm).set_ivars(MenuAction { action, enabled, checked });
+            Entry::Action { title, action, enabled, checked, titled, key } => {
+                let target = MenuTarget::alloc(mtm).set_ivars(MenuAction { action, enabled, checked, titled });
                 // SAFETY: NSObject's designated initialiser.
                 let target: Retained<MenuTarget> = unsafe { msg_send![super(target), init] };
                 let (k, flags) = key.unwrap_or((String::new(), NSEventModifierFlags::Command));

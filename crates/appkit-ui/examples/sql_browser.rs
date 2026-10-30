@@ -17,6 +17,8 @@ use rusqlite::fallible_iterator::FallibleIterator;
 use rusqlite::types::ValueRef;
 
 const RUN: Command = Command::new("run-query");
+const TOGGLE_SIDEBAR: Command = Command::new("toggle-sidebar");
+const TOGGLE_INSPECTOR: Command = Command::new("toggle-inspector");
 
 /// An open database: one connection, used by one query at a time from
 /// background threads.
@@ -243,6 +245,13 @@ struct Browser {
     schema: Resource<Vec<TreeNode<Item>>>,
     selected: Signal<Option<String>>,
     fill_ms: Signal<f64>,
+    /// The results row the inspector shows.
+    row: Signal<Option<u32>>,
+    no_sidebar: Signal<bool>,
+    no_inspector: Signal<bool>,
+    /// Queries run, newest first.
+    history: Signal<Vec<String>>,
+    history_shown: Signal<bool>,
 }
 
 impl Browser {
@@ -256,11 +265,23 @@ impl Browser {
             schema: Resource::new(|| (), move |(), _: &Cancel| schema(&d2)),
             selected: Signal::new(None),
             fill_ms: Signal::new(0.0),
+            row: Signal::new(None),
+            no_sidebar: Signal::new(false),
+            no_inspector: Signal::new(false),
+            history: Signal::new(Vec::new()),
+            history_shown: Signal::new(false),
         }
     }
 
     fn run(&self) {
         let sql = self.query.get_untracked();
+        if !sql.trim().is_empty() {
+            self.history.update(|h| {
+                h.retain(|q| *q != sql);
+                h.insert(0, sql.clone());
+                h.truncate(20);
+            });
+        }
         // A query of one's own isn't the selected table's any more.
         let shown = self.selected.get_untracked().and_then(|id| id.split_once(':').map(|(_, name)| format!("SELECT * FROM {};", quote(name))));
         if shown.is_some_and(|q| q != sql) {
@@ -336,6 +357,7 @@ fn database_view(doc: &Document<Db>) -> impl View + use<> {
         let start = Instant::now();
         m.set_columns(columns(&r));
         m.set_rows((0..r.rows as u32).collect());
+        b.row.set(None);
         b.fill_ms.set(start.elapsed().as_secs_f64() * 1e3);
         if r.schema_changed {
             b.schema.refetch();
@@ -364,8 +386,13 @@ fn database_view(doc: &Document<Db>) -> impl View + use<> {
         split((
             text_editor(&editor).bind(&b.query).syntax(Syntax::sql()).accessibility_label("Query"),
             vstack((
-                table(&model).accessibility_label("Results"),
-                label(move || b.status()).padding(6.0),
+                table(&model).on_select(move |rows| b.row.set(rows.first().map(|&r| r as u32))).accessibility_label("Results"),
+                hstack((
+                    label(move || b.status()),
+                    spacer(),
+                    button("History", move || b.history_shown.set(true)).popover(&b.history_shown, move || history(b)),
+                ))
+                .padding(6.0),
                 fill,
                 select,
                 first,
@@ -374,9 +401,56 @@ fn database_view(doc: &Document<Db>) -> impl View + use<> {
         ))
         .stacked()
         .position(110.0),
+        inspector(b),
     ))
+    .collapsible(0, &b.no_sidebar)
+    .collapsible(2, &b.no_inspector)
     .position(220.0)
+    .trailing(260.0)
     .on_command(RUN, move || b.run())
+    .on_command(TOGGLE_SIDEBAR, move || b.no_sidebar.update(|h| *h = !*h))
+    .on_command(TOGGLE_INSPECTOR, move || b.no_inspector.update(|h| *h = !*h))
+    .focused_value("browser", b)
+}
+
+/// The selected row, one field per line.
+fn inspector(b: Browser) -> impl View {
+    dynamic(move || {
+        let (Some(row), Some(r)) = (b.row.get(), b.results.get()) else {
+            return AnyView::new(text("No row selected").padding(12.0));
+        };
+        if row as usize >= r.rows {
+            return AnyView::new(text("No row selected").padding(12.0));
+        }
+        let fields: Vec<_> = r.names.iter().enumerate().map(|(i, name)| (text(name.clone()), text(r.text(row, i)))).collect();
+        AnyView::new(scroll(vstack((text(format!("Row {}", row + 1)), grid(fields).align_column(0, Align::End))).padding(12.0)))
+    })
+}
+
+/// The query history, in a popover: choosing one puts it in the editor.
+fn history(b: Browser) -> impl View {
+    let queries = b.history.get_untracked();
+    if queries.is_empty() {
+        return AnyView::new(text("No queries yet").padding(12.0));
+    }
+    let items: Vec<AnyView> = queries
+        .into_iter()
+        .map(|q| {
+            let title: String = q.split_whitespace().collect::<Vec<_>>().join(" ");
+            let title = if title.chars().count() > 60 { format!("{}…", title.chars().take(59).collect::<String>()) } else { title };
+            AnyView::new(button(&title, move || {
+                b.query.set(q.clone());
+                b.history_shown.set(false);
+            }))
+        })
+        .collect();
+    AnyView::new(vstack(items).alignment(Align::Start).padding(12.0))
+}
+
+/// "Show Sidebar" or "Hide Sidebar", for the focused window.
+fn shown_title(what: &str, hidden: fn(&Browser) -> Signal<bool>) -> String {
+    let hidden = focused_value::<Browser>("browser").is_some_and(|b| hidden(&b).get_untracked());
+    format!("{} {what}", if hidden { "Show" } else { "Hide" })
 }
 
 fn find<'a>(nodes: &'a [TreeNode<Item>], id: &str) -> Option<&'a Item> {
@@ -391,7 +465,7 @@ thread_local! {
 fn database() -> DocumentType<Db> {
     DocumentType::new(&["sqlite", "db", "sqlite3"], Db::scratch, database_view)
         .read(Db::open)
-        .toolbar(|_| vec![toolbar_command("run", "Run", "play.fill", RUN)])
+        .toolbar(|_| vec![toolbar_command("run", "Run", "play.fill", RUN), toolbar_space(), toolbar_command("inspector", "Inspector", "sidebar.right", TOGGLE_INSPECTOR)])
         .size(1100.0, 700.0)
 }
 
@@ -401,6 +475,17 @@ fn main() {
     App::new("SQL Browser")
         .documents(database())
         .menu("Query", vec![menu_command("Run Query", RUN).key("r")])
+        .menu(
+            "View",
+            vec![
+                menu_command("Hide Sidebar", TOGGLE_SIDEBAR)
+                    .key_with("s", &[Modifier::Control])
+                    .title_when(|| shown_title("Sidebar", |b| b.no_sidebar)),
+                menu_command("Hide Inspector", TOGGLE_INSPECTOR)
+                    .key_with("i", &[Modifier::Option])
+                    .title_when(|| shown_title("Inspector", |b| b.no_inspector)),
+            ],
+        )
         .on_launch(move || {
             if check == "all" {
                 self_checks::run();
@@ -502,10 +587,10 @@ mod self_checks {
     use std::path::PathBuf;
     use std::time::Instant;
 
-    use appkit_ui::testing::{ax_audit, capture_window, footprint_mb, snapshot_windows};
+    use appkit_ui::testing::{ax_audit, capture_window, footprint_mb, menu_key, snapshot_windows};
     use appkit_ui::*;
     use objc2::rc::Retained;
-    use objc2_app_kit::{NSOutlineView, NSSplitView, NSTableView, NSView};
+    use objc2_app_kit::{NSEventModifierFlags, NSOutlineView, NSSplitView, NSTableView, NSView};
     use objc2_foundation::{NSArray, NSSortDescriptor};
 
     use super::{BROWSERS, Browser, RUN};
@@ -717,7 +802,173 @@ mod self_checks {
                 );
                 let menu = can_perform_in(Some(&w), RUN);
                 check("run-command", menu, "Run Query (menu and toolbar) is enabled in a database window".into());
-                scratch(w, dir);
+                panes(w, b, dir);
+            });
+        });
+    }
+
+    /// Saves `w` as the window server shows it (needs screen recording).
+    fn save_capture(w: &NSWindow, path: &str) {
+        let png = capture_window(w).and_then(|rep| unsafe { rep.representationUsingType_properties(objc2_app_kit::NSBitmapImageFileType::PNG, &objc2_foundation::NSDictionary::new()) });
+        if let Some(png) = png {
+            png.writeToFile_atomically(&objc2_foundation::NSString::from_str(path), true);
+        }
+    }
+
+    /// Runs `f` once, after the run loop has handled pending work.
+    fn then(f: impl FnOnce() + 'static) {
+        spawn(|| std::thread::sleep(std::time::Duration::from_millis(100)), move |()| f());
+    }
+
+    /// The window's three-pane split (sidebar, query and results, inspector).
+    fn outer(w: &NSWindow) -> Retained<NSSplitView> {
+        all(w).into_iter().filter_map(|v| v.downcast::<NSSplitView>().ok()).find(|s| s.isVertical() && s.arrangedSubviews().count() == 3).unwrap()
+    }
+
+    fn pane_widths(w: &NSWindow) -> Vec<f64> {
+        outer(w).arrangedSubviews().iter().map(|p| if p.isHidden() { 0.0 } else { p.frame().size.width.round() }).collect()
+    }
+
+    fn labels(w: &NSWindow) -> Vec<String> {
+        all(w).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSTextField>().ok()).map(|f| f.stringValue().to_string()).collect()
+    }
+
+    /// The View menu item titled "… `what`", after AppKit validates the menu.
+    fn view_item(what: &str) -> String {
+        let app = objc2_app_kit::NSApplication::sharedApplication(objc2::MainThreadMarker::new().unwrap());
+        let menu = app.mainMenu().unwrap().itemWithTitle(&objc2_foundation::NSString::from_str("View")).unwrap().submenu().unwrap();
+        menu.update();
+        (0..menu.numberOfItems()).map(|i| menu.itemAtIndex(i).unwrap().title().to_string()).find(|t| t.ends_with(what)).unwrap_or_default()
+    }
+
+    /// The inspector, collapsing the sidebar and inspector (menu, toolbar
+    /// command, a drag), and the history popover.
+    fn panes(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
+        let before = pane_widths(&w);
+        check("three-panes", before.len() == 3 && before.iter().all(|&x| x > 50.0) && (before[2] - 260.0).abs() <= 2.0, format!("sidebar, content, inspector widths {before:?}"));
+        // Select the second row of notes through AppKit, as a click would.
+        let t = results(&w);
+        t.selectRowIndexes_byExtendingSelection(&objc2_foundation::NSIndexSet::indexSetWithIndex(1), false);
+        let w2 = w.clone();
+        when(move || untrack(|| b.row.get()) == Some(1), 2000, move |_| {
+            let shown = labels(&w2);
+            check(
+                "inspector-row",
+                shown.contains(&"Row 2".to_string()) && shown.contains(&"body".to_string()) && shown.contains(&"second".to_string()),
+                format!("the inspector shows {:?}", shown.iter().filter(|l| ["Row 2", "id", "body", "second"].contains(&l.as_str())).collect::<Vec<_>>()),
+            );
+            // The inspector: toolbar command, then again.
+            let title = view_item("Inspector");
+            perform_in(Some(&w2), super::TOGGLE_INSPECTOR);
+            let w3 = w2.clone();
+            then(move || {
+                let hidden = pane_widths(&w3);
+                let title_after = view_item("Inspector");
+                perform_in(Some(&w3), super::TOGGLE_INSPECTOR);
+                let w4 = w3.clone();
+                let before = before.clone();
+                then(move || {
+                    let back = pane_widths(&w4);
+                    check(
+                        "inspector-toggle",
+                        hidden[2] == 0.0 && hidden[1] > before[1] + 200.0 && (back[2] - before[2]).abs() <= 2.0 && title == "Hide Inspector" && title_after == "Show Inspector",
+                        format!("hidden {hidden:?}; shown again {back:?}; menu {title:?} → {title_after:?}"),
+                    );
+                    sidebar_checks(w4, b, dir);
+                });
+            });
+        });
+    }
+
+    fn sidebar_checks(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
+        // ⌃⌘S through the menu bar hides the sidebar; the content keeps
+        // the room, the inspector its width.
+        let before = pane_widths(&w);
+        let fired = menu_key("s", NSEventModifierFlags::Command | NSEventModifierFlags::Control);
+        let w2 = w.clone();
+        then(move || {
+            let hidden = pane_widths(&w2);
+            check(
+                "sidebar-shortcut",
+                fired && untrack(|| b.no_sidebar.get()) && hidden[0] == 0.0 && (hidden[2] - before[2]).abs() <= 2.0 && view_item("Sidebar") == "Show Sidebar",
+                format!("⌃⌘S fired {fired}: {before:?} → {hidden:?}; menu now {:?}", view_item("Sidebar")),
+            );
+            b.no_sidebar.set(false);
+            let w3 = w2.clone();
+            then(move || {
+                let back = pane_widths(&w3);
+                // Dragging the divider shut collapses it and sets the signal.
+                outer(&w3).setPosition_ofDividerAtIndex(0.0, 0);
+                let w4 = w3.clone();
+                then(move || {
+                    let dragged = untrack(|| b.no_sidebar.get());
+                    check(
+                        "sidebar-drag-collapse",
+                        (back[0] - before[0]).abs() <= 2.0 && dragged,
+                        format!("reopened at {} (was {}); dragged shut → signal {dragged}", back[0], before[0]),
+                    );
+                    b.no_sidebar.set(false);
+                    then(move || popover_checks(w4, b, dir));
+                });
+            });
+        });
+    }
+
+    fn popover_windows() -> Vec<Retained<NSWindow>> {
+        // AppKit's own popover windows (not in the app's `windows()`).
+        let app = objc2_app_kit::NSApplication::sharedApplication(objc2::MainThreadMarker::new().unwrap());
+        app.windows().iter().filter(|w| w.isVisible() && w.class().name().to_string_lossy().contains("Popover")).collect()
+    }
+
+    fn popover_checks(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
+        let live = live_signals();
+        b.history_shown.set(true);
+        let w2 = w.clone();
+        when(|| !popover_windows().is_empty(), 3000, move |ms| {
+            let pops = popover_windows();
+            let buttons: Vec<Retained<objc2_app_kit::NSButton>> = pops
+                .iter()
+                .flat_map(|p| all(p))
+                .filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok())
+                .collect();
+            let titles: Vec<String> = buttons.iter().map(|b| b.title().to_string()).collect();
+            check(
+                "history-popover",
+                pops.len() == 1 && titles.first().map(String::as_str) == Some("SELECT * FROM \"notes\";") && titles.len() >= 5,
+                format!("shown after {ms:.0} ms with {} queries, newest {:?}", titles.len(), titles.first()),
+            );
+            if let Ok(snap) = std::env::var("SNAP") {
+                save_capture(&w2, &format!("{snap}/sql_browser-panes.png"));
+                if let Some(p) = pops.first() {
+                    save_capture(p, &format!("{snap}/sql_browser-history.png"));
+                }
+            }
+            // Choosing one puts it in the editor and closes the popover.
+            let pick = buttons.iter().find(|b| b.title().to_string() == "SELECT * FROM orders").cloned();
+            if let Some(p) = &pick {
+                unsafe { p.performClick(None) };
+            }
+            when(|| popover_windows().is_empty(), 3000, move |_| {
+                let freed = live_signals() <= live;
+                check(
+                    "history-pick",
+                    pick.is_some() && untrack(|| b.query.get()) == "SELECT * FROM orders" && !untrack(|| b.history_shown.get()) && freed,
+                    format!("query now {:?}; closed: {}; content freed: {freed}", untrack(|| b.query.get()), popover_windows().is_empty()),
+                );
+                // Escape closes it too, clearing the signal.
+                b.history_shown.set(true);
+                when(|| !popover_windows().is_empty(), 3000, move |_| {
+                    let pop = popover_windows().pop();
+                    if let Some(p) = &pop
+                        && let Some(content) = p.contentView()
+                    {
+                        let _: () = unsafe { objc2::msg_send![&*content, cancelOperation: Option::<&objc2::runtime::AnyObject>::None] };
+                    }
+                    when(|| popover_windows().is_empty(), 3000, move |_| {
+                        check("popover-escape", !untrack(|| b.history_shown.get()) && popover_windows().is_empty(), format!("Escape closed it: signal {}", untrack(|| b.history_shown.get())));
+                        scratch(w2, dir);
+                    });
+                });
             });
         });
     }
