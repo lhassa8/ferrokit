@@ -1,12 +1,27 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (unreleased): one name, Ferrokit
 
-### appkit-host
+The crates take the project's name and share one version number, released together:
+
+| Was | Now |
+| --- | --- |
+| `appkit-ui` 0.3 | **`ferrokit`** 0.4: the framework, what most apps depend on |
+| `iced-appkit` 0.2 | **`ferrokit-iced`** 0.4: real AppKit views in Iced windows |
+| `appkit-host` 0.2 | **`ferrokit-core`** 0.4: the native layer the other two share |
+| `cargo-ferrokit` 0.1 | `cargo-ferrokit` 0.4: same name, new version line |
+
+Moving over: change the dependency (`ferrokit = "0.4"`, `ferrokit-iced = "0.4"`) and the paths (`use ferrokit::*`, `ferrokit_iced::…`, `ferrokit_core::…`). Nothing else in the API changed with the rename. `cargo ferrokit new` makes apps on `ferrokit` 0.4; its `--appkit-ui-path` option is now `--ferrokit-path`.
+
+The old names get one last release (`appkit-ui` 0.4.0, `iced-appkit` 0.3.0, `appkit-host` 0.3.0) that only re-exports the new crate, so an old dependency still builds and its crates.io page says where the project went. Their earlier versions stay as they were.
+
+Also renamed, for anyone who relied on them: the Objective-C class prefixes (`AppKitUi…` → `Ferrokit…`, `AppKitHost…` → `FerrokitCore…`) and a few identifiers the framework stores, such as its recent-documents defaults key and the Settings window's autosave name, so recent documents and the Settings window's position start fresh.
+
+### ferrokit-core (was appkit-host)
 
 - **Fixed: typing over a selection in a highlighted editor could crash the app.** Restyling set the editor's typing attributes in the middle of the edit, while the text view still held the old selection; AppKit read attributes past the end of the shorter text and threw, which left TextKit 2's layout behind the text, so the typed text didn't show and the next redraw aborted. Typing attributes are now left alone during an edit, and highlighting runs in `willProcessEditing` as part of the edit itself.
 
-### appkit-ui
+### ferrokit (was appkit-ui)
 
 - **Fixed: canvas colours lost their own transparency.** Drawing replaced a colour's alpha with the painter's opacity instead of multiplying them, so partly transparent system colours such as `TextColor::Separator` drew solid (the SQL browser's `results.csv` chip was a black box).
 

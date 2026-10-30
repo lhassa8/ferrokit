@@ -1,10 +1,10 @@
-//! {{display}}: a native Mac app made with appkit-ui.
+//! {{display}}: a native Mac app made with ferrokit.
 //!
 //! `cargo ferrokit run` runs it as an app; `cargo ferrokit check` builds,
 //! lints, tests and runs its self-checks (below, under `CHECK=all`);
 //! `cargo ferrokit bundle` makes `{{display}}.app`.
 
-use appkit_ui::*;
+use ferrokit::*;
 
 /// A to-do item.
 #[derive(Clone, PartialEq)]
@@ -73,8 +73,8 @@ fn main() {
 // ---- self-checks: `cargo ferrokit check` runs these (CHECK=all) ----
 
 mod self_checks {
-    use appkit_ui::testing::ax_audit;
-    use appkit_ui::*;
+    use ferrokit::testing::ax_audit;
+    use ferrokit::*;
 
     use super::{ADD, Task};
 

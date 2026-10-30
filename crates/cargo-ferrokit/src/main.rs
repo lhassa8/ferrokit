@@ -1,5 +1,5 @@
 //! `cargo ferrokit`: make, run, bundle, check and notarize native Mac apps
-//! built with appkit-ui. Settings live in the app's Cargo.toml under
+//! built with ferrokit. Settings live in the app's Cargo.toml under
 //! `[package.metadata.ferrokit]` (see the template `cargo ferrokit new`
 //! writes).
 
@@ -9,13 +9,13 @@ use std::process::{Command, ExitCode, Stdio};
 use std::time::{Duration, Instant};
 
 const USAGE: &str = "\
-cargo ferrokit: native Mac apps with appkit-ui
+cargo ferrokit: native Mac apps with ferrokit
 
 USAGE:
     cargo ferrokit new <path> [--document] [--name <app name>] [--id <bundle id>]
-                              [--appkit-ui-path <dir>]
+                              [--ferrokit-path <dir>]
         Makes a new app: a to-do list, or with --document a text document app.
-        --appkit-ui-path uses a local checkout of appkit-ui instead of crates.io.
+        --ferrokit-path uses a local checkout of ferrokit instead of crates.io.
 
     cargo ferrokit run [--release] [--bin <name>] [-- <args>…]
         Builds, bundles (so the app has its name, icon and identity) and runs
@@ -45,7 +45,7 @@ Settings, in the app's Cargo.toml:
     icon = \"icon.png\"          # square PNG (1024 px) or .icns
     min-macos = \"15.0\"
     category = \"public.app-category.productivity\"
-    languages = [\"de\", \"fr\"]     # its translations (see appkit-ui's App::translations)
+    languages = [\"de\", \"fr\"]     # its translations (see ferrokit's App::translations)
     sign = \"Developer ID Application: …\"
     notary-profile = \"…\"       # xcrun notarytool store-credentials …
     [[package.metadata.ferrokit.documents]]
@@ -253,7 +253,7 @@ impl Project {
 // ---- new ----
 
 fn new(args: &[String]) -> Result<()> {
-    let a = Args::parse(args, &["--name", "--id", "--appkit-ui-path"], &["--document"])?;
+    let a = Args::parse(args, &["--name", "--id", "--ferrokit-path"], &["--document"])?;
     let [path] = a.positional.as_slice() else { return Err("usage: cargo ferrokit new <path> [--document]".into()) };
     let path = PathBuf::from(path);
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).ok_or("the path needs a folder name")?;
@@ -274,15 +274,15 @@ fn new(args: &[String]) -> Result<()> {
             .join(" ")
     });
     let id = a.value("--id").map(String::from).unwrap_or_else(|| format!("com.example.{}", name.to_lowercase().replace('_', "-")));
-    let dep = match a.value("--appkit-ui-path") {
+    let dep = match a.value("--ferrokit-path") {
         Some(p) => {
-            let p = PathBuf::from(p).canonicalize().map_err(|e| format!("--appkit-ui-path {p}: {e}"))?;
+            let p = PathBuf::from(p).canonicalize().map_err(|e| format!("--ferrokit-path {p}: {e}"))?;
             if !p.join("Cargo.toml").exists() {
-                return Err(format!("{} has no Cargo.toml (point it at crates/appkit-ui)", p.display()));
+                return Err(format!("{} has no Cargo.toml (point it at crates/ferrokit)", p.display()));
             }
             format!("{{ path = {:?} }}", p.to_string_lossy())
         }
-        None => format!("\"{}\"", APPKIT_UI_VERSION),
+        None => format!("\"{}\"", FERROKIT_VERSION),
     };
     let document = a.flag("--document");
     let documents = if document {
@@ -303,8 +303,8 @@ fn new(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// The appkit-ui that new apps depend on.
-const APPKIT_UI_VERSION: &str = "0.3";
+/// The ferrokit that new apps depend on.
+const FERROKIT_VERSION: &str = "0.4";
 
 // ---- bundle ----
 

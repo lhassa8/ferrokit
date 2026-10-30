@@ -4,7 +4,7 @@
 # non-zero if anything failed.
 #
 # Usage: scripts/check-all.sh [--no-iced] [--no-lint]
-#   --no-iced   skip the iced-appkit checklist (it bundles an .app first)
+#   --no-iced   skip the ferrokit-iced checklist (it bundles an .app first)
 #   --no-lint   skip clippy, tests and docs (suites only)
 #
 # Logs go to a temporary folder, or to $CHECK_ALL_LOGS if set (CI uploads it).
@@ -102,7 +102,7 @@ PY
     fi
     if [ -f "$log/$name.hang.txt" ]; then
       echo "    main thread when it hung:"
-      grep -A40 'Thread_.*com.apple.main-thread' "$log/$name.hang.txt" | grep -E 'ui_checklist|appkit_ui|AppKit|\]' | head -25 | sed 's/^/      /'
+      grep -A40 'Thread_.*com.apple.main-thread' "$log/$name.hang.txt" | grep -E 'ui_checklist|ferrokit|AppKit|\]' | head -25 | sed 's/^/      /'
     fi
     summary="$summary\n  FAIL  $name: $fail failed, exit $code"
     failed=$((failed + 1))

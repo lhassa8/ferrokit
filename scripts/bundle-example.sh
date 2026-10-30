@@ -5,7 +5,7 @@
 # --lowres sets NSHighResolutionCapable false: the app runs at 1x on a Retina screen.
 set -e
 cd "$(dirname "$0")/.."
-cargo build --release -p iced-appkit --example "$1"
+cargo build --release -p ferrokit-iced --example "$1"
 app="target/$1.app"
 hires=true; [ "$2" = "--lowres" ] && hires=false
 mkdir -p "$app/Contents/MacOS"

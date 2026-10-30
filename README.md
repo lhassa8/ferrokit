@@ -1,22 +1,41 @@
 # Ferrokit
 
-Real AppKit controls for Rust apps on macOS. Not GPU-drawn imitations and not web views: an actual `NSTableView` or `NSTextView`, so you get native scrolling, keyboard navigation, IME, spell check, Dark Mode and VoiceOver for free.
+Native Mac apps in Rust, made from real AppKit controls: an actual `NSTableView`, `NSTextView` or `NSSplitView`, not a GPU-drawn imitation and not a web view. You get native scrolling, keyboard navigation, input methods, spell check, Dark Mode and VoiceOver because they're the system's own.
+
+```rust,ignore
+use ferrokit::*;
+
+fn main() {
+    let count = Signal::new(0);
+    App::new("Counter")
+        .window(Window::new("Counter").view(vstack((
+            label(move || format!("Clicked {} times", count.get())),
+            button("Click me", move || count.update(|n| *n += 1)),
+        ))))
+        .run();
+}
+```
+
+## Which crate do I want?
+
+- **Building a Mac app?** Use [`ferrokit`](crates/ferrokit), with [`cargo ferrokit`](crates/cargo-ferrokit) to make, check and bundle it. Start with the [guide](crates/ferrokit/guide/README.md).
+- **Already using [Iced](https://iced.rs)?** Use [`ferrokit-iced`](crates/ferrokit-iced) to put native tables and text editors inside your Iced windows.
 
 | Crate | What it is |
 | --- | --- |
-| [`iced-appkit`](crates/iced-appkit) | Real AppKit views inside [Iced](https://iced.rs) 0.14 windows: a table that shows a million rows at 60 fps, and a plain-text editor with native text services. |
-| [`appkit-host`](crates/appkit-host) | The framework-agnostic layer underneath: places AppKit views inside a GPU-rendered window and keeps layout, clipping, focus, shortcuts and appearance in step. |
-| [`appkit-ui`](crates/appkit-ui) | A standalone native framework on `appkit-host`: whole Mac apps in Rust, every view a real AppKit view, updated in place by signals. See its [guide](crates/appkit-ui/guide/README.md). |
-| [`cargo-ferrokit`](crates/cargo-ferrokit) | `cargo ferrokit new`, `run`, `check`, `bundle` and `notarize` for `appkit-ui` apps. |
+| [`ferrokit`](crates/ferrokit) | The framework: whole Mac apps where every view is a real AppKit view, updated in place by fine-grained signals. |
+| [`cargo-ferrokit`](crates/cargo-ferrokit) | `cargo ferrokit new`, `run`, `check`, `bundle` and `notarize`. |
+| [`ferrokit-iced`](crates/ferrokit-iced) | Real AppKit views inside Iced 0.14 windows: a table that shows a million rows at 60 fps, and a text editor with native text services. |
+| [`ferrokit-core`](crates/ferrokit-core) | The native layer the other two share. You don't need to depend on it yourself. |
 
-Status: `appkit-ui` **0.3.0** (alpha), `appkit-host` **0.2.2**, `iced-appkit` **0.2.1**, `cargo-ferrokit` **0.1.0**. macOS 15 or later.
+All four crates share one version number and are released together: use matching versions. Version **0.4.0**, an alpha: the API will change. macOS 15 or later.
 
 ## Try it
 
-A SQLite browser built with `appkit-ui` (it opens a generated sample with a million orders):
+A SQLite browser built with `ferrokit` (it opens a generated sample with a million orders):
 
 ```bash
-cargo run --release -p appkit-ui --example sql_browser
+cargo run --release -p ferrokit --example sql_browser
 ```
 
 Start an app of your own:
@@ -32,10 +51,16 @@ cargo ferrokit new my-app && cd my-app && cargo ferrokit run
 Iced with real AppKit views:
 
 ```bash
-cargo run --release -p iced-appkit --example csv_browser
+cargo run --release -p ferrokit-iced --example csv_browser
 ```
 
-`scripts/bundle-example.sh <example>` wraps an example in an `.app` bundle. The `checklist` example is the regression suite: every behaviour is on its Tests menu, and `CHECK=all` runs the unattended checks.
+## Earlier names
+
+Until 0.4 the crates were called `appkit-ui` (now `ferrokit`), `iced-appkit` (now `ferrokit-iced`) and `appkit-host` (now `ferrokit-core`). The old names' last releases re-export the new crates.
+
+## Working on Ferrokit
+
+`scripts/check-all.sh` runs every check: build, clippy, tests, docs, and each example app's unattended self-checks. `scripts/bundle-example.sh <example>` wraps an Iced example in an `.app` bundle.
 
 ## License
 

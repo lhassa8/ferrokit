@@ -1,7 +1,7 @@
 # cargo-ferrokit
 
 Make, run, check, bundle and notarize native Mac apps built with
-[`appkit-ui`](https://crates.io/crates/appkit-ui).
+[`ferrokit`](https://crates.io/crates/ferrokit).
 
 ```bash
 cargo install cargo-ferrokit

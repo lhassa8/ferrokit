@@ -28,7 +28,7 @@ jobs:
       - name: Unit tests
         run: cargo test --workspace
       - name: Docs
-        run: cargo doc --no-deps -p appkit-host -p iced-appkit -p appkit-ui -p cargo-ferrokit
+        run: cargo doc --no-deps -p ferrokit-core -p ferrokit-iced -p ferrokit -p cargo-ferrokit
         env:
           RUSTDOCFLAGS: -D warnings
       - name: Suites (unattended, every app's CHECK=all)

@@ -1,4 +1,4 @@
-//! {{display}}: a native Mac document app made with appkit-ui. Each window
+//! {{display}}: a native Mac document app made with ferrokit. Each window
 //! is a file: New, Open…, Open Recent, Save, Save As…, Revert, the edited
 //! dot, and a save prompt on close and quit come from the framework.
 //!
@@ -7,7 +7,7 @@
 //! `cargo ferrokit bundle` makes `{{display}}.app`, registered for the
 //! document types in Cargo.toml.
 
-use appkit_ui::*;
+use ferrokit::*;
 
 fn document() -> DocumentType<String> {
     DocumentType::new(&["txt", "md"], String::new, |doc: &Document<String>| {
@@ -39,8 +39,8 @@ fn main() {
 // ---- self-checks: `cargo ferrokit check` runs these (CHECK=all) ----
 
 mod self_checks {
-    use appkit_ui::testing::ax_audit;
-    use appkit_ui::*;
+    use ferrokit::testing::ax_audit;
+    use ferrokit::*;
 
     pub fn run() {
         let mut failed = 0;

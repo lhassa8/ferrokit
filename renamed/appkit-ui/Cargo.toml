@@ -1,0 +1,16 @@
+[package]
+name = "appkit-ui"
+version = "0.4.0"
+description = "Renamed to ferrokit. This release only re-exports ferrokit."
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.88"
+repository = "https://github.com/lhassa8/ferrokit"
+readme = "README.md"
+categories = ["gui", "os::macos-apis"]
+
+[dependencies]
+ferrokit = "0.4"
+
+# Not part of the main workspace: published on its own.
+[workspace]
