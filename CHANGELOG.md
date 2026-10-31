@@ -44,6 +44,15 @@ Also renamed, for anyone who relied on them: the Objective-C class prefixes (`Ap
 - **Reduce Motion is respected:** nothing moves, slides become fades. `reduce_motion()` reads the setting.
 - A new guide chapter, Motion, and a new example, `motion`, with 15 self-checks that read Core Animation's in-flight values.
 
+### More controls and charts (Phase 3, V4)
+
+- **Tabs:** `tabs(&page, pages)`, AppKit's tab view, or `.style(TabStyle::Segmented)` for a segmented control over borderless panes.
+- **Controls:** `radio_group`, `link`, `gauge` (with warning and critical levels), `rating` (stars), `token_field` (with suggestions) and `path_control`, each bound two ways to a signal.
+- **Tooltips:** `.tooltip(..)` on any view.
+- **Charts:** `stacked_bar_chart` (or `.grouped()`), `area_chart`, `scatter_chart` and `pie_chart` (or `.donut()`) join `bar_chart` and `line_chart`. All of them have legends, colours per series (`.colors(..)`, `Series::color(..)`) and formats for values and the x axis: `Format::Currency("USD")`, `Percent`, `Decimals(n)`, `Date` and `DateTime`. Date axes tick on whole local days, weeks, months or years.
+- **Changed:** `bar_chart` and `line_chart` return a `Chart` (with `min_size` and `exportable`, as before) instead of a `Canvas`.
+- A new guide chapter, More controls and charts, and a new example, `components`, with 16 self-checks.
+
 ### ferrokit-core (was appkit-host)
 
 - **Fixed: typing over a selection in a highlighted editor could crash the app.** Restyling set the editor's typing attributes in the middle of the edit, while the text view still held the old selection; AppKit read attributes past the end of the shorter text and threw, which left TextKit 2's layout behind the text, so the typed text didn't show and the next redraw aborted. Typing attributes are now left alone during an edit, and highlighting runs in `willProcessEditing` as part of the edit itself.

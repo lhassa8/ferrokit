@@ -55,6 +55,7 @@ mod l10n;
 mod layout;
 mod material;
 mod motion;
+mod widgets;
 mod interact;
 mod menu;
 mod models;
@@ -114,12 +115,13 @@ pub use syntax::Syntax;
 pub use style::{Font, Weight};
 pub use surface::Shadow;
 pub use material::{Glass, Material, has_liquid_glass};
+pub use widgets::{Gauge, Link, PathControl, RadioGroup, TabStyle, Tabs, TokenField, gauge, link, path_control, radio_group, rating, tabs, token_field};
 pub use motion::{Animation, Transition, animated, animated_with, reduce_motion};
 pub use popover::Edge;
 pub use canvas::{Canvas, Painter, canvas};
 pub use transfer::{Clipboard, DragItem, WriteFile};
 pub use l10n::{format_number, format_number_for, language, parse_strings, plural_category, set_language, t, t_plural, t_with};
-pub use charts::{Series, bar_chart, line_chart};
+pub use charts::{Chart, Format, Series, area_chart, bar_chart, line_chart, pie_chart, scatter_chart, stacked_bar_chart};
 pub use ferrokit_core::ViewId;
 /// The AppKit window type the window functions take and return.
 pub use objc2_app_kit::NSWindow;
@@ -977,4 +979,6 @@ mod guide {
     mod materials {}
     #[doc = include_str!("../guide/11-motion.md")]
     mod motion {}
+    #[doc = include_str!("../guide/12-more-controls-and-charts.md")]
+    mod components {}
 }

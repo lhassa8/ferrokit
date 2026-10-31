@@ -508,6 +508,12 @@ pub trait ViewExt: View + Sized {
         Modified::new(self).hover_highlight(color)
     }
 
+    /// A tooltip: `text` appears in a small box when the pointer rests on
+    /// the view (SwiftUI's `help`). VoiceOver reads it as the view's help.
+    fn tooltip(self, text: &str) -> Modified<Self> {
+        Modified::new(self).tooltip(text)
+    }
+
     /// Makes the whole view a button: a click on it calls `action`, it
     /// dims while pressed, and VoiceOver reads it as a button named by its
     /// text. For rows, cards and tiles; controls inside it don't get
@@ -536,6 +542,7 @@ pub struct Modified<V> {
     transition: Option<crate::Transition>,
     hover: Option<Rc<dyn Fn(bool)>>,
     click: Option<Rc<dyn Fn()>>,
+    tooltip: Option<String>,
 }
 
 /// A layout or look modifier, in the order written.
@@ -556,7 +563,7 @@ enum Op {
 
 impl<V: View> Modified<V> {
     fn new(view: V) -> Self {
-        Modified { view, ops: Vec::new(), menu: None, label: None, responds: Default::default(), popover: None, opacity: None, opacity_when: None, transition: None, hover: None, click: None }
+        Modified { view, ops: Vec::new(), menu: None, label: None, responds: Default::default(), popover: None, opacity: None, opacity_when: None, transition: None, hover: None, click: None, tooltip: None }
     }
 
     /// Shows `content` in a popover pointing at this view while `shown` is
@@ -709,6 +716,12 @@ impl<V: View> Modified<V> {
         self
     }
 
+    /// A tooltip (see [`ViewExt::tooltip`]).
+    pub fn tooltip(mut self, text: &str) -> Self {
+        self.tooltip = Some(text.into());
+        self
+    }
+
     /// The view as a button (see [`ViewExt::on_click`]).
     pub fn on_click(mut self, action: impl Fn() + 'static) -> Self {
         self.click = Some(Rc::new(action));
@@ -814,6 +827,15 @@ impl<V: View> View for Modified<V> {
             Native::add_subview(&cx.container, &interaction);
             node.decor.push(interaction);
             node.meta.mark();
+        }
+        if let Some(tip) = &self.tooltip {
+            let tip = objc2_foundation::NSString::from_str(tip);
+            let mut leaves = Vec::new();
+            node.leaf_views(&mut leaves);
+            // The leaves, and a clickable view's interaction over them.
+            for v in leaves.iter().chain(node.decor.iter().filter(|d| d.class().name().to_string_lossy() == "FerrokitInteraction")) {
+                v.setToolTip(Some(&tip));
+            }
         }
         if let Some(t) = self.transition {
             node.transition = Some(t);

@@ -264,7 +264,9 @@ lines through numeric points. Both give round-number axes and gridlines,
 show values under the pointer, and describe themselves to VoiceOver ("Bar
 chart, 72 bars, from … to …"). A line keeps at most a few points per
 pixel column (the first, lowest, highest and last), so a million rows draw
-in a few milliseconds and spikes still show.
+in a few milliseconds and spikes still show. Stacked bars, areas,
+scatter plots, pies, legends and formats for money, percentages and dates
+are in [More controls and charts](12-more-controls-and-charts.md).
 
 ```rust,no_run
 use ferrokit::*;
