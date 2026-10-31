@@ -189,6 +189,8 @@ mod self_checks {
         let boots = field(&w, "Boots");
         let start = presented(&boots).origin.y;
         animated_with(slow(), || state.details.set(true));
+        let started = std::time::Instant::now();
+
         let c = check.clone();
         later_ms(40, move || {
             let end = model(&boots).origin.y;
@@ -199,11 +201,18 @@ mod self_checks {
                 c("frame-animates", (start - end).abs() > 10.0 && between, format!("layer y from {start:.1} to {end:.1} (model); presented {mid:.1} between: {between}"));
                 let o = opacity(&panel);
                 c("fade-in", panel.alphaValue() == 1.0 && o > 0.05 && o < 0.95, format!("panel alpha {}; presented opacity {o:.2}", panel.alphaValue()));
-                later_ms(900, move || {
+                // Settled within 2 s of a 1 s animation (it starts when the
+                // change is committed, a frame or two in).
+                fn settle(boots: Retained<objc2_app_kit::NSTextField>, end: f64, started: std::time::Instant, c: Check, then: Box<dyn FnOnce()>) {
                     let settled = (presented(&boots).origin.y - end).abs() < 0.5 && no_animations(&boots);
-                    c("animation-settles", settled, format!("presented {:.1}, model {end:.1}", presented(&boots).origin.y));
-                    step_rows(w, state, c, failed);
-                });
+                    if settled || started.elapsed().as_millis() > 2000 {
+                        c("animation-settles", settled, format!("presented {:.1}, model {end:.1}, after {} ms", presented(&boots).origin.y, started.elapsed().as_millis()));
+                        then();
+                    } else {
+                        later_ms(50, move || settle(boots, end, started, c, then));
+                    }
+                }
+                later_ms(900, move || settle(boots, end, started, c.clone(), Box::new(move || step_rows(w, state, c, failed))));
             });
         });
     }

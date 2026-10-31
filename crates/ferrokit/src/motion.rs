@@ -102,6 +102,33 @@ thread_local! {
     /// Views on their way out (removed when their animation ends).
     static LEAVING: Cell<usize> = const { Cell::new(0) };
     static REDUCE_MOTION: Cell<Option<bool>> = const { Cell::new(None) };
+    /// Views layout has placed (weakly, by address): a view not in it has
+    /// never been placed, whatever its frame says (a label is created
+    /// already sized to its text).
+    static PLACED: RefCell<std::collections::HashMap<usize, objc2::rc::Weak<NSView>>> = RefCell::new(std::collections::HashMap::new());
+}
+
+fn key(view: &NSView) -> usize {
+    view as *const NSView as usize
+}
+
+/// Whether layout has placed `view` yet.
+fn placed(view: &NSView) -> bool {
+    PLACED.with_borrow(|p| p.get(&key(view)).and_then(|w| w.load()).is_some_and(|v| std::ptr::eq(&*v, view)))
+}
+
+/// Records that layout placed `view`; true if it's the first time.
+fn mark_placed(view: &NSView) -> bool {
+    if placed(view) {
+        return false;
+    }
+    PLACED.with_borrow_mut(|p| {
+        if p.len() > 4096 {
+            p.retain(|_, w| w.load().is_some());
+        }
+        p.insert(key(view), objc2::rc::Weak::from(view));
+    });
+    true
 }
 
 /// Runs `f` (as a [`batch`]) and animates what it changes: views that move
@@ -181,7 +208,7 @@ pub(crate) fn leaving() -> usize {
 /// Sets `view`'s frame: animated inside an animated change, except for a
 /// view never placed (it starts where it belongs).
 pub(crate) fn set_frame(view: &NSView, frame: NSRect) {
-    let unplaced = view.frame().size.width == 0.0 && view.frame().size.height == 0.0;
+    let unplaced = mark_placed(view);
     if RUNNING.with(Cell::get) && unplaced {
         without_animation(|| view.setFrame(frame));
     } else {
@@ -238,7 +265,10 @@ pub(crate) fn run_layout(layout: impl FnOnce()) {
     for e in ENTERING.with_borrow_mut(std::mem::take) {
         // Slides start off by a little toward their edge.
         if let (Transition::Slide(edge), false) = (e.transition, reduce) {
-            for v in &e.views {
+            // Only views layout has placed: one placed later (inside a
+            // scroll view whose content lays out on the next pass) would
+            // otherwise animate to where it was made, and stay there.
+            for v in e.views.iter().filter(|v| placed(v)) {
                 let end = v.frame();
                 without_animation(|| v.setFrame(offset(end, edge)));
                 v.setFrame(end);

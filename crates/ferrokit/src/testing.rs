@@ -12,6 +12,9 @@ use crate::{mtm, windows};
 #[path = "input.rs"]
 pub mod input;
 
+#[path = "soak.rs"]
+pub mod soak;
+
 /// Physical footprint in MB (what Activity Monitor shows; RSS keeps freed
 /// heap pages and overstates growth), via vmmap.
 pub fn footprint_mb() -> f64 {

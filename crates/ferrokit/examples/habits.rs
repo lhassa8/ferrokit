@@ -900,16 +900,25 @@ fn menu_panel(t: Tracker) -> impl View {
 
 fn main() {
     let checks = std::env::var("CHECK").is_ok_and(|v| v == "all");
-    // The checks start from the sample, under their own key.
-    let data = stored(if checks { "habits.check" } else { "habits" }, String::new());
+    // `SOAK=<minutes>`: random actions for that long (see `soak` below).
+    let soaking = std::env::var("SOAK").is_ok();
+    // `DEMO=1`: a fast, scripted tour of everything, sized to the screen.
+    let demo = std::env::var("DEMO").is_ok();
+    // The checks and soaks start from the sample, under their own keys.
+    let data = stored(if checks { "habits.check" } else if soaking { "habits.soak" } else if demo { "habits.demo" } else { "habits" }, String::new());
     let today = Signal::new(ferrokit::today());
     let (habits, done) = match untrack(|| data.get()) {
-        text if !checks && !text.is_empty() => load(&text),
+        text if !checks && !soaking && !demo && !text.is_empty() => load(&text),
         _ => sample(today.get_untracked()),
     };
     let t = Tracker { habits: Signal::new(habits), done: Signal::new(done), page: Signal::new(Page::Today), today };
-    if checks {
+    if checks || soaking || demo {
         ferrokit::testing::hold_notifications();
+    }
+    if soaking || demo {
+        soak::STATE.with(|s| s.set(Some(t)));
+    }
+    if checks {
         self_checks::STATE.with(|s| *s.borrow_mut() = Some((t, data)));
     }
     let content = split((
@@ -964,8 +973,344 @@ fn main() {
             if checks {
                 spawn(|| std::thread::sleep(std::time::Duration::from_millis(600)), |()| self_checks::run());
             }
+            if soaking {
+                spawn(|| std::thread::sleep(std::time::Duration::from_millis(600)), |()| soak::run());
+            }
+            if demo {
+                spawn(|| std::thread::sleep(std::time::Duration::from_millis(400)), |()| soak::demo());
+            }
         })
         .run();
+}
+
+/// The soak test's actions: what a user does, at random, for a long time.
+mod soak {
+    use std::cell::Cell;
+
+    use ferrokit::testing::input::{self, Key, Mod};
+    use ferrokit::testing::soak::{Rng, Settings, action};
+    use ferrokit::*;
+    use objc2::rc::Retained;
+    use objc2_app_kit::{NSView, NSWindow};
+
+    use super::{Page, Tracker};
+
+    thread_local! {
+        pub static STATE: Cell<Option<Tracker>> = const { Cell::new(None) };
+    }
+
+    fn views(w: &NSWindow) -> Vec<Retained<NSView>> {
+        fn all(v: &NSView, out: &mut Vec<Retained<NSView>>) {
+            for s in v.subviews().iter() {
+                out.push(s.clone());
+                all(&s, out);
+            }
+        }
+        let mut out = Vec::new();
+        if let Some(c) = w.contentView() {
+            all(&c, &mut out);
+        }
+        out
+    }
+
+    fn label_of(v: &NSView) -> String {
+        objc2_app_kit::NSAccessibility::accessibilityLabel(v).map(|l| l.to_string()).unwrap_or_default()
+    }
+
+    fn main_window() -> Option<Retained<NSWindow>> {
+        windows().into_iter().find(|w| w.title().to_string() == "Habits" && w.isVisible())
+    }
+
+    fn later(ms: u64, f: impl FnOnce() + 'static) {
+        spawn(move || std::thread::sleep(std::time::Duration::from_millis(ms)), move |()| f());
+    }
+
+    fn button_in(w: &NSWindow, title: &str) -> Option<Retained<objc2_app_kit::NSButton>> {
+        views(w).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).find(|b| b.title().to_string() == title)
+    }
+
+    /// The demo: a scripted tour of everything, fast, in a window sized to
+    /// the screen. It starts with nothing done today and ends with all done.
+    pub fn demo() {
+        let t = STATE.with(Cell::get).unwrap();
+        let Some(w) = main_window() else { return };
+        let mtm = objc2::MainThreadMarker::new().unwrap();
+        // Most of the screen, centred.
+        if let Some(screen) = w.screen().or_else(|| objc2_app_kit::NSScreen::mainScreen(mtm)) {
+            let v = screen.visibleFrame();
+            let (wd, ht) = ((v.size.width * 0.97).min(1600.0), (v.size.height * 0.97).min(1100.0));
+            let origin = objc2_foundation::NSPoint::new(v.origin.x + (v.size.width - wd) / 2.0, v.origin.y + (v.size.height - ht) / 2.0);
+            let frame = objc2_foundation::NSRect::new(origin, objc2_foundation::NSSize::new(wd, ht));
+            w.setFrame_display(frame, true);
+            eprintln!("demo window {:.0} × {:.0} on a {:.0} × {:.0} screen", wd, ht, v.size.width, v.size.height);
+        }
+        set_appearance(Appearance::Light);
+        let today = untrack(|| t.today.get());
+        untrack(|| t.done.update(|d| d.retain(|&(_, day)| day != today)));
+        untrack(|| t.page.set(Page::Today));
+        input::ready(&w);
+
+        // The tour, a step every `pace` milliseconds.
+        let mut steps: Vec<(u64, Box<dyn FnOnce()>)> = Vec::new();
+        let card = move |name: String| -> Box<dyn FnOnce()> {
+            Box::new(move || {
+                if let Some(w) = main_window()
+                    && let Some(c) = views(&w).into_iter().find(|v| v.class().name().to_string_lossy() == "FerrokitInteraction" && label_of(v).starts_with(&format!("{name}, ")))
+                {
+                    input::click(&c);
+                }
+            })
+        };
+        let key = |k: Key, mods: &'static [Mod]| -> Box<dyn FnOnce()> {
+            Box::new(move || {
+                if let Some(w) = main_window() {
+                    input::key(&w, k, mods);
+                }
+            })
+        };
+        // Paints days on the calendar: a few clicks on random past days.
+        let paint = move |n: usize, seed: u64| -> Box<dyn FnOnce()> {
+            Box::new(move || {
+                let mut r = Rng::new(seed);
+                let Some(w) = main_window() else { return };
+                if let Some(c) = views(&w).into_iter().find(|v| label_of(v).contains(": done ")) {
+                    let b = c.bounds();
+                    for _ in 0..n {
+                        input::click_at(&c, 30.0 + r.below((b.size.width - 40.0).max(1.0) as usize) as f64, 18.0 + r.below(130) as f64);
+                    }
+                }
+            })
+        };
+        let names: Vec<String> = untrack(|| t.habits.get()).into_iter().map(|h| h.name).collect();
+        // Today: tick everything off, the ring filling.
+        steps.push((900, Box::new(|| {})));
+        for n in &names {
+            steps.push((450, card(n.clone())));
+        }
+        steps.push((900, card(names[1].clone())));
+        steps.push((500, card(names[1].clone())));
+        // Each habit's page: ↓ through the sidebar, painting its calendar.
+        // A real click on Insights in the sidebar (so the arrow keys go to it).
+        steps.push((700, Box::new(|| {
+            let Some(w) = main_window() else { return };
+            if let Some(o) = views(&w).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSOutlineView>().ok()) {
+                let row = (0..o.numberOfRows()).find(|&r| {
+                    o.viewAtColumn_row_makeIfNecessary(0, r, true)
+                        .and_then(|v| v.downcast::<objc2_app_kit::NSTableCellView>().ok())
+                        // SAFETY: reading the cell's outlet on the main thread.
+                        .and_then(|c| unsafe { c.textField() })
+                        .is_some_and(|f| f.stringValue().to_string() == "Insights")
+                });
+                if let Some(r) = row {
+                    let rect = o.rectOfRow(r);
+                    input::click_at(&o, rect.origin.x + 40.0, rect.origin.y + rect.size.height / 2.0);
+                }
+            }
+        })));
+        steps.push((1400, key(Key::Down, &[])));
+        for i in 0..names.len() {
+            steps.push((450, paint(6, 11 + i as u64)));
+            steps.push((900, key(Key::Down, &[])));
+        }
+        // Insights, then dark, back through the pages.
+        steps.push((1400, key(Key::Char('2'), &[Mod::Command])));
+        steps.push((1600, Box::new(|| set_appearance(Appearance::Dark))));
+        steps.push((1400, key(Key::Char('1'), &[Mod::Command])));
+        for n in names.iter().take(3) {
+            steps.push((380, card(n.clone())));
+        }
+        for n in names.iter().take(3) {
+            steps.push((380, card(n.clone())));
+        }
+        steps.push((900, Box::new(move || untrack(|| t.page.set(Page::Habit(4))))));
+        steps.push((600, paint(10, 99)));
+        steps.push((1200, key(Key::Char('2'), &[Mod::Command])));
+        // A new habit through the sheet: a name, a symbol, a colour.
+        steps.push((1500, key(Key::Char('n'), &[Mod::Command])));
+        steps.push((600, Box::new(|| {
+            if let Some(s) = main_window().map(|_| ()).and(windows().into_iter().find_map(|w| w.attachedSheet())) {
+                input::type_text(&s, "Piano");
+            }
+        })));
+        steps.push((700, Box::new(|| {
+            if let Some(s) = windows().into_iter().find_map(|w| w.attachedSheet()) {
+                // The music note, then pink.
+                let picks: Vec<_> = views(&s).into_iter().filter(|v| v.class().name().to_string_lossy() == "FerrokitInteraction").collect();
+                if let Some(v) = picks.get(8) {
+                    input::click(v);
+                }
+                let dots: Vec<_> = views(&s).into_iter().filter(|v| label_of(v) == "Pink").collect();
+                if let Some(v) = dots.first() {
+                    input::click(v);
+                }
+            }
+        })));
+        steps.push((900, Box::new(|| {
+            if let Some(s) = windows().into_iter().find_map(|w| w.attachedSheet())
+                && let Some(b) = button_in(&s, "Add")
+            {
+                input::click(&b);
+            }
+        })));
+        steps.push((900, paint(14, 7)));
+        steps.push((1000, Box::new(|| set_appearance(Appearance::Light))));
+        // The menu bar's panel, then back to Today, all done.
+        steps.push((900, Box::new(move || {
+            if let Some((item, _)) = ferrokit::testing::menu_bar_extras().first()
+                && let Some(b) = item.button(mtm)
+            {
+                // SAFETY: clicking a button on the main thread.
+                unsafe { b.performClick(None) };
+            }
+        })));
+        steps.push((1800, Box::new(move || {
+            if let Some((_, Some(p))) = ferrokit::testing::menu_bar_extras().first() {
+                p.close();
+            }
+            untrack(|| animated(|| t.page.set(Page::Today)));
+        })));
+        let all: Vec<String> = names.iter().cloned().chain(["Piano".to_string()]).collect();
+        steps.push((800, Box::new(move || {
+            let today = untrack(|| t.today.get());
+            for (i, n) in all.iter().enumerate() {
+                let id = untrack(|| t.habits.get()).iter().find(|h| &h.name == n).map(|h| h.id);
+                // The rest done, one by one (a card below the fold too).
+                if let Some(id) = id.filter(|&id| !untrack(|| t.is_done(id, today))) {
+                    later(250 * i as u64, move || untrack(|| animated(|| t.toggle(id, today))));
+                }
+            }
+        })));
+        play(steps);
+    }
+
+    fn play(mut steps: Vec<(u64, Box<dyn FnOnce()>)>) {
+        if steps.is_empty() {
+            eprintln!("demo done");
+            return;
+        }
+        let (wait, step) = steps.remove(0);
+        later(wait, move || {
+            step();
+            play(steps);
+        });
+    }
+
+    pub fn run() {
+        let t = STATE.with(Cell::get).unwrap();
+        let Some(w) = main_window() else { return };
+        input::ready(&w);
+        // Every action works on the window as it is now (a sheet or alert
+        // may be up: those actions just do nothing).
+        let win = || main_window().filter(|w| w.attachedSheet().is_none());
+        let actions = vec![
+            action("toggle-card", 6, move |r: &mut Rng| {
+                let Some(w) = win() else { return };
+                let cards: Vec<_> = views(&w).into_iter().filter(|v| v.class().name().to_string_lossy() == "FerrokitInteraction" && label_of(v).contains(", ")).collect();
+                if !cards.is_empty() {
+                    input::click(&cards[r.below(cards.len())]);
+                }
+            }),
+            action("sidebar-click", 4, move |r: &mut Rng| {
+                let Some(w) = win() else { return };
+                if let Some(o) = views(&w).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSOutlineView>().ok()) {
+                    let row = r.below(o.numberOfRows().max(1) as usize) as isize;
+                    let rect = o.rectOfRow(row);
+                    input::click_at(&o, rect.origin.x + 40.0, rect.origin.y + rect.size.height / 2.0);
+                }
+            }),
+            action("arrow-key", 3, move |r: &mut Rng| {
+                if let Some(w) = win() {
+                    input::key(&w, *r.pick(&[Key::Up, Key::Down]), &[]);
+                }
+            }),
+            action("page-shortcut", 2, move |r: &mut Rng| {
+                if let Some(w) = win() {
+                    input::key(&w, Key::Char(*r.pick(&['1', '2'])), &[Mod::Command]);
+                }
+            }),
+            action("calendar-click", 3, move |r: &mut Rng| {
+                let Some(w) = win() else { return };
+                if let Some(c) = views(&w).into_iter().find(|v| label_of(v).contains(": done ")) {
+                    let b = c.bounds();
+                    input::click_at(&c, 30.0 + r.below((b.size.width - 30.0).max(1.0) as usize) as f64, 18.0 + r.below(133) as f64);
+                }
+            }),
+            action("reminder", 1, move |_: &mut Rng| {
+                if let Some(b) = win().and_then(|w| button_in(&w, "Remind me every day at")) {
+                    input::click(&b);
+                }
+            }),
+            action("new-habit", 1, move |r: &mut Rng| {
+                let Some(w) = win() else { return };
+                if untrack(|| t.habits.with(Vec::len)) >= 9 {
+                    return;
+                }
+                input::key(&w, Key::Char('n'), &[Mod::Command]);
+                let name = r.pick(&["Stretch", "Journal", "No sugar", "Floss", "Call a friend", "Piano"]).to_string();
+                let add = r.chance(0.7);
+                later(500, move || {
+                    let Some(s) = main_window().and_then(|w| w.attachedSheet()) else { return };
+                    input::type_text(&s, &name);
+                    later(300, move || {
+                        if let Some(b) = button_in(&s, if add { "Add" } else { "Cancel" }) {
+                            input::click(&b);
+                        }
+                    });
+                });
+            }),
+            action("delete-habit", 1, move |_: &mut Rng| {
+                let Some(w) = win() else { return };
+                // The Delete… button and its alert, as a user does it.
+                if untrack(|| t.habits.with(Vec::len)) <= 5 {
+                    return;
+                }
+                let Some(last) = untrack(|| t.habits.get()).last().map(|h| h.id) else { return };
+                untrack(|| t.page.set(Page::Habit(last)));
+                later(500, move || {
+                    let Some(w) = main_window() else { return };
+                    if let Some(b) = button_in(&w, "Delete…") {
+                        input::click(&b);
+                    }
+                    later(500, move || {
+                        if let Some(alert) = main_window().and_then(|w| w.attachedSheet())
+                            && let Some(b) = button_in(&alert, "Delete")
+                        {
+                            input::click(&b);
+                        }
+                    });
+                });
+                let _ = w;
+            }),
+            action("resize", 1, move |r: &mut Rng| {
+                if let Some(w) = win() {
+                    let f = w.frame();
+                    let size = objc2_foundation::NSSize::new(760.0 + r.below(600) as f64, 560.0 + r.below(400) as f64);
+                    w.setFrame_display(objc2_foundation::NSRect::new(f.origin, size), true);
+                }
+            }),
+            action("appearance", 1, move |r: &mut Rng| {
+                if r.chance(0.3) {
+                    set_appearance(*r.pick(&[Appearance::Light, Appearance::Dark, Appearance::System]));
+                }
+            }),
+            action("menu-bar-panel", 1, move |_: &mut Rng| {
+                let mtm = objc2::MainThreadMarker::new().unwrap();
+                if let Some((item, _)) = ferrokit::testing::menu_bar_extras().first()
+                    && let Some(b) = item.button(mtm)
+                {
+                    // SAFETY: clicking a button on the main thread.
+                    unsafe { b.performClick(None) };
+                }
+            }),
+            action("report-pdf", 1, move |r: &mut Rng| {
+                if r.chance(0.2) {
+                    let data = pdf_data(super::report(t));
+                    assert!(data.starts_with(b"%PDF"), "the report didn't print");
+                }
+            }),
+        ];
+        ferrokit::testing::soak::run(Settings::from_env(), actions);
+    }
 }
 
 /// Moves `today` on once a minute when the date changes.
@@ -1332,13 +1677,63 @@ mod self_checks {
                                         if let Some(id) = untrack(|| t.habits.get()).last().filter(|h| h.name == "Yoga").map(|h| h.id) {
                                             untrack(|| t.delete(id));
                                         }
-                                        dark_phase(w, t, check, failed);
+                                        transition_phase(w, t, check, failed);
                                     });
                                 });
                             });
                         });
                     });
                 });
+            });
+        });
+    }
+
+    /// An animated page change back to Today shows every card's text.
+    fn transition_phase(w: Retained<NSWindow>, t: Tracker, check: Check, failed: Rc<Cell<u32>>) {
+        untrack(|| t.page.set(Page::Insights));
+        later_ms(500, move || {
+            untrack(|| animated(|| t.page.set(Page::Today)));
+            // Cards clicked while the page is still fading in.
+            let today = untrack(|| t.today.get());
+            later_ms(100, move || {
+                for id in [2, 3] {
+                    untrack(|| animated(|| t.toggle(id, today)));
+                }
+            });
+            later_ms(1200, move || {
+                let names: Vec<String> = untrack(|| t.habits.get()).into_iter().map(|h| h.name).collect();
+                // The page's labels, not the sidebar's (in its outline view).
+                let in_sidebar = |f: &objc2_app_kit::NSTextField| {
+                    let mut a = unsafe { f.superview() };
+                    while let Some(v) = a {
+                        if v.downcast_ref::<objc2_app_kit::NSOutlineView>().is_some() {
+                            return true;
+                        }
+                        a = unsafe { v.superview() };
+                    }
+                    false
+                };
+                let fields: Vec<Retained<objc2_app_kit::NSTextField>> = views(&w).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSTextField>().ok()).filter(|f| !in_sidebar(f)).collect();
+                let mut bad = Vec::new();
+                for n in &names {
+                    // The card's title (not the sidebar's row).
+                    let shown = fields.iter().filter(|f| f.stringValue().to_string() == *n).any(|f| {
+                        let visible = f.alphaValue() > 0.99 && !f.isHiddenOrHasHiddenAncestor() && f.frame().size.width > 10.0 && f.window().is_some();
+                        let mut ancestor = unsafe { f.superview() };
+                        let mut faded = false;
+                        while let Some(a) = ancestor {
+                            faded |= a.alphaValue() < 0.99;
+                            ancestor = unsafe { a.superview() };
+                        }
+                        visible && !faded
+                    });
+                    let detail: Vec<String> = fields.iter().filter(|f| f.stringValue().to_string() == *n).map(|f| format!("alpha {:.2} frame {:?} hidden {}", f.alphaValue(), f.frame(), f.isHiddenOrHasHiddenAncestor())).collect();
+                    if !shown {
+                        bad.push(format!("{n}: {detail:?}"));
+                    }
+                }
+                check("animated-page-text", bad.is_empty(), format!("{bad:?}"));
+                dark_phase(w, t, check, failed);
             });
         });
     }

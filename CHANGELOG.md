@@ -135,6 +135,15 @@ Both showcase apps were compared with a SwiftUI reference of the same screens (`
   - real-input checks in `habits` (4) and `sql_browser` (2);
   - check-all reports skipped checks.
 
+### Soak tests (Phase 3, Q2)
+
+- **`testing::soak`:** an app's list of weighted user actions, run at random from a printed seed for `SOAK` minutes. A watchdog thread reports main-thread hangs over 2 s, and the footprint and live views, signals and windows are sampled every 30 s. Growth is reported per 1,000 actions, so time paused doesn't count. The run pauses while another app is in front.
+- **`scripts/soak.sh <example> [minutes] [seed]`** runs a soak and summarises it: exit code, crash reports, exceptions and assertions in the log, hangs, and the footprint over time. `habits` and `sql_browser` have soaks.
+- **Fixed: views that entered with a slide inside an animated change could stay unplaced.** After an animated switch to a page whose content lays out in a later pass (a scroll view's), its labels kept the frame they were made with: invisible, at the corner. The motion layer now knows which views layout has placed:
+  - a view's first placement never animates;
+  - slides only move views already placed.
+- **Habits' demo:** `DEMO=1` runs a fast, scripted tour of everything, in a window sized to the screen.
+
 ### ferrokit-core (was appkit-host)
 
 - **Fixed: typing over a selection in a highlighted editor could crash the app.** Restyling set the editor's typing attributes in the middle of the edit, while the text view still held the old selection; AppKit read attributes past the end of the shorter text and threw, which left TextKit 2's layout behind the text, so the typed text didn't show and the next redraw aborted. Typing attributes are now left alone during an edit, and highlighting runs in `willProcessEditing` as part of the edit itself.

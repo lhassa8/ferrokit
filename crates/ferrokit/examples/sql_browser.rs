@@ -902,6 +902,11 @@ fn main() {
                 self_checks::l10n();
                 return;
             }
+            if std::env::var("SOAK").is_ok() {
+                // `SOAK=<minutes>`: random actions on a sample of its own.
+                soak::start();
+                return;
+            }
             // With a file, it opens (and the welcome window goes).
             if let Some(path) = file {
                 open_or_report(&path);
@@ -1842,5 +1847,161 @@ mod self_checks {
             eprintln!("[check] done, {failed} failed");
             std::process::exit(if failed == 0 { 0 } else { 1 });
         });
+    }
+}
+
+/// The soak test's actions: queries typed and run, rows, panes, popovers,
+/// scratch databases, at random for a long time.
+mod soak {
+    use ferrokit::testing::input::{self, Key, Mod};
+    use ferrokit::testing::soak::{Rng, Settings, action};
+    use ferrokit::*;
+    use objc2::rc::Retained;
+    use objc2_app_kit::{NSView, NSWindow};
+
+    const QUERIES: [&str; 12] = [
+        "SELECT * FROM customers",
+        "SELECT * FROM orders WHERE id % 97 = 0",
+        "SELECT city, count(*) AS people FROM customers GROUP BY city",
+        "SELECT category, sum(quantity) AS items, round(avg(total)) AS average FROM orders JOIN products ON products.id = product_id GROUP BY category",
+        "SELECT substr(ordered_at, 1, 7) AS month, round(sum(total)) AS sales FROM orders GROUP BY month",
+        "SELECT id, total FROM orders WHERE id < 50000",
+        "SELECT * FROM big_orders LIMIT 500",
+        "SELEKT nonsense",
+        "SELECT name FROM customers WHERE name LIKE '%a%' ORDER BY name",
+        "CREATE TABLE IF NOT EXISTS soak (x); INSERT INTO soak VALUES (random()); SELECT count(*) FROM soak",
+        "SELECT * FROM products",
+        "SELECT 1",
+    ];
+
+    fn views(w: &NSWindow) -> Vec<Retained<NSView>> {
+        fn all(v: &NSView, out: &mut Vec<Retained<NSView>>) {
+            for s in v.subviews().iter() {
+                out.push(s.clone());
+                all(&s, out);
+            }
+        }
+        let mut out = Vec::new();
+        if let Some(c) = w.contentView() {
+            all(&c, &mut out);
+        }
+        out
+    }
+
+    fn later(ms: u64, f: impl FnOnce() + 'static) {
+        spawn(move || std::thread::sleep(std::time::Duration::from_millis(ms)), move |()| f());
+    }
+
+    /// The sample database's window (the soak's own copy).
+    fn main_window() -> Option<Retained<NSWindow>> {
+        windows().into_iter().find(|w| w.title().to_string() == "soak.sqlite" && w.isVisible() && w.attachedSheet().is_none())
+    }
+
+    fn results(w: &NSWindow) -> Option<Retained<objc2_app_kit::NSTableView>> {
+        views(w).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSTableView>().ok()).find(|t| t.downcast_ref::<objc2_app_kit::NSOutlineView>().is_none())
+    }
+
+    pub fn start() {
+        let dir = std::env::temp_dir().join(format!("ferrokit-soak-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("soak.sqlite");
+        let p = path.clone();
+        spawn(move || super::sample::create(&p, 1_000_000), move |r| {
+            r.expect("the sample database");
+            let w = open_document(&path).expect("open the sample");
+            input::ready(&w);
+            later(1500, run);
+        });
+    }
+
+    fn run() {
+        let actions = vec![
+            action("type-and-run", 6, |r: &mut Rng| {
+                let Some(w) = main_window() else { return };
+                let Some(editor) = views(&w).into_iter().find(|v| objc2_app_kit::NSAccessibility::accessibilityLabel(&**v).is_some_and(|l| l.to_string() == "Query")) else { return };
+                input::click(&editor);
+                input::key(&w, Key::Char('a'), &[Mod::Command]);
+                input::type_text(&w, QUERIES[r.below(QUERIES.len())]);
+                input::key(&w, Key::Char('r'), &[Mod::Command]);
+            }),
+            action("rerun-twice", 1, |_: &mut Rng| {
+                // A newer run cancels the one running.
+                if let Some(w) = main_window() {
+                    input::key(&w, Key::Char('r'), &[Mod::Command]);
+                    input::key(&w, Key::Char('r'), &[Mod::Command]);
+                }
+            }),
+            action("row-click", 4, |r: &mut Rng| {
+                let Some(w) = main_window() else { return };
+                if let Some(t) = results(&w).filter(|t| t.numberOfRows() > 0) {
+                    let visible = t.rowsInRect(t.visibleRect());
+                    let row = visible.location as isize + r.below(visible.length.max(1)) as isize;
+                    let rect = t.rectOfRow(row);
+                    input::click_at(&t, rect.origin.x + 20.0, rect.origin.y + rect.size.height / 2.0);
+                }
+            }),
+            action("arrow-key", 3, |r: &mut Rng| {
+                if let Some(w) = main_window() {
+                    input::key(&w, *r.pick(&[Key::Up, Key::Down, Key::Down]), &[]);
+                }
+            }),
+            action("sidebar-click", 3, |r: &mut Rng| {
+                let Some(w) = main_window() else { return };
+                if let Some(o) = views(&w).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSOutlineView>().ok()) {
+                    let rect = o.rectOfRow(r.below(o.numberOfRows().max(1) as usize) as isize);
+                    input::click_at(&o, rect.origin.x + 50.0, rect.origin.y + rect.size.height / 2.0);
+                }
+            }),
+            action("toggle-pane", 2, |r: &mut Rng| {
+                let Some(w) = main_window() else { return };
+                match r.below(3) {
+                    0 => input::key(&w, Key::Char('s'), &[Mod::Command, Mod::Control]),
+                    1 => input::key(&w, Key::Char('i'), &[Mod::Command, Mod::Option]),
+                    _ => input::key(&w, Key::Char('k'), &[Mod::Command, Mod::Option]),
+                }
+            }),
+            action("history", 1, |_: &mut Rng| {
+                let Some(w) = main_window() else { return };
+                if let Some(b) = views(&w).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).find(|b| b.title().to_string() == "History") {
+                    input::click(&b);
+                    later(400, move || {
+                        if let Some(w) = main_window() {
+                            input::key(&w, Key::Escape, &[]);
+                        }
+                    });
+                }
+            }),
+            action("scratch-database", 1, |r: &mut Rng| {
+                // A new window, a write, a moment, then closed again.
+                if windows().iter().filter(|w| w.isVisible()).count() > 3 {
+                    return;
+                }
+                let Some(s) = new_document() else { return };
+                let keep = 1000 + r.below(3000) as u64;
+                later(400, move || {
+                    input::type_text(&s, "CREATE TABLE t (x); INSERT INTO t VALUES (1), (2); SELECT * FROM t");
+                    input::key(&s, Key::Char('r'), &[Mod::Command]);
+                    later(keep, move || {
+                        close_window(&s);
+                        if let Some(w) = main_window() {
+                            input::ready(&w);
+                        }
+                    });
+                });
+            }),
+            action("resize", 1, |r: &mut Rng| {
+                if let Some(w) = main_window() {
+                    let f = w.frame();
+                    let size = objc2_foundation::NSSize::new(800.0 + r.below(600) as f64, 560.0 + r.below(400) as f64);
+                    w.setFrame_display(objc2_foundation::NSRect::new(f.origin, size), true);
+                }
+            }),
+            action("appearance", 1, |r: &mut Rng| {
+                if r.chance(0.3) {
+                    set_appearance(*r.pick(&[Appearance::Light, Appearance::Dark, Appearance::System]));
+                }
+            }),
+        ];
+        ferrokit::testing::soak::run(Settings::from_env(), actions);
     }
 }

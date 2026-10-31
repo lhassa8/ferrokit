@@ -81,6 +81,43 @@ The `input` example's suite and the real-input checks in `habits` and
 ran on the old text; menu items, buttons and commands now deliver an
 editor's pending changes first.
 
+### Soak tests
+
+`testing::soak` runs an app's own list of user actions (clicks, typing,
+page switches, sheets, resizing) at random for a long time, and watches:
+- a watchdog thread reports the main thread not answering for over two
+  seconds;
+- every 30 seconds it samples the footprint and the live views, signals
+  and windows;
+- at the end it prints the footprint's growth over the second half of
+  the run.
+
+```rust,no_run
+use ferrokit::testing::input::{self, Key};
+use ferrokit::testing::soak::{self, Rng, Settings, action};
+use ferrokit::*;
+
+fn start(window: Retained<NSWindow>) {
+    let w = window.clone();
+    soak::run(Settings::from_env(), vec![
+        action("arrow", 3, move |r: &mut Rng| input::key(&w, *r.pick(&[Key::Up, Key::Down]), &[])),
+        action("resize", 1, move |r: &mut Rng| {
+            let f = window.frame();
+            let size = objc2_foundation::NSSize::new(600.0 + r.below(400) as f64, 400.0 + r.below(300) as f64);
+            window.setFrame_display(objc2_foundation::NSRect::new(f.origin, size), true);
+        }),
+    ]);
+}
+# let _ = start;
+```
+
+`SOAK=<minutes>` sets the length, `SOAK_SEED` the seed (printed at the
+start, so a run can be repeated) and `SOAK_MS` the time between actions.
+The app takes the front at the start and pauses while another app is in
+front. `scripts/soak.sh <example> [minutes] [seed]` runs a soak and
+summarises the log, crash reports and logged exceptions included. The
+`habits` and `sql_browser` examples have soaks.
+
 In this repository, `scripts/check-all.sh` builds everything, runs clippy,
 the unit and doc tests, and every app's suite, and prints a summary.
 
