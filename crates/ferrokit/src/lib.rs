@@ -9,7 +9,7 @@
 //! App::new("Counter")
 //!     .window(Window::new("Counter").size(320.0, 140.0).view(
 //!         vstack((
-//!             label(move || format!("Clicked {} times", count.get())),
+//!             text(move || format!("Clicked {} times", count.get())),
 //!             button("Click me", move || count.update(|n| *n += 1)),
 //!         ))
 //!         .padding(20.0),
@@ -73,6 +73,7 @@ mod surface;
 mod syntax;
 mod transfer;
 mod undo;
+mod value;
 pub mod testing;
 mod view;
 
@@ -125,6 +126,7 @@ pub use status::MenuBarExtra;
 pub use motion::{Animation, Transition, animated, animated_with, reduce_motion};
 pub use popover::Edge;
 pub use canvas::{Canvas, Painter, canvas};
+pub use value::{IntoValue, Value};
 pub use transfer::{Clipboard, DragItem, WriteFile};
 pub use l10n::{format_date, format_number, format_number_for, local_day, local_day_start, today, weekday, language, parse_strings, plural_category, set_language, t, t_plural, t_with};
 pub use charts::{Chart, Format, Series, area_chart, bar_chart, line_chart, pie_chart, scatter_chart, stacked_bar_chart};
@@ -137,6 +139,7 @@ pub use view::{
     Align, AnyView, Axis, Cx, Dynamic, ForEach, Grid, Identifiable, Modified, Node, Size, Spacer, Stack, View, ViewExt, Views,
     dynamic, for_each, grid, hstack, zstack, Layers, live_nodes, spacer, vstack, watch, Watch,
 };
+#[allow(deprecated)]
 pub use appkit_views::{Button, Divider, Label, Scroll, Text, button, divider, label, scroll, text};
 
 fn mtm() -> MainThreadMarker {
@@ -786,7 +789,7 @@ impl App {
         let mut window_items = Vec::new();
         if let Some(make) = welcome {
             documents::set_welcome(make);
-            window_items.push(menu_item(&t_with("Welcome to {app}", &[("app", &self.name)]), || {
+            window_items.push(menu_item(t_with("Welcome to {app}", &[("app", &self.name)]), || {
                 show_welcome();
             }).key_with("1", &[Modifier::Shift]));
         }

@@ -336,8 +336,8 @@ fn habit_card(t: Tracker, h: Habit) -> impl View {
     hstack((
         badge(&h.symbol, tint, 44.0),
         vstack((
-            label(move || t.habit(id).map(|h| h.name).unwrap_or_default()).font(Font::headline()),
-            hstack((image("flame.fill").symbol_size(11.0).color(Color::Orange), label(move || streak_line(t.streak(id))).font(Font::caption()).color(Color::Secondary))).spacing(4.0),
+            text(move || t.habit(id).map(|h| h.name).unwrap_or_default()).font(Font::headline()),
+            hstack((image("flame.fill").symbol_size(11.0).color(Color::Orange), text(move || streak_line(t.streak(id))).font(Font::caption()).color(Color::Secondary))).spacing(4.0),
         ))
         .spacing(3.0)
         .alignment(Align::Start),
@@ -347,10 +347,12 @@ fn habit_card(t: Tracker, h: Habit) -> impl View {
     ))
     .spacing(14.0)
     .padding(14.0)
-    .background_when(move || if t.is_done(id, t.today.get()) { tint.opacity(0.14) } else { Color::QuaternaryFill })
+    .background(move || if t.is_done(id, t.today.get()) { tint.opacity(0.14) } else { Color::QuaternaryFill })
     .corner_radius(12.0)
     .hover_highlight(Color::Quaternary)
     .on_click(move || animated(|| t.toggle(id, t.today.get_untracked())))
+    // VoiceOver reads the card's text, then whether it's done.
+    .accessibility_value(move || if t.is_done(id, t.today.get()) { tr("Done") } else { tr("Not done") })
     .transition(Transition::Slide(Edge::Below))
     .fill_width()
 }
@@ -360,13 +362,13 @@ fn today_view(t: Tracker) -> impl View {
     let summary = card(hstack((
         ring(move || if total() == 0 { 0.0 } else { t.done_today() as f64 / total() as f64 }, Color::Green, 116.0).frame(116.0, 116.0),
         vstack((
-            label(move || t_with("{done} of {total} done", &[("done", &t.done_today()), ("total", &total())])).font(Font::title2().weight(Weight::Bold)),
-            label(move || match total().saturating_sub(t.done_today()) {
+            text(move || t_with("{done} of {total} done", &[("done", &t.done_today()), ("total", &total())])).font(Font::title2().weight(Weight::Bold)),
+            text(move || match total().saturating_sub(t.done_today()) {
                 0 => tr("Everything done. See you tomorrow."),
                 left => t_plural(left as i64, "{n} habit to go today", "{n} habits to go today"),
             })
             .color(Color::Secondary),
-            hstack((image("flame.fill").color(Color::Orange), label(move || best_now(t)).font(Font::callout()))).spacing(6.0),
+            hstack((image("flame.fill").color(Color::Orange), text(move || best_now(t)).font(Font::callout()))).spacing(6.0),
         ))
         .spacing(6.0)
         .alignment(Align::Start),
@@ -403,7 +405,7 @@ fn best_now(t: Tracker) -> String {
 // ---- a habit ----
 
 fn stat(title: String, value: impl Fn() -> String + 'static, tint: Color) -> impl View {
-    card(vstack((text(title).font(Font::caption()).color(Color::Secondary), label(value).font(Font::title().weight(Weight::Bold)).color(tint))).spacing(4.0).alignment(Align::Start)).fill_width()
+    card(vstack((text(title).font(Font::caption()).color(Color::Secondary), text(value).font(Font::title().weight(Weight::Bold)).color(tint))).spacing(4.0).alignment(Align::Start)).fill_width()
 }
 
 const WEEKS: i64 = 26;
@@ -493,8 +495,8 @@ fn habit_view(t: Tracker, id: u32) -> AnyView {
             hstack((
                 badge(&h.symbol, tint, 64.0),
                 vstack((
-                    label(move || t.habit(id).map(|h| h.name).unwrap_or_default()).font(Font::large_title().weight(Weight::Bold)),
-                    label(move || match t.habit(id).and_then(|h| h.reminder) {
+                    text(move || t.habit(id).map(|h| h.name).unwrap_or_default()).font(Font::large_title().weight(Weight::Bold)),
+                    text(move || match t.habit(id).and_then(|h| h.reminder) {
                         Some((hh, mm)) => t_with("Every day · reminder at {time}", &[("time", &format_date(local_day_start(0) + (hh * 3600 + mm * 60) as f64, "jm"))]),
                         None => tr("Every day"),
                     })
@@ -504,7 +506,7 @@ fn habit_view(t: Tracker, id: u32) -> AnyView {
                 .alignment(Align::Start),
                 spacer(),
                 share_button(move || vec![ShareItem::Text(share_text())]).tooltip(&tr("Share this streak")),
-                button(&tr("Delete…"), move || confirm_delete(t, id, name.clone())),
+                button(tr("Delete…"), move || confirm_delete(t, id, name.clone())),
             ))
             .spacing(16.0),
             hstack((
@@ -649,10 +651,10 @@ where
     S: Fn() -> bool + 'static,
     A: Fn() + 'static,
 {
-    hstack((image(symbol).symbol_size(14.0).color(tint).frame(20.0, 20.0), label(title), spacer()))
+    hstack((image(symbol).symbol_size(14.0).color(tint).frame(20.0, 20.0), text(title), spacer()))
         .spacing(8.0)
         .padding(7.0)
-        .background_when(move || if selected() { Color::Gray.opacity(0.22) } else { Color::Clear })
+        .background(move || if selected() { Color::Gray.opacity(0.22) } else { Color::Clear })
         .corner_radius(7.0)
         .hover_highlight(Color::Quaternary)
         .on_click(action)
@@ -790,8 +792,8 @@ fn new_habit(t: Tracker) {
         hstack(colors).spacing(4.0),
         hstack((
             spacer(),
-            button(&tr("Cancel"), close),
-            button(&tr("Add"), move || {
+            button(tr("Cancel"), close),
+            button(tr("Add"), move || {
                 let id = t.add(&name.get_untracked(), SYMBOLS[symbol.get_untracked()], color.get_untracked());
                 animated(|| t.page.set(Page::Habit(id)));
                 close();
@@ -880,11 +882,11 @@ fn menu_panel(t: Tracker) -> impl View {
         hstack((
             text(tr("Today")).font(Font::headline()),
             spacer(),
-            label(move || t_with("{done} of {total}", &[("done", &t.done_today()), ("total", &t.habits.with(Vec::len))])).color(Color::Secondary),
+            text(move || t_with("{done} of {total}", &[("done", &t.done_today()), ("total", &t.habits.with(Vec::len))])).color(Color::Secondary),
         )),
         vstack((for_each(move || t.habits.get(), move |h: Habit| {
             let (id, tint) = (h.id, h.tint());
-            hstack((image(&h.symbol).color(tint).frame(20.0, 20.0), label(move || t.habit(id).map(|h| h.name).unwrap_or_default()), spacer(), check_mark(t, id, tint)))
+            hstack((image(&h.symbol).color(tint).frame(20.0, 20.0), text(move || t.habit(id).map(|h| h.name).unwrap_or_default()), spacer(), check_mark(t, id, tint)))
                 .spacing(8.0)
                 .padding(4.0)
                 .hover_highlight(Color::Quaternary)
@@ -948,17 +950,17 @@ fn main() {
         .menu(
             "File",
             vec![
-                menu_command(&tr("New Habit…"), NEW_HABIT).key("n"),
+                menu_command(tr("New Habit…"), NEW_HABIT).key("n"),
                 menu_separator(),
-                menu_command(&tr("Export Report as PDF…"), EXPORT_REPORT).key("E"),
-                menu_command(&tr("Print Report…"), PRINT_REPORT).key("p"),
+                menu_command(tr("Export Report as PDF…"), EXPORT_REPORT).key("E"),
+                menu_command(tr("Print Report…"), PRINT_REPORT).key("p"),
             ],
         )
         .menu(
             &tr("View"),
             vec![
-                menu_item(&tr("Today"), move || animated(|| t.page.set(Page::Today))).key("1"),
-                menu_item(&tr("Insights"), move || animated(|| t.page.set(Page::Insights))).key("2"),
+                menu_item(tr("Today"), move || animated(|| t.page.set(Page::Today))).key("1"),
+                menu_item(tr("Insights"), move || animated(|| t.page.set(Page::Insights))).key("2"),
             ],
         )
         .menu_bar_extra(

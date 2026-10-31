@@ -12,7 +12,7 @@ fn text_document() -> DocumentType<String> {
         let words = *doc.content();
         vstack((
             text_editor(&model).bind(doc.content()).accessibility_label("Text"),
-            label(move || format!("{} words", words.with(|t| t.split_whitespace().count()))).padding(6.0),
+            text(move || format!("{} words", words.with(|t| t.split_whitespace().count()))).padding(6.0),
         ))
     })
     .read(|path| std::fs::read_to_string(path))

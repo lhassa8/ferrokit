@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use ferrokit::{
     Align, App, AppEvent, Effect, Identifiable, Signal, View, ViewExt, Window, batch, button, checkbox, dynamic, effect_runs,
-    for_each, grid, hstack, label, later, layout_stats, layout_passes, layout_times_us, live_nodes, open, secure_field, spacer, spawn, text,
+    for_each, grid, hstack, later, layout_stats, layout_passes, layout_times_us, live_nodes, open, secure_field, spacer, spawn, text,
     text_field, toggle, vstack, windows, divider, image, picker, progress, scroll, slider, stepper, table, Column, Sort,
     TableModel, ViewId, TreeNode, outline, sidebar, TextModel, text_editor, split, toolbar_button, toolbar_space,
     toolbar_search, menu_item, menu_separator, MenuItem, Modifier, submenu, stored, set_undoable, Alert, OpenOptions, SheetHandle, alert, open_panel, save_panel, sheet,
@@ -282,7 +282,7 @@ fn resource_owner_check(events: Rc<RefCell<Vec<AppEvent>>>) {
             fin.store(true, Ordering::Relaxed);
             Ok::<_, String>(1)
         });
-        label(move || if r.loading() { "loading".into() } else { "done".into() })
+        text(move || if r.loading() { "loading".into() } else { "done".into() })
     })));
     wait(50, move || {
         ferrokit::close_window(&w);
@@ -325,7 +325,7 @@ fn file_menu() -> Vec<MenuItem> {
     let has = m.items;
     vec![
         menu_item("New Item", move || add.update(|n| *n += 1)).key("n"),
-        menu_item("Remove Item", move || remove.update(|n| *n -= 1)).key_with("n", &[Modifier::Option]).enabled_when(move || has.get() > 0),
+        menu_item("Remove Item", move || remove.update(|n| *n -= 1)).key_with("n", &[Modifier::Option]).disabled(move || has.get() <= 0),
     ]
 }
 
@@ -334,12 +334,12 @@ fn view_menu() -> Vec<MenuItem> {
     let (s1, s2) = (m.sidebar, m.sidebar);
     let sort_item = |title: &str, v: u8| {
         let (a, b) = (m.sort, m.sort);
-        menu_item(title, move || a.set(v)).checked_when(move || b.get() == v)
+        menu_item(title, move || a.set(v)).checked(move || b.get() == v)
     };
     let r = m.refreshed;
     let rn = m.renamed;
     vec![
-        menu_item("Show Sidebar", move || s1.update(|s| *s = !*s)).key_with("s", &[Modifier::Control]).checked_when(move || s2.get()),
+        menu_item("Show Sidebar", move || s1.update(|s| *s = !*s)).key_with("s", &[Modifier::Control]).checked(move || s2.get()),
         submenu("Sort By", vec![sort_item("Name", 0), sort_item("Date", 1)]),
         menu_separator(),
         menu_item("Refresh", move || r.update(|n| *n += 1)).key("R"),
@@ -1291,7 +1291,7 @@ fn closable_window(title: &str, value: &Signal<u32>) -> Window {
     let labels: Vec<ferrokit::AnyView> = (0..200)
         .map(|i| {
             let v = *value;
-            ferrokit::AnyView::new(label(move || format!("{i}: {}", v.get())))
+            ferrokit::AnyView::new(text(move || format!("{i}: {}", v.get())))
         })
         .collect();
     let model = Rc::new(TableModel::new(ViewId(970), vec![Column::text("n", "N", |n: &u32| n.to_string())]));
@@ -2317,12 +2317,12 @@ fn views_window() -> impl View {
     let st = state();
     let (items, flag, inner, tab) = (st.items, st.flag, st.inner, st.tab);
     vstack((
-        label(move || format!("{} items", st.items.with(Vec::len))),
-        for_each(move || items.get(), |it: Item| label(move || it.name.clone())),
+        text(move || format!("{} items", st.items.with(Vec::len))),
+        for_each(move || items.get(), |it: Item| text(move || it.name.clone())),
         dynamic(move || {
             if flag.get() {
                 let inner = inner;
-                vstack((text("on"), label(move || format!("inner {}", inner.get())))).id("on")
+                vstack((text("on"), text(move || format!("inner {}", inner.get())))).id("on")
             } else {
                 text("off").id("off")
             }
@@ -2452,7 +2452,7 @@ fn layout_window() -> impl View {
         hstack((text("left"), spacer(), text("right"))),
         text("filled").fill_width(),
         text("framed").frame(121.0, 41.0),
-        hstack((label(move || wide.get()), text("after"))),
+        hstack((text(move || wide.get()), text("after"))),
     ))
     .padding(13.0)
 }
@@ -2536,7 +2536,7 @@ fn layout_bench(events: Rc<RefCell<Vec<AppEvent>>>) {
     let rows: Vec<_> = (0..250)
         .map(|i| {
             hstack((
-                if i == 0 { ferrokit::AnyView::new(label(move || format!("Counter {}", c.get()))) } else { ferrokit::AnyView::new(text(format!("Row {i}"))) },
+                if i == 0 { ferrokit::AnyView::new(text(move || format!("Counter {}", c.get()))) } else { ferrokit::AnyView::new(text(format!("Row {i}"))) },
                 text("Some label"),
                 spacer(), // rows stretch: every row re-lays out on resize
                 button("Go", || {}),
@@ -2609,7 +2609,7 @@ fn controls_window() -> impl View {
         toggle("Wi-Fi", &c.wifi),
         checkbox("Remember me", &c.remember),
         button("Save", move || saves.update(|n| *n += 1)).disabled(move || name.with(String::is_empty)).default_action(),
-        label(move || {
+        text(move || {
             format!(
                 "{} / {} chars / wifi {} / remember {}",
                 summary.name.get(),
@@ -2748,11 +2748,11 @@ fn controls_b_window() -> impl View {
     let (count, prog, lines) = (c.count, c.progress, c.lines);
     vstack((
         picker(&c.size, vec![("Small", 1), ("Medium", 2), ("Large", 3)]).accessibility_label("Size"),
-        hstack((slider(&c.volume, 0.0, 1.0).accessibility_label("Volume"), stepper(&c.count, 0.0, 10.0, 1.0).accessibility_label("Count"), label(move || format!("count {}", count.get())))),
+        hstack((slider(&c.volume, 0.0, 1.0).accessibility_label("Volume"), stepper(&c.count, 0.0, 10.0, 1.0).accessibility_label("Count"), text(move || format!("count {}", count.get())))),
         progress(move || prog.get()),
         hstack((image("star.fill").description("Favourite"), text("starred"))),
         divider(),
-        scroll(vstack((for_each(move || lines.get(), |it: Item| label(move || it.name.clone())),))),
+        scroll(vstack((for_each(move || lines.get(), |it: Item| text(move || it.name.clone())),))),
     ))
     .padding(16.0)
 }
@@ -3002,7 +3002,7 @@ fn table_window() -> impl View {
     let t = TABLE.with(Clone::clone);
     let (t1, t2, t3, t4, t5, t6) = (t.clone(), t.clone(), t.clone(), t.clone(), t.clone(), t.clone());
     vstack((
-        label(move || format!("{} selected", t1.selected.with(Vec::len))),
+        text(move || format!("{} selected", t1.selected.with(Vec::len))),
         dynamic(move || {
             if t2.show.get() {
                 let (t3, t4, t5, t6) = (t3.clone(), t4.clone(), t5.clone(), t6.clone());
@@ -3394,7 +3394,7 @@ fn editor_window() -> impl View {
     let e = EDITOR.with(Clone::clone);
     let (e1, e2) = (e.clone(), e.clone());
     vstack((
-        label(move || format!("{} characters", e1.notes.with(|t| t.chars().count()))),
+        text(move || format!("{} characters", e1.notes.with(|t| t.chars().count()))),
         dynamic(move || {
             if e2.show.get() {
                 let (c, k) = (e2.changes, e2.compositions);
@@ -3582,7 +3582,7 @@ fn chrome_window() -> Window {
                     text("Right-click me").context_menu(vec![
                         menu_item("Rename", move || renames.update(|n| *n += 1)),
                         menu_separator(),
-                        menu_item("Archive", || {}).enabled_when(move || archivable.get_untracked()),
+                        menu_item("Archive", || {}).disabled(move || !(archivable.get_untracked())),
                     ]),
                 ))
                 .padding(8.0),

@@ -13,7 +13,9 @@ cargo run -p ferrokit --example styles
 
 ## Text
 
-`text` and `label` take a font and a colour:
+`text` takes a font and a colour, each fixed or from signals.
+`.font(..)` and `.color(..)` also work on any view (a row, a card) and
+after other modifiers, for all the text inside:
 
 ```rust,no_run
 use ferrokit::*;
@@ -22,9 +24,9 @@ let total = Signal::new(48_210.0);
 let header = vstack((
     text("Good morning").font(Font::subheadline()).color(Color::Secondary),
     text("Your money this month").font(Font::large_title().weight(Weight::Bold)),
-    label(move || format!("${}", format_number(total.get(), 0)))
+    text(move || format!("${}", format_number(total.get(), 0)))
         .font(Font::title().monospaced_digits())
-        .color_when(move || if total.get() < 0.0 { Color::Red } else { Color::Primary }),
+        .color(move || if total.get() < 0.0 { Color::Red } else { Color::Primary }),
 ))
 .alignment(Align::Start);
 # let _ = header;

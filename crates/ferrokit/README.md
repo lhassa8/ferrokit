@@ -13,7 +13,7 @@ fn main() {
     App::new("Counter")
         .window(Window::new("Counter").size(320.0, 140.0).view(
             vstack((
-                label(move || format!("Clicked {} times", count.get())),
+                text(move || format!("Clicked {} times", count.get())),
                 button("Click me", move || count.update(|n| *n += 1)),
             ))
             .padding(20.0),

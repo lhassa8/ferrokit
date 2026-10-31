@@ -40,7 +40,7 @@ fn main() {
         .window(
             Window::new("Counter").size(320.0, 140.0).view(
                 vstack((
-                    label(move || format!("Clicked {} times", count.get())),
+                    text(move || format!("Clicked {} times", count.get())),
                     button("Click me", move || count.update(|n| *n += 1)),
                 ))
                 .padding(20.0),
@@ -54,9 +54,10 @@ What happens here:
 
 - `App::new` names the app. It gets the standard menu bar (the app menu,
   Edit, Window, Help) without asking.
-- `Window::new(…).view(…)` builds the window's views **once**. `label`
-  reads `count`, so when `count` changes, that one `NSTextField` gets its
-  new text. Nothing else is rebuilt.
+- `Window::new(…).view(…)` builds the window's views **once**. The
+  `text` given a closure reads `count`, so when `count` changes, that one
+  `NSTextField` gets its new text. Nothing else is rebuilt. Most things a
+  view shows work this way: a value, or a closure over signals.
 - `button` takes the action to run on click.
 - `run` starts AppKit's run loop and doesn't return.
 

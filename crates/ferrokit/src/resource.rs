@@ -97,7 +97,7 @@ impl<T: Clone + Send + 'static> Resource<T> {
     ///     }
     ///     Ok::<_, String>(found)
     /// });
-    /// let status = label(move || match matches.state() {
+    /// let status = text(move || match matches.state() {
     ///     Load::Loading => "Searching…".into(),
     ///     Load::Ready(words) => format!("{} words", words.len()),
     ///     Load::Failed(e) => format!("Couldn't search: {e}"),

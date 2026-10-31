@@ -170,11 +170,11 @@ pub fn focused_value_in<T: Clone + 'static>(window: &NSWindow, name: &str) -> Op
 
 /// A menu item that performs `command` on whatever has focus, enabled only
 /// while something handles it. Add `.key(..)` for a shortcut.
-pub fn menu_command(title: &str, command: Command) -> MenuItem {
+pub fn menu_command(title: impl crate::IntoValue<String>, command: Command) -> MenuItem {
     menu_item(title, move || {
         perform(command);
     })
-    .enabled_when(move || can_perform(command))
+    .disabled(move || !can_perform(command))
 }
 
 /// A toolbar button that performs `command` on its window's focus,

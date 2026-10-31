@@ -72,7 +72,7 @@ fn settings(s: Settings) -> impl View {
         (AnyView::new(text("Rating:")), AnyView::new(rating(&s.stars, 5).accessibility_label("Rating"))),
         (
             AnyView::new(text("Photo storage:")),
-            AnyView::new(hstack((gauge(move || s.storage.get(), 100.0).warning(75.0).critical(90.0).accessibility_label("Photo storage"), label(move || format!("{:.0}%", s.storage.get())).font(Font::caption()).color(Color::Secondary)))),
+            AnyView::new(hstack((gauge(move || s.storage.get(), 100.0).warning(75.0).critical(90.0).accessibility_label("Photo storage"), text(move || format!("{:.0}%", s.storage.get())).font(Font::caption()).color(Color::Secondary)))),
         ),
         (AnyView::new(text("Export to:")), AnyView::new(path_control(&s.folder).accessibility_label("Export folder"))),
         (

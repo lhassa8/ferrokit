@@ -38,14 +38,14 @@ fn row(state: State, item: Item) -> impl View {
         image(item.symbol).symbol_size(14.0).hierarchical(Color::Accent).frame(22.0, 18.0),
         text(&item.name).font(Font::body()),
         spacer(),
-        label(move || if packed() { "Packed".into() } else { String::new() }).font(Font::caption()).color(Color::Secondary),
+        text(move || if packed() { "Packed".into() } else { String::new() }).font(Font::caption()).color(Color::Secondary),
     ))
     .spacing(10.0)
     .padding(10.0)
     .fill_width()
     .hover_highlight(Color::Quaternary)
     .corner_radius(8.0)
-    .opacity_when(move || if packed() { 0.45 } else { 1.0 })
+    .opacity(move || if packed() { 0.45 } else { 1.0 })
     .on_click(move || {
         animated(|| {
             state.packed.update(|p| match p.iter().position(|x| *x == id) {
@@ -89,7 +89,7 @@ fn screen(state: State) -> impl View {
                         .color(Color::Secondary)
                         .padding(12.0)
                         .fill_width()
-                        .background_when(move || if state.packed.get().is_empty() { Color::ControlBackground } else { Color::Green.opacity(0.18) })
+                        .background(move || if state.packed.get().is_empty() { Color::ControlBackground } else { Color::Green.opacity(0.18) })
                         .corner_radius(10.0)
                         .transition(Transition::Fade),
                 )
@@ -262,13 +262,18 @@ mod self_checks {
             // Hover: the row's highlight comes on.
             let water = interaction_of(&w2, "Water bottle").unwrap();
             let surface = surface_under(&water);
-            let before = surface.as_ref().and_then(|s| bg_rgba(s)).map(|c| c.3);
-            hover(&water, true);
+            // A real pointer resting where the window opened may have hovered
+            // it already: start from no hover.
+            hover(&water, false);
             later_ms(400, move || {
-                let after = surface.as_ref().and_then(|s| bg_rgba(s)).map(|c| c.3);
-                c2("hover-highlight", before == Some(0.0) && after.is_some_and(|a| a > 0.0), format!("highlight alpha {before:?} → {after:?}"));
-                hover(&water, false);
-                later_ms(400, move || remove_packed(w2, state, c2, failed));
+                let before = surface.as_ref().and_then(|s| bg_rgba(s)).map(|c| c.3);
+                hover(&water, true);
+                later_ms(400, move || {
+                    let after = surface.as_ref().and_then(|s| bg_rgba(s)).map(|c| c.3);
+                    c2("hover-highlight", before == Some(0.0) && after.is_some_and(|a| a > 0.0), format!("highlight alpha {before:?} → {after:?}"));
+                    hover(&water, false);
+                    later_ms(400, move || remove_packed(w2, state, c2, failed));
+                });
             });
         });
     }

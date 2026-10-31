@@ -199,6 +199,10 @@ pub(crate) enum Kind {
     },
 }
 
+/// What [`Node::each_leaf`] calls: a leaf's view, its measured size and its
+/// node's metadata.
+pub(crate) type LeafFn<'a> = dyn FnMut(&NativeView, &Cell<Option<Size>>, &Rc<Meta>) + 'a;
+
 /// A built view: native views, effects and helper objects it owns.
 pub struct Node {
     pub(crate) kind: Kind,
@@ -206,6 +210,11 @@ pub struct Node {
     /// Inset (horizontal, vertical) on each side.
     pub(crate) padding: (f64, f64),
     pub(crate) fixed: (Option<f64>, Option<f64>),
+    /// At least this wide and tall (`min_width` / `min_height`).
+    pub(crate) min: (Option<f64>, Option<f64>),
+    /// Can be narrower than its ideal width when its row is short of room
+    /// (truncating text).
+    pub(crate) shrinks: bool,
     /// Forced flexibility (`fill_width` / `fill_height`).
     pub(crate) fill: (bool, bool),
     pub(crate) meta: Rc<Meta>,
@@ -230,6 +239,8 @@ impl Node {
             id: None,
             padding: (0.0, 0.0),
             fixed: (None, None),
+            min: (None, None),
+            shrinks: false,
             fill: (false, false),
             meta,
             decor: Vec::new(),
@@ -294,6 +305,18 @@ impl Node {
             Kind::Grid { rows, .. } => rows.iter().flatten().for_each(|c| c.leaf_views(out)),
             Kind::Group(g) => g.borrow().iter().for_each(|c| c.leaf_views(out)),
             Kind::Spacer => {}
+        }
+    }
+
+    /// Calls `f` with each leaf of this subtree (not inside scroll views or
+    /// splits: those are panes of their own) and its measured size.
+    pub(crate) fn each_leaf(&self, f: &mut LeafFn<'_>) {
+        match &self.kind {
+            Kind::Leaf(l) => f(&l.view, &l.content, &self.meta),
+            Kind::Stack { children, .. } | Kind::Layers { children, .. } => children.iter().for_each(|c| c.each_leaf(f)),
+            Kind::Grid { rows, .. } => rows.iter().flatten().for_each(|c| c.each_leaf(f)),
+            Kind::Group(g) => g.borrow().iter().for_each(|c| c.each_leaf(f)),
+            Kind::Scroll { .. } | Kind::Split { .. } | Kind::Spacer => {}
         }
     }
 
@@ -407,6 +430,16 @@ pub trait ViewExt: View + Sized {
         Modified::new(self).width(points)
     }
 
+    /// At least `points` wide (SwiftUI's `frame(minWidth:)`).
+    fn min_width(self, points: f64) -> Modified<Self> {
+        Modified::new(self).min_width(points)
+    }
+
+    /// At least `points` tall (SwiftUI's `frame(minHeight:)`).
+    fn min_height(self, points: f64) -> Modified<Self> {
+        Modified::new(self).min_height(points)
+    }
+
     /// A fixed height.
     fn height(self, points: f64) -> Modified<Self> {
         Modified::new(self).height(points)
@@ -447,8 +480,10 @@ pub trait ViewExt: View + Sized {
 
     /// A background behind the view, its padding included: with
     /// [`corner_radius`](Self::corner_radius) and [`shadow`](Self::shadow), a
-    /// card. `Color::ControlBackground` is the system's card colour.
-    fn background(self, color: crate::Color) -> Modified<Self> {
+    /// card. `Color::QuaternaryFill` is the system's grouped-card colour.
+    /// A closure computes it from signals (a selected row, a status); it
+    /// changes smoothly inside [`animated`](crate::animated).
+    fn background(self, color: impl crate::IntoValue<crate::Color>) -> Modified<Self> {
         Modified::new(self).background(color)
     }
 
@@ -467,9 +502,29 @@ pub trait ViewExt: View + Sized {
         Modified::new(self).shadow(shadow)
     }
 
-    /// The view at `opacity` (0 transparent, 1 opaque), all of it.
-    fn opacity(self, opacity: f64) -> Modified<Self> {
+    /// The view at `opacity` (0 transparent, 1 opaque), all of it, or a
+    /// closure computing it from signals; it fades inside
+    /// [`animated`](crate::animated).
+    fn opacity(self, opacity: impl crate::IntoValue<f64>) -> Modified<Self> {
         Modified::new(self).opacity(opacity)
+    }
+
+    /// The font of the text inside the view (all of it, when it's a row or
+    /// a card): a text style or a custom font. Works after any modifier.
+    fn font(self, font: crate::Font) -> Modified<Self> {
+        Modified::new(self).font(font)
+    }
+
+    /// The colour of the text and symbols inside the view, or a closure
+    /// computing it from signals. Works after any modifier.
+    fn color(self, color: impl crate::IntoValue<crate::Color>) -> Modified<Self> {
+        Modified::new(self).color(color)
+    }
+
+    /// What VoiceOver reads as the view's value, after its name: a card's
+    /// state ("done"), a gauge's level. A closure keeps it current.
+    fn accessibility_value(self, value: impl crate::IntoValue<String>) -> Modified<Self> {
+        Modified::new(self).accessibility_value(value)
     }
 
     /// A system material behind the view, its padding included: a
@@ -486,17 +541,18 @@ pub trait ViewExt: View + Sized {
         Modified::new(self).glass(glass)
     }
 
-    /// A background whose colour follows the signals `color` reads (a
-    /// selected row, a status). It changes smoothly inside
-    /// [`animated`](crate::animated).
+    /// A background following signals (now [`background`](Self::background)
+    /// takes a closure).
+    #[deprecated(since = "0.4.0", note = "`background` takes a closure: `.background(move || ..)`")]
     fn background_when(self, color: impl Fn() -> crate::Color + 'static) -> Modified<Self> {
-        Modified::new(self).background_when(color)
+        Modified::new(self).background(color)
     }
 
-    /// The view's opacity, following the signals `opacity` reads. It fades
-    /// inside [`animated`](crate::animated).
+    /// Opacity following signals (now [`opacity`](Self::opacity) takes a
+    /// closure).
+    #[deprecated(since = "0.4.0", note = "`opacity` takes a closure: `.opacity(move || ..)`")]
     fn opacity_when(self, opacity: impl Fn() -> f64 + 'static) -> Modified<Self> {
-        Modified::new(self).opacity_when(opacity)
+        Modified::new(self).opacity(opacity)
     }
 
     /// How the view comes and goes when it's added or removed (by
@@ -526,7 +582,7 @@ pub trait ViewExt: View + Sized {
     /// Disables the view's controls while `when()` is true (a picker that
     /// only matters once a checkbox is on, a form while it's saving),
     /// following the signals it reads. SwiftUI's `disabled`.
-    fn disabled(self, when: impl Fn() -> bool + 'static) -> Modified<Self> {
+    fn disabled(self, when: impl crate::IntoValue<bool>) -> Modified<Self> {
         Modified::new(self).disabled(when)
     }
 
@@ -559,13 +615,18 @@ pub struct Modified<V> {
     hover: Option<Rc<dyn Fn(bool)>>,
     click: Option<Rc<dyn Fn()>>,
     tooltip: Option<String>,
-    disabled: Option<Box<dyn Fn() -> bool>>,
+    disabled: Option<crate::Value<bool>>,
+    font: Option<crate::Font>,
+    color: Option<crate::Value<crate::Color>>,
+    ax_value: Option<crate::Value<String>>,
 }
 
 /// A layout or look modifier, in the order written.
 enum Op {
     Padding(f64, f64),
     Width(f64),
+    MinWidth(f64),
+    MinHeight(f64),
     Height(f64),
     FillWidth,
     FillHeight,
@@ -580,7 +641,7 @@ enum Op {
 
 impl<V: View> Modified<V> {
     fn new(view: V) -> Self {
-        Modified { view, ops: Vec::new(), menu: None, label: None, responds: Default::default(), popover: None, opacity: None, opacity_when: None, transition: None, hover: None, click: None, tooltip: None, disabled: None }
+        Modified { view, ops: Vec::new(), menu: None, label: None, responds: Default::default(), popover: None, opacity: None, opacity_when: None, transition: None, hover: None, click: None, tooltip: None, disabled: None, font: None, color: None, ax_value: None }
     }
 
     /// Shows `content` in a popover pointing at this view while `shown` is
@@ -661,6 +722,18 @@ impl<V: View> Modified<V> {
         self
     }
 
+    /// A minimum width (see [`ViewExt::min_width`]).
+    pub fn min_width(mut self, points: f64) -> Self {
+        self.ops.push(Op::MinWidth(points));
+        self
+    }
+
+    /// A minimum height (see [`ViewExt::min_height`]).
+    pub fn min_height(mut self, points: f64) -> Self {
+        self.ops.push(Op::MinHeight(points));
+        self
+    }
+
     /// A fixed height.
     pub fn height(mut self, points: f64) -> Self {
         self.ops.push(Op::Height(points));
@@ -668,8 +741,11 @@ impl<V: View> Modified<V> {
     }
 
     /// A background behind the view (see [`ViewExt::background`]).
-    pub fn background(mut self, color: crate::Color) -> Self {
-        self.ops.push(Op::Background(color));
+    pub fn background(mut self, color: impl crate::IntoValue<crate::Color>) -> Self {
+        self.ops.push(match color.into_value() {
+            crate::Value::Fixed(c) => Op::Background(c),
+            crate::Value::Computed(f) => Op::BackgroundWhen(f),
+        });
         self
     }
 
@@ -691,9 +767,30 @@ impl<V: View> Modified<V> {
         self
     }
 
-    /// The view at `opacity`.
-    pub fn opacity(mut self, opacity: f64) -> Self {
-        self.opacity = Some(opacity);
+    /// The view at `opacity` (see [`ViewExt::opacity`]).
+    pub fn opacity(mut self, opacity: impl crate::IntoValue<f64>) -> Self {
+        match opacity.into_value() {
+            crate::Value::Fixed(o) => self.opacity = Some(o),
+            crate::Value::Computed(f) => self.opacity_when = Some(Box::new(move || f())),
+        }
+        self
+    }
+
+    /// The font of the text inside (see [`ViewExt::font`]).
+    pub fn font(mut self, font: crate::Font) -> Self {
+        self.font = Some(font);
+        self
+    }
+
+    /// The colour of the text and symbols inside (see [`ViewExt::color`]).
+    pub fn color(mut self, color: impl crate::IntoValue<crate::Color>) -> Self {
+        self.color = Some(color.into_value());
+        self
+    }
+
+    /// What VoiceOver reads as the value (see [`ViewExt::accessibility_value`]).
+    pub fn accessibility_value(mut self, value: impl crate::IntoValue<String>) -> Self {
+        self.ax_value = Some(value.into_value());
         self
     }
 
@@ -709,16 +806,16 @@ impl<V: View> Modified<V> {
         self
     }
 
-    /// A background following signals (see [`ViewExt::background_when`]).
-    pub fn background_when(mut self, color: impl Fn() -> crate::Color + 'static) -> Self {
-        self.ops.push(Op::BackgroundWhen(Rc::new(color)));
-        self
+    /// A background following signals (now `background` takes a closure).
+    #[deprecated(since = "0.4.0", note = "`background` takes a closure: `.background(move || ..)`")]
+    pub fn background_when(self, color: impl Fn() -> crate::Color + 'static) -> Self {
+        self.background(color)
     }
 
-    /// Opacity following signals (see [`ViewExt::opacity_when`]).
-    pub fn opacity_when(mut self, opacity: impl Fn() -> f64 + 'static) -> Self {
-        self.opacity_when = Some(Box::new(opacity));
-        self
+    /// Opacity following signals (now `opacity` takes a closure).
+    #[deprecated(since = "0.4.0", note = "`opacity` takes a closure: `.opacity(move || ..)`")]
+    pub fn opacity_when(self, opacity: impl Fn() -> f64 + 'static) -> Self {
+        self.opacity(opacity)
     }
 
     /// How the view comes and goes (see [`ViewExt::transition`]).
@@ -746,8 +843,8 @@ impl<V: View> Modified<V> {
     }
 
     /// Disabled controls (see [`ViewExt::disabled`]).
-    pub fn disabled(mut self, when: impl Fn() -> bool + 'static) -> Self {
-        self.disabled = Some(Box::new(when));
+    pub fn disabled(mut self, when: impl crate::IntoValue<bool>) -> Self {
+        self.disabled = Some(when.into_value());
         self
     }
 
@@ -791,6 +888,18 @@ impl<V: View> View for Modified<V> {
                         node = wrap(node);
                     }
                     node.padding = (px, py);
+                }
+                Op::MinWidth(w) => {
+                    if node.min.0.is_some() {
+                        node = wrap(node);
+                    }
+                    node.min.0 = Some(w);
+                }
+                Op::MinHeight(h) => {
+                    if node.min.1.is_some() {
+                        node = wrap(node);
+                    }
+                    node.min.1 = Some(h);
                 }
                 Op::Width(w) => {
                     if node.fixed.0.is_some() {
@@ -863,12 +972,57 @@ impl<V: View> View for Modified<V> {
             node.decor.push(interaction);
             node.meta.mark();
         }
+        if let Some(font) = &self.font {
+            // Text inside takes the font, and is measured again.
+            let ns = font.ns();
+            node.each_leaf(&mut |v, content, meta| {
+                if let Some(field) = v.downcast_ref::<objc2_app_kit::NSTextField>() {
+                    field.setFont(Some(&ns));
+                    content.set(None);
+                    meta.mark();
+                }
+            });
+        }
+        if let Some(color) = self.color {
+            let mut fields = Vec::new();
+            let mut symbols = Vec::new();
+            node.each_leaf(&mut |v, _, _| {
+                if let Ok(f) = v.clone().downcast::<objc2_app_kit::NSTextField>() {
+                    fields.push(f);
+                } else if let Ok(i) = v.clone().downcast::<objc2_app_kit::NSImageView>() {
+                    symbols.push(i);
+                }
+            });
+            let set = move |c: crate::Color| {
+                let ns = c.ns();
+                fields.iter().for_each(|f| f.setTextColor(Some(&ns)));
+                symbols.iter().for_each(|i| i.setContentTintColor(Some(&ns)));
+            };
+            match color {
+                crate::Value::Fixed(c) => set(c),
+                color => node.own(Effect::new(move || set(color.get()))),
+            }
+        }
+        if let Some(value) = self.ax_value {
+            // On a clickable view's button, else on its native views.
+            let mut targets: Vec<NativeView> = node.decor.iter().filter(|d| d.class().name().to_string_lossy() == "FerrokitInteraction").cloned().collect();
+            if targets.is_empty() {
+                node.leaf_views(&mut targets);
+            }
+            node.own(Effect::new(move || {
+                let v = objc2_foundation::NSString::from_str(&value.get());
+                for t in &targets {
+                    // SAFETY: an NSString is a valid accessibility value.
+                    unsafe { objc2_app_kit::NSAccessibility::setAccessibilityValue(&**t, Some(&v)) };
+                }
+            }));
+        }
         if let Some(when) = self.disabled {
             let mut leaves = Vec::new();
             node.leaf_views(&mut leaves);
             let controls: Vec<_> = leaves.into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSControl>().ok()).collect();
             node.own(Effect::new(move || {
-                let enabled = !when();
+                let enabled = !when.get();
                 for c in &controls {
                     c.setEnabled(enabled);
                 }
@@ -981,6 +1135,14 @@ pub trait Views {
 impl Views for Vec<AnyView> {
     fn into_views(self) -> Vec<AnyView> {
         self
+    }
+}
+
+/// One view alone is a list of one: `vstack(for_each(..))`,
+/// `scroll(vstack(text("Notes")))`.
+impl<V: View> Views for V {
+    fn into_views(self) -> Vec<AnyView> {
+        vec![AnyView::new(self)]
     }
 }
 

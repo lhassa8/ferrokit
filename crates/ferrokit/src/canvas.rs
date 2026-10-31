@@ -586,12 +586,12 @@ fn export(node: &mut Node, view: &Retained<CanvasView>, name: &str, mtm: objc2::
     }
     let (copy, save) = (objc2::rc::Weak::from_retained(view), objc2::rc::Weak::from_retained(view));
     let items = vec![
-        crate::chrome::menu_item(&crate::t("Copy Image"), move || {
+        crate::chrome::menu_item(crate::t("Copy Image"), move || {
             if let Some(png) = copy.load().and_then(|v| png(&v)) {
                 crate::Clipboard::general().set_png(&png);
             }
         }),
-        crate::chrome::menu_item(&crate::t("Save Image…"), move || {
+        crate::chrome::menu_item(crate::t("Save Image…"), move || {
             let Some(v) = save.load() else { return };
             let (Some(png), Some(window)) = (png(&v), v.window()) else { return };
             crate::dialogs::save_panel(&window, &file, None, move |path| {

@@ -13,10 +13,10 @@ fn document() -> DocumentType<String> {
     DocumentType::new(&["txt", "md"], String::new, |doc: &Document<String>| {
         let model = TextModel::new(ViewId(1), &doc.content().get_untracked());
         model.set_font(Some("Menlo"), 13.0);
-        let text = *doc.content();
+        let body = *doc.content();
         vstack((
             text_editor(&model).bind(doc.content()).syntax(Syntax::new().line_comment("#", TextStyle::new().color(Color::Gray))).accessibility_label("Text"),
-            label(move || format!("{} words", text.with(|t| t.split_whitespace().count()))).padding(6.0),
+            text(move || format!("{} words", body.with(|t| t.split_whitespace().count()))).padding(6.0),
         ))
     })
     .read(|path| std::fs::read_to_string(path))

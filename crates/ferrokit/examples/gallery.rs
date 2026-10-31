@@ -95,7 +95,7 @@ fn main() {
             let _ = std::process::Command::new("open").arg(p).spawn();
         }
     });
-    let status = label(move || {
+    let status = text(move || {
         let n = g3.selected.with(Vec::len);
         if n == 0 { String::new() } else { format!("{n} selected") }
     });

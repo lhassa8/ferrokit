@@ -42,7 +42,7 @@ fn content(tasks: Signal<Vec<Task>>, draft: Signal<String>) -> impl View {
             button("Add", add),
         )),
         table(&model).on_toggle(move |row, _, done| tasks.update(|t| t[row].done = done)).accessibility_label("Tasks"),
-        label(move || {
+        text(move || {
             let (all, done) = tasks.with(|t| (t.len(), t.iter().filter(|t| t.done).count()));
             format!("{done} of {all} done")
         }),

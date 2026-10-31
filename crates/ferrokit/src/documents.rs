@@ -478,12 +478,12 @@ fn clear_recents() {
 /// The File menu's document items: those above Close, and those after it.
 pub(crate) fn file_items() -> (Vec<MenuItem>, Vec<MenuItem>) {
     let can_open = || OPENER.with_borrow(|o| o.as_ref().is_some_and(|o| o.can_open()));
-    let mut above = vec![menu_item(&t("New"), || {
+    let mut above = vec![menu_item(t("New"), || {
         new_document();
     })
     .key("n")];
     if can_open() {
-        above.push(menu_item(&t("Open…"), choose_documents).key("o"));
+        above.push(menu_item(t("Open…"), choose_documents).key("o"));
         above.push(dynamic_submenu(&t("Open Recent"), || {
             let mut items: Vec<MenuItem> = recent_documents()
                 .into_iter()
@@ -496,27 +496,27 @@ pub(crate) fn file_items() -> (Vec<MenuItem>, Vec<MenuItem>) {
             if any {
                 items.push(menu_separator());
             }
-            items.push(menu_item(&t("Clear Menu"), clear_recents).enabled_when(move || any));
+            items.push(menu_item(t("Clear Menu"), clear_recents).disabled(move || !(any)));
             items
         }));
     }
     let writable = || current().is_some_and(|d| d.writable());
     let after = vec![
-        menu_item(&t("Save"), || {
+        menu_item(t("Save"), || {
             if let Some(d) = current() {
                 save_flow(d, |_| {});
             }
         })
         .key("s")
-        .enabled_when(writable),
-        menu_item(&t("Save As…"), || {
+        .disabled(move || !writable()),
+        menu_item(t("Save As…"), || {
             if let Some(d) = current() {
                 save_as_flow(d, |_| {});
             }
         })
         .key_with("s", &[Modifier::Shift])
-        .enabled_when(writable),
-        menu_item(&t("Revert to Saved"), confirm_revert).enabled_when(|| current().is_some_and(|d| d.edited() && d.path().is_some())),
+        .disabled(move || !writable()),
+        menu_item(t("Revert to Saved"), confirm_revert).disabled(|| !current().is_some_and(|d| d.edited() && d.path().is_some())),
     ];
     (above, after)
 }

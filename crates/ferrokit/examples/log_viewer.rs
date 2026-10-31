@@ -290,7 +290,7 @@ fn content(v: &Viewer) -> impl View {
             picker(&v.level, vec![("All levels", Level::Debug), ("Info and up", Level::Info), ("Warnings and up", Level::Warn), ("Errors", Level::Error)]).accessibility_label("Level"),
             checkbox("Follow", &v.follow),
             spacer(),
-            label(move || {
+            text(move || {
                 let name = v1.path.with(|p| p.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()));
                 format!("{}  ·  {} of {} lines", name.unwrap_or_else(|| "No file".into()), v2.shown.get(), v2.total.get())
             }),

@@ -132,6 +132,8 @@ pub(crate) fn ideal(node: &Node) -> Size {
     if let Some(h) = node.fixed.1 {
         s.h = h;
     }
+    s.w = s.w.max(node.min.0.unwrap_or(0.0));
+    s.h = s.h.max(node.min.1.unwrap_or(0.0));
     node.meta.ideal.set(Some(s));
     s
 }
@@ -393,6 +395,19 @@ fn place_stack(children: &[Node], axis: Axis, spacing: f64, align: Option<Align>
     let used: f64 = lengths.iter().sum::<f64>() + spacing * kids.len().saturating_sub(1) as f64;
     if len > used {
         share(&mut lengths, &flex, len - spacing * kids.len().saturating_sub(1) as f64);
+    } else if len < used {
+        // Short of room: children that can shrink (truncating text, or rows
+        // holding it) give it up, in proportion to their length.
+        let can: Vec<bool> = kids.iter().map(|c| shrinkable(c, axis)).collect();
+        let total: f64 = lengths.iter().zip(&can).filter(|(_, c)| **c).map(|(l, _)| *l).sum();
+        if total > 0.0 {
+            let cut = (used - len).min(total);
+            for (l, c) in lengths.iter_mut().zip(&can) {
+                if *c {
+                    *l = (*l - cut * *l / total).max(0.0);
+                }
+            }
+        }
     }
     let align = align.unwrap_or(if axis == Axis::Horizontal { Align::Center } else { Align::Start });
     let mut pos = 0.0;
@@ -409,6 +424,26 @@ fn place_stack(children: &[Node], axis: Axis, spacing: f64, align: Option<Align>
             place(child, x + off, y + pos, c, *a, snap);
         }
         pos += a + spacing;
+    }
+}
+
+/// Whether `node` can be shorter than its ideal length along `axis`: a
+/// truncating text, or a stack or box holding one, with no fixed or minimum
+/// length that way.
+fn shrinkable(node: &Node, axis: Axis) -> bool {
+    let fixed = if axis == Axis::Horizontal { node.fixed.0.or(node.min.0) } else { node.fixed.1.or(node.min.1) };
+    if fixed.is_some() {
+        return false;
+    }
+    match &node.kind {
+        Kind::Leaf(_) => node.shrinks && axis == Axis::Horizontal,
+        Kind::Stack { children, .. } | Kind::Layers { children, .. } => {
+            let mut any = false;
+            each_child(children, false, &mut |c| any |= shrinkable(c, axis));
+            any
+        }
+        Kind::Group(g) => g.borrow().iter().any(|c| shrinkable(c, axis)),
+        _ => false,
     }
 }
 

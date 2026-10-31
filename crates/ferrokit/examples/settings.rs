@@ -59,7 +59,7 @@ fn account(s: &Settings) -> impl View {
             (text("Password:"), secure_field(&s.password).placeholder("Required")),
         ])
         .align_column(0, Align::End),
-        label(move || if s1.email_ok() { String::new() } else { "Enter a valid email address.".into() }),
+        text(move || if s1.email_ok() { String::new() } else { "Enter a valid email address.".into() }),
     ))
 }
 
@@ -81,7 +81,7 @@ fn notifications(s: &Settings) -> impl View {
         checkbox("Play sounds", &s.sounds),
         grid([
             (text("Volume:"), hstack((image("speaker.fill"), slider(&s.volume, 0.0, 1.0).accessibility_label("Volume")))),
-            (text("Keep for:"), hstack((stepper(&s.keep_days, 1.0, 365.0, 1.0).accessibility_label("Keep for"), label(move || format!("{} days", days.get()))))),
+            (text("Keep for:"), hstack((stepper(&s.keep_days, 1.0, 365.0, 1.0).accessibility_label("Keep for"), text(move || format!("{} days", days.get()))))),
         ])
         .align_column(0, Align::End),
     ))
@@ -92,7 +92,7 @@ fn sync_row(s: &Settings) -> impl View {
     hstack((
         button("Sync Now", move || s1.sync()).disabled(move || s2.syncing.get()),
         progress(move || if s3.syncing.get() { None } else { Some(1.0) }),
-        label(move || s4.status.get()),
+        text(move || s4.status.get()),
     ))
 }
 

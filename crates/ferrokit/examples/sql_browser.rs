@@ -418,17 +418,17 @@ fn database_view(doc: &Document<Db>) -> impl View + use<> {
                 hstack((
                     // An error leads with a warning symbol, in red.
                     dynamic(move || {
-                        let headline = label(move || b.headline()).font(Font::body().weight(Weight::Semibold).monospaced_digits());
+                        let headline = text(move || b.headline()).font(Font::body().weight(Weight::Semibold).monospaced_digits());
                         if b.failed() {
                             AnyView::new(hstack((image("exclamationmark.triangle.fill").color(Color::Red).accessibility_label(&t("Error")), headline.color(Color::Red))).spacing(6.0))
                         } else {
                             AnyView::new(headline)
                         }
                     }),
-                    label(move || b.timing()).font(Font::caption().monospaced_digits()).color(Color::Secondary),
+                    text(move || b.timing()).font(Font::caption().monospaced_digits()).color(Color::Secondary),
                     spacer(),
                     csv_chip(b),
-                    button(&t("History"), move || b.history_shown.set(true)).popover(&b.history_shown, move || history(b)),
+                    button(t("History"), move || b.history_shown.set(true)).popover(&b.history_shown, move || history(b)),
                 ))
                 .spacing(8.0)
                 .padding(8.0),
@@ -779,27 +779,21 @@ fn open_or_report(path: &Path) {
     }
 }
 
-/// A file's folder as the Finder abbreviates it: "~/Documents" under the
-/// home folder, and the middle left out of a long one.
+/// A file's folder as the Finder shows it: "~/Documents" under the home
+/// folder (a long one is truncated by its text).
 fn shown_folder(path: &Path) -> String {
     let dir = path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
-    let dir = match std::env::var("HOME") {
+    match std::env::var("HOME") {
         Ok(home) if dir.starts_with(&home) => format!("~{}", &dir[home.len()..]),
         _ => dir,
-    };
-    let chars: Vec<char> = dir.chars().collect();
-    if chars.len() <= 34 {
-        return dir;
     }
-    let (head, tail): (String, String) = (chars[..14].iter().collect(), chars[chars.len() - 19..].iter().collect());
-    format!("{head}…{tail}")
 }
 
 /// A row on the welcome window: a symbol, a title and a line under it.
 fn welcome_row(symbol: &str, title: String, detail: impl Fn() -> String + 'static, action: impl Fn() + 'static) -> impl View {
     hstack((
         image(symbol).symbol_size(18.0).color(Color::Accent).frame(26.0, 26.0),
-        vstack((text(title.clone()).font(Font::headline()), label(detail).font(Font::caption()).color(Color::Secondary))).spacing(1.0).alignment(Align::Start),
+        vstack((text(title.clone()).font(Font::headline()).truncate(), text(detail).font(Font::caption()).color(Color::Secondary).truncate())).spacing(1.0).alignment(Align::Start),
         spacer(),
     ))
     .spacing(10.0)
@@ -876,20 +870,14 @@ fn main() {
         .translations(&[("de", include_str!("sql_browser.de.strings"))])
         .documents(database())
         .welcome(welcome)
-        .menu("File", vec![menu_separator(), menu_command(&t("Export Results as CSV…"), EXPORT_CSV).key("E")])
-        .menu(&t("Query"), vec![menu_command(&t("Run Query"), RUN).key("r"), menu_command(&t("Copy Results as CSV"), COPY_CSV)])
+        .menu("File", vec![menu_separator(), menu_command(t("Export Results as CSV…"), EXPORT_CSV).key("E")])
+        .menu(&t("Query"), vec![menu_command(t("Run Query"), RUN).key("r"), menu_command(t("Copy Results as CSV"), COPY_CSV)])
         .menu(
             &t("View"),
             vec![
-                menu_command(&t("Hide Sidebar"), TOGGLE_SIDEBAR)
-                    .key_with("s", &[Modifier::Control])
-                    .title_when(|| shown_title("Sidebar", |b| b.no_sidebar)),
-                menu_command(&t("Hide Inspector"), TOGGLE_INSPECTOR)
-                    .key_with("i", &[Modifier::Option])
-                    .title_when(|| shown_title("Inspector", |b| b.no_inspector)),
-                menu_command(&t("Show Chart"), TOGGLE_CHART)
-                    .key_with("k", &[Modifier::Option])
-                    .title_when(|| shown_title("Chart", |b| b.no_chart)),
+                menu_command(|| shown_title("Sidebar", |b| b.no_sidebar), TOGGLE_SIDEBAR).key_with("s", &[Modifier::Control]),
+                menu_command(|| shown_title("Inspector", |b| b.no_inspector), TOGGLE_INSPECTOR).key_with("i", &[Modifier::Option]),
+                menu_command(|| shown_title("Chart", |b| b.no_chart), TOGGLE_CHART).key_with("k", &[Modifier::Option]),
             ],
         )
         .on_launch(move || {

@@ -146,11 +146,10 @@ pub(crate) fn remeasure(view: &NSView, leaf: &LeafHandle) {
     }
 }
 
-/// How a label's text looks: its font and colour.
+/// How a label's text looks: its font.
 #[derive(Clone, Default)]
 struct TextLook {
     font: Option<crate::Font>,
-    color: Option<crate::Color>,
 }
 
 impl TextLook {
@@ -158,26 +157,47 @@ impl TextLook {
         if let Some(font) = &self.font {
             field.setFont(Some(&font.ns()));
         }
-        if let Some(color) = self.color {
-            field.setTextColor(Some(&color.ns()));
-        }
     }
 }
 
-/// A static label.
-pub struct Text(String, TextLook);
+/// Text (see [`text`]).
+pub struct Text {
+    content: crate::Value<String>,
+    look: TextLook,
+    color: Option<crate::Value<crate::Color>>,
+    truncates: bool,
+}
+
+/// [`Text`]: `label(f)` was the name for text computed from signals; `text`
+/// takes a closure too.
+pub type Label = Text;
 
 impl Text {
     /// Its font: a text style (`Font::title()`, `Font::caption()`) or a
     /// custom one.
     pub fn font(mut self, font: crate::Font) -> Self {
-        self.1.font = Some(font);
+        self.look.font = Some(font);
         self
     }
 
-    /// Its colour (`Color::Secondary` for less prominent text).
-    pub fn color(mut self, color: crate::Color) -> Self {
-        self.1.color = Some(color);
+    /// Its colour (`Color::Secondary` for less prominent text), or a closure
+    /// computing it from signals (a balance red when it's negative).
+    pub fn color(mut self, color: impl crate::IntoValue<crate::Color>) -> Self {
+        self.color = Some(color.into_value());
+        self
+    }
+
+    /// A colour computed from signals (now [`color`](Self::color) takes a
+    /// closure).
+    #[deprecated(since = "0.4.0", note = "`color` takes a closure: `.color(move || ..)`")]
+    pub fn color_when(self, f: impl Fn() -> crate::Color + 'static) -> Self {
+        self.color(f)
+    }
+
+    /// On one line, shortened with "…" when there isn't room for it all,
+    /// instead of pushing past its row (a file's path, a long value).
+    pub fn truncate(mut self) -> Self {
+        self.truncates = true;
         self
     }
 }
@@ -220,63 +240,46 @@ pub(crate) fn printable_label(text: &str, mtm: MainThreadMarker) -> Retained<NST
 
 impl View for Text {
     fn build(self, cx: &mut Cx) -> Node {
-        let field = printable_label(&self.0, cx.mtm);
-        self.1.apply(&field);
-        Node::leaf(cx, Retained::into_super(Retained::into_super(field)), (false, false), Size::default()).0
-    }
-}
-
-/// A static label.
-pub fn text(s: impl Into<String>) -> Text {
-    Text(s.into(), TextLook::default())
-}
-
-/// A label computed from signals; updates in place.
-pub struct Label(Box<dyn Fn() -> String>, TextLook, Option<Box<dyn Fn() -> crate::Color>>);
-
-impl Label {
-    /// Its font (see [`Text::font`]).
-    pub fn font(mut self, font: crate::Font) -> Self {
-        self.1.font = Some(font);
-        self
-    }
-
-    /// Its colour (see [`Text::color`]).
-    pub fn color(mut self, color: crate::Color) -> Self {
-        self.1.color = Some(color);
-        self
-    }
-
-    /// A colour computed from signals, updated in place (a balance red when
-    /// it's negative).
-    pub fn color_when(mut self, f: impl Fn() -> crate::Color + 'static) -> Self {
-        self.2 = Some(Box::new(f));
-        self
-    }
-}
-
-impl View for Label {
-    fn build(self, cx: &mut Cx) -> Node {
         let field = printable_label("", cx.mtm);
-        self.1.apply(&field);
+        self.look.apply(&field);
+        if self.truncates {
+            field.setLineBreakMode(objc2_app_kit::NSLineBreakMode::ByTruncatingTail);
+            field.setMaximumNumberOfLines(1);
+        }
         let view: Retained<NSView> = Retained::into_super(Retained::into_super(field.clone()));
         let (mut node, handle) = Node::leaf(cx, view.clone(), (false, false), Size::default());
-        let f = self.0;
-        let fld = field.clone();
-        node.own(Effect::new(move || {
-            fld.setStringValue(&NSString::from_str(&f()));
-            remeasure(&view, &handle);
-        }));
-        if let Some(color) = self.2 {
-            node.own(Effect::new(move || field.setTextColor(Some(&color().ns()))));
+        if self.truncates {
+            node.shrinks = true;
+        }
+        match self.content {
+            crate::Value::Fixed(s) => field.setStringValue(&NSString::from_str(&s)),
+            content => {
+                let fld = field.clone();
+                node.own(Effect::new(move || {
+                    fld.setStringValue(&NSString::from_str(&content.get()));
+                    remeasure(&view, &handle);
+                }));
+            }
+        }
+        match self.color {
+            Some(crate::Value::Fixed(c)) => field.setTextColor(Some(&c.ns())),
+            Some(color) => node.own(Effect::new(move || field.setTextColor(Some(&color.get().ns())))),
+            None => {}
         }
         node
     }
 }
 
-/// A label computed from signals; updates in place.
-pub fn label(f: impl Fn() -> String + 'static) -> Label {
-    Label(Box::new(f), TextLook::default(), None)
+/// Text: fixed (`text("Packing list")`), or computed from signals and
+/// updated in place (`text(move || format!("{} left", left.get()))`).
+pub fn text(content: impl crate::IntoValue<String>) -> Text {
+    Text { content: content.into_value(), look: TextLook::default(), color: None, truncates: false }
+}
+
+/// Text computed from signals: the same as [`text`] with a closure.
+#[deprecated(since = "0.4.0", note = "`text` takes a closure: `text(move || ..)`")]
+pub fn label(f: impl Fn() -> String + 'static) -> Text {
+    text(f)
 }
 
 define_class!(
@@ -305,16 +308,27 @@ impl ActionTarget {
 
 /// A push button.
 pub struct Button {
-    title: String,
+    title: crate::Value<String>,
     action: Box<dyn Fn()>,
-    disabled: Option<Box<dyn Fn() -> bool>>,
+    disabled: Option<crate::Value<bool>>,
     default_action: bool,
+    symbol: Option<crate::Value<String>>,
 }
 
 impl Button {
-    /// Disables the button while `f` (reading signals) returns true.
-    pub fn disabled(mut self, f: impl Fn() -> bool + 'static) -> Self {
-        self.disabled = Some(Box::new(f));
+    /// Disables the button: `true`, or a closure reading signals (disabled
+    /// while it returns true).
+    pub fn disabled(mut self, when: impl crate::IntoValue<bool>) -> Self {
+        self.disabled = Some(when.into_value());
+        self
+    }
+
+    /// An SF Symbol on the button, before its title, or alone when the
+    /// title is empty (the title is then what VoiceOver reads; give it one
+    /// with `accessibility_label`). A closure changes it with signals: Play
+    /// and Pause, `move || if playing.get() { "pause.fill" } else { "play.fill" }`.
+    pub fn symbol(mut self, name: impl crate::IntoValue<String>) -> Self {
+        self.symbol = Some(name.into_value());
         self
     }
 
@@ -330,22 +344,40 @@ impl View for Button {
         let target = ActionTarget::new(cx.mtm, self.action);
         // SAFETY: the target responds to `fire:` and the node keeps it alive.
         let button = unsafe {
-            NSButton::buttonWithTitle_target_action(&NSString::from_str(&self.title), Some(&target), Some(sel!(fire:)), cx.mtm)
+            NSButton::buttonWithTitle_target_action(&NSString::from_str(&self.title.get()), Some(&target), Some(sel!(fire:)), cx.mtm)
         };
         if self.default_action {
             button.setKeyEquivalent(&NSString::from_str("\r"));
         }
-        let (mut node, _) =
-            Node::leaf(cx, Retained::into_super(Retained::into_super(button.clone())), (false, false), Size::default());
-        if let Some(disabled) = self.disabled {
-            node.own(Effect::new(move || button.setEnabled(!disabled())));
+        let view: Retained<NSView> = Retained::into_super(Retained::into_super(button.clone()));
+        let (mut node, handle) = Node::leaf(cx, view.clone(), (false, false), Size::default());
+        // Title and symbol, set again (and the button measured again) when
+        // their signals change.
+        let (title, symbol, b) = (self.title, self.symbol, button.clone());
+        if !title.is_fixed() || symbol.is_some() {
+            node.own(Effect::new(move || {
+                let t = title.get();
+                b.setTitle(&NSString::from_str(&t));
+                if let Some(name) = symbol.as_ref().map(|s| s.get()) {
+                    let image = objc2_app_kit::NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str(&name), Some(&NSString::from_str(&t)));
+                    b.setImage(image.as_deref());
+                    b.setImagePosition(if t.is_empty() { objc2_app_kit::NSCellImagePosition::ImageOnly } else { objc2_app_kit::NSCellImagePosition::ImageLeading });
+                }
+                remeasure(&view, &handle);
+            }));
+        }
+        match self.disabled {
+            Some(crate::Value::Fixed(d)) => button.setEnabled(!d),
+            Some(disabled) => node.own(Effect::new(move || button.setEnabled(!disabled.get()))),
+            None => {}
         }
         node.keep(Retained::into_super(target));
         node
     }
 }
 
-/// A push button; `action` runs inside a batch.
-pub fn button(title: &str, action: impl Fn() + 'static) -> Button {
-    Button { title: title.into(), action: Box::new(action), disabled: None, default_action: false }
+/// A push button; `action` runs inside a batch. The title is fixed, or a
+/// closure computing it from signals ("Show Sidebar" or "Hide Sidebar").
+pub fn button(title: impl crate::IntoValue<String>, action: impl Fn() + 'static) -> Button {
+    Button { title: title.into_value(), action: Box::new(action), disabled: None, default_action: false, symbol: None }
 }

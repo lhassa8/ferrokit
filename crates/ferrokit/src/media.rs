@@ -78,7 +78,7 @@ struct PageState {
 /// let browser = vstack((
 ///     hstack((
 ///         button("Back", { let p = page.clone(); move || p.back() }),
-///         label({ let p = page.clone(); move || p.title() }),
+///         text({ let p = page.clone(); move || p.title() }),
 ///     )),
 ///     web_view(&page),
 /// ));

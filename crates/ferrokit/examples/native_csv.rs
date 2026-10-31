@@ -134,7 +134,7 @@ fn content(b: &Browser) -> impl View {
                 }
                 None => AnyView::new(text("Open a CSV file (⌘O) or wait for the sample.")).id(0usize),
             }),
-            label(move || {
+            text(move || {
                 let total = b4.data.with(|d| d.as_ref().map_or(0, |d| d.records.len()));
                 format!("Showing {} of {} rows · filter {:.0} ms", b4.shown.get(), total, b4.filter_ms.get())
             }),

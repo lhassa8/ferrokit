@@ -352,25 +352,39 @@ enum Entry {
 }
 
 impl MenuItem {
-    /// Only enabled while `f` returns true (checked when the menu opens, and
-    /// before its key equivalent fires).
-    pub fn enabled_when(mut self, f: impl Fn() -> bool + 'static) -> Self {
+    /// Disabled: `true`, or a closure (read when the menu opens, and before
+    /// the item's key equivalent fires).
+    pub fn disabled(mut self, when: impl crate::IntoValue<bool>) -> Self {
         if let Entry::Action { enabled, .. } = &mut self.0 {
-            *enabled = Some(Box::new(f));
+            let when = when.into_value();
+            *enabled = Some(Box::new(move || !when.get()));
         }
         self
     }
 
-    /// Shows a checkmark while `f` returns true (checked when the menu opens).
-    pub fn checked_when(mut self, f: impl Fn() -> bool + 'static) -> Self {
+    /// A checkmark: `true`, or a closure (read when the menu opens).
+    pub fn checked(mut self, when: impl crate::IntoValue<bool>) -> Self {
         if let Entry::Action { checked, .. } = &mut self.0 {
-            *checked = Some(Box::new(f));
+            let when = when.into_value();
+            *checked = Some(Box::new(move || when.get()));
         }
         self
     }
 
-    /// The title `f` returns, read when the menu opens ("Show Sidebar" /
-    /// "Hide Sidebar").
+    /// Enabled while `f` returns true (now [`disabled`](Self::disabled)).
+    #[deprecated(since = "0.4.0", note = "use `.disabled(move || !..)`")]
+    pub fn enabled_when(self, f: impl Fn() -> bool + 'static) -> Self {
+        self.disabled(move || !f())
+    }
+
+    /// A checkmark while `f` returns true (now [`checked`](Self::checked)).
+    #[deprecated(since = "0.4.0", note = "`checked` takes a closure: `.checked(move || ..)`")]
+    pub fn checked_when(self, f: impl Fn() -> bool + 'static) -> Self {
+        self.checked(f)
+    }
+
+    /// The title `f` returns (now [`menu_item`] takes a closure as its title).
+    #[deprecated(since = "0.4.0", note = "`menu_item` takes a closure as its title")]
     pub fn title_when(mut self, f: impl Fn() -> String + 'static) -> Self {
         if let Entry::Action { title, titled, .. } = &mut self.0 {
             *title = f();
@@ -401,9 +415,14 @@ impl MenuItem {
     }
 }
 
-/// A menu command.
-pub fn menu_item(title: &str, action: impl Fn() + 'static) -> MenuItem {
-    MenuItem(Entry::Action { title: title.into(), action: Box::new(action), enabled: None, checked: None, titled: None, key: None })
+/// A menu command. The title is fixed, or a closure read each time the
+/// menu opens ("Show Sidebar" or "Hide Sidebar").
+pub fn menu_item(title: impl crate::IntoValue<String>, action: impl Fn() + 'static) -> MenuItem {
+    let (title, titled): (String, Option<Box<dyn Fn() -> String>>) = match title.into_value() {
+        crate::Value::Fixed(t) => (t, None),
+        crate::Value::Computed(f) => (crate::signal::untrack(|| f()), Some(Box::new(move || f()))),
+    };
+    MenuItem(Entry::Action { title, action: Box::new(action), enabled: None, checked: None, titled, key: None })
 }
 
 /// A separator line.
@@ -556,11 +575,12 @@ pub enum ToolbarItem {
 }
 
 impl ToolbarItem {
-    /// Disabled while `f` (reading signals) returns true.
-    pub fn disabled(self, f: impl Fn() -> bool + 'static) -> Self {
+    /// Disabled: `true`, or a closure reading signals.
+    pub fn disabled(self, when: impl crate::IntoValue<bool>) -> Self {
         match self {
             ToolbarItem::Button { id, label, symbol, action, .. } => {
-                ToolbarItem::Button { id, label, symbol, action, disabled: Some(Box::new(f)) }
+                let when = when.into_value();
+                ToolbarItem::Button { id, label, symbol, action, disabled: Some(Box::new(move || when.get())) }
             }
             other => other,
         }

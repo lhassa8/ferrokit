@@ -22,7 +22,7 @@ Also renamed, for anyone who relied on them: the Objective-C class prefixes (`Ap
 - **Text styles:** `text(..)` and `label(..)` take `.font(..)` and `.color(..)` (`label` also `.color_when(..)`). `Font` has the system's text styles (`large_title`, `title`, `headline`, `body`, `caption`…), `system`, `monospaced` and `named` fonts, with `.weight(Weight::..)`, `.bold()`, `.size(..)`, `.italic()` and `.monospaced_digits()`.
 - **Surfaces on any view:** `.background(..)`, `.corner_radius(..)`, `.border(..)`, `.shadow(Shadow::soft())` and `.opacity(..)`. Colours resolve again on appearance changes, so cards follow Dark Mode.
 - **Pictures:** `image_file(..)` and `image_data(..)`, fitted or `.fill()`ed, with `.corner_radius(..)`. SF Symbols take `.symbol_size(..)`, `.symbol_weight(..)`, `.color(..)`, `.hierarchical(..)`, `.palette(..)` and `.multicolor()`.
-- **`Color`** (was `TextColor`, and merges the colour well's `Color` struct): it adds `Quaternary`, `Accent`, `WindowBackground`, `ControlBackground`, `Clear`, `Rgba`, plus `Color::rgb`, `rgba`, `hex`, `.opacity(..)` and `.components()`.
+- **`Color`** (was `TextColor`, and merges the colour well's `Color` struct): it adds `Quaternary`, the system fills (`Fill`, `SecondaryFill`, `TertiaryFill`, `QuaternaryFill`), `Accent`, `WindowBackground`, `ControlBackground`, `Clear`, `Rgba`, plus `Color::rgb`, `rgba`, `hex`, `.opacity(..)` and `.components()`.
 - **Changed: modifiers apply in the order written,** as in SwiftUI. A modifier that has to go around what's already there (padding outside a frame or background, a second frame) adds a box: `.frame(18.0, 18.0).padding(7.0)` is an 18-point view with 7 points around it. Before, all of a view's modifiers applied together.
 - **Changed: a stack's flexible children share its length equally.** A child whose own length is larger keeps it. So a row of cards that `fill_width()` come out the same width; before, each got its own width plus an equal share of the extra.
 - A new guide chapter, Styling, and a new example, `styles`, with 12 self-checks, from fonts read back to colours, corners and shadows sampled from real window captures in light and dark.
@@ -143,6 +143,22 @@ Both showcase apps were compared with a SwiftUI reference of the same screens (`
   - a view's first placement never animates;
   - slides only move views already placed.
 - **Habits' demo:** `DEMO=1` runs a fast, scripted tour of everything, in a window sized to the screen.
+
+### API review (Phase 3, Q3)
+
+The review is in `docs/Q3_API_REVIEW.md`. Changes:
+- **One name per modifier, taking a value or a closure** (`impl IntoValue<T>`; types `IntoValue` and `Value`):
+  - `text(..)`, `.color(..)`, `.background(..)`, `.opacity(..)`, `.disabled(..)`;
+  - `button(title, ..)`, `menu_item(title, ..)`, `menu_command(title, ..)`;
+  - a menu item's `.disabled(..)` and `.checked(..)`, and a toolbar item's `.disabled(..)`.
+- **Deprecated, still working for one release:** `label`, `background_when`, `opacity_when`, `color_when`, and a menu item's `enabled_when`, `title_when` and `checked_when`.
+- **`.font(..)` and `.color(..)` on any view and after any modifier,** for the text and symbols inside.
+- **One view alone as a stack's children:** `vstack(for_each(..))`.
+- **`text(..).truncate()`:** a row short of room takes it from truncating text before overflowing.
+- **`.min_width(..)`, `.min_height(..)`.**
+- **`button(..).symbol(..)`:** a symbol on a button, from signals too.
+- **`.accessibility_value(..)`:** what VoiceOver reads after a view's name; Habits' cards say whether they're done.
+- **A new `values` suite** with 11 checks; the examples, guide and templates use the new names.
 
 ### ferrokit-core (was appkit-host)
 

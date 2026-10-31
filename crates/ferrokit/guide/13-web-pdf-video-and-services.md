@@ -25,7 +25,7 @@ let (p1, p2, p3) = (page.clone(), page.clone(), page.clone());
 let browser = vstack((
     hstack((
         button("Back", move || p1.back()).disabled(move || !p2.can_go_back()),
-        label(move || p3.title()).font(Font::headline()),
+        text(move || p3.title()).font(Font::headline()),
         spacer(),
     )),
     web_view(&page),

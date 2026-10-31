@@ -37,6 +37,27 @@ long as the app. Reading a freed signal panics with a message saying so;
 setting it does nothing, and `try_get` and `is_alive` check first.
 `live_signals()` counts the signals in existence, for leak checks.
 
+## Values in views: fixed, or from signals
+
+What a view shows takes either a value or a closure that reads signals:
+`text("Total")` or `text(move || format!("{} left", left.get()))`, and the
+same for `.color(..)`, `.background(..)`, `.opacity(..)`, `.disabled(..)`,
+a button's title and symbol, and a menu item's title. A closure runs again
+when a signal it read changes, and only that view updates. (These take
+`impl IntoValue<T>`.)
+
+```rust,no_run
+use ferrokit::*;
+
+let done = Signal::new(false);
+let row = text("Boots")
+    .padding(8.0)
+    .background(move || if done.get() { Color::Green.opacity(0.18) } else { Color::Clear })
+    .opacity(move || if done.get() { 0.5 } else { 1.0 });
+let toggle = button(move || if done.get() { "Unpack".to_string() } else { "Pack".to_string() }, move || done.set(!done.get()));
+# let _ = (row, toggle);
+```
+
 ## Memo: derived state
 
 A memo recomputes when its inputs change, and notifies its own readers only
@@ -47,7 +68,7 @@ use ferrokit::*;
 
 let items = Signal::new(vec![3, 1, 4, 1, 5]);
 let total = Memo::new(move || items.with(|v| v.iter().sum::<i32>()));
-let view = label(move || format!("Total: {}", total.get()));
+let view = text(move || format!("Total: {}", total.get()));
 # let _ = view;
 ```
 
@@ -130,7 +151,7 @@ let results = Resource::new(move || query.get(), |q: String, cancel: &Cancel| {
 });
 let view = vstack((
     search_field(&query),
-    label(move || match results.state() {
+    text(move || match results.state() {
         Load::Loading => "Searching…".into(),
         Load::Ready(rows) => format!("{} matches", rows.len()),
         Load::Failed(error) => format!("Search failed: {error}"),

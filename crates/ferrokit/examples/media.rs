@@ -104,7 +104,7 @@ fn guide(s: &State) -> impl View {
     vstack((
         hstack((
             button("Back", move || p1.back()).disabled(move || !p2.can_go_back()),
-            label(move || p3.title()).font(Font::headline()),
+            text(move || p3.title()).font(Font::headline()),
             spacer(),
         )),
         web_view(&s.page).links_open_in_browser().corner_radius(8.0).border(Color::Separator, 1.0),
@@ -119,7 +119,7 @@ fn report_tab(s: &State) -> impl View {
             search_field(&find).placeholder("Find in report"),
             spacer(),
             button("Previous", move || page.set(page.get().saturating_sub(1))).disabled(move || page.get() == 0),
-            label(move || format!("Page {} of {}", page.get() + 1, pages.get().max(1))).font(Font::body().monospaced_digits()),
+            text(move || format!("Page {} of {}", page.get() + 1, pages.get().max(1))).font(Font::body().monospaced_digits()),
             button("Next", move || page.set(page.get() + 1)).disabled(move || page.get() + 1 >= pages.get()),
         )),
         pdf_view(|| report_path().exists().then(report_path)).page(&page).page_count(&pages).highlight(move || find.get()),
@@ -140,10 +140,11 @@ fn clip_tab(s: &State) -> impl View {
                     }
                 });
             }),
-            dynamic(move || if playing.get() { button("Pause", move || playing.set(false)) } else { button("Play", move || playing.set(true)) }),
+            button(move || if playing.get() { "Pause".to_string() } else { "Play".to_string() }, move || playing.set(!playing.get()))
+                .symbol(move || if playing.get() { "pause.fill".to_string() } else { "play.fill".to_string() }),
             checkbox("Mute", &muted),
             spacer(),
-            label(move || format!("{:.0}:{:02.0} / {:.0}:{:02.0}", (time.get() / 60.0).floor(), time.get() % 60.0, (length.get() / 60.0).floor(), length.get() % 60.0))
+            text(move || format!("{:.0}:{:02.0} / {:.0}:{:02.0}", (time.get() / 60.0).floor(), time.get() % 60.0, (length.get() / 60.0).floor(), length.get() % 60.0))
                 .font(Font::body().monospaced_digits())
                 .color(Color::Secondary),
         )),

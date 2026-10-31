@@ -13,7 +13,7 @@ fn stat(symbol: &str, tint: Color, caption: &str, value: Signal<f64>, format: fn
             text(caption).font(Font::subheadline().weight(Weight::Medium)).color(Color::Secondary),
         ))
         .spacing(6.0),
-        label(move || format(value.get())).font(Font::title().weight(Weight::Semibold).monospaced_digits()),
+        text(move || format(value.get())).font(Font::title().weight(Weight::Semibold).monospaced_digits()),
     ))
     .spacing(8.0)
     .alignment(Align::Start)

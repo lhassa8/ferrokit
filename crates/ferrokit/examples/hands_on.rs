@@ -94,9 +94,9 @@ fn main() {
         )),
         text("4: a field and an editor. Type (also Japanese), then ⌘Z and ⇧⌘Z."),
         hstack((text("Name:"), text_field(&name).accessibility_label("Name"))),
-        label(move || format!("The field's value: {:?}", n1.get())),
+        text(move || format!("The field's value: {:?}", n1.get())),
         text_editor(&notes).accessibility_label("Notes"),
-        label(move || l7.get().join("  ·  ")),
+        text(move || l7.get().join("  ·  ")),
     ))
     .padding(12.0);
     let m4 = model.clone();

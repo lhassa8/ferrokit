@@ -15,12 +15,12 @@ App::new("Notes")
         menu_item("New Note", move || items.update(|n| *n += 1)).key("n"),                // ⌘N
         menu_item("Delete Note", move || items.update(|n| *n -= 1))
             .key_with("n", &[Modifier::Option])                                      // ⌥⌘N
-            .enabled_when(move || items.get() > 0),                                     // greyed out at 0
+            .disabled(move || !(items.get() > 0)),                                     // greyed out at 0
     ])
     .menu("View", vec![
         menu_item("Show Sidebar", move || show_sidebar.update(|s| *s = !*s))
             .key_with("s", &[Modifier::Control])
-            .checked_when(move || show_sidebar.get()),                                         // ✓ when shown
+            .checked(move || show_sidebar.get()),                                         // ✓ when shown
         menu_separator(),
         submenu("Sort By", vec![menu_item("Name", || {}), menu_item("Date", || {})]),
     ])
@@ -28,8 +28,8 @@ App::new("Notes")
     .run();
 ```
 
-`enabled_when` and `checked_when` are evaluated when the menu opens or a
-shortcut is pressed. `dynamic_submenu(title, || items)` rebuilds its items
+A menu item's title, `.disabled(..)` and `.checked(..)` take a value or a
+closure; closures are read when the menu opens or a shortcut is pressed. `dynamic_submenu(title, || items)` rebuilds its items
 each time it opens, for menus that list current things (servers, recent
 files).
 
@@ -197,7 +197,7 @@ sets the signal when the user drags the pane shut. The first pane and
 collapsible ones keep their size as the window resizes, and a pane reopens
 at the size it had. `.trailing(points)` gives the last pane (an inspector)
 its first width. The menu items follow the Mac convention: ⌃⌘S and ⌥⌘I,
-titled "Hide…" or "Show…" through `title_when`:
+titled "Hide…" or "Show…" by a closure as the title:
 
 ```rust,no_run
 use ferrokit::*;
@@ -207,12 +207,10 @@ let app = App::new("Library")
     .menu(
         "View",
         vec![
-            menu_item("Hide Sidebar", move || no_sidebar.update(|h| *h = !*h))
-                .key_with("s", &[Modifier::Control])
-                .title_when(move || format!("{} Sidebar", if no_sidebar.get() { "Show" } else { "Hide" })),
-            menu_item("Hide Inspector", move || no_inspector.update(|h| *h = !*h))
-                .key_with("i", &[Modifier::Option])
-                .title_when(move || format!("{} Inspector", if no_inspector.get() { "Show" } else { "Hide" })),
+            menu_item(move || format!("{} Sidebar", if no_sidebar.get() { "Show" } else { "Hide" }), move || no_sidebar.update(|h| *h = !*h))
+                .key_with("s", &[Modifier::Control]),
+            menu_item(move || format!("{} Inspector", if no_inspector.get() { "Show" } else { "Hide" }), move || no_inspector.update(|h| *h = !*h))
+                .key_with("i", &[Modifier::Option]),
         ],
     )
     .window(Window::new("Library").view(
@@ -329,7 +327,7 @@ use ferrokit::*;
 App::new("Notes")
     .translations(&[("de", "\"Run Query\" = \"Abfrage ausführen\";\n\"{n} row\" = \"{n} Zeile\";\n\"{n} rows\" = \"{n} Zeilen\";")])
     .menu(&t("Query"), vec![menu_item(&t("Run Query"), || {})])
-    .window(Window::new(&t("Notes")).view(label(|| t_plural(3, "{n} row", "{n} rows"))))
+    .window(Window::new(&t("Notes")).view(text(|| t_plural(3, "{n} row", "{n} rows"))))
     .run();
 ```
 

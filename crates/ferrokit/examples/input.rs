@@ -85,7 +85,7 @@ fn main() {
         ))
         .spacing(10.0),
         hstack((
-            hstack((image("hand.tap"), label(move || format!("Clicked {} times", f.card_clicks.get())), spacer()))
+            hstack((image("hand.tap"), text(move || format!("Clicked {} times", f.card_clicks.get())), spacer()))
                 .padding(12.0)
                 .background(Color::QuaternaryFill)
                 .corner_radius(10.0)

@@ -169,7 +169,7 @@ fn lookup(key: &str) -> Option<String> {
 ///
 /// App::new("Notes")
 ///     .translations(&[("de", "\"Notes\" = \"Notizen\";\n\"{n} note\" = \"{n} Notiz\";\n\"{n} notes\" = \"{n} Notizen\";")])
-///     .window(Window::new(&t("Notes")).view(label(|| t_plural(3, "{n} note", "{n} notes"))))
+///     .window(Window::new(&t("Notes")).view(text(|| t_plural(3, "{n} note", "{n} notes"))))
 ///     .run();
 /// ```
 pub fn t(key: &str) -> String {

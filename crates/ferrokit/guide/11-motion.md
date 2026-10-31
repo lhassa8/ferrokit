@@ -27,8 +27,8 @@ let toggle = button("Details", move || animated(|| details.set(!details.get())))
 Inside `animated`:
 - **Views that move or resize** because of the change slide to their new
   place. That covers the list pushed down by a panel that appears.
-- **Opacity and colours** set by `.opacity_when(..)` and
-  `.background_when(..)` fade to their new values.
+- **Opacity and colours** set by `.opacity(..)` and
+  `.background(..)` fade to their new values.
 - **Views with a transition** that are added or removed come and go as it
   says.
 
@@ -44,9 +44,9 @@ use ferrokit::*;
 let done = Signal::new(false);
 let row = hstack((text("Boots"), spacer()))
     .padding(10.0)
-    .background_when(move || if done.get() { Color::Green.opacity(0.18) } else { Color::Clear })
+    .background(move || if done.get() { Color::Green.opacity(0.18) } else { Color::Clear })
     .corner_radius(8.0)
-    .opacity_when(move || if done.get() { 0.45 } else { 1.0 });
+    .opacity(move || if done.get() { 0.45 } else { 1.0 });
 # let _ = row;
 ```
 

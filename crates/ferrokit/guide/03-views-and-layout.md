@@ -29,6 +29,13 @@ let page = vstack((toolbar, divider(), text("Content").fill_width())).padding(16
 - Modifiers, on any view: `.padding(p)`, `.padding_xy(horizontal,
   vertical)`, `.width(w)`, `.height(h)`, `.frame(w, h)`, `.fill_width()`,
   `.fill_height()`.
+- `.min_width(w)` and `.min_height(h)`: at least that size, larger if the
+  content is.
+- `text(..).truncate()`: one line, shortened with "…" when its row is short
+  of room (a long path, a long name), instead of pushing past the row's
+  edge. A row holding truncating text gives up room before overflowing.
+- A stack takes a tuple of views, a `Vec<AnyView>`, or one view alone:
+  `vstack(for_each(..))`.
 - `zstack` puts views on top of one another, such as text over a picture
   (see [Materials and windows](10-materials-and-windows.md)).
 
@@ -52,7 +59,7 @@ let form = grid([
 
 ## Text that changes
 
-`text("…")` is fixed. `label(|| …)` re-runs when the signals it reads
+`text("…")` is fixed. `text(|| …)` re-runs when the signals it reads
 change, and updates only its own text field.
 
 ## Lists: `for_each` and identity
