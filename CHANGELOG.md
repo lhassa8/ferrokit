@@ -66,6 +66,26 @@ Also renamed, for anyone who relied on them: the Objective-C class prefixes (`Ap
 - **Testing:** `testing::hold_notifications`, `sent_notifications`, `click_notification`, `shared_items` and `menu_bar_extras`.
 - A new guide chapter, Web, PDF, video and services, and a new example, `media`, with 20 self-checks: the printed report's pages, text and card backgrounds, the web page's title and a script, PDF pages and search, playback of a sound made with `say`, sharing, notifications and their clicks, both kinds of menu-bar extra, and the Print sheet.
 
+### The SQL browser, polished (Phase 3, S1)
+
+The flagship example now uses the visual layer, and building it added to the framework:
+- **`App::welcome(make)`:** a welcome window at launch instead of an untitled document, closed when a document opens, back with Window ▸ Welcome to … (⇧⌘1) or `show_welcome()`. `welcome_window()` returns it.
+- **`DocumentType::window(|w| ..)`:** document windows take `Window`'s chrome (full-size content, toolbar styles).
+- **`choose_documents()`:** the Open panel for the app's document types, from a button.
+- **Under the title bar:** the columns of a top-level row with a material or background now reach up under the title bar, as split panes do. A stacked split's `.position(..)` counts from below the bar.
+- **Fixed:**
+  - a clickable view's `.accessibility_label` named every view inside it as well as its button, so VoiceOver read it twice; it now names the button only;
+  - editors and mounted views dropped during exit could panic on torn-down thread-locals.
+
+The app itself:
+- **Welcome window:** the sample, Open…, a scratch database, and recent databases in a sidebar.
+- **Main window:** the sidebar's material runs under the title bar.
+- **Status line:** the row count as a headline and the timings in secondary text; an error in red with a symbol.
+- **Inspector:** the table's name, "Row 2 of 3" and the fields in a grouped card (NULL in italic grey, numbers with even digits), with an empty state, fading between rows.
+- **Chart:** up to four number columns as series (lines, or grouped bars), with a legend and number formats.
+- **German:** translations for all of the new text.
+- **Checks:** 5 new: the welcome window, its menu item, its recent list, the chart's legend, and the welcome window in German.
+
 ### ferrokit-core (was appkit-host)
 
 - **Fixed: typing over a selection in a highlighted editor could crash the app.** Restyling set the editor's typing attributes in the middle of the edit, while the text view still held the old selection; AppKit read attributes past the end of the shorter text and threw, which left TextKit 2's layout behind the text, so the typed text didn't show and the next redraw aborted. Typing attributes are now left alone during an edit, and highlighting runs in `willProcessEditing` as part of the edit itself.

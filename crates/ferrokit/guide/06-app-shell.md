@@ -113,7 +113,44 @@ App::new("Notes").documents(text_files).run(); // starts with an untitled docume
 - `new_document()`, `open_document(path)`, `save_document(window)`,
   `save_document_as(window, path)`, `revert_document(window)`,
   `document_edited(window)` and `recent_documents()` do the same from code,
-  without panels.
+  without panels. `choose_documents()` shows the Open panel, as Open… does.
+- `DocumentType::window(|w| ..)` styles each document window with
+  [`Window`]'s chrome methods, e.g. `|w| w.full_size_content()` for a
+  sidebar that runs up under the title bar.
+
+### A welcome window
+
+`App::welcome(make)` shows a window at launch instead of an untitled
+document, as Xcode does: recent documents, a sample, Open…. It closes when
+a document opens, and Window ▸ Welcome to … (⇧⌘1) or `show_welcome()`
+brings it back, built again so its list is current.
+
+```rust,no_run
+use ferrokit::*;
+
+fn welcome() -> Window {
+    let recent: Vec<AnyView> = recent_documents()
+        .into_iter()
+        .map(|path| {
+            let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            AnyView::new(text(name).padding(6.0).hover_highlight(Color::Quaternary).on_click(move || {
+                open_document(&path).ok();
+            }))
+        })
+        .collect();
+    Window::new("Welcome").size(600.0, 400.0).view(hstack((
+        vstack((button("Open…", choose_documents), button("New", || {
+            new_document();
+        }))),
+        vstack(recent).width(240.0).material(Material::Sidebar),
+    )))
+}
+# let text_files = DocumentType::new(&["txt"], String::new, |_: &Document<String>| text(""));
+App::new("Notes").documents(text_files).welcome(welcome).run();
+```
+
+The SQL browser's welcome window is a fuller one: a large symbol, rows
+that highlight under the pointer, and recent databases in a sidebar.
 
 Files opened from the Finder (double-click, Open With, a drop on the Dock
 icon, `open file.txt`) open as documents; an untouched Untitled window

@@ -106,7 +106,7 @@ pub use controls::{
 pub use chrome::{MenuItem, Modifier, Split, dynamic_submenu, submenu, ToolbarItem, menu_item, menu_separator, split, toolbar_button, toolbar_search, toolbar_space};
 pub use dialogs::{Alert, OpenOptions, SheetHandle, alert, open_panel, save_panel, sheet};
 pub use documents::{
-    Document, DocumentType, document_edited, new_document, open_document, recent_documents, revert_document, save_document, save_document_as,
+    Document, DocumentType, choose_documents, document_edited, new_document, open_document, recent_documents, revert_document, save_document, save_document_as, show_welcome, welcome_window,
 };
 pub use layout::layout_stats;
 pub use models::{Table, TextEditor, table, text_editor};
@@ -651,12 +651,13 @@ pub struct App {
     documents: Option<Box<dyn FnOnce()>>,
     extras: Vec<MenuBarExtra>,
     menu_bar_only: bool,
+    welcome: Option<Rc<dyn Fn() -> Window>>,
 }
 
 impl App {
     /// An app called `name` (shown in the menu bar).
     pub fn new(name: &str) -> Self {
-        App { name: name.into(), windows: Vec::new(), on_launch: None, menus: Vec::new(), settings: None, documents: None, extras: Vec::new(), menu_bar_only: false }
+        App { name: name.into(), windows: Vec::new(), on_launch: None, menus: Vec::new(), settings: None, documents: None, extras: Vec::new(), menu_bar_only: false, welcome: None }
     }
 
     /// Opens `window` at launch. Call more than once for several windows.
@@ -698,6 +699,16 @@ impl App {
     /// an untitled document.
     pub fn documents<T: Clone + PartialEq + 'static>(mut self, kind: DocumentType<T>) -> Self {
         self.documents = Some(Box::new(move || documents::install(kind)));
+        self
+    }
+
+    /// A welcome window for a document app, shown at launch instead of an
+    /// untitled document (as Xcode's is): recent documents, a sample,
+    /// Open… `make` builds it each time it opens. It closes when a document
+    /// opens, and Window ▸ Welcome to … (⇧⌘1) or [`show_welcome`] brings it
+    /// back.
+    pub fn welcome(mut self, make: impl Fn() -> Window + 'static) -> Self {
+        self.welcome = Some(Rc::new(make));
         self
     }
 
@@ -762,8 +773,17 @@ impl App {
                 None => menus.insert(0, ("File".into(), above)),
             }
         }
-        let start_untitled = is_documents && self.windows.is_empty();
-        let targets = menu::install(mtm, &self.name, menus, settings, file_after);
+        let welcome = self.welcome.filter(|_| is_documents);
+        let start_welcome = welcome.is_some() && self.windows.is_empty();
+        let start_untitled = is_documents && self.windows.is_empty() && !start_welcome;
+        let mut window_items = Vec::new();
+        if let Some(make) = welcome {
+            documents::set_welcome(make);
+            window_items.push(menu_item(&t_with("Welcome to {app}", &[("app", &self.name)]), || {
+                show_welcome();
+            }).key_with("1", &[Modifier::Shift]));
+        }
+        let targets = menu::install(mtm, &self.name, menus, settings, file_after, window_items);
         EXTRAS.with_borrow_mut(|e| e.extend(targets));
         for extra in self.extras {
             status::install(extra, &self.name);
@@ -796,6 +816,9 @@ impl App {
         });
         if start_untitled {
             objc2::rc::autoreleasepool(|_| documents::new_launch_document());
+        }
+        if start_welcome {
+            objc2::rc::autoreleasepool(|_| show_welcome());
         }
         #[allow(deprecated)]
         app.activateIgnoringOtherApps(true);

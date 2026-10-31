@@ -237,22 +237,37 @@ pub(crate) fn place(node: &Node, x: f64, y: f64, w: f64, h: f64, snap: &Snap) {
 /// panes (a sidebar's material runs up behind the window buttons), while
 /// the content starts below the bar.
 pub(crate) fn place_under_bar(node: &Node, w: f64, h: f64, top: f64, snap: &Snap) {
+    place_under_bar_at(node, 0.0, w, h, top, snap);
+}
+
+/// [`place_under_bar`] for a node `w` wide at `x`.
+fn place_under_bar_at(node: &Node, x: f64, w: f64, h: f64, top: f64, snap: &Snap) {
     if top <= 0.0 {
-        return place(node, 0.0, 0.0, w, h, snap);
+        return place(node, x, 0.0, w, h, snap);
     }
     // Its own key: the same size under a different bar is a new layout.
-    let rect = [0.0, -top, w, h];
+    let rect = [x, -top, w, h];
     if !node.meta.dirty.get() && node.meta.rect.get() == Some(rect) {
         bump(&SKIPPED);
         return;
     }
     bump(&PLACED);
     for d in &node.decor {
-        Native::place(d, snapped(0.0, 0.0, w, h, snap));
+        Native::place(d, snapped(x, 0.0, w, h, snap));
     }
     match &node.kind {
-        Kind::Split { .. } => place_body(node, 0.0, 0.0, w, h, top, snap),
-        _ => place_body(node, 0.0, top, w, (h - top).max(0.0), 0.0, snap),
+        Kind::Split { .. } => place_body(node, x, 0.0, w, h, top, snap),
+        Kind::Stack { axis: Axis::Horizontal, children, .. } => {
+            place_body(node, x, top, w, (h - top).max(0.0), 0.0, snap);
+            // The columns of a row reach up too, when they draw something
+            // (a sidebar's material, a pane's background): as a split's do.
+            each_child(children, false, &mut |c| {
+                if let (false, Some([cx, _, cw, _])) = (c.decor.is_empty(), c.meta.rect.get()) {
+                    place_under_bar_at(c, cx, cw, h, top, snap);
+                }
+            });
+        }
+        _ => place_body(node, x, top, w, (h - top).max(0.0), 0.0, snap),
     }
     finish(&node.meta, rect);
 }
@@ -280,8 +295,14 @@ fn place_body(node: &Node, x: f64, y: f64, w: f64, h: f64, top: f64, snap: &Snap
         }
         Kind::Split { split, panes, position, trailing, stacked } => {
             Native::place_split(split, snapped(ix, iy, iw, ih, snap));
-            if let Some(p) = position.take() {
-                Native::set_divider(split, 0, p);
+            // A stacked split under the title bar: the app's position counts
+            // from below the bar, where its top pane's content starts (a
+            // saved one is the pane's whole height). The bar is known once
+            // the split is in its window, so it waits for that.
+            if let Some((p, given)) = position.get().filter(|(_, given)| !(*stacked && *given) || Native::in_window(split)) {
+                position.set(None);
+                let bar = if *stacked && given { top } else { 0.0 };
+                Native::set_divider(split, 0, p + bar);
             }
             // Not into a hidden (collapsed) last pane: moving its divider
             // would open it. It opens at this size when shown.

@@ -51,6 +51,7 @@ pub(crate) fn install(
     menus: Vec<(String, Vec<MenuItem>)>,
     settings: Option<Retained<NSObject>>,
     file_after_close: Vec<MenuItem>,
+    window_items: Vec<MenuItem>,
 ) -> Vec<Retained<NSObject>> {
     let app = NSApplication::sharedApplication(mtm);
     let bar = NSMenu::new(mtm);
@@ -141,6 +142,17 @@ pub(crate) fn install(
             Some(item(mtm, &t("Bring All to Front"), Some(sel!(arrangeInFront:)), "")),
         ],
     );
+    if !window_items.is_empty() {
+        // The app's own window items (Welcome…), above Bring All to Front.
+        let (extra, targets) = build_titled_menu(mtm, "", window_items);
+        keep.extend(targets);
+        let at = window_menu.numberOfItems() - 1;
+        window_menu.insertItem_atIndex(&NSMenuItem::separatorItem(mtm), at);
+        for (i, it) in extra.itemArray().iter().enumerate() {
+            extra.removeItem(&it);
+            window_menu.insertItem_atIndex(&it, at + 1 + i as isize);
+        }
+    }
     bar.addItem(&window_item);
 
     // The Help menu's search field is added by AppKit.

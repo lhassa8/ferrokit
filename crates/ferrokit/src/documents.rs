@@ -42,6 +42,7 @@ pub struct DocumentType<T: 'static> {
     view: DocView<T>,
     toolbar: Option<DocToolbar<T>>,
     size: (f64, f64),
+    style: Option<Rc<dyn Fn(Window) -> Window>>,
 }
 
 impl<T: Clone + PartialEq + 'static> DocumentType<T> {
@@ -59,6 +60,7 @@ impl<T: Clone + PartialEq + 'static> DocumentType<T> {
             view: Rc::new(move |d| AnyView::new(view(d))),
             toolbar: None,
             size: (640.0, 480.0),
+            style: None,
         }
     }
 
@@ -84,6 +86,15 @@ impl<T: Clone + PartialEq + 'static> DocumentType<T> {
     /// The size of new document windows (default 640 × 480).
     pub fn size(mut self, width: f64, height: f64) -> Self {
         self.size = (width, height);
+        self
+    }
+
+    /// Styles each document window: `style` gets the window as the
+    /// document type made it and returns it with [`Window`]'s chrome
+    /// methods applied, e.g.
+    /// `.window(|w| w.full_size_content().toolbar_style(ToolbarStyle::Unified))`.
+    pub fn window(mut self, style: impl Fn(Window) -> Window + 'static) -> Self {
+        self.style = Some(Rc::new(style));
         self
     }
 }
@@ -284,7 +295,12 @@ fn show<T: Clone + PartialEq + 'static>(kind: Rc<DocumentType<T>>, content: T, p
     if let Some(toolbar) = &kind.toolbar {
         spec = spec.toolbar(owner.with(|| toolbar(&doc)));
     }
+    if let Some(style) = &kind.style {
+        spec = style(spec);
+    }
     let window = crate::open(spec);
+    // A document is open: the welcome window has done its job.
+    close_welcome();
     *doc.0.window.borrow_mut() = Weak::from_retained(&window);
     // The title bar follows the file and the edited state (the dot in the
     // close button, the proxy icon of the file).
@@ -337,6 +353,45 @@ fn close_auto_untitled() {
     let opened_more = DOCS.with_borrow(|docs| docs.len() > 1);
     if opened_more && !document_edited(&window) && document_of(&window).is_some_and(|d| d.path().is_none()) {
         window.close();
+    }
+}
+
+/// How to make the welcome window, and the window while it's open.
+type Welcome = (Option<Rc<dyn Fn() -> Window>>, Weak<NSWindow>);
+
+thread_local! {
+    static WELCOME: RefCell<Welcome> = RefCell::new((None, Weak::default()));
+}
+
+pub(crate) fn set_welcome(make: Rc<dyn Fn() -> Window>) {
+    WELCOME.with_borrow_mut(|w| w.0 = Some(make));
+}
+
+/// Shows the app's welcome window (see [`App::welcome`](crate::App::welcome)),
+/// opening it again if it was closed. False if the app has none.
+pub fn show_welcome() -> bool {
+    // (A closed window's views are gone: it's made again.)
+    let (make, open) = WELCOME.with_borrow(|w| (w.0.clone(), w.1.load().filter(|w| w.isVisible())));
+    if let Some(w) = open {
+        w.makeKeyAndOrderFront(None);
+        return true;
+    }
+    let Some(make) = make else { return false };
+    let w = crate::open(make());
+    w.center();
+    w.makeKeyAndOrderFront(None);
+    WELCOME.with_borrow_mut(|s| s.1 = Weak::from_retained(&w));
+    true
+}
+
+/// The welcome window, while it's open.
+pub fn welcome_window() -> Option<Retained<NSWindow>> {
+    WELCOME.with_borrow(|w| w.1.load()).filter(|w| w.isVisible())
+}
+
+fn close_welcome() {
+    if let Some(w) = WELCOME.with_borrow_mut(|w| std::mem::take(&mut w.1)).load() {
+        w.close();
     }
 }
 
@@ -428,7 +483,7 @@ pub(crate) fn file_items() -> (Vec<MenuItem>, Vec<MenuItem>) {
     })
     .key("n")];
     if can_open() {
-        above.push(menu_item(&t("Open…"), choose_and_open).key("o"));
+        above.push(menu_item(&t("Open…"), choose_documents).key("o"));
         above.push(dynamic_submenu(&t("Open Recent"), || {
             let mut items: Vec<MenuItem> = recent_documents()
                 .into_iter()
@@ -466,7 +521,9 @@ pub(crate) fn file_items() -> (Vec<MenuItem>, Vec<MenuItem>) {
     (above, after)
 }
 
-fn choose_and_open() {
+/// Shows the Open panel for the app's document types, as File ▸ Open…
+/// does (a button on a welcome window, say), and opens what's chosen.
+pub fn choose_documents() {
     let Some(opener) = OPENER.with_borrow(Clone::clone) else { return };
     let app = NSApplication::sharedApplication(mtm());
     let options = OpenOptions { extensions: opener.extensions(), multiple: true, directories: false };

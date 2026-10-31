@@ -91,7 +91,9 @@ pub(crate) fn with_host<R>(f: impl FnOnce(&Host) -> R) -> Option<R> {
 }
 
 fn with_host_mut<R>(f: impl FnOnce(&mut Host) -> R) -> Option<R> {
-    HOST.with_borrow_mut(|host| host.as_mut().map(f))
+    // `try_with`: views are also unmounted while thread-locals are torn
+    // down at exit.
+    HOST.try_with(|host| host.borrow_mut().as_mut().map(f)).ok().flatten()
 }
 
 /// Takes the window's content view. Call once the host window exists.

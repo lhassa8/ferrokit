@@ -211,7 +211,7 @@ impl View for Split {
         let mut node = Node::new(Kind::Split {
             split,
             panes,
-            position: std::cell::Cell::new(saved.or(self.position)),
+            position: std::cell::Cell::new(saved.map(|p| (p, false)).or(self.position.map(|p| (p, true)))),
             trailing: std::cell::Cell::new(self.trailing),
             stacked: self.stacked,
         });

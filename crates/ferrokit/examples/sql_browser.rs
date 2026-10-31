@@ -1,10 +1,12 @@
-//! H4, the flagship, step 1: a SQLite browser. Each window is a database
-//! (Open… a file, or New for a scratch database in memory): its schema in
-//! the sidebar, SQL over the results, run on a background thread (⌘R or
-//! the toolbar), results of millions of rows in a native table. A newer
-//! query cancels the one running.
+//! H4, the flagship, polished in S1: a SQLite browser. It starts at a
+//! welcome window (the sample, Open…, a scratch database, recent
+//! databases). Each window is a database: its schema in a sidebar that runs
+//! up under the title bar, SQL over the results, run on a background
+//! thread (⌘R or the toolbar), results of millions of rows in a native
+//! table, a chart with a series per number column, and an inspector showing
+//! the selected row as a card. A newer query cancels the one running.
 //! `cargo run --release -p ferrokit --example sql_browser [file.sqlite]`
-//! (without a file it opens a generated sample with a million orders);
+//! (the sample, a million orders, is generated on first use);
 //! `CHECK=all` runs its self-checks and measurements.
 
 use std::path::Path;
@@ -303,21 +305,44 @@ impl Browser {
         self.run();
     }
 
-    fn status(&self) -> String {
+    /// The status line's lead: the rows, the changes, running or an error.
+    fn headline(&self) -> String {
         if self.results.loading() {
             return t("Running…");
         }
         match self.results.state() {
             Load::Loading => t("Running…"),
             Load::Failed(e) => t_with("Error: {message}", &[("message", &e)]),
-            Load::Ready(r) if r.names.is_empty() && r.changed > 0 => format!("{} · {:.0} ms", t_plural(r.changed as i64, "{n} row changed", "{n} rows changed"), r.ms),
-            Load::Ready(r) if r.names.is_empty() => format!("{} · {:.0} ms", t("Done"), r.ms),
-            Load::Ready(r) => format!(
-                "{} · {}",
-                t_plural(r.rows as i64, "{n} row", "{n} rows"),
-                t_with("query {query} ms · table {table} ms", &[("query", &format!("{:.0}", r.ms)), ("table", &format!("{:.0}", self.fill_ms.get()))])
-            ),
+            Load::Ready(r) if r.names.is_empty() && r.changed > 0 => t_plural(r.changed as i64, "{n} row changed", "{n} rows changed"),
+            Load::Ready(r) if r.names.is_empty() => t("Done"),
+            Load::Ready(r) => t_plural(r.rows as i64, "{n} row", "{n} rows"),
         }
+    }
+
+    /// How long it took, after the headline.
+    fn timing(&self) -> String {
+        if self.results.loading() {
+            return String::new();
+        }
+        match self.results.state() {
+            Load::Ready(r) if r.names.is_empty() => format!("{:.0} ms", r.ms),
+            Load::Ready(r) => t_with("query {query} ms · table {table} ms", &[("query", &format!("{:.0}", r.ms)), ("table", &format!("{:.0}", self.fill_ms.get()))]),
+            _ => String::new(),
+        }
+    }
+
+    fn failed(&self) -> bool {
+        !self.results.loading() && matches!(self.results.state(), Load::Failed(_))
+    }
+
+    fn status(&self) -> String {
+        let (lead, timing) = (self.headline(), self.timing());
+        if timing.is_empty() { lead } else { format!("{lead} · {timing}") }
+    }
+
+    /// What the results come from: the selected table or view, or a query.
+    fn source(&self) -> String {
+        self.selected.get().and_then(|id| id.split_once(':').map(|(_, name)| name.to_string())).unwrap_or_else(|| t("Query Result"))
     }
 }
 
@@ -381,21 +406,32 @@ fn database_view(doc: &Document<Db>) -> impl View + use<> {
         // main thread, where the app's tables aren't.)
         sidebar(move || b.schema.get().unwrap_or_default(), |i: &Item| if i.icon.is_none() && i.source.is_none() && !i.id.contains('.') { t(&i.title) } else { i.title.clone() })
             .icon(|i: &Item| i.icon.map(String::from))
-            .selection(&b.selected),
+            .selection(&b.selected)
+            .material(Material::Sidebar),
         split((
             text_editor(&editor).bind(&b.query).syntax(Syntax::sql()).accessibility_label("Query"),
             vstack((
-                split((table(&model).on_select(move |rows| b.row.set(rows.first().map(|&r| r as u32))).accessibility_label("Results"), chart(b)))
+                split((table(&model).on_select(move |rows| animated_with(Animation::ease_out(0.15), || b.row.set(rows.first().map(|&r| r as u32)))).accessibility_label("Results"), chart(b)))
                     .stacked()
                     .collapsible(1, &b.no_chart)
                     .trailing(240.0),
                 hstack((
-                    label(move || b.status()),
+                    // An error leads with a warning symbol, in red.
+                    dynamic(move || {
+                        let headline = label(move || b.headline()).font(Font::body().weight(Weight::Semibold).monospaced_digits());
+                        if b.failed() {
+                            AnyView::new(hstack((image("exclamationmark.triangle.fill").color(Color::Red).accessibility_label(&t("Error")), headline.color(Color::Red))).spacing(6.0))
+                        } else {
+                            AnyView::new(headline)
+                        }
+                    }),
+                    label(move || b.timing()).font(Font::caption().monospaced_digits()).color(Color::Secondary),
                     spacer(),
                     csv_chip(b),
                     button(&t("History"), move || b.history_shown.set(true)).popover(&b.history_shown, move || history(b)),
                 ))
-                .padding(6.0),
+                .spacing(8.0)
+                .padding(8.0),
                 fill,
                 select,
                 first,
@@ -426,43 +462,66 @@ fn database_view(doc: &Document<Db>) -> impl View + use<> {
 /// What the chart shows for a result: the first column across, the first
 /// numeric column after it up. A numeric first column makes a line (every
 /// row); text makes bars (the first 200 rows).
+/// Up to four number columns after the first are its series, with a legend
+/// when there's more than one.
 enum Plot {
-    Line(String, Vec<(f64, f64)>),
+    Lines(Vec<Series>),
     Bars(Vec<(String, f64)>),
+    Groups(Vec<(String, Vec<f64>)>),
     Nothing,
 }
 
+fn numeric(k: ColKind) -> bool {
+    matches!(k, ColKind::Int | ColKind::Real(_))
+}
+
+/// The columns charted against the first.
+fn plotted(r: &Results) -> Vec<usize> {
+    (1..r.names.len()).filter(|&i| numeric(r.kinds[i])).take(4).collect()
+}
+
 fn plot(r: &Results) -> Plot {
-    let numeric = |k: ColKind| matches!(k, ColKind::Int | ColKind::Real(_));
-    let Some(y) = (1..r.names.len()).find(|&i| numeric(r.kinds[i])) else {
+    let ys = plotted(r);
+    if ys.is_empty() {
         return Plot::Nothing;
-    };
+    }
     if numeric(r.kinds[0]) {
-        Plot::Line(r.names[y].clone(), (0..r.rows as u32).map(|row| (r.number(row, 0), r.number(row, y))).collect())
+        Plot::Lines(ys.iter().map(|&y| Series::new(&r.names[y], (0..r.rows as u32).map(|row| (r.number(row, 0), r.number(row, y))).collect())).collect())
+    } else if ys.len() == 1 {
+        Plot::Bars((0..r.rows.min(200) as u32).map(|row| (r.text(row, 0), r.number(row, ys[0]))).collect())
     } else {
-        Plot::Bars((0..r.rows.min(200) as u32).map(|row| (r.text(row, 0), r.number(row, y))).collect())
+        Plot::Groups((0..r.rows.min(60) as u32).map(|row| (r.text(row, 0), ys.iter().map(|&y| r.number(row, y)).collect())).collect())
     }
 }
 
 /// The results as a chart (only computed while it's shown).
 fn chart(b: Browser) -> impl View {
     // Rebuilt only when the kind of chart changes, not for every result.
+    // (kind, series names, decimals): 1 lines, 2 bars, 3 grouped bars.
     let shape = Memo::new(move || {
-        let numeric = |k: ColKind| matches!(k, ColKind::Int | ColKind::Real(_));
         b.results.with(|r| match r {
-            Some(r) if (1..r.names.len()).any(|i| numeric(r.kinds[i])) => if numeric(r.kinds[0]) { 1 } else { 2 },
-            _ => 0,
+            Some(r) if !plotted(r).is_empty() => {
+                let ys = plotted(r);
+                let kind = if numeric(r.kinds[0]) { 1 } else if ys.len() == 1 { 2 } else { 3 };
+                let decimals = ys.iter().map(|&y| if let ColKind::Real(d) = r.kinds[y] { d.min(2) } else { 0 }).max().unwrap_or(0);
+                (kind, ys.iter().map(|&y| r.names[y].clone()).collect::<Vec<_>>(), decimals)
+            }
+            _ => (0, Vec::new(), 0),
         })
     });
     dynamic(move || {
-        let shape = shape.get();
+        let (shape, names, decimals) = shape.get();
         let data = move || if b.no_chart.get() { None } else { b.results.get().map(|r| plot(&r)) };
+        let format = if decimals == 0 { Format::Number } else { Format::Decimals(decimals) };
+        let palette = [Color::Blue, Color::Orange, Color::Green, Color::Purple];
         match shape {
             1 => AnyView::new(
                 line_chart(move || match data() {
-                    Some(Plot::Line(name, points)) => vec![Series::new(&name, points)],
+                    Some(Plot::Lines(series)) => series,
                     _ => Vec::new(),
                 })
+                .value_format(format)
+                .colors(&palette)
                 .exportable("chart"),
             ),
             2 => AnyView::new(
@@ -470,8 +529,23 @@ fn chart(b: Browser) -> impl View {
                     Some(Plot::Bars(bars)) => bars,
                     _ => Vec::new(),
                 })
+                .value_format(format)
                 .exportable("chart"),
             ),
+            3 => {
+                let names: Vec<&str> = names.iter().map(String::as_str).collect();
+                AnyView::new(
+                    stacked_bar_chart(move || match data() {
+                        Some(Plot::Groups(groups)) => groups,
+                        _ => Vec::new(),
+                    })
+                    .grouped()
+                    .series_names(&names)
+                    .value_format(format)
+                    .colors(&palette)
+                    .exportable("chart"),
+                )
+            }
             _ => AnyView::new(text(t("Charts need a first column and a number column after it")).padding(12.0)),
         }
     })
@@ -558,18 +632,57 @@ fn csv_chip(b: Browser) -> impl View {
     .frame(84.0, 20.0)
 }
 
-/// The selected row, one field per line.
+/// The selected row: where it's from, then its fields in a grouped card,
+/// as an inspector in Apple's apps shows them.
 fn inspector(b: Browser) -> impl View {
     dynamic(move || {
         let (Some(row), Some(r)) = (b.row.get(), b.results.get()) else {
-            return AnyView::new(text(t("No row selected")).padding(12.0));
+            return AnyView::new(no_row().transition(Transition::Fade));
         };
         if row as usize >= r.rows {
-            return AnyView::new(text(t("No row selected")).padding(12.0));
+            return AnyView::new(no_row().transition(Transition::Fade));
         }
-        let fields: Vec<_> = r.names.iter().enumerate().map(|(i, name)| (text(name.clone()), text(r.text(row, i)))).collect();
-        AnyView::new(scroll(vstack((text(t_with("Row {n}", &[("n", &(row + 1))])), grid(fields).align_column(0, Align::End))).padding(12.0)))
+        let mut fields: Vec<AnyView> = Vec::new();
+        for (i, name) in r.names.iter().enumerate() {
+            if i > 0 {
+                fields.push(AnyView::new(divider().padding(0.0)));
+            }
+            let value = match r.cell(row, i) {
+                Cell::Null => text("NULL").font(Font::body().italic()).color(Color::Tertiary),
+                Cell::Int(_) | Cell::Real(_) => text(r.text(row, i)).font(Font::body().monospaced_digits()),
+                Cell::Blob(_) => text(r.text(row, i)).color(Color::Secondary),
+                Cell::Text(_) => text(r.text(row, i)),
+            };
+            fields.push(AnyView::new(vstack((text(name.clone()).font(Font::caption()).color(Color::Secondary), value)).spacing(2.0).alignment(Align::Start).padding(9.0).fill_width()));
+        }
+        AnyView::new(scroll(
+            vstack((
+                vstack((
+                    text(b.source()).font(Font::title3().weight(Weight::Semibold)),
+                    text(t_with("Row {n} of {count}", &[("n", &format_number((row + 1) as f64, 0)), ("count", &format_number(r.rows as f64, 0))])).font(Font::caption()).color(Color::Secondary),
+                ))
+                .spacing(2.0)
+                .alignment(Align::Start),
+                vstack(fields).spacing(0.0).alignment(Align::Start).background(Color::ControlBackground).corner_radius(10.0).border(Color::Separator, 0.5).fill_width(),
+            ))
+            .spacing(12.0)
+            .alignment(Align::Start)
+            .padding(14.0),
+        ).transition(Transition::Fade))
     })
+}
+
+/// The inspector with no row: a symbol and a line of help, centred.
+fn no_row() -> impl View {
+    vstack((
+        spacer(),
+        image("tablecells").symbol_size(30.0).color(Color::Tertiary),
+        text(t("No Row Selected")).font(Font::title3()).color(Color::Secondary),
+        text(t("Select a row to see its fields.")).font(Font::caption()).color(Color::Tertiary),
+        spacer(),
+    ))
+    .spacing(6.0)
+    .padding(16.0)
 }
 
 /// The query history, in a popover: choosing one puts it in the editor.
@@ -619,6 +732,130 @@ fn database() -> DocumentType<Db> {
             ]
         })
         .size(1100.0, 700.0)
+        // The sidebar runs up under the title bar, as in Mail and Notes.
+        .window(|w| w.full_size_content().toolbar_style(ToolbarStyle::Unified))
+}
+
+/// Where the sample database lives (made on first use).
+fn sample_path() -> std::path::PathBuf {
+    std::env::temp_dir().join("ferrokit-sample.sqlite")
+}
+
+/// Opens the sample, making it first if needed (a few seconds, off the
+/// main thread); `making` is true meanwhile.
+fn open_sample(making: Signal<bool>) {
+    if making.get_untracked() {
+        return;
+    }
+    let path = sample_path();
+    if path.exists() {
+        open_or_report(&path);
+        return;
+    }
+    making.set(true);
+    spawn(
+        move || sample::create(&path, 1_000_000).map(|()| path).map_err(|e| e.to_string()),
+        move |r| {
+            making.set(false);
+            match r {
+                Ok(path) => open_or_report(&path),
+                Err(e) => eprintln!("Couldn't make the sample: {e}"),
+            }
+        },
+    );
+}
+
+fn open_or_report(path: &Path) {
+    if let Err(e) = open_document(path) {
+        eprintln!("Couldn't open {}: {e}", path.display());
+    }
+}
+
+/// A file's folder as the Finder abbreviates it: "~/Documents" under the
+/// home folder, and the middle left out of a long one.
+fn shown_folder(path: &Path) -> String {
+    let dir = path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+    let dir = match std::env::var("HOME") {
+        Ok(home) if dir.starts_with(&home) => format!("~{}", &dir[home.len()..]),
+        _ => dir,
+    };
+    let chars: Vec<char> = dir.chars().collect();
+    if chars.len() <= 34 {
+        return dir;
+    }
+    let (head, tail): (String, String) = (chars[..14].iter().collect(), chars[chars.len() - 19..].iter().collect());
+    format!("{head}…{tail}")
+}
+
+/// A row on the welcome window: a symbol, a title and a line under it.
+fn welcome_row(symbol: &str, title: String, detail: impl Fn() -> String + 'static, action: impl Fn() + 'static) -> impl View {
+    hstack((
+        image(symbol).symbol_size(18.0).color(Color::Accent).frame(26.0, 26.0),
+        vstack((text(title.clone()).font(Font::headline()), label(detail).font(Font::caption()).color(Color::Secondary))).spacing(1.0).alignment(Align::Start),
+        spacer(),
+    ))
+    .spacing(10.0)
+    .padding(8.0)
+    .hover_highlight(Color::Quaternary)
+    .corner_radius(8.0)
+    .on_click(action)
+    .accessibility_label(&title)
+}
+
+/// The welcome window: what to open, and the recent databases.
+fn welcome() -> Window {
+    let making = Signal::new(false);
+    let recents: Vec<AnyView> = recent_documents()
+        .into_iter()
+        .take(8)
+        .map(|path| {
+            let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let folder = shown_folder(&path);
+            AnyView::new(welcome_row("cylinder", name, move || folder.clone(), move || open_or_report(&path)))
+        })
+        .collect();
+    let recent: AnyView = if recents.is_empty() {
+        AnyView::new(vstack((spacer(), text(t("No Recent Databases")).color(Color::Tertiary), spacer())).fill_width())
+    } else {
+        AnyView::new(scroll(vstack(recents).spacing(2.0).alignment(Align::Start)))
+    };
+    let start = vstack((
+        spacer(),
+        image("cylinder.split.1x2.fill").symbol_size(56.0).hierarchical(Color::Accent),
+        text("SQL Browser").font(Font::large_title().weight(Weight::Bold)),
+        text(t("Browse and query SQLite databases")).color(Color::Secondary),
+        spacer().height(18.0),
+        vstack((
+            welcome_row(
+                "sparkles",
+                t("Open the Sample"),
+                move || if making.get() { t("Making a million orders…") } else { t("A million orders to explore") },
+                move || open_sample(making),
+            ),
+            welcome_row("folder", t("Open a Database…"), || t("A .sqlite or .db file"), choose_documents),
+            welcome_row("plus.square", t("New Scratch Database"), || t("In memory, gone when closed"), || {
+                new_document();
+            }),
+        ))
+        .spacing(2.0)
+        .width(300.0),
+        spacer(),
+    ))
+    .spacing(6.0)
+    .alignment(Align::Center)
+    .padding(28.0)
+    .fill_width();
+    let side = vstack((text(t("Recent")).font(Font::headline()).color(Color::Secondary).padding(8.0), recent, spacer()))
+        .alignment(Align::Start)
+        .padding(14.0)
+        .width(280.0)
+        .material(Material::Sidebar);
+    Window::new(&t_with("Welcome to {app}", &[("app", &"SQL Browser")]))
+        .size(800.0, 460.0)
+        .full_size_content()
+        .transparent_title_bar()
+        .hide_title()
+        .view(hstack((start, side)).spacing(0.0))
 }
 
 fn main() {
@@ -630,6 +867,7 @@ fn main() {
     App::new("SQL Browser")
         .translations(&[("de", include_str!("sql_browser.de.strings"))])
         .documents(database())
+        .welcome(welcome)
         .menu("File", vec![menu_separator(), menu_command(&t("Export Results as CSV…"), EXPORT_CSV).key("E")])
         .menu(&t("Query"), vec![menu_command(&t("Run Query"), RUN).key("r"), menu_command(&t("Copy Results as CSV"), COPY_CSV)])
         .menu(
@@ -656,28 +894,9 @@ fn main() {
                 self_checks::l10n();
                 return;
             }
-            let open = |path: &Path| {
-                if let Err(e) = open_document(path) {
-                    eprintln!("Couldn't open {}: {e}", path.display());
-                }
-            };
-            match file {
-                Some(path) => open(&path),
-                None => {
-                    let path = std::env::temp_dir().join("ferrokit-sample.sqlite");
-                    spawn(
-                        move || {
-                            if !path.exists() {
-                                sample::create(&path, 1_000_000).map_err(|e| e.to_string())?;
-                            }
-                            Ok::<_, String>(path)
-                        },
-                        move |r| match r {
-                            Ok(path) => open(&path),
-                            Err(e) => eprintln!("Couldn't make the sample: {e}"),
-                        },
-                    );
-                }
+            // With a file, it opens (and the welcome window goes).
+            if let Some(path) = file {
+                open_or_report(&path);
             }
         })
         .run();
@@ -866,7 +1085,9 @@ mod self_checks {
             app_menu.first().map(String::as_str) == Some("Über SQL Browser") && app_menu.last().map(String::as_str) == Some("SQL Browser beenden"),
             format!("{app_menu:?}"),
         );
-        let w = windows().into_iter().find(|w| w.isVisible()).unwrap();
+        let welcome = welcome_window().map(|w| w.title().to_string());
+        check("l10n-welcome", welcome.as_deref() == Some("Willkommen bei SQL Browser"), format!("{welcome:?}"));
+        let w = new_document().unwrap();
         let toolbar: Vec<String> = w.toolbar().map(|t| t.items().iter().map(|i| i.label().to_string()).filter(|l| !l.is_empty()).collect()).unwrap_or_default();
         check("l10n-window", w.title().to_string() == "Ohne Titel" && toolbar == ["Ausführen", "Diagramm", "Inspektor"], format!("title {:?}; toolbar {toolbar:?}", w.title()));
         let b = BROWSERS.with_borrow(|all| all.last().unwrap().0);
@@ -894,7 +1115,34 @@ mod self_checks {
         });
     }
 
+    /// The welcome window the app starts with, and the Window menu's item
+    /// that brings it back.
+    fn welcome_checks() {
+        let shown: Vec<Retained<NSWindow>> = windows().into_iter().filter(|w| w.isVisible()).collect();
+        let w = welcome_window();
+        let titles: Vec<String> = shown.iter().map(|w| w.title().to_string()).collect();
+        let words = w.as_ref().map(|w| labels(w)).unwrap_or_default();
+        let want = ["SQL Browser", "Open the Sample", "Open a Database…", "New Scratch Database", "Recent"];
+        let missing: Vec<&str> = want.iter().copied().filter(|t| !words.iter().any(|w| w == t)).collect();
+        let problems = w.as_ref().map(|w| ax_audit(w)).unwrap_or_default();
+        check(
+            "welcome-window",
+            titles == ["Welcome to SQL Browser"] && missing.is_empty() && problems.is_empty(),
+            format!("windows {titles:?}; missing {missing:?}; accessibility {problems:?}"),
+        );
+        let app = objc2_app_kit::NSApplication::sharedApplication(objc2::MainThreadMarker::new().unwrap());
+        let window_menu = app.windowsMenu().unwrap();
+        let item = (0..window_menu.numberOfItems()).filter_map(|i| window_menu.itemAtIndex(i)).find(|i| i.title().to_string() == "Welcome to SQL Browser");
+        let key = item.as_ref().map(|i| (i.keyEquivalent().to_string(), i.keyEquivalentModifierMask()));
+        check(
+            "welcome-menu-item",
+            key.as_ref().is_some_and(|(k, m)| k == "1" && m.contains(NSEventModifierFlags::Shift) && m.contains(NSEventModifierFlags::Command)),
+            format!("{key:?}"),
+        );
+    }
+
     pub fn run() {
+        welcome_checks();
         let dir = std::env::temp_dir().join(format!("ferrokit-sql-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("sample.sqlite");
@@ -909,16 +1157,28 @@ mod self_checks {
 
     fn open_checks(dir: PathBuf, path: PathBuf) {
         let before = footprint_mb();
+        // (Captured now: at launch it isn't on screen yet.)
+        if let (Ok(snap), Some(w)) = (std::env::var("SNAP"), welcome_window()) {
+            save_capture(&w, &format!("{snap}/sql_browser-welcome.png"));
+        }
         let untitled = windows().iter().map(|w| w.title().to_string()).collect::<Vec<_>>();
         let opened = open_document(&path);
         // The untouched Untitled window the app started with goes.
         let left = windows().iter().filter(|w| w.isVisible()).map(|w| w.title().to_string()).collect::<Vec<_>>();
         check(
             "open-database",
-            opened.is_ok() && untitled == ["Untitled"] && left == ["sample.sqlite"],
+            opened.is_ok() && untitled == ["Welcome to SQL Browser"] && left == ["sample.sqlite"] && welcome_window().is_none(),
             format!("{:?}; windows before {untitled:?}, after {left:?}", opened.as_ref().err()),
         );
         let w = opened.unwrap();
+        // Brought back, the welcome window lists the database just opened.
+        show_welcome();
+        let recent = welcome_window().map(|w| labels(&w)).unwrap_or_default();
+        check("welcome-recent", recent.iter().any(|t| t == "sample.sqlite"), format!("{recent:?}"));
+        if let Some(welcome) = welcome_window() {
+            welcome.close();
+        }
+        w.makeKeyAndOrderFront(None);
         let b = BROWSERS.with_borrow(|all| all.last().unwrap().0);
         let w2 = w.clone();
         when(move || untrack(|| b.schema.get().is_some()) && idle(b)() && results(&w2).numberOfRows() > 0, 5000, move |ms| {
@@ -1081,8 +1341,9 @@ mod self_checks {
             let shown = labels(&w2);
             check(
                 "inspector-row",
-                shown.contains(&"Row 2".to_string()) && shown.contains(&"body".to_string()) && shown.contains(&"second".to_string()),
-                format!("the inspector shows {:?}", shown.iter().filter(|l| ["Row 2", "id", "body", "second"].contains(&l.as_str())).collect::<Vec<_>>()),
+                // Where the row is from, which row, then its fields.
+                ["notes", "Row 2 of 3", "id", "body", "second"].iter().all(|t| shown.contains(&t.to_string())),
+                format!("the inspector shows {:?}", shown.iter().filter(|l| ["notes", "Row 2 of 3", "id", "body", "second"].contains(&l.as_str())).collect::<Vec<_>>()),
             );
             // The inspector: toolbar command, then again.
             let title = view_item("Inspector");
@@ -1308,7 +1569,40 @@ mod self_checks {
                 points > 100 && (points as f64) <= width * 4.0 + 8.0 && label.starts_with("Line chart of total, 1000000 points"),
                 format!("1,000,000 rows drawn as a {points}-point line ({width:.0} pt wide) {ms:.0} ms after Run; VoiceOver: {label:?}"),
             );
-            transfer_checks(w, b, dir);
+            legend_check(w, b, dir);
+        });
+    }
+
+    /// Two number columns after a text one: grouped bars, a colour each, and
+    /// a legend naming them.
+    fn legend_check(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
+        run_query(&w, b, "SELECT category, sum(quantity) / 1000 AS items, round(avg(total)) AS average FROM orders JOIN products ON products.id = product_id GROUP BY category ORDER BY category");
+        let w2 = w.clone();
+        when(move || idle(b)() && drawing(&w2).iter().any(|d| d.contains("\"average\"")), 20_000, move |ms| {
+            let d = drawing(&w);
+            let fills = |colour: &str| d.iter().filter(|t| t.starts_with("fill") && t.ends_with(colour)).count();
+            let (blue, orange) = (fills("Blue"), fills("Orange"));
+            let legend = d.iter().any(|t| t.contains("\"items\"")) && d.iter().any(|t| t.contains("\"average\""));
+            let categories = ["Books", "Garden", "Kitchen", "Music", "Tools"].iter().all(|c| d.iter().any(|t| t.contains(&format!("\"{c}\""))));
+            check("chart-legend", legend && categories && blue >= 5 && orange >= 5, format!("legend {legend}; categories {categories}; {blue} blue and {orange} orange fills, {ms:.0} ms after Run"));
+            let Ok(snap) = std::env::var("SNAP") else {
+                transfer_checks(w, b, dir);
+                return;
+            };
+            // Captures in light and dark, of this window and the welcome window.
+            save_capture(&w, &format!("{snap}/sql_browser-legend.png"));
+            set_appearance(Appearance::Dark);
+            show_welcome();
+            when(|| false, 500, move |_| {
+                save_capture(&w, &format!("{snap}/sql_browser-legend-dark.png"));
+                if let Some(welcome) = welcome_window() {
+                    save_capture(&welcome, &format!("{snap}/sql_browser-welcome-dark.png"));
+                    welcome.close();
+                }
+                set_appearance(Appearance::System);
+                w.makeKeyAndOrderFront(None);
+                when(|| false, 300, move |_| transfer_checks(w, b, dir));
+            });
         });
     }
 

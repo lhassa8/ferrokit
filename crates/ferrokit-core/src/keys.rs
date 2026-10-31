@@ -39,7 +39,12 @@ thread_local! {
 
 /// Lets a view keep plain Tab (e.g. a text editor). Ctrl-Tab leaves it.
 pub fn set_accepts_tab(id: ViewId, accepts: bool) {
-    ACCEPTS_TAB.with_borrow_mut(|s| if accepts { s.insert(id) } else { s.remove(&id) });
+    // `try_with`: editors are also dropped while thread-locals are torn
+    // down at exit, when this one may already be gone.
+    let _ = ACCEPTS_TAB.try_with(|s| {
+        let mut s = s.borrow_mut();
+        if accepts { s.insert(id) } else { s.remove(&id) }
+    });
 }
 
 /// Makes a mounted view the first responder.

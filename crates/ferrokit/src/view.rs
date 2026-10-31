@@ -189,8 +189,9 @@ pub(crate) enum Kind {
     Split {
         split: NativeSplit,
         panes: Vec<(NativeView, Node)>,
-        /// Initial divider position, applied at the first layout.
-        position: Cell<Option<f64>>,
+        /// The first divider's position to set, and whether it was given by
+        /// the app (counted from below a title bar it's under) or restored.
+        position: Cell<Option<(f64, bool)>>,
         /// The last pane's initial size, applied at the first layout.
         trailing: Cell<Option<f64>>,
         /// Panes top to bottom (dividers across) instead of side by side.
@@ -850,7 +851,9 @@ impl<V: View> View for Modified<V> {
                 node.keep(t);
             }
         }
-        if let Some(label) = &self.label {
+        // A clickable view's label names its button (the interaction view),
+        // not each view inside it.
+        if let Some(label) = self.label.as_ref().filter(|_| self.click.is_none()) {
             let mut leaves = Vec::new();
             node.leaf_views(&mut leaves);
             for v in leaves {
