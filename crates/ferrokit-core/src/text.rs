@@ -48,7 +48,10 @@ trait Data {
     fn quiet(&self) -> bool;
     fn composing(&self) -> bool;
     fn undo_manager(&self) -> Retained<NSUndoManager>;
-    fn highlight(&self, edited: Option<NSRange>);
+    /// Restyles; inside an edit (`edited`), true when the rest of the
+    /// region is left for [`Data::finish_highlight`] just after it.
+    fn highlight(&self, edited: Option<NSRange>) -> bool;
+    fn finish_highlight(&self);
 }
 
 struct ViewIvars {
@@ -122,7 +125,12 @@ define_class!(
     unsafe impl NSTextDelegate for Delegate {
         #[unsafe(method(textDidChange:))]
         fn text_did_change(&self, _notification: &NSNotification) {
-            if let Some(data) = self.data().filter(|d| !d.quiet()) {
+            let Some(data) = self.data() else { return };
+            // The edit is done and the caret placed: style the rest of what
+            // it changed now (edits without this message, such as undo, get
+            // it from the run loop).
+            data.finish_highlight();
+            if !data.quiet() {
                 data.push(TextEvent::Changed);
             }
         }
@@ -142,7 +150,20 @@ define_class!(
                 return;
             }
             let Some(data) = self.data().filter(|d| !d.composing()) else { return };
-            data.highlight(Some(range));
+            if data.highlight(Some(range)) {
+                // Just after the edit, before the run loop draws, unless
+                // textDidChange: comes first.
+                let weak = self.ivars().data.borrow().clone();
+                let block = block2::RcBlock::new(move || {
+                    if let Some(d) = weak.as_ref().and_then(Weak::upgrade) {
+                        objc2::rc::autoreleasepool(|_| d.finish_highlight());
+                    }
+                });
+                let main = objc2_core_foundation::CFRunLoop::main().expect("main run loop");
+                // SAFETY: the main run loop; the block touches main-thread state only.
+                unsafe { main.perform_block(objc2_core_foundation::kCFRunLoopCommonModes.map(|m| m.as_ref()), Some(&block)) };
+                main.wake_up();
+            }
         }
 
         #[unsafe(method(textStorage:didProcessEditing:range:changeInLength:))]
@@ -234,6 +255,8 @@ struct Inner {
     /// The runs last applied and the text's length then, to restyle only
     /// what an edit changed.
     shown: RefCell<Option<(usize, Runs)>>,
+    /// The UTF-16 span an edit left to restyle just after it.
+    deferred: Cell<Option<(usize, usize)>>,
 }
 
 type Highlighter = dyn Fn(&str) -> Runs;
@@ -501,10 +524,12 @@ impl Inner {
     /// (and the `edited` UTF-16 range) is reset to the editor's font and
     /// colour, then given its runs' styles. `None` restyles everything.
     /// With an `edited` range it runs inside the storage's own edit
-    /// (willProcessEditing), so it opens no edit of its own.
-    fn apply_styles(&self, runs: Vec<(Range<usize>, TextStyle)>, edited: Option<NSRange>) {
+    /// (willProcessEditing), so it opens no edit of its own; `only` limits
+    /// a restyle outside an edit to a UTF-16 span. True when part of an
+    /// edit's span was newly left for just after it.
+    fn apply_styles(&self, runs: Vec<(Range<usize>, TextStyle)>, edited: Option<NSRange>, only: Option<(usize, usize)>) -> bool {
         // SAFETY: the text view's own storage, on the main thread.
-        let Some(storage) = (unsafe { self.view.textStorage() }) else { return };
+        let Some(storage) = (unsafe { self.view.textStorage() }) else { return false };
         let text = storage.string().to_string();
         let map = utf16_map(&text);
         let len16 = *map.last().unwrap_or(&0);
@@ -527,7 +552,24 @@ impl Inner {
                 let (lo, hi) = (map[lo].min(edited.location), map[hi.max(lo)].max(edited.location + edited.length).min(len16));
                 lo..hi
             }
-            _ => 0..len16,
+            _ => only.map_or(0..len16, |(lo, hi)| lo.min(len16)..hi.min(len16)),
+        };
+        // Inside an edit only the edited characters are styled: attributes
+        // changed past them widen the storage's edited range, and the text
+        // view puts the caret at its end (typing mid-line jumped to the next
+        // run). The rest of the span is restyled just after the edit (all
+        // of the text if an earlier edit's span is still waiting).
+        let mut deferred = false;
+        let region = match edited {
+            Some(e) => {
+                let inside = region.start.max(e.location)..region.end.min(e.location + e.length);
+                if inside != region {
+                    deferred = self.deferred.get().is_none();
+                    self.deferred.set(Some(if deferred { (region.start, region.end) } else { (0, usize::MAX) }));
+                }
+                inside.start..inside.end.max(inside.start)
+            }
+            None => region,
         };
         let font = self.font.borrow().clone();
         self.styling.set(true);
@@ -584,7 +626,7 @@ impl Inner {
         // text). After an edit the text view takes them from the text
         // around the caret, which is already styled.
         if edited.is_some() {
-            return;
+            return deferred;
         }
         // SAFETY: a dictionary of standard attributes.
         unsafe {
@@ -595,6 +637,7 @@ impl Inner {
             );
             self.view.setTypingAttributes(&typing);
         }
+        false
     }
 }
 
@@ -627,13 +670,23 @@ impl Data for Inner {
         self.undo.borrow().clone()
     }
 
-    fn highlight(&self, edited: Option<NSRange>) {
+    fn highlight(&self, edited: Option<NSRange>) -> bool {
         if self.styling.get() {
+            return false;
+        }
+        let Some(f) = self.highlighter.borrow().clone() else { return false };
+        let runs = f(&self.view.string().to_string());
+        self.apply_styles(runs, edited, None)
+    }
+
+    fn finish_highlight(&self) {
+        let Some(span) = self.deferred.take() else { return };
+        if self.styling.get() || self.view.hasMarkedText() {
             return;
         }
         let Some(f) = self.highlighter.borrow().clone() else { return };
         let runs = f(&self.view.string().to_string());
-        self.apply_styles(runs, edited);
+        self.apply_styles(runs, None, Some(span));
     }
 }
 
@@ -731,6 +784,7 @@ impl TextModel {
             highlighter: RefCell::new(None),
             styling: Cell::new(false),
             shown: RefCell::new(None),
+            deferred: Cell::new(None),
         });
         let weak: Weak<dyn Data> = Rc::downgrade(&inner) as Weak<dyn Data>;
         *view.ivars().data.borrow_mut() = Some(weak.clone());
@@ -884,7 +938,7 @@ impl TextModel {
         if self.inner.highlighter.borrow().is_some() {
             self.inner.highlight(None);
         } else {
-            self.inner.apply_styles(Vec::new(), None);
+            self.inner.apply_styles(Vec::new(), None, None);
         }
     }
 

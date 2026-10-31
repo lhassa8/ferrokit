@@ -87,9 +87,28 @@ pub(crate) fn app_command(command: Command, handler: Rc<Handler>) {
     APP.with_borrow_mut(|a| a.commands.push((command, handler)));
 }
 
-/// The window commands go to: the key window, else the main window, else
-/// the most recently opened visible one (an inactive app has neither).
+thread_local! {
+    /// The window a toolbar item is acting in, while it acts.
+    static ACTING: RefCell<Option<Retained<NSWindow>>> = const { RefCell::new(None) };
+}
+
+/// Runs `f` with `window` as the focused window: a toolbar button acts in
+/// its own window, also when the app is inactive (pressed with VoiceOver or
+/// accessibility tools, the app has no key or main window).
+pub(crate) fn acting_in<R>(window: Option<Retained<NSWindow>>, f: impl FnOnce() -> R) -> R {
+    let before = ACTING.with_borrow_mut(|a| std::mem::replace(a, window));
+    let out = f();
+    ACTING.with_borrow_mut(|a| *a = before);
+    out
+}
+
+/// The window commands go to: the window of the toolbar button acting, the
+/// key window, else the main window, else the most recently opened visible
+/// one (an inactive app has neither).
 pub fn focused_window() -> Option<Retained<NSWindow>> {
+    if let Some(w) = ACTING.with_borrow(Clone::clone) {
+        return Some(w);
+    }
     let app = NSApplication::sharedApplication(crate::mtm());
     app.keyWindow().or_else(|| app.mainWindow()).or_else(|| crate::windows().into_iter().rev().find(|w| w.isVisible()))
 }

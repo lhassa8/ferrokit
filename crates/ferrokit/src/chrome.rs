@@ -15,7 +15,6 @@ use objc2_foundation::{NSArray, NSNotification, NSSize, NSString, NSUserDefaults
 
 use crate::controls::FieldDelegate;
 use crate::signal::{Effect, Signal, batch};
-use crate::appkit_views::ActionTarget;
 use crate::view::{AnyView, Cx, Kind, Meta, Node, View};
 
 // ---- split view ----
@@ -612,12 +611,60 @@ pub fn toolbar_search(id: &str, query: &Signal<String>) -> ToolbarItem {
     ToolbarItem::Search { id: id.into(), query: *query }
 }
 
+/// A toolbar button's action and its enabled state, both in its own window.
+pub(crate) struct ToolbarAction {
+    action: Box<dyn Fn()>,
+    disabled: Option<Rc<dyn Fn() -> bool>>,
+    window: objc2::rc::Weak<NSWindow>,
+}
+
+define_class!(
+    // Action and validation for one toolbar button. AppKit asks
+    // `validateToolbarItem:` as events arrive, so the enabled state follows
+    // what the window can do (it was only known once its content was in).
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "FerrokitToolbarTarget"]
+    #[ivars = ToolbarAction]
+    pub(crate) struct ToolbarTarget;
+
+    impl ToolbarTarget {
+        #[unsafe(method(fire:))]
+        fn fire(&self, _sender: Option<&AnyObject>) {
+            crate::models::flush();
+            let a = self.ivars();
+            crate::commands::acting_in(a.window.load(), || batch(|| (a.action)()));
+        }
+
+        #[unsafe(method(validateToolbarItem:))]
+        fn validate(&self, _item: &NSToolbarItem) -> bool {
+            self.enabled()
+        }
+    }
+);
+
+impl ToolbarTarget {
+    fn new(mtm: MainThreadMarker, action: Box<dyn Fn()>, disabled: Option<Rc<dyn Fn() -> bool>>, window: objc2::rc::Weak<NSWindow>) -> Retained<Self> {
+        let action = Box::new(crate::signal::with_current_owner(action)) as Box<dyn Fn()>;
+        let this = Self::alloc(mtm).set_ivars(ToolbarAction { action, disabled, window });
+        // SAFETY: NSObject's designated initialiser.
+        unsafe { msg_send![super(this), init] }
+    }
+
+    fn enabled(&self) -> bool {
+        let a = self.ivars();
+        a.disabled.as_ref().is_none_or(|d| !crate::commands::acting_in(a.window.load(), || d()))
+    }
+}
+
 pub(crate) struct ToolbarState {
     items: RefCell<Vec<ToolbarItem>>,
     order: Vec<String>,
     /// What the created items need kept alive.
     keep: RefCell<Vec<Retained<NSObject>>>,
     effects: RefCell<Vec<Effect>>,
+    /// The toolbar's window: its buttons act there.
+    window: objc2::rc::Weak<NSWindow>,
 }
 
 define_class!(
@@ -668,16 +715,17 @@ impl ToolbarDelegate {
                 ti.setLabel(&NSString::from_str(&label));
                 ti.setToolTip(Some(&NSString::from_str(&label)));
                 ti.setImage(NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str(&symbol), Some(&NSString::from_str(&label))).as_deref());
-                let target = ActionTarget::new(mtm, action);
+                let disabled: Option<Rc<dyn Fn() -> bool>> = disabled.map(Rc::from);
+                let target = ToolbarTarget::new(mtm, action, disabled.clone(), state.window.clone());
                 // SAFETY: the target responds to `fire:`; kept alive below.
                 unsafe {
                     ti.setTarget(Some(&target));
                     ti.setAction(Some(sel!(fire:)));
                 }
-                ti.setAutovalidates(false);
-                if let Some(disabled) = disabled {
-                    let t = ti.clone();
-                    state.effects.borrow_mut().push(Effect::new(move || t.setEnabled(!disabled())));
+                if disabled.is_some() {
+                    // Validated as events arrive, and at once when signals it reads change.
+                    let (t, target) = (ti.clone(), target.clone());
+                    state.effects.borrow_mut().push(Effect::new(move || t.setEnabled(target.enabled())));
                 }
                 state.keep.borrow_mut().push(Retained::into_super(target));
                 Some(ti)
@@ -707,7 +755,7 @@ impl ToolbarDelegate {
 pub(crate) fn install_toolbar(window: &NSWindow, items: Vec<ToolbarItem>) -> Retained<NSObject> {
     let mtm = MainThreadMarker::from(window);
     let order = items.iter().map(ToolbarItem::id).collect();
-    let state = ToolbarState { items: RefCell::new(items), order, keep: RefCell::default(), effects: RefCell::default() };
+    let state = ToolbarState { items: RefCell::new(items), order, keep: RefCell::default(), effects: RefCell::default(), window: objc2::rc::Weak::from(window) };
     let delegate = ToolbarDelegate::alloc(mtm).set_ivars(state);
     // SAFETY: NSObject's designated initialiser.
     let delegate: Retained<ToolbarDelegate> = unsafe { msg_send![super(delegate), init] };

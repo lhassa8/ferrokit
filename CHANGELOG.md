@@ -160,6 +160,12 @@ The review is in `docs/Q3_API_REVIEW.md`. Changes:
 - **`.accessibility_value(..)`:** what VoiceOver reads after a view's name; Habits' cards say whether they're done.
 - **A new `values` suite** with 11 checks; the examples, guide and templates use the new names.
 
+### Fixed in the hands-on checks (Phase 3, Q4)
+
+- **Typing in the middle of highlighted text moved the caret** to the end of the restyled span (in the SQL browser's query, typing after `SELECT ` jumped past the next word). An edit now styles only its own characters during the edit and the rest just after it.
+- **Toolbar buttons with a `.disabled(..)` condition (all `toolbar_command`s) stayed disabled:** their state was computed once, before the window's content could answer. AppKit now validates them as events arrive, as for menu items.
+- **A toolbar button acts in its own window,** not in whichever window is key (or in none, when the app is inactive, as when VoiceOver presses it).
+
 ### ferrokit-core (was appkit-host)
 
 - **Fixed: typing over a selection in a highlighted editor could crash the app.** Restyling set the editor's typing attributes in the middle of the edit, while the text view still held the old selection; AppKit read attributes past the end of the shorter text and threw, which left TextKit 2's layout behind the text, so the typed text didn't show and the next redraw aborted. Typing attributes are now left alone during an edit, and highlighting runs in `willProcessEditing` as part of the edit itself.

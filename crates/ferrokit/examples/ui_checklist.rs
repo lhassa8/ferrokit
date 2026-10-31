@@ -537,6 +537,23 @@ fn styled_text_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     um.endUndoGrouping();
     let restored = s(last_let(&model)) == keyword && s(model.text().len() - 3) == TextStyle::new().color(Color::Gray).italic();
     check("styled-far-edit", commented && restored, format!("/* at the top comments out the last line: {commented}; removing it restores keywords and comments there: {restored}"));
+    // Typing in the middle of a line keeps the caret there: the rest of the
+    // restyle waits until the edit is done (it used to widen the edit, and
+    // the text view put the caret at the end of the restyled span).
+    model.set_text("let a = 1; let b = 2;");
+    tv.setSelectedRange(objc2_foundation::NSRange::new(4, 0));
+    for c in ["x", "y"] {
+        um.beginUndoGrouping();
+        unsafe { objc2::msg_send![&*tv, insertText: &*NSString::from_str(c), replacementRange: tv.selectedRange()] }
+        um.endUndoGrouping();
+    }
+    let caret = tv.selectedRange();
+    let second_let = model.text().rfind("let").unwrap();
+    check(
+        "styled-caret-mid-line",
+        model.text() == "let xya = 1; let b = 2;" && caret.location == 6 && caret.length == 0 && s(second_let) == keyword && s(4) != keyword,
+        format!("{:?}, caret at {}; the second let styled {}", model.text(), caret.location, s(second_let) == keyword),
+    );
     // Typing over a selection of everything, as key presses, drawing after
     // each. Restyling used to set typing attributes mid-edit, which read the
     // old selection past the end of the new text: the exception stopped the

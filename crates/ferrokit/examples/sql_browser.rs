@@ -1747,6 +1747,19 @@ mod self_checks {
                 format!("a .txt refused: {refused}; other.sqlite taken: {taken} and opened in its own window after {ms:.0} ms: {}", opened.is_some()),
             );
             if let Some(o) = opened {
+                // With the new window in front, this window's toolbar
+                // button still acts here (as when VoiceOver presses it).
+                o.makeKeyAndOrderFront(None);
+                let before = untrack(|| b.no_inspector.get());
+                let item = w.toolbar().and_then(|t| t.items().iter().find(|i| i.itemIdentifier().to_string() == "inspector"));
+                if let Some(item) = &item {
+                    // SAFETY: the item's own target and action, as AppKit sends them.
+                    unsafe { objc2_app_kit::NSApplication::sharedApplication(objc2::MainThreadMarker::new().unwrap()).sendAction_to_from(item.action().unwrap(), item.target().as_deref(), Some(item)) };
+                }
+                let after = untrack(|| b.no_inspector.get());
+                let enabled: Vec<(String, bool)> = w.toolbar().map(|t| t.items().iter().map(|i| (i.itemIdentifier().to_string(), i.isEnabled())).collect()).unwrap_or_default();
+                check("toolbar-own-window", item.is_some() && after != before && enabled.iter().all(|e| e.1), format!("key window {:?}; the inspector button toggled this window's inspector: {}; enabled {enabled:?}", o.title(), after != before));
+                untrack(|| b.no_inspector.set(before));
                 close_window(&o);
             }
             input_checks(w, b, dir);
@@ -1797,9 +1810,44 @@ mod self_checks {
                                 clicked == Some(0) && after == Some(1) && shown.contains(&"Row 2 of 3".to_string()),
                                 format!("click {clicked:?}, then ↓ {after:?}; inspector shows Row 2 of 3: {}", shown.contains(&"Row 2 of 3".to_string())),
                             );
-                            scratch(w4, dir);
+                            input_edit_middle(w4, b, dir);
                         });
                     });
+                });
+            });
+        });
+    }
+
+    /// Typing in the middle of the query, a key at a time: the caret stays
+    /// where the typing is (the developer found it jumping to the end).
+    fn input_edit_middle(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
+        use ferrokit::testing::input;
+        let Some(editor) = all(&w).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSTextView>().ok().filter(|t| objc2_app_kit::NSAccessibility::accessibilityLabel(&**t).is_some_and(|l| l.to_string() == "Query"))) else {
+            check("input-type-in-middle", false, "no query editor".into());
+            return scratch(w, dir);
+        };
+        input::click(&editor);
+        let w2 = w.clone();
+        when(|| false, 200, move |_| {
+            // The caret after "SELECT ", then "D" and "z" a key at a time.
+            editor.setSelectedRange(objc2_foundation::NSRange::new(7, 0));
+            input::type_text(&w2, "D");
+            let w3 = w2.clone();
+            when(|| false, 200, move |_| {
+                let caret1 = editor.selectedRange().location;
+                input::type_text(&w3, "z");
+                when(|| false, 200, move |_| {
+                    let typed = untrack(|| b.query.get());
+                    let caret = editor.selectedRange().location;
+                    // The styles follow too: the keywords on both sides stay keywords, the typed name is plain.
+                    let model = BROWSERS.with_borrow(|all| all.iter().find(|(x, _)| x.query == b.query).map(|(_, m)| m.clone()));
+                    let styled = model.is_some_and(|m| m.style_at(0) == m.style_at(typed.find("FROM").unwrap_or(0)) && m.style_at(0) != TextStyle::new() && m.style_at(7) == TextStyle::new());
+                    check(
+                        "input-type-in-middle",
+                        typed.starts_with("SELECT Dzname, city") && caret1 == 8 && caret == 9 && styled,
+                        format!("query {typed:?}; caret after D at {caret1}, after z at {caret}; styles kept {styled}"),
+                    );
+                    scratch(w3, dir);
                 });
             });
         });
