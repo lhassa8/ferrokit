@@ -209,6 +209,8 @@ pub struct Node {
     pub(crate) meta: Rc<Meta>,
     /// Views behind the node's own (a surface), framed to its rectangle.
     pub(crate) decor: Vec<NativeView>,
+    /// How it leaves when removed inside an animated change.
+    pub(crate) transition: Option<crate::Transition>,
     effects: Vec<Effect>,
     keep: Vec<NativeObject>,
     held: Vec<Rc<dyn std::any::Any>>,
@@ -229,6 +231,7 @@ impl Node {
             fill: (false, false),
             meta,
             decor: Vec::new(),
+            transition: None,
             effects: Vec::new(),
             keep: Vec::new(),
             held: Vec::new(),
@@ -313,26 +316,54 @@ impl Node {
     }
 }
 
+thread_local! {
+    /// The views of a node leaving with a transition: collected instead of
+    /// removed, to go when the transition ends.
+    static LEAVING: RefCell<Option<Vec<NativeView>>> = const { RefCell::new(None) };
+}
+
+/// Removes `view` from its window, or keeps it for the leaving node's
+/// transition.
+fn remove_view(view: &NativeView) {
+    let kept = LEAVING.try_with(|l| l.borrow_mut().as_mut().map(|l| l.push(view.clone())).is_some()).unwrap_or(false);
+    if !kept {
+        Native::remove(view);
+    }
+}
+
 impl Drop for Node {
     fn drop(&mut self) {
         LIVE_NODES.with(|n| n.set(n.get() - 1));
+        // Removed inside an animated change: its views (and its subtree's)
+        // stay for its transition, then go.
+        let leaving = self.transition.filter(|_| crate::motion::animating() && LEAVING.try_with(|l| l.borrow().is_none()).unwrap_or(false));
+        if leaving.is_some() {
+            LEAVING.with_borrow_mut(|l| *l = Some(Vec::new()));
+        }
         // Effects stop first (dropping them), then the native view leaves.
         self.effects.clear();
         for d in &self.decor {
-            Native::remove(d);
+            remove_view(d);
         }
         if let Kind::Scroll { scroll, .. } = &self.kind {
-            Native::remove(&Native::scroll_as_view(scroll));
+            remove_view(&Native::scroll_as_view(scroll));
         }
         if let Kind::Split { split, .. } = &self.kind {
-            Native::remove(&Native::split_as_view(split));
+            remove_view(&Native::split_as_view(split));
         }
         if let Kind::Leaf(l) = &self.kind {
             crate::commands::unregister_leaf(Native::view_key(&l.view));
-            Native::remove(&l.view);
+            remove_view(&l.view);
             if let Some(parent) = self.meta.parent.borrow().upgrade() {
                 parent.mark();
             }
+            invalidate_layout();
+        }
+        if let Some(transition) = leaving {
+            // The subtree goes now, so its views are collected too.
+            drop(std::mem::replace(&mut self.kind, Kind::Spacer));
+            let views = LEAVING.with_borrow_mut(Option::take).unwrap_or_default();
+            crate::motion::exit(views, transition);
             invalidate_layout();
         }
     }
@@ -445,6 +476,45 @@ pub trait ViewExt: View + Sized {
     fn glass(self, glass: crate::Glass) -> Modified<Self> {
         Modified::new(self).glass(glass)
     }
+
+    /// A background whose colour follows the signals `color` reads (a
+    /// selected row, a status). It changes smoothly inside
+    /// [`animated`](crate::animated).
+    fn background_when(self, color: impl Fn() -> crate::Color + 'static) -> Modified<Self> {
+        Modified::new(self).background_when(color)
+    }
+
+    /// The view's opacity, following the signals `opacity` reads. It fades
+    /// inside [`animated`](crate::animated).
+    fn opacity_when(self, opacity: impl Fn() -> f64 + 'static) -> Modified<Self> {
+        Modified::new(self).opacity_when(opacity)
+    }
+
+    /// How the view comes and goes when it's added or removed (by
+    /// [`dynamic`] or [`for_each`]) inside [`animated`](crate::animated).
+    fn transition(self, transition: crate::Transition) -> Modified<Self> {
+        Modified::new(self).transition(transition)
+    }
+
+    /// Calls `action` with `true` when the pointer moves over the view and
+    /// `false` when it leaves (while the app is active).
+    fn on_hover(self, action: impl Fn(bool) + 'static) -> Modified<Self> {
+        Modified::new(self).on_hover(action)
+    }
+
+    /// A background of `color` while the pointer is over the view, fading
+    /// in and out: for rows and cards that can be clicked.
+    fn hover_highlight(self, color: crate::Color) -> Modified<Self> {
+        Modified::new(self).hover_highlight(color)
+    }
+
+    /// Makes the whole view a button: a click on it calls `action`, it
+    /// dims while pressed, and VoiceOver reads it as a button named by its
+    /// text. For rows, cards and tiles; controls inside it don't get
+    /// clicks.
+    fn on_click(self, action: impl Fn() + 'static) -> Modified<Self> {
+        Modified::new(self).on_click(action)
+    }
 }
 
 impl<V: View> ViewExt for V {}
@@ -462,6 +532,10 @@ pub struct Modified<V> {
     responds: crate::commands::Responds,
     popover: Option<crate::popover::PopoverSpec>,
     opacity: Option<f64>,
+    opacity_when: Option<Box<dyn Fn() -> f64>>,
+    transition: Option<crate::Transition>,
+    hover: Option<Rc<dyn Fn(bool)>>,
+    click: Option<Rc<dyn Fn()>>,
 }
 
 /// A layout or look modifier, in the order written.
@@ -476,11 +550,13 @@ enum Op {
     Border(crate::Color, f64),
     Shadow(crate::Shadow),
     Backdrop(crate::material::Backdrop),
+    BackgroundWhen(Rc<dyn Fn() -> crate::Color>),
+    HoverHighlight(crate::Color),
 }
 
 impl<V: View> Modified<V> {
     fn new(view: V) -> Self {
-        Modified { view, ops: Vec::new(), menu: None, label: None, responds: Default::default(), popover: None, opacity: None }
+        Modified { view, ops: Vec::new(), menu: None, label: None, responds: Default::default(), popover: None, opacity: None, opacity_when: None, transition: None, hover: None, click: None }
     }
 
     /// Shows `content` in a popover pointing at this view while `shown` is
@@ -602,18 +678,69 @@ impl<V: View> Modified<V> {
         self.ops.push(Op::Backdrop(crate::material::Backdrop::Glass(glass)));
         self
     }
+
+    /// A background following signals (see [`ViewExt::background_when`]).
+    pub fn background_when(mut self, color: impl Fn() -> crate::Color + 'static) -> Self {
+        self.ops.push(Op::BackgroundWhen(Rc::new(color)));
+        self
+    }
+
+    /// Opacity following signals (see [`ViewExt::opacity_when`]).
+    pub fn opacity_when(mut self, opacity: impl Fn() -> f64 + 'static) -> Self {
+        self.opacity_when = Some(Box::new(opacity));
+        self
+    }
+
+    /// How the view comes and goes (see [`ViewExt::transition`]).
+    pub fn transition(mut self, transition: crate::Transition) -> Self {
+        self.transition = Some(transition);
+        self
+    }
+
+    /// Hover in and out (see [`ViewExt::on_hover`]).
+    pub fn on_hover(mut self, action: impl Fn(bool) + 'static) -> Self {
+        self.hover = Some(Rc::new(action));
+        self
+    }
+
+    /// A background while hovered (see [`ViewExt::hover_highlight`]).
+    pub fn hover_highlight(mut self, color: crate::Color) -> Self {
+        self.ops.push(Op::HoverHighlight(color));
+        self
+    }
+
+    /// The view as a button (see [`ViewExt::on_click`]).
+    pub fn on_click(mut self, action: impl Fn() + 'static) -> Self {
+        self.click = Some(Rc::new(action));
+        self
+    }
 }
 
 impl<V: View> View for Modified<V> {
     fn build(self, cx: &mut Cx) -> Node {
         let mut node = self.view.build(cx);
+        // A hover highlight follows a signal the hover handler sets.
+        let mut hover = self.hover;
+        let hovered = self.ops.iter().any(|o| matches!(o, Op::HoverHighlight(_))).then(|| {
+            let hovered = crate::Signal::new(false);
+            let user = hover.take();
+            hover = Some(Rc::new(move |on: bool| {
+                crate::animated(|| hovered.set(on));
+                if let Some(f) = &user {
+                    f(on);
+                }
+            }));
+            hovered
+        });
         // Look modifiers written one after another make one surface.
         let mut look = crate::surface::Look::default();
         let mut has_look = false;
+        let mut look_when: Option<Rc<dyn Fn() -> crate::Color>> = None;
         for op in self.ops {
-            let is_look = matches!(op, Op::Background(_) | Op::Radius(_) | Op::Border(..) | Op::Shadow(_) | Op::Backdrop(_));
+            let is_look = matches!(op, Op::Background(_) | Op::Radius(_) | Op::Border(..) | Op::Shadow(_) | Op::Backdrop(_) | Op::BackgroundWhen(_) | Op::HoverHighlight(_));
             if !is_look && has_look {
                 node = add_surface(node, std::mem::take(&mut look), cx);
+                follow_background(&mut node, look_when.take());
                 has_look = false;
             }
             match op {
@@ -642,15 +769,56 @@ impl<V: View> View for Modified<V> {
                 Op::Border(c, w) => look.border = Some((c, w)),
                 Op::Shadow(s) => look.shadow = Some(s),
                 Op::Backdrop(b) => look.backdrop = Some(b),
+                Op::BackgroundWhen(f) => {
+                    look.background = Some(crate::signal::untrack(|| f()));
+                    look_when = Some(f);
+                }
+                Op::HoverHighlight(c) => {
+                    let hovered = hovered.expect("made above");
+                    let f: Rc<dyn Fn() -> crate::Color> = Rc::new(move || if hovered.get() { c } else { crate::Color::Clear });
+                    look.background = Some(crate::signal::untrack(|| f()));
+                    look_when = Some(f);
+                }
             }
             has_look |= is_look;
         }
         if has_look {
             node = add_surface(node, look, cx);
+            follow_background(&mut node, look_when);
         }
         if let Some(alpha) = self.opacity {
             for v in node.all_views() {
                 v.setAlphaValue(alpha);
+            }
+        }
+        if let Some(f) = self.opacity_when {
+            let views = node.all_views();
+            let first = Cell::new(true);
+            node.own(Effect::new(move || {
+                let alpha = f();
+                let views = views.clone();
+                let set = move || views.iter().for_each(|v| v.setAlphaValue(alpha));
+                if first.replace(false) { set() } else { crate::motion::apply(set) }
+            }));
+        }
+        if hover.is_some() || self.click.is_some() {
+            let views = node.all_views();
+            let interaction = crate::interact::Interaction::new(cx.mtm, hover, self.click.clone());
+            if self.click.is_some() {
+                let mut leaves = Vec::new();
+                node.leaf_views(&mut leaves);
+                let texts = leaves.into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSTextField>().ok()).collect();
+                interaction.set_views(views, self.label.clone(), texts);
+            }
+            let interaction: NativeView = objc2::rc::Retained::into_super(interaction);
+            Native::add_subview(&cx.container, &interaction);
+            node.decor.push(interaction);
+            node.meta.mark();
+        }
+        if let Some(t) = self.transition {
+            node.transition = Some(t);
+            if crate::motion::animating() {
+                crate::motion::enter(node.all_views(), t, self.opacity.unwrap_or(1.0));
             }
         }
         if let Some(items) = self.menu {
@@ -682,6 +850,21 @@ impl<V: View> View for Modified<V> {
         }
         node
     }
+}
+
+/// Makes `node`'s last surface follow `color` (a dynamic background).
+fn follow_background(node: &mut Node, color: Option<Rc<dyn Fn() -> crate::Color>>) {
+    let Some(color) = color else { return };
+    let Some(surface) = node.decor.iter().rev().find_map(|d| d.clone().downcast::<crate::surface::Surface>().ok()) else { return };
+    let first = Cell::new(true);
+    node.own(Effect::new(move || {
+        let c = color();
+        if first.replace(false) {
+            return; // the surface starts with it
+        }
+        let surface = surface.clone();
+        crate::motion::apply(move || surface.set_background(c));
+    }));
 }
 
 /// `node` inside a box of its own, so a modifier can go around what it

@@ -106,6 +106,14 @@ impl Surface {
         this
     }
 
+    /// Changes the background now (animated inside an animated change).
+    pub(crate) fn set_background(&self, color: Color) {
+        self.ivars().borrow_mut().background = Some(color);
+        // Resolve named colours for this view's appearance, as in updateLayer.
+        let block = block2::StackBlock::new(|| self.apply());
+        objc2_app_kit::NSAppearanceCustomization::effectiveAppearance(&**self).performAsCurrentDrawingAppearance(&block);
+    }
+
     fn apply(&self) {
         let Some(layer) = self.layer() else { return };
         let look = self.ivars().borrow().clone();

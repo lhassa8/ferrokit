@@ -130,7 +130,7 @@ impl Platform for AppKit {
     fn place(view: &NSView, rect: Rect) {
         let r = ns(rect);
         if view.frame() != r {
-            view.setFrame(r);
+            crate::motion::set_frame(view, r);
         }
     }
 
@@ -144,7 +144,7 @@ impl Platform for AppKit {
     fn place_scroll(scroll: &NSScrollView, rect: Rect) -> Size {
         let r = ns(rect);
         if scroll.frame() != r {
-            scroll.setFrame(r);
+            crate::motion::set_frame(scroll, r);
         }
         let v = scroll.contentSize();
         Size { w: v.width, h: v.height }

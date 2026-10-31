@@ -25,6 +25,8 @@ the guide can't drift from the API.
    and pictures.
 10. [Materials and windows](10-materials-and-windows.md): sidebar and panel
     materials, Liquid Glass, layered views, and title bar and toolbar styles.
+11. [Motion](11-motion.md): animated changes, transitions, hover and click,
+    and Reduce Motion.
 
 The example apps in `crates/ferrokit/examples` are the long form of these
 chapters:
@@ -34,6 +36,7 @@ chapters:
 | `settings` | a settings form: grid layout, validation, background work |
 | `styles` | a styled screen: type hierarchy, cards, symbols, pictures |
 | `materials` | materials, Liquid Glass over a picture, full-size windows |
+| `motion` | animated layout, fades and slides, hover highlights, clickable rows |
 | `native_csv` | a 200,000-row CSV browser: table, sidebar, search, sheet, notes |
 | `log_viewer` | a log tail at display rate: `on_frame`, `append`, filtering |
 | `hands_on` | drag and drop, the clipboard, panels, undo, input methods |

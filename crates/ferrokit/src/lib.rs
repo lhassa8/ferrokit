@@ -54,6 +54,8 @@ mod frame;
 mod l10n;
 mod layout;
 mod material;
+mod motion;
+mod interact;
 mod menu;
 mod models;
 mod outline;
@@ -112,6 +114,7 @@ pub use syntax::Syntax;
 pub use style::{Font, Weight};
 pub use surface::Shadow;
 pub use material::{Glass, Material, has_liquid_glass};
+pub use motion::{Animation, Transition, animated, animated_with, reduce_motion};
 pub use popover::Edge;
 pub use canvas::{Canvas, Painter, canvas};
 pub use transfer::{Clipboard, DragItem, WriteFile};
@@ -729,9 +732,11 @@ impl App {
         let targets = menu::install(mtm, &self.name, menus, settings, file_after);
         EXTRAS.with_borrow_mut(|e| e.extend(targets));
         after_batch(|| {
-            if view::LAYOUT_DIRTY.with(Cell::get) {
-                relayout_all();
-            }
+            motion::run_layout(|| {
+                if view::LAYOUT_DIRTY.with(Cell::get) {
+                    relayout_all();
+                }
+            });
         });
 
         ferrokit_core::observe_appearance();
@@ -970,4 +975,6 @@ mod guide {
     mod styling {}
     #[doc = include_str!("../guide/10-materials-and-windows.md")]
     mod materials {}
+    #[doc = include_str!("../guide/11-motion.md")]
+    mod motion {}
 }

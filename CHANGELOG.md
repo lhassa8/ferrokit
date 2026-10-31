@@ -35,6 +35,15 @@ Also renamed, for anyone who relied on them: the Objective-C class prefixes (`Ap
 - **Window chrome:** `Window::full_size_content()`, `.transparent_title_bar()`, `.hide_title()`, `.toolbar_style(ToolbarStyle::UnifiedCompact)` (and `Unified`, `Expanded`, `Preference`) and `.background(color)`. With full-size content, backgrounds, materials and split panes reach the top of the window, so a sidebar runs up behind the window buttons, while the content starts below the title bar.
 - A new guide chapter, Materials and windows, and a new example, `materials`, with 13 self-checks including captures in light and dark.
 
+### Motion (Phase 3, V3)
+
+- **Animated changes:** `animated(|| signal.set(..))` animates what the change causes: views moving or resizing, opacity and colours fading. `animated_with(Animation::ease_out(0.4), ..)` sets the timing.
+- **State-driven looks:** `.opacity_when(..)` and `.background_when(..)` follow signals, and fade inside `animated`.
+- **Transitions:** `.transition(Transition::Fade)` or `Transition::Slide(Edge::Leading)` for views that `dynamic` and `for_each` add and remove. A removed view stays until it has faded out.
+- **Hover and click on any view:** `.on_hover(..)`, `.hover_highlight(Color::Quaternary)` and `.on_click(..)`. A clickable view dims while pressed, and VoiceOver reads it as a button named by its text.
+- **Reduce Motion is respected:** nothing moves, slides become fades. `reduce_motion()` reads the setting.
+- A new guide chapter, Motion, and a new example, `motion`, with 15 self-checks that read Core Animation's in-flight values.
+
 ### ferrokit-core (was appkit-host)
 
 - **Fixed: typing over a selection in a highlighted editor could crash the app.** Restyling set the editor's typing attributes in the middle of the edit, while the text view still held the old selection; AppKit read attributes past the end of the shorter text and threw, which left TextKit 2's layout behind the text, so the typed text didn't show and the next redraw aborted. Typing attributes are now left alone during an edit, and highlighting runs in `willProcessEditing` as part of the edit itself.

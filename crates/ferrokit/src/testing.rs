@@ -453,3 +453,34 @@ pub fn fulfil(item: &crate::DragItem, dir: &std::path::Path) -> std::io::Result<
 pub fn drop_on_view(view: &objc2_app_kit::NSView, pasteboard: &objc2_app_kit::NSPasteboard) -> bool {
     ferrokit_core::testing::drop_on_view(view, pasteboard)
 }
+
+/// Overrides the Reduce Motion setting animated changes follow (`None`:
+/// the system's), so checks can run both paths without changing it.
+pub fn set_reduce_motion(on: Option<bool>) {
+    crate::motion::set_reduce_motion(on);
+}
+
+/// How many native views are still animating out after a transition.
+pub fn leaving_views() -> usize {
+    crate::motion::leaving()
+}
+
+/// Sends a view made with `on_hover` or `hover_highlight` (its interaction
+/// view, a `FerrokitInteraction`) the pointer entering or leaving. False if
+/// `view` isn't one.
+pub fn hover(view: &objc2_app_kit::NSView, inside: bool) -> bool {
+    crate::interact::hover(view, inside)
+}
+
+/// Presses (`down`) or releases a view made with `on_click` (its
+/// `FerrokitInteraction`), as the mouse does: the press dims it, the
+/// release clicks. False if `view` isn't one.
+pub fn press(view: &objc2_app_kit::NSView, down: bool) -> bool {
+    crate::interact::press(view, down)
+}
+
+/// Whether a clickable view's interaction is pressed (`None` if `view`
+/// isn't one).
+pub fn is_pressed(view: &objc2_app_kit::NSView) -> Option<bool> {
+    crate::interact::is_pressed(view)
+}
