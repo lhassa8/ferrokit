@@ -1756,8 +1756,59 @@ mod self_checks {
             if let Some(o) = opened {
                 close_window(&o);
             }
-            let _ = b;
-            scratch(w, dir);
+            input_checks(w, b, dir);
+        });
+    }
+
+    /// Real input: a query typed into the editor, ⌘R, then a click on a
+    /// result row and ↓, as a user does them.
+    fn input_checks(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
+        use ferrokit::testing::input::{self, Key, Mod};
+        input::ready(&w);
+        when(|| false, 300, move |_| {
+            if !input::ready(&w) {
+                check("input-ready", false, "the window couldn't become key".into());
+                return scratch(w, dir);
+            }
+            let editor = all(&w).into_iter().find(|v| objc2_app_kit::NSAccessibility::accessibilityLabel(&**v).is_some_and(|l| l.to_string() == "Query"));
+            if let Some(e) = &editor {
+                input::click(e);
+            }
+            let w2 = w.clone();
+            when(|| false, 200, move |_| {
+                // Select all and type over it, then ⌘R.
+                input::key(&w2, Key::Char('a'), &[Mod::Command]);
+                input::type_text(&w2, "SELECT name, city FROM customers WHERE id <= 3");
+                input::key(&w2, Key::Char('r'), &[Mod::Command]);
+                let w3 = w2.clone();
+                when(move || idle(b)() && results(&w3).numberOfRows() == 3, 5000, move |ms| {
+                    let typed = untrack(|| b.query.get());
+                    let t = results(&w2);
+                    check(
+                        "input-type-and-run",
+                        typed == "SELECT name, city FROM customers WHERE id <= 3" && t.numberOfRows() == 3 && titles(&t) == ["name", "city"],
+                        format!("query {typed:?}; {} rows, columns {:?}, {ms:.0} ms", t.numberOfRows(), titles(&t)),
+                    );
+                    // A click on the first row, then ↓: the inspector follows.
+                    let r = t.rectOfRow(0);
+                    input::click_at(&t, r.origin.x + 30.0, r.origin.y + r.size.height / 2.0);
+                    let w4 = w2.clone();
+                    when(|| false, 300, move |_| {
+                        let clicked = untrack(|| b.row.get());
+                        input::key(&w4, Key::Down, &[]);
+                        when(|| false, 300, move |_| {
+                            let after = untrack(|| b.row.get());
+                            let shown = labels(&w4);
+                            check(
+                                "input-table-row",
+                                clicked == Some(0) && after == Some(1) && shown.contains(&"Row 2 of 3".to_string()),
+                                format!("click {clicked:?}, then ↓ {after:?}; inspector shows Row 2 of 3: {}", shown.contains(&"Row 2 of 3".to_string())),
+                            );
+                            scratch(w4, dir);
+                        });
+                    });
+                });
+            });
         });
     }
 

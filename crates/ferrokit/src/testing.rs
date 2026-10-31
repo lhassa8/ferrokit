@@ -9,6 +9,9 @@ use objc2_foundation::NSString;
 
 use crate::{mtm, windows};
 
+#[path = "input.rs"]
+pub mod input;
+
 /// Physical footprint in MB (what Activity Monitor shows; RSS keeps freed
 /// heap pages and overstates growth), via vmmap.
 pub fn footprint_mb() -> f64 {

@@ -1268,7 +1268,78 @@ mod self_checks {
             if let Ok(dir) = std::env::var("SNAP") {
                 let _ = std::fs::write(format!("{dir}/habits-report.pdf"), &data);
             }
-            dark_phase(w, t, check, failed);
+            input_phase(w, t, check, failed);
+        });
+    }
+
+    /// Real clicks and keys: a card, the calendar, the sidebar's arrow
+    /// keys, and the New Habit sheet by ⌘N, typing and a click on Add.
+    fn input_phase(w: Retained<NSWindow>, t: Tracker, check: Check, failed: Rc<Cell<u32>>) {
+        use ferrokit::testing::input::{self, Key, Mod};
+        input::ready(&w);
+        untrack(|| t.page.set(Page::Today));
+        later_ms(600, move || {
+            if !input::ready(&w) {
+                check("input-ready", false, "the window couldn't become key".into());
+                return dark_phase(w, t, check, failed);
+            }
+            let today = untrack(|| t.today.get());
+            let was = untrack(|| t.is_done(4, today));
+            if let Some(card) = clickable(&w, "Meditate", true) {
+                input::click(&card);
+            }
+            later_ms(400, move || {
+                check("input-card", untrack(|| t.is_done(4, today)) != was, format!("Meditate done {was} → {}", untrack(|| t.is_done(4, today))));
+                // The sidebar: a click on Insights, then ↓ (past the Habits heading).
+                let (outline, row, _) = sidebar_row(&w, "Insights");
+                if let (Some(o), Some(r)) = (&outline, row) {
+                    let rect = o.rectOfRow(r as isize);
+                    input::click_at(o, rect.origin.x + 40.0, rect.origin.y + rect.size.height / 2.0);
+                }
+                later_ms(400, move || {
+                    let clicked = untrack(|| t.page.get());
+                    input::key(&w, Key::Down, &[]);
+                    later_ms(500, move || {
+                        let after = untrack(|| t.page.get());
+                        check("input-sidebar", clicked == Page::Insights && after == Page::Habit(1), format!("click {clicked:?}, then ↓ {after:?}"));
+                        // The calendar: a real click on a day two weeks ago.
+                        let cal = canvases(&w, "Walk 8,000 steps: done").into_iter().next();
+                        let day = today - 14;
+                        let first = super::first_shown(today);
+                        let was = untrack(|| t.is_done(1, day));
+                        if let Some(c) = &cal {
+                            input::click_at(c, 30.0 + ((day - first) / 7) as f64 * 19.0 + 7.0, 18.0 + ((day - first) % 7) as f64 * 19.0 + 7.0);
+                        }
+                        later_ms(400, move || {
+                            check("input-calendar", cal.is_some() && untrack(|| t.is_done(1, day)) != was, format!("day {day}: {was} → {}", untrack(|| t.is_done(1, day))));
+                            // ⌘N, typing a name, a click on Add.
+                            input::key(&w, Key::Char('n'), &[Mod::Command]);
+                            later_ms(700, move || {
+                                let sheet = w.attachedSheet();
+                                if let Some(s) = &sheet {
+                                    input::type_text(s, "Yoga");
+                                }
+                                later_ms(300, move || {
+                                    // A click on Add. (A posted Return doesn't press a
+                                    // default button, even in plain AppKit: only window-server
+                                    // input can check that.)
+                                    if let Some(add) = sheet.as_ref().and_then(|s| views(s).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).find(|b| b.title().to_string() == "Add")) {
+                                        input::click(&add);
+                                    }
+                                    later_ms(800, move || {
+                                        let last = untrack(|| t.habits.get()).last().map(|h| h.name.clone());
+                                        check("input-new-habit", sheet.is_some() && last.as_deref() == Some("Yoga") && w.attachedSheet().is_none(), format!("sheet {}; last habit {last:?}", sheet.is_some()));
+                                        if let Some(id) = untrack(|| t.habits.get()).last().filter(|h| h.name == "Yoga").map(|h| h.id) {
+                                            untrack(|| t.delete(id));
+                                        }
+                                        dark_phase(w, t, check, failed);
+                                    });
+                                });
+                            });
+                        });
+                    });
+                });
+            });
         });
     }
 

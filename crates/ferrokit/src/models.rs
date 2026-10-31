@@ -21,6 +21,16 @@ thread_local! {
 
 /// Delivers queued model events (called on the run-loop pass after
 /// `ferrokit-core` asks for a redraw).
+/// Delivers editors' and tables' pending changes now: before a menu item,
+/// a button or a command acts, so it sees what was just typed (typing and
+/// a shortcut can arrive in the same run-loop turn, before the next pass
+/// would deliver them).
+pub(crate) fn flush() {
+    if !DRAINS.with_borrow(Vec::is_empty) {
+        drain_all();
+    }
+}
+
 pub(crate) fn drain_all() {
     ferrokit_core::begin_frame();
     let live: Vec<Drain> = DRAINS.with_borrow_mut(|d| {

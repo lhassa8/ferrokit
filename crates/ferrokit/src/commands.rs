@@ -139,6 +139,7 @@ pub fn can_perform(command: Command) -> bool {
 pub fn perform_in(window: Option<&NSWindow>, command: Command) -> bool {
     match resolve(window, command) {
         Some(h) if h.enabled() => {
+            crate::models::flush();
             batch(|| (h.action)());
             true
         }

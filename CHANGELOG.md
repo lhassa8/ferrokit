@@ -126,6 +126,15 @@ Both showcase apps were compared with a SwiftUI reference of the same screens (`
   - Habits uses the real sidebar (arrow keys, type-select, the system's selection) and flat grouped cards;
   - the SQL browser's inspector is a grouped form: names on the left, values right-aligned in secondary text.
 
+### Real-input testing (Phase 3, Q1)
+
+- **`testing::input`:** clicks, double-clicks, typing and keys with modifiers, posted to the app's own event queue so AppKit dispatches them along the user's path (hit-testing, the first responder, the field editor, key equivalents). `ready(&window)` brings the app and window to the front first. Window-server input (`server_click`, `server_type`, through `CGEvent`s) runs when the process is trusted for Accessibility; `server_available()` says whether it is.
+- **Fixed, found by real input:** a shortcut typed straight after text in an editor (⌘R after a query) ran on the old text, since the editor's changes reached its bound signal only on the next pass. Menu items, buttons and commands now deliver pending edits before they act.
+- **Checks:**
+  - a new `input` example: 10 checks, plus window-server input, skipped without trust;
+  - real-input checks in `habits` (4) and `sql_browser` (2);
+  - check-all reports skipped checks.
+
 ### ferrokit-core (was appkit-host)
 
 - **Fixed: typing over a selection in a highlighted editor could crash the app.** Restyling set the editor's typing attributes in the middle of the edit, while the text view still held the old selection; AppKit read attributes past the end of the shorter text and threw, which left TextKit 2's layout behind the text, so the typed text didn't show and the next redraw aborted. Typing attributes are now left alone during an edit, and highlighting runs in `willProcessEditing` as part of the edit itself.

@@ -298,6 +298,7 @@ define_class!(
     impl MenuTarget {
         #[unsafe(method(fire:))]
         fn fire(&self, _sender: Option<&AnyObject>) {
+            crate::models::flush();
             batch(|| (self.ivars().action)());
         }
 

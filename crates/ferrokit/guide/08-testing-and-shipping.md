@@ -42,6 +42,45 @@ clicks posted to a window that isn't active are ignored, so drive controls
 through their own entry points (as the helpers do); and mouse drags between
 apps need a person.
 
+### Real input
+
+`testing::input` sends clicks and keystrokes along the user's path:
+- **Event-queue input** works whenever the app is active and the window
+  key (`input::ready(&window)`). `input::click(&view)`, `click_at`,
+  `double_click`, `type_text(&window, "Ada")` and
+  `key(&window, Key::Down, &[Mod::Command])` post events to the app's own
+  queue, so AppKit dispatches them as it does the window server's:
+  hit-testing, the first responder, the field editor, the menus' key
+  equivalents.
+- **Window-server input** (`server_click`, `server_type`) goes through the
+  window server like a real keyboard and mouse, without moving the
+  pointer. It needs the process to be trusted for Accessibility;
+  `input::server_available()` says whether it is, and checks report
+  `SKIP` when it isn't.
+
+```rust,no_run
+use ferrokit::testing::input::{self, Key, Mod};
+use ferrokit::*;
+
+fn check(window: &NSWindow, field: &objc2_app_kit::NSView) {
+    if input::ready(window) {
+        input::click(field);
+        input::type_text(window, "Ada Lovelace");
+        input::key(window, Key::Char('s'), &[Mod::Command]);
+        // Look at the effect a moment later: events arrive on the next turns.
+    }
+}
+# let _ = check;
+```
+
+A posted Return doesn't press a window's default button (not even in a
+plain AppKit app), so click it instead; window-server input does press it.
+
+The `input` example's suite and the real-input checks in `habits` and
+`sql_browser` use it. They found that a shortcut typed straight after text
+ran on the old text; menu items, buttons and commands now deliver an
+editor's pending changes first.
+
 In this repository, `scripts/check-all.sh` builds everything, runs clippy,
 the unit and doc tests, and every app's suite, and prints a summary.
 

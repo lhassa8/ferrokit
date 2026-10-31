@@ -9,7 +9,7 @@
 #
 # Logs go to a temporary folder, or to $CHECK_ALL_LOGS if set (CI uploads it).
 # The suites open real windows: run it in a logged-in session with the
-# display awake. Each suite prints "[check] <name> PASS|FAIL ..." lines.
+# display awake. Each suite prints "[check] <name> PASS|FAIL|SKIP ..." lines.
 set -u
 cd "$(dirname "$0")/.."
 
@@ -75,9 +75,14 @@ suite() {
   fi
   pass=$(grep -c '^\[check\] .* PASS' "$log/$name.log")
   fail=$(grep -c '^\[check\] .* FAIL' "$log/$name.log")
+  # Checks that can't run in this session (window-server input without
+  # Accessibility trust) say SKIP, and are reported, not failed.
+  skip=$(grep -c '^\[check\] .* SKIP' "$log/$name.log")
+  skipped=""
+  [ "$skip" -gt 0 ] && skipped=", $skip skipped"
   if [ "$code" -eq 0 ] && [ "$fail" -eq 0 ] && [ "$pass" -gt 0 ]; then
-    printf 'ok     %3s checks (%ss)\n' "$pass" $(( $(date +%s) - start ))
-    summary="$summary\n  ok    $name: $pass checks"
+    printf 'ok     %3s checks%s (%ss)\n' "$pass" "$skipped" $(( $(date +%s) - start ))
+    summary="$summary\n  ok    $name: $pass checks$skipped"
   else
     printf 'FAILED %3s of %s checks, exit %s (%ss)\n' "$fail" $((pass + fail)) "$code" $(( $(date +%s) - start ))
     grep '^\[check\] .* FAIL' "$log/$name.log" | sed 's/^/    /'
@@ -130,6 +135,7 @@ suite motion CHECK=all "$ex/motion"
 suite components CHECK=all "$ex/components"
 suite media CHECK=all "$ex/media"
 suite habits CHECK=all "$ex/habits"
+suite input CHECK=all "$ex/input"
 suite sql_browser CHECK=all "$ex/sql_browser"
 suite sql_browser_de CHECK=l10n "$ex/sql_browser" -AppleLanguages "(de)"
 suite cargo_ferrokit FERROKIT_E2E=1 scripts/check-ferrokit.sh
