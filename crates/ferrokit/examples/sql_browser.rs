@@ -633,7 +633,8 @@ fn csv_chip(b: Browser) -> impl View {
 }
 
 /// The selected row: where it's from, then its fields in a grouped card,
-/// as an inspector in Apple's apps shows them.
+/// as a grouped form in Apple's apps shows them: the name, and the value
+/// right-aligned in secondary text (under the name when it's long).
 fn inspector(b: Browser) -> impl View {
     dynamic(move || {
         let (Some(row), Some(r)) = (b.row.get(), b.results.get()) else {
@@ -645,15 +646,22 @@ fn inspector(b: Browser) -> impl View {
         let mut fields: Vec<AnyView> = Vec::new();
         for (i, name) in r.names.iter().enumerate() {
             if i > 0 {
-                fields.push(AnyView::new(divider().padding(0.0)));
+                // Inset, as a grouped form's separators are.
+                fields.push(AnyView::new(divider().padding_xy(10.0, 0.0)));
             }
+            let shown = r.text(row, i);
             let value = match r.cell(row, i) {
                 Cell::Null => text("NULL").font(Font::body().italic()).color(Color::Tertiary),
-                Cell::Int(_) | Cell::Real(_) => text(r.text(row, i)).font(Font::body().monospaced_digits()),
-                Cell::Blob(_) => text(r.text(row, i)).color(Color::Secondary),
-                Cell::Text(_) => text(r.text(row, i)),
+                Cell::Int(_) | Cell::Real(_) => text(shown.clone()).font(Font::body().monospaced_digits()).color(Color::Secondary),
+                _ => text(shown.clone()).color(Color::Secondary),
             };
-            fields.push(AnyView::new(vstack((text(name.clone()).font(Font::caption()).color(Color::Secondary), value)).spacing(2.0).alignment(Align::Start).padding(9.0).fill_width()));
+            let long = shown.chars().count() + name.chars().count() > 28;
+            let field: AnyView = if long {
+                AnyView::new(vstack((text(name.clone()), value)).spacing(2.0).alignment(Align::Start))
+            } else {
+                AnyView::new(hstack((text(name.clone()), spacer(), value)).spacing(8.0))
+            };
+            fields.push(AnyView::new(field.padding_xy(10.0, 11.0).fill_width()));
         }
         AnyView::new(scroll(
             vstack((
@@ -663,7 +671,7 @@ fn inspector(b: Browser) -> impl View {
                 ))
                 .spacing(2.0)
                 .alignment(Align::Start),
-                vstack(fields).spacing(0.0).alignment(Align::Start).background(Color::ControlBackground).corner_radius(10.0).border(Color::Separator, 0.5).fill_width(),
+                vstack(fields).spacing(0.0).alignment(Align::Start).background(Color::QuaternaryFill).corner_radius(10.0).fill_width(),
             ))
             .spacing(12.0)
             .alignment(Align::Start)

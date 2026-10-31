@@ -203,7 +203,8 @@ pub(crate) enum Kind {
 pub struct Node {
     pub(crate) kind: Kind,
     pub(crate) id: Option<u64>,
-    pub(crate) padding: f64,
+    /// Inset (horizontal, vertical) on each side.
+    pub(crate) padding: (f64, f64),
     pub(crate) fixed: (Option<f64>, Option<f64>),
     /// Forced flexibility (`fill_width` / `fill_height`).
     pub(crate) fill: (bool, bool),
@@ -227,7 +228,7 @@ impl Node {
         let node = Node {
             kind,
             id: None,
-            padding: 0.0,
+            padding: (0.0, 0.0),
             fixed: (None, None),
             fill: (false, false),
             meta,
@@ -394,6 +395,13 @@ pub trait ViewExt: View + Sized {
         Modified::new(self).padding(points)
     }
 
+    /// Inset `horizontal` points left and right and `vertical` above and
+    /// below: a row's `.padding_xy(10.0, 7.0)`, as SwiftUI's
+    /// `.padding(.horizontal, 10)` and `.padding(.vertical, 7)`.
+    fn padding_xy(self, horizontal: f64, vertical: f64) -> Modified<Self> {
+        Modified::new(self).padding_xy(horizontal, vertical)
+    }
+
     /// A fixed width.
     fn width(self, points: f64) -> Modified<Self> {
         Modified::new(self).width(points)
@@ -556,7 +564,7 @@ pub struct Modified<V> {
 
 /// A layout or look modifier, in the order written.
 enum Op {
-    Padding(f64),
+    Padding(f64, f64),
     Width(f64),
     Height(f64),
     FillWidth,
@@ -637,7 +645,13 @@ impl<V: View> Modified<V> {
 
     /// Inset on all sides, in points.
     pub fn padding(mut self, points: f64) -> Self {
-        self.ops.push(Op::Padding(points));
+        self.ops.push(Op::Padding(points, points));
+        self
+    }
+
+    /// Inset left and right, and above and below (see [`ViewExt::padding_xy`]).
+    pub fn padding_xy(mut self, horizontal: f64, vertical: f64) -> Self {
+        self.ops.push(Op::Padding(horizontal, vertical));
         self
     }
 
@@ -772,11 +786,11 @@ impl<V: View> View for Modified<V> {
                 has_look = false;
             }
             match op {
-                Op::Padding(p) => {
-                    if node.padding > 0.0 || node.fixed != (None, None) || !node.decor.is_empty() {
+                Op::Padding(px, py) => {
+                    if node.padding != (0.0, 0.0) || node.fixed != (None, None) || !node.decor.is_empty() {
                         node = wrap(node);
                     }
-                    node.padding = p;
+                    node.padding = (px, py);
                 }
                 Op::Width(w) => {
                     if node.fixed.0.is_some() {

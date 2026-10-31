@@ -693,6 +693,9 @@ pub(crate) fn install_toolbar(window: &NSWindow, items: Vec<ToolbarItem>) -> Ret
     let toolbar = NSToolbar::initWithIdentifier(NSToolbar::alloc(mtm), &NSString::from_str("ferrokit.toolbar"));
     toolbar.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
     toolbar.setAllowsUserCustomization(false);
+    // Symbols alone, as Apple's apps show them (the labels stay for
+    // VoiceOver, tooltips and the overflow menu).
+    toolbar.setDisplayMode(objc2_app_kit::NSToolbarDisplayMode::IconOnly);
     window.setToolbar(Some(&toolbar));
     window.setToolbarStyle(NSWindowToolbarStyle::Unified);
     Retained::into_super(delegate)

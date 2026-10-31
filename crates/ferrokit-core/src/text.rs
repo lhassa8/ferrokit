@@ -252,6 +252,16 @@ pub enum Color {
     Tertiary,
     /// The least prominent text and fills.
     Quaternary,
+    /// The system's fill for thin shapes (a slider's track, a progress
+    /// ring's track): the strongest of the fills, a translucent grey.
+    Fill,
+    /// A fill for medium shapes (a switch's background).
+    SecondaryFill,
+    /// A fill for large shapes (an input field, a search bar).
+    TertiaryFill,
+    /// A fill for large areas with content on them: grouped cards, as
+    /// SwiftUI's `GroupBox` and grouped forms draw them.
+    QuaternaryFill,
     /// The user's accent colour (System Settings › Appearance).
     Accent,
     /// Links.
@@ -299,11 +309,15 @@ pub enum Color {
 }
 
 impl Color {
-    const NAMED: [Color; 24] = [
+    const NAMED: [Color; 28] = [
         Color::Primary,
         Color::Secondary,
         Color::Tertiary,
         Color::Quaternary,
+        Color::Fill,
+        Color::SecondaryFill,
+        Color::TertiaryFill,
+        Color::QuaternaryFill,
         Color::Accent,
         Color::Link,
         Color::Red,
@@ -376,6 +390,10 @@ impl Color {
             Color::Secondary => NSColor::secondaryLabelColor(),
             Color::Tertiary => NSColor::tertiaryLabelColor(),
             Color::Quaternary => NSColor::quaternaryLabelColor(),
+            Color::Fill => NSColor::systemFillColor(),
+            Color::SecondaryFill => NSColor::secondarySystemFillColor(),
+            Color::TertiaryFill => NSColor::tertiarySystemFillColor(),
+            Color::QuaternaryFill => NSColor::quaternarySystemFillColor(),
             Color::Accent => NSColor::controlAccentColor(),
             Color::Link => NSColor::linkColor(),
             Color::Red => NSColor::systemRedColor(),

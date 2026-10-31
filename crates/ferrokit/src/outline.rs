@@ -16,7 +16,7 @@ use objc2_app_kit::{
     NSControlTextEditingDelegate, NSImage, NSImageView, NSOutlineView, NSOutlineViewDataSource, NSOutlineViewDelegate,
     NSScrollView, NSTableCellView, NSTableColumn, NSTableViewStyle, NSTextField, NSUserInterfaceItemIdentification, NSView,
 };
-use objc2_foundation::{NSIndexSet, NSInteger, NSNotification, NSPoint, NSRect, NSSize, NSString};
+use objc2_foundation::{NSIndexSet, NSInteger, NSNotification, NSString};
 
 use crate::signal::{Effect, Signal, batch, untrack};
 use crate::view::{Cx, Identifiable, Kind, Node, Size, View};
@@ -45,7 +45,8 @@ impl<T> TreeNode<T> {
 struct Entry {
     key: u64,
     title: String,
-    icon: Option<String>,
+    /// An SF Symbol and its colour.
+    icon: Option<(String, Option<crate::Color>)>,
     children: Vec<usize>,
     expandable: bool,
 }
@@ -126,7 +127,7 @@ define_class!(
                     s.entries.get(i).map(|e| (e.title.clone(), e.icon.clone(), s.group_roots && s.roots.contains(&i)))
                 })
             });
-            found.map(|(title, icon, group)| cell(ov, &title, icon.as_deref(), group))
+            found.map(|(title, icon, group)| cell(ov, &title, icon.as_ref().map(|(n, c)| (n.as_str(), *c)), group))
         }
 
         #[unsafe(method(outlineView:isGroupItem:))]
@@ -179,7 +180,7 @@ fn index_of(item: Option<&AnyObject>) -> Option<usize> {
 }
 
 /// A row: optional SF Symbol and a title (reused by identifier).
-fn cell(ov: &NSOutlineView, title: &str, icon: Option<&str>, group: bool) -> Retained<NSView> {
+fn cell(ov: &NSOutlineView, title: &str, icon: Option<(&str, Option<crate::Color>)>, group: bool) -> Retained<NSView> {
     let mtm = MainThreadMarker::from(ov);
     let ident = NSString::from_str(if group { "group" } else if icon.is_some() { "icon" } else { "plain" });
     // SAFETY: reuse lookup by identifier; owner may be nil.
@@ -188,18 +189,37 @@ fn cell(ov: &NSOutlineView, title: &str, icon: Option<&str>, group: bool) -> Ret
         let v = NSTableCellView::new(mtm);
         v.setIdentifier(Some(&ident));
         let text = NSTextField::labelWithString(&NSString::new(), mtm);
-        let x = if icon.is_some() { 24.0 } else { 2.0 };
-        text.setFrame(NSRect::new(NSPoint::new(x, 2.0), NSSize::new(200.0, 18.0)));
-        text.setAutoresizingMask(objc2_app_kit::NSAutoresizingMaskOptions::ViewWidthSizable);
+        text.setLineBreakMode(objc2_app_kit::NSLineBreakMode::ByTruncatingTail);
+        if group {
+            // Section headings: small, bold and secondary, as in Finder's
+            // and Mail's sidebars.
+            text.setFont(Some(&objc2_app_kit::NSFont::boldSystemFontOfSize(objc2_app_kit::NSFont::smallSystemFontSize())));
+            text.setTextColor(Some(&objc2_app_kit::NSColor::secondaryLabelColor()));
+        }
         v.addSubview(&text);
         // SAFETY: the cell view keeps its subviews; these are weak conveniences.
         unsafe { v.setTextField(Some(&text)) };
+        // Centred in the row, whatever its height: the sidebar's rows follow
+        // the user's sidebar icon size (System Settings › Appearance).
+        let center = |sub: &NSView| {
+            sub.setTranslatesAutoresizingMaskIntoConstraints(false);
+            sub.centerYAnchor().constraintEqualToAnchor(&v.centerYAnchor()).setActive(true);
+        };
+        center(&text);
+        text.trailingAnchor().constraintLessThanOrEqualToAnchor_constant(&v.trailingAnchor(), -2.0).setActive(true);
+        // (Lower priority than the outline's own width.)
+        text.setContentCompressionResistancePriority_forOrientation(250.0, objc2_app_kit::NSLayoutConstraintOrientation::Horizontal);
         if icon.is_some() {
             let image = NSImageView::new(mtm);
-            image.setFrame(NSRect::new(NSPoint::new(2.0, 2.0), NSSize::new(18.0, 18.0)));
             v.addSubview(&image);
             // SAFETY: as above.
             unsafe { v.setImageView(Some(&image)) };
+            center(&image);
+            image.leadingAnchor().constraintEqualToAnchor_constant(&v.leadingAnchor(), 2.0).setActive(true);
+            image.widthAnchor().constraintEqualToConstant(20.0).setActive(true);
+            text.leadingAnchor().constraintEqualToAnchor_constant(&image.trailingAnchor(), 6.0).setActive(true);
+        } else {
+            text.leadingAnchor().constraintEqualToAnchor_constant(&v.leadingAnchor(), 2.0).setActive(true);
         }
         v
     });
@@ -207,8 +227,10 @@ fn cell(ov: &NSOutlineView, title: &str, icon: Option<&str>, group: bool) -> Ret
     if let Some(t) = unsafe { view.textField() } {
         t.setStringValue(&NSString::from_str(title));
     }
-    if let (Some(name), Some(iv)) = (icon, unsafe { view.imageView() }) {
+    if let (Some((name, tint)), Some(iv)) = (icon, unsafe { view.imageView() }) {
         iv.setImage(NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str(name), None).as_deref());
+        // A reused cell keeps its last tint unless it's set every time.
+        iv.setContentTintColor(tint.map(|c| c.ns()).as_deref());
     }
     Retained::into_super(view)
 }
@@ -222,12 +244,17 @@ fn key_of<K: Hash>(id: &K) -> u64 {
 type Roots<T> = Box<dyn Fn() -> Vec<TreeNode<T>>>;
 /// An item's SF Symbol name, if any.
 type IconFn<T> = dyn Fn(&T) -> Option<String>;
+/// An item's icon colour, if it has its own.
+type TintFn<T> = dyn Fn(&T) -> Option<crate::Color>;
+/// An item's symbol and colour.
+type LookFn<T> = dyn Fn(&T) -> Option<(String, Option<crate::Color>)>;
 
 /// A native outline view over a tree (see the module docs).
 pub struct Outline<T: Identifiable + 'static> {
     roots: Roots<T>,
     title: Rc<dyn Fn(&T) -> String>,
     icon: Option<Rc<IconFn<T>>>,
+    tint: Option<Rc<TintFn<T>>>,
     selection: Option<Signal<Option<T::Id>>>,
     sidebar: bool,
 }
@@ -236,6 +263,13 @@ impl<T: Identifiable + 'static> Outline<T> {
     /// An SF Symbol per item (or `None`).
     pub fn icon(mut self, f: impl Fn(&T) -> Option<String> + 'static) -> Self {
         self.icon = Some(Rc::new(f));
+        self
+    }
+
+    /// A colour per item's icon (or `None` for the sidebar's own), as
+    /// Mail's mailboxes and Reminders' lists show theirs.
+    pub fn icon_color(mut self, f: impl Fn(&T) -> Option<crate::Color> + 'static) -> Self {
+        self.tint = Some(Rc::new(f));
         self
     }
 
@@ -258,6 +292,9 @@ impl<T: Identifiable + 'static> View for Outline<T> {
         if self.sidebar {
             ov.setStyle(NSTableViewStyle::SourceList);
             ov.setFloatsGroupRows(false);
+            // The user's sidebar icon size (small, medium, large), as in
+            // Finder and Mail; the cells' fonts and symbols follow it.
+            ov.setRowSizeStyle(objc2_app_kit::NSTableViewRowSizeStyle::Default);
         }
         let scroll = NSScrollView::new(mtm);
         scroll.setDocumentView(Some(&ov));
@@ -317,7 +354,9 @@ impl<T: Identifiable + 'static> View for Outline<T> {
         };
 
         // Rebuild when the tree's signals change; keep item objects by id.
-        let (roots_fn, title, icon, sidebar) = (self.roots, self.title, self.icon, self.sidebar);
+        let (roots_fn, title, sidebar) = (self.roots, self.title, self.sidebar);
+        let tint = self.tint;
+        let icon: Option<Rc<LookFn<T>>> = self.icon.map(|f| Rc::new(move |v: &T| f(v).map(|name| (name, tint.as_ref().and_then(|t| t(v))))) as Rc<LookFn<T>>);
         let (st, ids2, ov2, restore2) = (state.clone(), ids.clone(), ov.clone(), restore.clone());
         node.own(Effect::new(move || {
             let roots = roots_fn();
@@ -330,7 +369,7 @@ impl<T: Identifiable + 'static> View for Outline<T> {
                     out: &mut Vec<Entry>,
                     typed: &mut Vec<T::Id>,
                     title: &dyn Fn(&T) -> String,
-                    icon: Option<&IconFn<T>>,
+                    icon: Option<&LookFn<T>>,
                 ) -> usize {
                     let index = out.len();
                     let id = n.value.id();
@@ -391,7 +430,7 @@ pub fn outline<T: Identifiable + 'static>(
     roots: impl Fn() -> Vec<TreeNode<T>> + 'static,
     title: impl Fn(&T) -> String + 'static,
 ) -> Outline<T> {
-    Outline { roots: Box::new(roots), title: Rc::new(title), icon: None, selection: None, sidebar: false }
+    Outline { roots: Box::new(roots), title: Rc::new(title), icon: None, tint: None, selection: None, sidebar: false }
 }
 
 /// A Mac sidebar: an outline in the source-list style whose top-level items

@@ -265,9 +265,10 @@ fn badge(symbol: &str, tint: Color, size: f64) -> impl View + use<> {
     .frame(size, size)
 }
 
-/// A card: the system's card colour, rounded, a hairline and a soft shadow.
+/// A card as AppKit's grouped boxes draw them: the system's fill for
+/// grouped content, rounded, no border or shadow.
 fn card(content: impl View) -> impl View {
-    content.padding(16.0).background(Color::ControlBackground).corner_radius(14.0).border(Color::Separator, 0.5).shadow(Shadow::soft())
+    content.padding(16.0).background(Color::QuaternaryFill).corner_radius(12.0)
 }
 
 /// A ring `done()` full, in `tint`, with the percentage inside.
@@ -346,10 +347,9 @@ fn habit_card(t: Tracker, h: Habit) -> impl View {
     ))
     .spacing(14.0)
     .padding(14.0)
-    .background_when(move || if t.is_done(id, t.today.get()) { tint.opacity(0.14) } else { Color::ControlBackground })
-    .corner_radius(14.0)
-    .border(Color::Separator, 0.5)
-    .shadow(Shadow::soft())
+    .background_when(move || if t.is_done(id, t.today.get()) { tint.opacity(0.14) } else { Color::QuaternaryFill })
+    .corner_radius(12.0)
+    .hover_highlight(Color::Quaternary)
     .on_click(move || animated(|| t.toggle(id, t.today.get_untracked())))
     .transition(Transition::Slide(Edge::Below))
     .fill_width()
@@ -642,11 +642,7 @@ fn insights(t: Tracker) -> impl View {
 
 // ---- the sidebar ----
 
-/// A sidebar row: selected while its page shows, and a click shows it.
-fn nav_row<F: Fn() -> String + 'static>(t: Tracker, page: Page, symbol: &str, tint: Color, title: F) -> impl View + use<F> {
-    row(symbol, tint, title, move || t.page.get() == page, move || animated(|| t.page.set(page)))
-}
-
+/// A clickable row with a symbol (New Habit…).
 fn row<F, S, A>(symbol: &str, tint: Color, title: F, selected: S, action: A) -> impl View + use<F, S, A>
 where
     F: Fn() -> String + 'static,
@@ -662,22 +658,72 @@ where
         .on_click(action)
 }
 
+/// A sidebar item: a page, or a section heading.
+#[derive(Clone, PartialEq)]
+struct Item {
+    key: String,
+    title: String,
+    symbol: Option<String>,
+    tint: Option<Color>,
+}
+
+impl Identifiable for Item {
+    type Id = String;
+    fn id(&self) -> String {
+        self.key.clone()
+    }
+}
+
+fn key_of(page: Page) -> String {
+    match page {
+        Page::Today => "today".into(),
+        Page::Insights => "insights".into(),
+        Page::Habit(id) => format!("habit:{id}"),
+    }
+}
+
+fn page_of(key: &str) -> Option<Page> {
+    match key {
+        "today" => Some(Page::Today),
+        "insights" => Some(Page::Insights),
+        _ => key.strip_prefix("habit:").and_then(|id| id.parse().ok()).map(Page::Habit),
+    }
+}
+
+/// AppKit's own sidebar (arrow keys, type-select, the system's selection),
+/// with each habit's symbol in its colour.
 fn sidebar_view(t: Tracker) -> impl View {
+    let selected = Signal::new(Some(key_of(untrack(|| t.page.get()))));
+    let item = |key: &str, title: String, symbol: &str, tint: Color| TreeNode::leaf(Item { key: key.into(), title, symbol: Some(symbol.into()), tint: Some(tint) });
+    let sections = move || {
+        let habits = t.habits.get().into_iter().map(|h| item(&key_of(Page::Habit(h.id)), h.name.clone(), &h.symbol, h.tint())).collect();
+        vec![
+            TreeNode::branch(Item { key: "overview".into(), title: tr("Overview"), symbol: None, tint: None }, vec![
+                item("today", tr("Today"), "checkmark.circle.fill", Color::Green),
+                item("insights", tr("Insights"), "chart.bar.fill", Color::Blue),
+            ]),
+            TreeNode::branch(Item { key: "habits".into(), title: tr("Habits"), symbol: None, tint: None }, habits),
+        ]
+    };
     vstack((
-        nav_row(t, Page::Today, "checkmark.circle.fill", Color::Green, || tr("Today")),
-        nav_row(t, Page::Insights, "chart.bar.fill", Color::Blue, || tr("Insights")),
-        text(tr("Habits")).font(Font::caption().weight(Weight::Semibold)).color(Color::Secondary).padding(8.0),
-        vstack((for_each(move || t.habits.get(), move |h: Habit| {
-            let id = h.id;
-            nav_row(t, Page::Habit(id), &h.symbol, h.tint(), move || t.habit(id).map(|h| h.name).unwrap_or_default()).transition(Transition::Slide(Edge::Leading))
-        }),))
-        .spacing(1.0),
-        spacer(),
-        row("plus.circle", Color::Secondary, || tr("New Habit…"), || false, move || new_habit(t)),
+        sidebar(sections, |i: &Item| i.title.clone()).icon(|i: &Item| i.symbol.clone()).icon_color(|i: &Item| i.tint).selection(&selected),
+        row("plus.circle", Color::Secondary, || tr("New Habit…"), || false, move || new_habit(t)).padding(8.0),
+        // The selection and the page follow each other.
+        watch(move || {
+            if let Some(page) = selected.get().as_deref().and_then(page_of)
+                && untrack(|| t.page.get()) != page
+            {
+                untrack(|| animated(|| t.page.set(page)));
+            }
+        }),
+        watch(move || {
+            let key = Some(key_of(t.page.get()));
+            if untrack(|| selected.get()) != key {
+                untrack(|| selected.set(key));
+            }
+        }),
     ))
-    .spacing(1.0)
-    .alignment(Align::Start)
-    .padding(10.0)
+    .spacing(0.0)
 }
 
 // ---- new habit ----
@@ -988,6 +1034,21 @@ mod self_checks {
         })
     }
 
+    /// The sidebar, the row titled `name`, and its icon's colour.
+    fn sidebar_row(w: &NSWindow, name: &str) -> (Option<Retained<objc2_app_kit::NSOutlineView>>, Option<usize>, Option<String>) {
+        let Some(o) = views(w).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSOutlineView>().ok()) else { return (None, None, None) };
+        for r in 0..o.numberOfRows() {
+            let Some(cell) = o.viewAtColumn_row_makeIfNecessary(0, r, true).and_then(|v| v.downcast::<objc2_app_kit::NSTableCellView>().ok()) else { continue };
+            // SAFETY: reading the cell's outlets on the main thread.
+            let (text, image) = unsafe { (cell.textField(), cell.imageView()) };
+            if text.is_some_and(|t| t.stringValue().to_string() == name) {
+                let tint = image.and_then(|i| i.contentTintColor()).and_then(|c| Color::from_ns(&c)).map(|c| format!("{c:?}"));
+                return (Some(o), Some(r as usize), tint);
+            }
+        }
+        (Some(o), None, None)
+    }
+
     /// The opacity of the background behind a clickable row.
     fn row_fill(w: &NSWindow, row: &NSView) -> Option<f64> {
         let surface = views(w).into_iter().find(|v| v.class().name().to_string_lossy() == "FerrokitSurface" && v.frame() == row.frame())?;
@@ -1031,8 +1092,8 @@ mod self_checks {
         let streaks = ["12 days", "5 days"].iter().all(|s| shown.contains(&s.to_string()));
         check("streaks", streaks && untrack(|| t.streak(1)) == 12 && untrack(|| t.best_streak(1)) >= 12, format!("walk {} (best {}), read {}", untrack(|| t.streak(1)), untrack(|| t.best_streak(1)), untrack(|| t.streak(2))));
         snap(&w, "today");
-        // The selected sidebar row keeps its colour under the pointer.
-        let row = clickable(&w, "Today", false);
+        // A done card keeps its colour under the pointer.
+        let row = clickable(&w, "Walk 8,000 steps", true);
         let before = row.as_ref().and_then(|r| row_fill(&w, r));
         if let Some(r) = &row {
             ferrokit::testing::hover(r, true);
@@ -1049,7 +1110,7 @@ mod self_checks {
             let shown = texts(&w);
             let arc = canvases(&w, "60%").into_iter().next().and_then(|r| canvas_drawing(&r)).and_then(|d| d.into_iter().find(|o| o.starts_with("stroke arc")));
             let after = row.as_ref().and_then(|r| row_fill(&w, r));
-            check2("selected-row-hover", before.is_some_and(|b| b > 0.1) && after == before, format!("selection {before:?}, hovered {after:?}"));
+            check2("hover-keeps-background", before.is_some_and(|b| b > 0.1) && after == before, format!("done card {before:?}, hovered {after:?}"));
             if let Some(r) = &row {
                 ferrokit::testing::hover(r, false);
             }
@@ -1093,9 +1154,16 @@ mod self_checks {
 
     fn habit_phase(w: Retained<NSWindow>, t: Tracker, check: Check, failed: Rc<Cell<u32>>) {
         w.makeKeyAndOrderFront(None);
-        if let Some(row) = clickable(&w, "Walk 8,000 steps", false) {
-            click(&row);
+        // The sidebar is AppKit's: select the row as a click (or arrow key) would.
+        let (outline, row, tint) = sidebar_row(&w, "Walk 8,000 steps");
+        if let (Some(o), Some(r)) = (&outline, row) {
+            o.selectRowIndexes_byExtendingSelection(&objc2_foundation::NSIndexSet::indexSetWithIndex(r), false);
         }
+        check(
+            "sidebar",
+            outline.as_ref().is_some_and(|o| o.style() == objc2_app_kit::NSTableViewStyle::SourceList) && tint.as_deref() == Some("Green"),
+            format!("source list {}; row {row:?}; icon tint {tint:?}", outline.as_ref().is_some_and(|o| o.style() == objc2_app_kit::NSTableViewStyle::SourceList)),
+        );
         later_ms(500, move || {
             let page = untrack(|| t.page.get());
             let shown = texts(&w);

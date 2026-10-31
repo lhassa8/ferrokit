@@ -78,7 +78,7 @@ let card = vstack((
 # let _ = card;
 ```
 
-- **Colours:** `Color::ControlBackground` is the system's colour for cards and panels, and `Color::WindowBackground` the window's.
+- **Colours:** `Color::QuaternaryFill` is the system's fill for grouped content: cards as SwiftUI's `GroupBox` and grouped forms draw them, a translucent grey that suits light and dark. `Fill`, `SecondaryFill` and `TertiaryFill` are stronger, for smaller shapes (a ring's track, a field). `Color::ControlBackground` is the colour for panels and lists, and `Color::WindowBackground` the window's.
 - **Shadows:** `Shadow::soft()` suits cards on a background, `Shadow::floating()` something above the content, and `Shadow::new(radius, y)` sets your own.
 - **Opacity:** `.opacity(0.4)` fades a whole view.
 

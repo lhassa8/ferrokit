@@ -180,6 +180,11 @@ let window = Window::new("Library")
 # let _ = window;
 ```
 
+Toolbar items show their symbols alone, as in Apple's apps; their labels
+are what VoiceOver reads and what the overflow menu shows. With
+`ToolbarStyle::Expanded` or `Preference` (a Settings window), the labels
+show under the symbols.
+
 `.remember(name)` keeps the divider's position across launches;
 `Window::remember_frame(name)` does the same for the window's frame.
 

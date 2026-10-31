@@ -76,7 +76,7 @@ pub(crate) fn ideal(node: &Node) -> Size {
         return s;
     }
     bump(&MEASURED);
-    let p = node.padding * 2.0;
+    let p = (node.padding.0 * 2.0, node.padding.1 * 2.0);
     let mut s = match &node.kind {
         Kind::Leaf(l) => {
             let s = l.content.get().unwrap_or_else(|| {
@@ -124,8 +124,8 @@ pub(crate) fn ideal(node: &Node) -> Size {
             }
         }
     };
-    s.w += p;
-    s.h += p;
+    s.w += p.0;
+    s.h += p.1;
     if let Some(w) = node.fixed.0 {
         s.w = w;
     }
@@ -275,8 +275,8 @@ fn place_under_bar_at(node: &Node, x: f64, w: f64, h: f64, top: f64, snap: &Snap
 /// Places what's inside `node`'s padding. `top` is a title bar over a split
 /// view's panes (see [`place_under_bar`]).
 fn place_body(node: &Node, x: f64, y: f64, w: f64, h: f64, top: f64, snap: &Snap) {
-    let p = node.padding;
-    let (ix, iy, iw, ih) = (x + p, y + p, (w - 2.0 * p).max(0.0), (h - 2.0 * p).max(0.0));
+    let (px, py) = node.padding;
+    let (ix, iy, iw, ih) = (x + px, y + py, (w - 2.0 * px).max(0.0), (h - 2.0 * py).max(0.0));
     match &node.kind {
         Kind::Leaf(l) => Native::place(&l.view, snapped(ix, iy, iw, ih, snap)),
         Kind::Spacer => {}

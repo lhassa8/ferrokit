@@ -93,7 +93,10 @@ let view = table(&model).accessibility_label("Downloads");
 
 `outline(roots, title)` shows a tree of `Identifiable` values; expansion and
 selection survive updates. `sidebar(…)` is the same in the source-list
-style of Mail's or Finder's sidebar.
+style of Mail's or Finder's sidebar: its roots are section headings, and
+its rows follow the user's sidebar icon size (System Settings ›
+Appearance). `.icon_color(|item| Some(Color::Green))` gives a row's symbol
+its own colour, as Mail's mailboxes and Reminders' lists have.
 
 ```rust,no_run
 use ferrokit::*;

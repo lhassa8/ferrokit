@@ -176,6 +176,7 @@ pub enum ToolbarStyle {
     /// One bar, shorter: for windows with few toolbar items.
     UnifiedCompact,
     /// The title above the toolbar, items labelled (as in Settings windows).
+    /// The other styles show symbols alone.
     Expanded,
     /// The title above the toolbar, items centred (Settings' tabs).
     Preference,
@@ -387,6 +388,12 @@ impl Window {
         }
         if let Some(style) = self.chrome.toolbar_style {
             window.setToolbarStyle(style.ns());
+            // The title-above styles label their items.
+            if matches!(style, ToolbarStyle::Expanded | ToolbarStyle::Preference)
+                && let Some(t) = window.toolbar()
+            {
+                t.setDisplayMode(objc2_app_kit::NSToolbarDisplayMode::IconAndLabel);
+            }
         }
         if self.chrome.hide_title {
             window.setTitleVisibility(objc2_app_kit::NSWindowTitleVisibility::Hidden);

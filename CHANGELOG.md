@@ -112,6 +112,20 @@ The app:
   - storage in user defaults.
 - **Checks:** 17 self-checks, and captures in light and dark.
 
+### Side by side with Apple's rendering (Phase 3, S3)
+
+Both showcase apps were compared with a SwiftUI reference of the same screens (`docs/S3_REVIEW.md`), and the framework now matches it:
+- **Toolbars show symbols alone,** as Apple's apps do (the bar is 52 points, not 66). The Expanded and Preference styles keep labels.
+- **Sidebars:**
+  - rows follow the user's sidebar icon size, with icons and titles centred and long titles truncated;
+  - section headings are small, bold and secondary;
+  - `.icon_color(..)` gives each row's symbol its own colour.
+- **`Color::Fill`, `SecondaryFill`, `TertiaryFill`, `QuaternaryFill`:** the system fills; `QuaternaryFill` is the grouped-card colour of `GroupBox` and grouped forms.
+- **`.padding_xy(horizontal, vertical)`:** padding per axis.
+- **The apps:**
+  - Habits uses the real sidebar (arrow keys, type-select, the system's selection) and flat grouped cards;
+  - the SQL browser's inspector is a grouped form: names on the left, values right-aligned in secondary text.
+
 ### ferrokit-core (was appkit-host)
 
 - **Fixed: typing over a selection in a highlighted editor could crash the app.** Restyling set the editor's typing attributes in the middle of the edit, while the text view still held the old selection; AppKit read attributes past the end of the shorter text and threw, which left TextKit 2's layout behind the text, so the typed text didn't show and the next redraw aborted. Typing attributes are now left alone during an edit, and highlighting runs in `willProcessEditing` as part of the edit itself.
