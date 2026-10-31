@@ -27,6 +27,14 @@ Also renamed, for anyone who relied on them: the Objective-C class prefixes (`Ap
 - **Changed: a stack's flexible children share its length equally.** A child whose own length is larger keeps it. So a row of cards that `fill_width()` come out the same width; before, each got its own width plus an equal share of the extra.
 - A new guide chapter, Styling, and a new example, `styles`, with 12 self-checks, from fonts read back to colours, corners and shadows sampled from real window captures in light and dark.
 
+### Materials and window chrome (Phase 3, V2)
+
+- **Materials:** `.material(Material::Sidebar)` (and header, title bar, popover, menu, HUD, sheet, window and content backgrounds, selection, tooltip) puts the system's translucent material behind any view. It follows Dark Mode, Reduce Transparency and the window's active state; `.corner_radius(..)` rounds it.
+- **Liquid Glass:** `.glass(Glass::Regular)` (or `Clear`, or `Tinted(color)`) on macOS 26 and later, with a translucent material in its place on macOS 15. `has_liquid_glass()` says which.
+- **Layers:** `zstack(..)` puts views on top of one another (text or glass over a picture, a badge over an icon), with `.alignment(horizontal, vertical)`.
+- **Window chrome:** `Window::full_size_content()`, `.transparent_title_bar()`, `.hide_title()`, `.toolbar_style(ToolbarStyle::UnifiedCompact)` (and `Unified`, `Expanded`, `Preference`) and `.background(color)`. With full-size content, backgrounds, materials and split panes reach the top of the window, so a sidebar runs up behind the window buttons, while the content starts below the title bar.
+- A new guide chapter, Materials and windows, and a new example, `materials`, with 13 self-checks including captures in light and dark.
+
 ### ferrokit-core (was appkit-host)
 
 - **Fixed: typing over a selection in a highlighted editor could crash the app.** Restyling set the editor's typing attributes in the middle of the edit, while the text view still held the old selection; AppKit read attributes past the end of the shorter text and threw, which left TextKit 2's layout behind the text, so the typed text didn't show and the next redraw aborted. Typing attributes are now left alone during an edit, and highlighting runs in `willProcessEditing` as part of the edit itself.

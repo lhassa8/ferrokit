@@ -179,6 +179,8 @@ pub(crate) enum Kind {
     Stack { axis: Axis, spacing: f64, align: Option<Align>, children: Vec<Node> },
     Grid { spacing: (f64, f64), rows: Vec<Vec<Node>>, align: Vec<Align> },
     Spacer,
+    /// Children on top of one another, each aligned in the same rectangle.
+    Layers { align: (Align, Align), children: Vec<Node> },
     /// Children that change over time; laid out inline in the parent stack.
     Group(Rc<RefCell<Vec<Node>>>),
     /// Content inside a scroll container's (flipped) document view.
@@ -241,7 +243,7 @@ impl Node {
     /// Children owned directly (not through a group).
     fn children_static(&self) -> Vec<&Node> {
         match &self.kind {
-            Kind::Stack { children, .. } => children.iter().collect(),
+            Kind::Stack { children, .. } | Kind::Layers { children, .. } => children.iter().collect(),
             Kind::Grid { rows, .. } => rows.iter().flatten().collect(),
             Kind::Scroll { content, .. } => vec![&**content],
             Kind::Split { panes, .. } => panes.iter().map(|(_, n)| n).collect(),
@@ -283,7 +285,7 @@ impl Node {
             Kind::Leaf(l) => out.push(l.view.clone()),
             Kind::Scroll { scroll, .. } => out.push(Native::scroll_as_view(scroll)),
             Kind::Split { panes, .. } => panes.iter().for_each(|(_, n)| n.leaf_views(out)),
-            Kind::Stack { children, .. } => children.iter().for_each(|c| c.leaf_views(out)),
+            Kind::Stack { children, .. } | Kind::Layers { children, .. } => children.iter().for_each(|c| c.leaf_views(out)),
             Kind::Grid { rows, .. } => rows.iter().flatten().for_each(|c| c.leaf_views(out)),
             Kind::Group(g) => g.borrow().iter().for_each(|c| c.leaf_views(out)),
             Kind::Spacer => {}
@@ -297,7 +299,7 @@ impl Node {
             Kind::Leaf(l) => out.push(l.view.clone()),
             Kind::Scroll { scroll, .. } => out.push(Native::scroll_as_view(scroll)),
             Kind::Split { panes, .. } => panes.iter().for_each(|(_, n)| out.extend(n.all_views())),
-            Kind::Stack { children, .. } => children.iter().for_each(|c| out.extend(c.all_views())),
+            Kind::Stack { children, .. } | Kind::Layers { children, .. } => children.iter().for_each(|c| out.extend(c.all_views())),
             Kind::Grid { rows, .. } => rows.iter().flatten().for_each(|c| out.extend(c.all_views())),
             Kind::Group(g) => g.borrow().iter().for_each(|c| out.extend(c.all_views())),
             Kind::Spacer => {}
@@ -429,6 +431,20 @@ pub trait ViewExt: View + Sized {
     fn opacity(self, opacity: f64) -> Modified<Self> {
         Modified::new(self).opacity(opacity)
     }
+
+    /// A system material behind the view, its padding included: a
+    /// translucent sidebar, header or panel that blurs what's behind it.
+    /// [`corner_radius`](Self::corner_radius) rounds it.
+    fn material(self, material: crate::Material) -> Modified<Self> {
+        Modified::new(self).material(material)
+    }
+
+    /// Liquid Glass behind the view, its padding included (macOS 26; a
+    /// translucent material on macOS 15). [`corner_radius`](Self::corner_radius)
+    /// rounds it.
+    fn glass(self, glass: crate::Glass) -> Modified<Self> {
+        Modified::new(self).glass(glass)
+    }
 }
 
 impl<V: View> ViewExt for V {}
@@ -459,6 +475,7 @@ enum Op {
     Radius(f64),
     Border(crate::Color, f64),
     Shadow(crate::Shadow),
+    Backdrop(crate::material::Backdrop),
 }
 
 impl<V: View> Modified<V> {
@@ -573,6 +590,18 @@ impl<V: View> Modified<V> {
         self.opacity = Some(opacity);
         self
     }
+
+    /// A system material behind the view (see [`ViewExt::material`]).
+    pub fn material(mut self, material: crate::Material) -> Self {
+        self.ops.push(Op::Backdrop(crate::material::Backdrop::Material(material)));
+        self
+    }
+
+    /// Liquid Glass behind the view (see [`ViewExt::glass`]).
+    pub fn glass(mut self, glass: crate::Glass) -> Self {
+        self.ops.push(Op::Backdrop(crate::material::Backdrop::Glass(glass)));
+        self
+    }
 }
 
 impl<V: View> View for Modified<V> {
@@ -582,7 +611,7 @@ impl<V: View> View for Modified<V> {
         let mut look = crate::surface::Look::default();
         let mut has_look = false;
         for op in self.ops {
-            let is_look = matches!(op, Op::Background(_) | Op::Radius(_) | Op::Border(..) | Op::Shadow(_));
+            let is_look = matches!(op, Op::Background(_) | Op::Radius(_) | Op::Border(..) | Op::Shadow(_) | Op::Backdrop(_));
             if !is_look && has_look {
                 node = add_surface(node, std::mem::take(&mut look), cx);
                 has_look = false;
@@ -612,6 +641,7 @@ impl<V: View> View for Modified<V> {
                 Op::Radius(r) => look.radius = r,
                 Op::Border(c, w) => look.border = Some((c, w)),
                 Op::Shadow(s) => look.shadow = Some(s),
+                Op::Backdrop(b) => look.backdrop = Some(b),
             }
             has_look |= is_look;
         }
@@ -662,20 +692,29 @@ fn wrap(node: Node) -> Node {
 }
 
 /// A surface behind `node`'s native views, framed to its rectangle (a
-/// node that already has one goes in a box first).
-fn add_surface(node: Node, look: crate::surface::Look, cx: &Cx) -> Node {
+/// node that already has one goes in a box first). A material or glass in
+/// the look goes under the surface.
+fn add_surface(node: Node, mut look: crate::surface::Look, cx: &Cx) -> Node {
     let mut node = if node.decor.is_empty() { node } else { wrap(node) };
-    let surface: NativeView = objc2::rc::Retained::into_super(crate::surface::Surface::new(cx.mtm, look));
+    let mut layers = Vec::new();
+    if let Some(b) = look.backdrop.take() {
+        layers.push(crate::material::backdrop(cx.mtm, b, look.radius));
+    }
+    if look != (crate::surface::Look { radius: look.radius, ..Default::default() }) || layers.is_empty() {
+        layers.push(objc2::rc::Retained::into_super(crate::surface::Surface::new(cx.mtm, look)));
+    }
     // Below the lowest of the node's views in the container (they were
-    // added as it was built).
+    // added as it was built), bottom layer first.
     let views = node.all_views();
     let subviews = cx.container.subviews();
     let lowest = subviews.iter().find(|s| views.iter().any(|v| objc2::rc::Retained::as_ptr(v) == objc2::rc::Retained::as_ptr(s)));
-    match lowest {
-        Some(lowest) => cx.container.addSubview_positioned_relativeTo(&surface, objc2_app_kit::NSWindowOrderingMode::Below, Some(&lowest)),
-        None => Native::add_subview(&cx.container, &surface),
+    for layer in layers {
+        match &lowest {
+            Some(lowest) => cx.container.addSubview_positioned_relativeTo(&layer, objc2_app_kit::NSWindowOrderingMode::Below, Some(lowest)),
+            None => Native::add_subview(&cx.container, &layer),
+        }
+        node.decor.push(layer);
     }
-    node.decor.push(surface);
     node.meta.mark();
     node
 }
@@ -752,6 +791,50 @@ pub fn vstack(children: impl Views) -> Stack {
 /// Children left to right.
 pub fn hstack(children: impl Views) -> Stack {
     Stack { axis: Axis::Horizontal, spacing: 8.0, align: None, children: children.into_views() }
+}
+
+/// Children on top of one another (see [`zstack`]).
+pub struct Layers {
+    align: (Align, Align),
+    children: Vec<AnyView>,
+}
+
+impl Layers {
+    /// Where children smaller than the stack sit, across and down (default
+    /// centred): `Align::Start` is leading or top, `Align::End` trailing or
+    /// bottom.
+    pub fn alignment(mut self, horizontal: Align, vertical: Align) -> Self {
+        self.align = (horizontal, vertical);
+        self
+    }
+}
+
+impl View for Layers {
+    fn build(self, cx: &mut Cx) -> Node {
+        let children = self.children.into_iter().map(|c| c.build_node(&mut cx.child())).collect();
+        Node::new(Kind::Layers { align: self.align, children })
+    }
+}
+
+/// Children on top of one another, the first at the back: text or a glass
+/// panel over a picture, a badge over an icon. The stack is as large as its
+/// largest child. Children that fill (a picture with `.fill_width()` and
+/// `.fill_height()`) take its whole size; the others keep their own and are
+/// centred, or placed by [`alignment`](Layers::alignment).
+///
+/// ```no_run
+/// use ferrokit::*;
+///
+/// let hero = zstack((
+///     image_file("cover.jpg").fill().fill_width().fill_height(),
+///     text("Summer").font(Font::large_title()).padding(16.0).glass(Glass::Regular).corner_radius(14.0).padding(20.0),
+/// ))
+/// .alignment(Align::Start, Align::End)
+/// .height(260.0);
+/// # let _ = hero;
+/// ```
+pub fn zstack(children: impl Views) -> Layers {
+    Layers { align: (Align::Center, Align::Center), children: children.into_views() }
 }
 
 /// Rows of cells in aligned columns: each column is as wide as its widest

@@ -28,6 +28,8 @@ let page = vstack((toolbar, divider(), text("Content").fill_width())).padding(16
 - `spacer()` takes the space left over. A fixed view keeps its natural size.
 - Modifiers, on any view: `.padding(p)`, `.width(w)`, `.height(h)`,
   `.frame(w, h)`, `.fill_width()`, `.fill_height()`.
+- `zstack` puts views on top of one another, such as text over a picture
+  (see [Materials and windows](10-materials-and-windows.md)).
 
 ## Grids: forms
 

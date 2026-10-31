@@ -53,6 +53,7 @@ mod documents;
 mod frame;
 mod l10n;
 mod layout;
+mod material;
 mod menu;
 mod models;
 mod outline;
@@ -110,6 +111,7 @@ pub use ferrokit_core::text::{Color, TextModel, TextStyle};
 pub use syntax::Syntax;
 pub use style::{Font, Weight};
 pub use surface::Shadow;
+pub use material::{Glass, Material, has_liquid_glass};
 pub use popover::Edge;
 pub use canvas::{Canvas, Painter, canvas};
 pub use transfer::{Clipboard, DragItem, WriteFile};
@@ -122,7 +124,7 @@ pub use objc2_app_kit::NSWindow;
 pub use objc2::rc::Retained;
 pub use view::{
     Align, AnyView, Axis, Cx, Dynamic, ForEach, Grid, Identifiable, Modified, Node, Size, Spacer, Stack, View, ViewExt, Views,
-    dynamic, for_each, grid, hstack, live_nodes, spacer, vstack, watch, Watch,
+    dynamic, for_each, grid, hstack, zstack, Layers, live_nodes, spacer, vstack, watch, Watch,
 };
 pub use appkit_views::{Button, Divider, Label, Scroll, Text, button, divider, label, scroll, text};
 
@@ -141,6 +143,43 @@ pub struct Window {
     fixed: bool,
     responds: commands::Responds,
     drops: Option<FileDrop>,
+    chrome: WindowChrome,
+}
+
+/// How a window's title bar and toolbar look.
+#[derive(Default)]
+struct WindowChrome {
+    toolbar_style: Option<ToolbarStyle>,
+    hide_title: bool,
+    transparent_title_bar: bool,
+    full_size_content: bool,
+    background: Option<Color>,
+}
+
+/// How a window's toolbar sits with its title (see [`Window::toolbar_style`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ToolbarStyle {
+    /// The title and toolbar items in one bar (the default).
+    Unified,
+    /// One bar, shorter: for windows with few toolbar items.
+    UnifiedCompact,
+    /// The title above the toolbar, items labelled (as in Settings windows).
+    Expanded,
+    /// The title above the toolbar, items centred (Settings' tabs).
+    Preference,
+}
+
+impl ToolbarStyle {
+    fn ns(self) -> objc2_app_kit::NSWindowToolbarStyle {
+        use objc2_app_kit::NSWindowToolbarStyle as S;
+        match self {
+            ToolbarStyle::Unified => S::Unified,
+            ToolbarStyle::UnifiedCompact => S::UnifiedCompact,
+            ToolbarStyle::Expanded => S::Expanded,
+            ToolbarStyle::Preference => S::Preference,
+        }
+    }
 }
 
 /// What a window takes when files are dropped on it.
@@ -217,7 +256,48 @@ impl Window {
             fixed: false,
             responds: commands::Responds::default(),
             drops: None,
+            chrome: WindowChrome::default(),
         }
+    }
+
+    /// How the toolbar sits with the title ([`ToolbarStyle::Unified`] by
+    /// default).
+    pub fn toolbar_style(mut self, style: ToolbarStyle) -> Self {
+        self.chrome.toolbar_style = Some(style);
+        self
+    }
+
+    /// Hides the title in the title bar (it still names the window in the
+    /// Window menu and Mission Control): for windows whose content says
+    /// what they are.
+    pub fn hide_title(mut self) -> Self {
+        self.chrome.hide_title = true;
+        self
+    }
+
+    /// A title bar without its own background: the window's background
+    /// shows through it, so the title bar and content read as one surface.
+    pub fn transparent_title_bar(mut self) -> Self {
+        self.chrome.transparent_title_bar = true;
+        self
+    }
+
+    /// Content under the title bar and toolbar, which become transparent.
+    /// The content's backgrounds and materials, and a [`split`]'s panes,
+    /// reach the window's top edge (a sidebar's material runs up behind the
+    /// window buttons, as in Apple's apps), while the content itself starts
+    /// below the title bar.
+    pub fn full_size_content(mut self) -> Self {
+        self.chrome.full_size_content = true;
+        self.chrome.transparent_title_bar = true;
+        self
+    }
+
+    /// The window's background colour (the system's window background by
+    /// default). Named colours follow Dark Mode.
+    pub fn background(mut self, color: Color) -> Self {
+        self.chrome.background = Some(color);
+        self
     }
 
     /// The content size in points.
@@ -268,11 +348,14 @@ impl Window {
 
     pub(crate) fn open(self, mtm: MainThreadMarker) -> Retained<NSWindow> {
         let rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(self.size.0, self.size.1));
-        let style = if self.fixed {
+        let mut style = if self.fixed {
             NSWindowStyleMask::Titled | NSWindowStyleMask::Closable
         } else {
             NSWindowStyleMask::Titled | NSWindowStyleMask::Closable | NSWindowStyleMask::Miniaturizable | NSWindowStyleMask::Resizable
         };
+        if self.chrome.full_size_content {
+            style |= NSWindowStyleMask::FullSizeContentView;
+        }
         // SAFETY: standard window creation on the main thread.
         let window = unsafe {
             NSWindow::initWithContentRect_styleMask_backing_defer(
@@ -290,6 +373,16 @@ impl Window {
         if !self.toolbar.is_empty() {
             let delegate = chrome::install_toolbar(&window, self.toolbar);
             WINDOW_EXTRAS.with_borrow_mut(|e| e.push((window.clone(), delegate)));
+        }
+        if let Some(style) = self.chrome.toolbar_style {
+            window.setToolbarStyle(style.ns());
+        }
+        if self.chrome.hide_title {
+            window.setTitleVisibility(objc2_app_kit::NSWindowTitleVisibility::Hidden);
+        }
+        window.setTitlebarAppearsTransparent(self.chrome.transparent_title_bar);
+        if let Some(color) = self.chrome.background {
+            window.setBackgroundColor(Some(&color.ns()));
         }
         let (delegate, undo) = undo::install(mtm, &window);
         WINDOW_EXTRAS.with_borrow_mut(|e| e.push((window.clone(), delegate)));
@@ -415,8 +508,9 @@ fn relayout(root: &RootView) {
         for (view, node) in roots {
             if std::ptr::eq(&**view, root) {
                 let b = view.bounds().size;
-                let scale = view.window().map_or(2.0, |w| w.backingScaleFactor());
-                layout::place(node, 0.0, 0.0, b.width, b.height, &layout::Snap(scale));
+                let window = view.window();
+                let scale = window.as_ref().map_or(2.0, |w| w.backingScaleFactor());
+                layout::place_under_bar(node, b.width, b.height, window.as_deref().map_or(0.0, |w| title_bar_inset(w, view)), &layout::Snap(scale));
             }
         }
     });
@@ -429,6 +523,15 @@ fn relayout(root: &RootView) {
     });
     LAYOUT_PASSES.with(|n| n.set(n.get() + 1));
     IN_LAYOUT.with(|l| l.set(false));
+}
+
+/// How far a window with full-size content has its title bar and toolbar
+/// over `root`, its content view (0 for other windows).
+fn title_bar_inset(window: &NSWindow, root: &RootView) -> f64 {
+    if !window.styleMask().contains(NSWindowStyleMask::FullSizeContentView) || window.contentView().is_none_or(|c| !std::ptr::eq(&*c, &**root)) {
+        return 0.0;
+    }
+    (root.bounds().size.height - window.contentLayoutRect().size.height).max(0.0)
 }
 
 /// The root node of `window`'s view tree.
@@ -865,4 +968,6 @@ mod guide {
     mod testing_and_shipping {}
     #[doc = include_str!("../guide/09-styling.md")]
     mod styling {}
+    #[doc = include_str!("../guide/10-materials-and-windows.md")]
+    mod materials {}
 }

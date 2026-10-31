@@ -125,6 +125,7 @@ suite hands_on CHECK=drop "$ex/hands_on"
 suite notes CHECK=all "$ex/notes"
 suite gallery CHECK=all "$ex/gallery"
 suite styles CHECK=all "$ex/styles"
+suite materials CHECK=all "$ex/materials"
 suite sql_browser CHECK=all "$ex/sql_browser"
 suite sql_browser_de CHECK=l10n "$ex/sql_browser" -AppleLanguages "(de)"
 suite cargo_ferrokit FERROKIT_E2E=1 scripts/check-ferrokit.sh

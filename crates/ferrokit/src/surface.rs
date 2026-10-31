@@ -58,9 +58,8 @@ pub(crate) struct Look {
     pub(crate) shadow: Option<Shadow>,
     /// A picture as the content, and whether it fills (else fits).
     pub(crate) picture: Option<(Retained<objc2_app_kit::NSImage>, bool)>,
-}
-
-impl Look {
+    /// A material or glass under the surface.
+    pub(crate) backdrop: Option<crate::material::Backdrop>,
 }
 
 define_class!(

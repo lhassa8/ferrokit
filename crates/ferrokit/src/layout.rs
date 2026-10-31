@@ -89,6 +89,14 @@ pub(crate) fn ideal(node: &Node) -> Size {
         Kind::Spacer => Size::default(),
         Kind::Group(g) => stack_ideal(&g.borrow(), Axis::Vertical, 0.0),
         Kind::Stack { axis, spacing, children, .. } => stack_ideal(children, *axis, *spacing),
+        Kind::Layers { children, .. } => {
+            let mut s = Size::default();
+            each_child(children, false, &mut |c| {
+                let i = ideal(c);
+                s = Size { w: s.w.max(i.w), h: s.h.max(i.h) };
+            });
+            s
+        }
         Kind::Split { panes, stacked, .. } => {
             let (mut w, mut h) = (0.0f64, 0.0f64);
             for (_, n) in panes {
@@ -185,6 +193,11 @@ pub(crate) fn flexible(node: &Node, axis: Axis, parent: Option<Axis>) -> bool {
             any
         }
         Kind::Grid { rows, .. } => rows.iter().flatten().any(|c| flexible(c, axis, None)),
+        Kind::Layers { children, .. } => {
+            let mut any = false;
+            each_child(children, false, &mut |c| any |= flexible(c, axis, None));
+            any
+        }
     }
 }
 
@@ -214,6 +227,39 @@ pub(crate) fn place(node: &Node, x: f64, y: f64, w: f64, h: f64, snap: &Snap) {
     for d in &node.decor {
         Native::place(d, snapped(x, y, w, h, snap));
     }
+    place_body(node, x, y, w, h, 0.0, snap);
+    finish(&node.meta, rect);
+}
+
+/// Places a window's root node in its `w × h` content view, under a title
+/// bar and toolbar `top` points tall (a window with full-size content). Its
+/// backgrounds and materials reach the top edge, and so do a split view's
+/// panes (a sidebar's material runs up behind the window buttons), while
+/// the content starts below the bar.
+pub(crate) fn place_under_bar(node: &Node, w: f64, h: f64, top: f64, snap: &Snap) {
+    if top <= 0.0 {
+        return place(node, 0.0, 0.0, w, h, snap);
+    }
+    // Its own key: the same size under a different bar is a new layout.
+    let rect = [0.0, -top, w, h];
+    if !node.meta.dirty.get() && node.meta.rect.get() == Some(rect) {
+        bump(&SKIPPED);
+        return;
+    }
+    bump(&PLACED);
+    for d in &node.decor {
+        Native::place(d, snapped(0.0, 0.0, w, h, snap));
+    }
+    match &node.kind {
+        Kind::Split { .. } => place_body(node, 0.0, 0.0, w, h, top, snap),
+        _ => place_body(node, 0.0, top, w, (h - top).max(0.0), 0.0, snap),
+    }
+    finish(&node.meta, rect);
+}
+
+/// Places what's inside `node`'s padding. `top` is a title bar over a split
+/// view's panes (see [`place_under_bar`]).
+fn place_body(node: &Node, x: f64, y: f64, w: f64, h: f64, top: f64, snap: &Snap) {
     let p = node.padding;
     let (ix, iy, iw, ih) = (x + p, y + p, (w - 2.0 * p).max(0.0), (h - 2.0 * p).max(0.0));
     match &node.kind {
@@ -243,9 +289,11 @@ pub(crate) fn place(node: &Node, x: f64, y: f64, w: f64, h: f64, snap: &Snap) {
                 let along = if *stacked { ih } else { iw };
                 Native::set_divider(split, panes.len() - 2, along - t - 1.0);
             }
-            for (pane, child) in panes {
+            for (i, (pane, child)) in panes.iter().enumerate() {
                 let b = Native::size(pane);
-                place(child, 0.0, 0.0, b.w, b.h, snap);
+                // Stacked, only the top pane is under the bar.
+                let bar = if *stacked && i > 0 { 0.0 } else { top };
+                place_under_bar(child, b.w, b.h, bar, snap);
             }
         }
         Kind::Group(g) => place_stack(&g.borrow(), Axis::Vertical, 0.0, None, [ix, iy, iw, ih], snap),
@@ -253,8 +301,20 @@ pub(crate) fn place(node: &Node, x: f64, y: f64, w: f64, h: f64, snap: &Snap) {
             place_stack(children, *axis, *spacing, *align, [ix, iy, iw, ih], snap)
         }
         Kind::Grid { spacing, rows, align } => place_grid(rows, *spacing, align, [ix, iy, iw, ih], snap),
+        Kind::Layers { align, children } => {
+            let offset = |a: Align, room: f64, len: f64| match a {
+                Align::Start => 0.0,
+                Align::Center => (room - len) / 2.0,
+                Align::End => room - len,
+            };
+            for c in flat(children, true) {
+                let s = ideal(c);
+                let w = if flexible(c, Axis::Horizontal, None) { iw } else { s.w.min(iw) };
+                let h = if flexible(c, Axis::Vertical, None) { ih } else { s.h.min(ih) };
+                place(c, ix + offset(align.0, iw, w), iy + offset(align.1, ih, h), w, h, snap);
+            }
+        }
     }
-    finish(&node.meta, rect);
 }
 
 fn finish(meta: &Meta, rect: [f64; 4]) {
