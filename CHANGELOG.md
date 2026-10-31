@@ -53,6 +53,19 @@ Also renamed, for anyone who relied on them: the Objective-C class prefixes (`Ap
 - **Changed:** `bar_chart` and `line_chart` return a `Chart` (with `min_size` and `exportable`, as before) instead of a `Canvas`.
 - A new guide chapter, More controls and charts, and a new example, `components`, with 16 self-checks.
 
+### Web, PDF, video and the system's services (Phase 3, V5)
+
+- **Web pages:** `web_view(&page)` shows a `WebPage` in WebKit's own view. The page loads web addresses, HTML or local files, and reports its title, address, loading state and history as signals; `evaluate(..)` runs JavaScript. `.links_open_in_browser()` sends clicked links to the browser.
+- **PDFs:** `pdf_view(|| path)` (or `pdf_view_data`) is Preview's view, with `.page(&signal)` both ways, `.page_count(..)`, `.highlight(|| query)` and single-page or two-up layouts.
+- **Video and sound:** `video_player(|| path)` and `video_stream(|| url)` are AVKit's player, with `.playing(..)` and `.time(..)` both ways, `.duration(..)`, `.muted(..)`, `.loops()` and the system's control styles.
+- **Sharing:** `share_button(|| items)` shows the system's Share menu for text, web addresses or files.
+- **Printing:** `print(window, title, view)` prints any view laid out at the page's width over as many pages as it needs, with the Print sheet; `save_pdf(view, path)` and `pdf_data(view)` make the same pages with no panel. Backgrounds, borders, pictures and charts print, in the light appearance.
+- **Notifications:** `notify(Notification::new(..).body(..).sound().on_click(..))` posts through Notification Center (from an app bundle), with banners while the app is in front and clicks routed to the app.
+- **Menu bar:** `App::menu_bar_extra(MenuBarExtra::new(symbol).title(..).menu(..))`, or `.panel(view)` for a panel of the app's own views; `App::menu_bar_only()` for an app without a Dock icon.
+- **Fixed: printed text.** AppKit's labels write their text into a printed PDF twice, a few points apart, so finding or copying text in the PDF went wrong. Ferrokit's `text` and `label` now print their text once.
+- **Testing:** `testing::hold_notifications`, `sent_notifications`, `click_notification`, `shared_items` and `menu_bar_extras`.
+- A new guide chapter, Web, PDF, video and services, and a new example, `media`, with 20 self-checks: the printed report's pages, text and card backgrounds, the web page's title and a script, PDF pages and search, playback of a sound made with `say`, sharing, notifications and their clicks, both kinds of menu-bar extra, and the Print sheet.
+
 ### ferrokit-core (was appkit-host)
 
 - **Fixed: typing over a selection in a highlighted editor could crash the app.** Restyling set the editor's typing attributes in the middle of the edit, while the text view still held the old selection; AppKit read attributes past the end of the shorter text and threw, which left TextKit 2's layout behind the text, so the typed text didn't show and the next redraw aborted. Typing attributes are now left alone during an edit, and highlighting runs in `willProcessEditing` as part of the edit itself.

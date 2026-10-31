@@ -225,6 +225,15 @@ pub fn untrack<R>(f: impl FnOnce() -> R) -> R {
     r
 }
 
+/// Runs the effects waiting for the current batch to end now (printing
+/// needs a view's drawing recorded before the batch it's called in ends).
+pub(crate) fn run_pending() {
+    while let Some(e) = PENDING.with_borrow_mut(|p| (!p.is_empty()).then(|| p.remove(0))) {
+        e.queued.set(false);
+        e.run();
+    }
+}
+
 fn flush() {
     loop {
         while let Some(e) = PENDING.with_borrow_mut(|p| (!p.is_empty()).then(|| p.remove(0))) {

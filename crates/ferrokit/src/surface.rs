@@ -83,6 +83,14 @@ define_class!(
             self.apply();
         }
 
+        // Printing draws views, not layers: the surface draws itself then.
+        #[unsafe(method(drawRect:))]
+        fn draw_rect(&self, _dirty: objc2_foundation::NSRect) {
+            if !objc2_app_kit::NSGraphicsContext::currentContextDrawingToScreen() {
+                self.draw_for_print();
+            }
+        }
+
         #[unsafe(method(hitTest:))]
         fn hit_test(&self, _point: NSPoint) -> *mut NSView {
             std::ptr::null_mut()
@@ -112,6 +120,47 @@ impl Surface {
         // Resolve named colours for this view's appearance, as in updateLayer.
         let block = block2::StackBlock::new(|| self.apply());
         objc2_app_kit::NSAppearanceCustomization::effectiveAppearance(&**self).performAsCurrentDrawingAppearance(&block);
+    }
+
+    /// Draws the background, picture and border into the current context.
+    fn draw_for_print(&self) {
+        use objc2_app_kit::{NSBezierPath, NSCompositingOperation, NSGraphicsContext};
+        let look = self.ivars().borrow().clone();
+        let bounds = self.bounds();
+        let r = look.radius.min(bounds.size.width / 2.0).min(bounds.size.height / 2.0);
+        let path = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(bounds, r, r);
+        if let Some(c) = look.background {
+            c.ns().setFill();
+            path.fill();
+        }
+        if let Some((image, fill)) = &look.picture {
+            let size = image.size();
+            if size.width > 0.0 && size.height > 0.0 {
+                let scale = (bounds.size.width / size.width).max(bounds.size.height / size.height);
+                let scale = if *fill { scale } else { (bounds.size.width / size.width).min(bounds.size.height / size.height) };
+                let (w, h) = (size.width * scale, size.height * scale);
+                let rect = objc2_foundation::NSRect::new(
+                    NSPoint::new(bounds.origin.x + (bounds.size.width - w) / 2.0, bounds.origin.y + (bounds.size.height - h) / 2.0),
+                    objc2_foundation::NSSize::new(w, h),
+                );
+                NSGraphicsContext::saveGraphicsState_class();
+                path.addClip();
+                // SAFETY: drawing an image into the current context, the
+                // right way up in this flipped view.
+                unsafe { image.drawInRect_fromRect_operation_fraction_respectFlipped_hints(rect, objc2_foundation::NSRect::ZERO, NSCompositingOperation::SourceOver, 1.0, true, None) };
+                NSGraphicsContext::restoreGraphicsState_class();
+            }
+        }
+        if let Some((c, width)) = look.border {
+            let inset = objc2_foundation::NSRect::new(
+                NSPoint::new(bounds.origin.x + width / 2.0, bounds.origin.y + width / 2.0),
+                objc2_foundation::NSSize::new(bounds.size.width - width, bounds.size.height - width),
+            );
+            let edge = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(inset, r, r);
+            edge.setLineWidth(width);
+            c.ns().setStroke();
+            edge.stroke();
+        }
     }
 
     fn apply(&self) {

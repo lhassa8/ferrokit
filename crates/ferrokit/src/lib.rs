@@ -54,6 +54,9 @@ mod frame;
 mod l10n;
 mod layout;
 mod material;
+mod media;
+mod services;
+mod status;
 mod motion;
 mod widgets;
 mod interact;
@@ -116,6 +119,9 @@ pub use style::{Font, Weight};
 pub use surface::Shadow;
 pub use material::{Glass, Material, has_liquid_glass};
 pub use widgets::{Gauge, Link, PathControl, RadioGroup, TabStyle, Tabs, TokenField, gauge, link, path_control, radio_group, rating, tabs, token_field};
+pub use media::{PdfView, VideoControls, VideoPlayer, WebPage, WebView, pdf_view, pdf_view_data, video_player, video_stream, web_view};
+pub use services::{Notification, SentNotification, ShareButton, ShareItem, notifications_supported, notify, pdf_data, print, save_pdf, share_button};
+pub use status::MenuBarExtra;
 pub use motion::{Animation, Transition, animated, animated_with, reduce_motion};
 pub use popover::Edge;
 pub use canvas::{Canvas, Painter, canvas};
@@ -573,6 +579,15 @@ pub(crate) fn host_view(view: view::AnyView) -> (Retained<NSView>, NSSize) {
     (Retained::into_super(root), NSSize::new(size.w.ceil(), size.h.ceil()))
 }
 
+/// The ideal size of a root made by [`host_view`], measured again.
+pub(crate) fn hosted_ideal(root: &NSView) -> Option<NSSize> {
+    ROOTS.with_borrow(|r| {
+        let (_, node) = r.iter().find(|(v, _)| std::ptr::eq(&***v as *const NSView, root as *const NSView))?;
+        let s = layout::ideal(node);
+        Some(NSSize::new(s.w.ceil(), s.h.ceil()))
+    })
+}
+
 /// Drops the tree of a root made by [`host_view`].
 pub(crate) fn drop_hosted(root: &NSView) {
     // `try_with`: this also runs while the window roots are being dropped
@@ -634,12 +649,14 @@ pub struct App {
     menus: Vec<(String, Vec<MenuItem>)>,
     settings: Option<Window>,
     documents: Option<Box<dyn FnOnce()>>,
+    extras: Vec<MenuBarExtra>,
+    menu_bar_only: bool,
 }
 
 impl App {
     /// An app called `name` (shown in the menu bar).
     pub fn new(name: &str) -> Self {
-        App { name: name.into(), windows: Vec::new(), on_launch: None, menus: Vec::new(), settings: None, documents: None }
+        App { name: name.into(), windows: Vec::new(), on_launch: None, menus: Vec::new(), settings: None, documents: None, extras: Vec::new(), menu_bar_only: false }
     }
 
     /// Opens `window` at launch. Call more than once for several windows.
@@ -684,6 +701,21 @@ impl App {
         self
     }
 
+    /// Adds an item to the right side of the menu bar, with a menu or a
+    /// panel (see [`MenuBarExtra`]).
+    pub fn menu_bar_extra(mut self, extra: MenuBarExtra) -> Self {
+        self.extras.push(extra);
+        self
+    }
+
+    /// Makes this a menu-bar app: no Dock icon and no menu bar of its own,
+    /// only its [`menu_bar_extra`](Self::menu_bar_extra)s (and any windows
+    /// it opens).
+    pub fn menu_bar_only(mut self) -> Self {
+        self.menu_bar_only = true;
+        self
+    }
+
     /// Runs `f` on the first run-loop pass after the windows are on screen.
     pub fn on_launch(mut self, f: impl FnOnce() + 'static) -> Self {
         self.on_launch = Some(Box::new(f));
@@ -708,7 +740,7 @@ impl App {
     pub fn run(self) {
         let mtm = mtm();
         let app = NSApplication::sharedApplication(mtm);
-        app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
+        app.setActivationPolicy(if self.menu_bar_only { NSApplicationActivationPolicy::Accessory } else { NSApplicationActivationPolicy::Regular });
         let settings = self.settings.map(|w| {
             SETTINGS.with_borrow_mut(|s| *s = Some(Err(w)));
             Retained::into_super(appkit_views::ActionTarget::new(mtm, || {
@@ -733,6 +765,9 @@ impl App {
         let start_untitled = is_documents && self.windows.is_empty();
         let targets = menu::install(mtm, &self.name, menus, settings, file_after);
         EXTRAS.with_borrow_mut(|e| e.extend(targets));
+        for extra in self.extras {
+            status::install(extra, &self.name);
+        }
         after_batch(|| {
             motion::run_layout(|| {
                 if view::LAYOUT_DIRTY.with(Cell::get) {
@@ -981,4 +1016,6 @@ mod guide {
     mod motion {}
     #[doc = include_str!("../guide/12-more-controls-and-charts.md")]
     mod components {}
+    #[doc = include_str!("../guide/13-web-pdf-video-and-services.md")]
+    mod media {}
 }

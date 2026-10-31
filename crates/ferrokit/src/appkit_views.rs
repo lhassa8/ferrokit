@@ -182,9 +182,45 @@ impl Text {
     }
 }
 
+define_class!(
+    // A label that prints its text once: AppKit's labels write their text
+    // into a printed PDF twice, a few points apart, which breaks searching
+    // and copying the PDF (seen on macOS 27).
+    #[unsafe(super(NSTextField, objc2_app_kit::NSControl, NSView, NSResponder, NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "FerrokitLabel"]
+    struct PrintableLabel;
+
+    impl PrintableLabel {
+        #[unsafe(method(drawRect:))]
+        fn draw_rect(&self, dirty: objc2_foundation::NSRect) {
+            if objc2_app_kit::NSGraphicsContext::currentContextDrawingToScreen() {
+                // SAFETY: NSTextField's own drawing.
+                let _: () = unsafe { msg_send![super(self), drawRect: dirty] };
+                return;
+            }
+            let Some(cell) = self.cell() else { return };
+            let mut r = cell.drawingRectForBounds(self.bounds());
+            // The cell's text container pads each side by 2 points.
+            r.origin.x += 2.0;
+            r.size.width -= 4.0;
+            let options = objc2_app_kit::NSStringDrawingOptions::UsesLineFragmentOrigin | objc2_app_kit::NSStringDrawingOptions::TruncatesLastVisibleLine;
+            objc2_app_kit::NSAttributedStringNSExtendedStringDrawing::drawWithRect_options_context(&*self.attributedStringValue(), r, options, None);
+        }
+    }
+);
+
+/// A label (`NSTextField::labelWithString`) that prints its text once.
+pub(crate) fn printable_label(text: &str, mtm: MainThreadMarker) -> Retained<NSTextField> {
+    let _ = mtm;
+    // SAFETY: NSTextField's class constructor, called on the subclass.
+    let field: Retained<PrintableLabel> = unsafe { msg_send![<PrintableLabel as objc2::ClassType>::class(), labelWithString: &*NSString::from_str(text)] };
+    Retained::into_super(field)
+}
+
 impl View for Text {
     fn build(self, cx: &mut Cx) -> Node {
-        let field = NSTextField::labelWithString(&NSString::from_str(&self.0), cx.mtm);
+        let field = printable_label(&self.0, cx.mtm);
         self.1.apply(&field);
         Node::leaf(cx, Retained::into_super(Retained::into_super(field)), (false, false), Size::default()).0
     }
@@ -221,7 +257,7 @@ impl Label {
 
 impl View for Label {
     fn build(self, cx: &mut Cx) -> Node {
-        let field = NSTextField::labelWithString(&NSString::from_str(""), cx.mtm);
+        let field = printable_label("", cx.mtm);
         self.1.apply(&field);
         let view: Retained<NSView> = Retained::into_super(Retained::into_super(field.clone()));
         let (mut node, handle) = Node::leaf(cx, view.clone(), (false, false), Size::default());

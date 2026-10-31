@@ -30,6 +30,9 @@ the guide can't drift from the API.
 12. [More controls and charts](12-more-controls-and-charts.md): tabs, radio
     groups, links, gauges, token fields, path controls, tooltips, and bar,
     stacked, line, area, scatter and pie charts with formats.
+13. [Web, PDF, video and services](13-web-pdf-video-and-services.md): web
+    pages, PDFs, video and sound, the Share menu, printing, notifications
+    and menu-bar extras.
 
 The example apps in `crates/ferrokit/examples` are the long form of these
 chapters:
@@ -41,6 +44,7 @@ chapters:
 | `materials` | materials, Liquid Glass over a picture, full-size windows |
 | `motion` | animated layout, fades and slides, hover highlights, clickable rows |
 | `components` | tabs, radio groups, tokens, ratings, gauges, path control, every chart |
+| `media` | a web page, a printed report in a PDF view, video, Share, Print, notifications, a menu-bar extra |
 | `native_csv` | a 200,000-row CSV browser: table, sidebar, search, sheet, notes |
 | `log_viewer` | a log tail at display rate: `on_frame`, `append`, filtering |
 | `hands_on` | drag and drop, the clipboard, panels, undo, input methods |

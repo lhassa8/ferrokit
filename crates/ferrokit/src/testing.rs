@@ -484,3 +484,32 @@ pub fn press(view: &objc2_app_kit::NSView, down: bool) -> bool {
 pub fn is_pressed(view: &objc2_app_kit::NSView) -> Option<bool> {
     crate::interact::is_pressed(view)
 }
+
+/// Makes [`notify`](crate::notify) record notifications instead of posting
+/// them (no permission prompt, no banners); read them with
+/// [`sent_notifications`].
+pub fn hold_notifications() {
+    crate::services::HOLD.with(|h| h.set(true));
+}
+
+/// The notifications recorded since [`hold_notifications`], oldest first.
+pub fn sent_notifications() -> Vec<crate::SentNotification> {
+    crate::services::SENT.with_borrow(|s| s.clone())
+}
+
+/// Runs the click action of the notification `id`, as clicking it in
+/// Notification Center would; false if it has none.
+pub fn click_notification(id: &str) -> bool {
+    crate::services::click(id)
+}
+
+/// What a [`share_button`](crate::share_button) would share if clicked now.
+pub fn shared_items(button: &objc2_app_kit::NSButton) -> Option<Vec<crate::ShareItem>> {
+    crate::services::shared_by(button)
+}
+
+/// The app's menu-bar extras, oldest first, each with its panel's popover
+/// (for extras with a panel).
+pub fn menu_bar_extras() -> Vec<(Retained<objc2_app_kit::NSStatusItem>, Option<Retained<objc2_app_kit::NSPopover>>)> {
+    crate::status::EXTRAS.with_borrow(|e| e.iter().map(|i| (i.item.clone(), i.popover.clone())).collect())
+}
