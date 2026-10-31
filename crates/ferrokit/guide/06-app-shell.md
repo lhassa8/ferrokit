@@ -348,6 +348,12 @@ In a real app the table is a file, `include_str!("../locales/de.strings")`:
   For languages with more than two (Russian, Polish), the table gives
   `"{n} rows#one"`, `"#few"`, `"#many"` and `"#other"`. `{n}` is formatted
   for the user's region, as is `format_number(value, decimals)`.
+- `format_date(seconds, template)` writes a date as the user's locale
+  does from a template: `"EEEEdMMMM"` is "Friday, 31 October" in English
+  and "Freitag, 31. Oktober" in German. `today()`, `local_day(seconds)`,
+  `local_day_start(day)` and `weekday(day)` count calendar days in the
+  user's time zone, through daylight saving: the key for "done today",
+  streaks and calendars.
 - Try another language without changing the system:
   `my-app -AppleLanguages "(de)"`.
 - In the bundle, list the languages under `languages` in

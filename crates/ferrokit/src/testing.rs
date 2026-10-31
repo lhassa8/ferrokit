@@ -437,6 +437,13 @@ pub fn canvas_png(view: &objc2_app_kit::NSView) -> Option<Vec<u8>> {
     crate::canvas::png(view)
 }
 
+/// Clicks a [`canvas`](crate::canvas) at `x, y` (points from its top
+/// left), running its [`on_click`](crate::Canvas::on_click) handler; false
+/// if it has none.
+pub fn canvas_click(view: &objc2_app_kit::NSView, x: f64, y: f64) -> bool {
+    crate::canvas::click_at(view, x, y)
+}
+
 /// What dragging a canvas would carry now (its `draggable`, or the image
 /// of an `exportable` one), without a drag session.
 pub fn canvas_drag(view: &objc2_app_kit::NSView) -> Option<crate::DragItem> {
@@ -492,7 +499,8 @@ pub fn hold_notifications() {
     crate::services::HOLD.with(|h| h.set(true));
 }
 
-/// The notifications recorded since [`hold_notifications`], oldest first.
+/// The notifications recorded since [`hold_notifications`], oldest first
+/// (one posted again with the same id replaces it; cancelled ones go).
 pub fn sent_notifications() -> Vec<crate::SentNotification> {
     crate::services::SENT.with_borrow(|s| s.clone())
 }

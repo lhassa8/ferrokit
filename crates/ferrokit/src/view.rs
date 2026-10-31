@@ -515,6 +515,13 @@ pub trait ViewExt: View + Sized {
         Modified::new(self).tooltip(text)
     }
 
+    /// Disables the view's controls while `when()` is true (a picker that
+    /// only matters once a checkbox is on, a form while it's saving),
+    /// following the signals it reads. SwiftUI's `disabled`.
+    fn disabled(self, when: impl Fn() -> bool + 'static) -> Modified<Self> {
+        Modified::new(self).disabled(when)
+    }
+
     /// Makes the whole view a button: a click on it calls `action`, it
     /// dims while pressed, and VoiceOver reads it as a button named by its
     /// text. For rows, cards and tiles; controls inside it don't get
@@ -544,6 +551,7 @@ pub struct Modified<V> {
     hover: Option<Rc<dyn Fn(bool)>>,
     click: Option<Rc<dyn Fn()>>,
     tooltip: Option<String>,
+    disabled: Option<Box<dyn Fn() -> bool>>,
 }
 
 /// A layout or look modifier, in the order written.
@@ -564,7 +572,7 @@ enum Op {
 
 impl<V: View> Modified<V> {
     fn new(view: V) -> Self {
-        Modified { view, ops: Vec::new(), menu: None, label: None, responds: Default::default(), popover: None, opacity: None, opacity_when: None, transition: None, hover: None, click: None, tooltip: None }
+        Modified { view, ops: Vec::new(), menu: None, label: None, responds: Default::default(), popover: None, opacity: None, opacity_when: None, transition: None, hover: None, click: None, tooltip: None, disabled: None }
     }
 
     /// Shows `content` in a popover pointing at this view while `shown` is
@@ -723,6 +731,12 @@ impl<V: View> Modified<V> {
         self
     }
 
+    /// Disabled controls (see [`ViewExt::disabled`]).
+    pub fn disabled(mut self, when: impl Fn() -> bool + 'static) -> Self {
+        self.disabled = Some(Box::new(when));
+        self
+    }
+
     /// The view as a button (see [`ViewExt::on_click`]).
     pub fn on_click(mut self, action: impl Fn() + 'static) -> Self {
         self.click = Some(Rc::new(action));
@@ -789,7 +803,13 @@ impl<V: View> View for Modified<V> {
                 }
                 Op::HoverHighlight(c) => {
                     let hovered = hovered.expect("made above");
-                    let f: Rc<dyn Fn() -> crate::Color> = Rc::new(move || if hovered.get() { c } else { crate::Color::Clear });
+                    // Over the view's own background (a selected row's): the
+                    // highlight shows only where that's clear.
+                    let base: Option<Rc<dyn Fn() -> crate::Color>> = look_when.take().or_else(|| look.background.map(|b| Rc::new(move || b) as Rc<dyn Fn() -> crate::Color>));
+                    let f: Rc<dyn Fn() -> crate::Color> = Rc::new(move || {
+                        let under = base.as_ref().map_or(crate::Color::Clear, |b| b());
+                        if hovered.get() && under == crate::Color::Clear { c } else { under }
+                    });
                     look.background = Some(crate::signal::untrack(|| f()));
                     look_when = Some(f);
                 }
@@ -828,6 +848,17 @@ impl<V: View> View for Modified<V> {
             Native::add_subview(&cx.container, &interaction);
             node.decor.push(interaction);
             node.meta.mark();
+        }
+        if let Some(when) = self.disabled {
+            let mut leaves = Vec::new();
+            node.leaf_views(&mut leaves);
+            let controls: Vec<_> = leaves.into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSControl>().ok()).collect();
+            node.own(Effect::new(move || {
+                let enabled = !when();
+                for c in &controls {
+                    c.setEnabled(enabled);
+                }
+            }));
         }
         if let Some(tip) = &self.tooltip {
             let tip = objc2_foundation::NSString::from_str(tip);

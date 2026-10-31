@@ -235,7 +235,7 @@ only, and the highlighter restyles what changed.
 
 ## Drawing and charts
 
-`canvas(|p| …)` draws with a `Painter`: rectangles, circles, lines,
+`canvas(|p| …)` draws with a `Painter`: rectangles, circles, arcs, lines,
 polygons and text, in points from the top-left corner, in `Color`s
 (the system's follow Dark Mode). The drawing is recorded and replayed by
 a native view. It's recorded again when signals it reads change or the
@@ -256,7 +256,12 @@ let meter = canvas(move |p| {
 ```
 
 VoiceOver sees a canvas as an image. `.description(…)` is what it reads,
-kept current.
+kept current; a canvas without one is decoration (a tinted circle behind
+a symbol) and VoiceOver skips it.
+
+`p.stroke_arc(cx, cy, r, 0.0..270.0, color, width)` draws part of a
+circle with round ends, clockwise in degrees from the top: a progress ring
+is a faint full circle and an arc through `0.0..360.0 * done`.
 
 Charts are canvases. `bar_chart(|| vec![(label, value)…])` draws bars
 for categories. `line_chart(|| vec![Series::new(name, points)…])` draws

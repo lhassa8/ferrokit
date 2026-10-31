@@ -240,6 +240,7 @@ pub struct Notification {
     subtitle: String,
     body: String,
     sound: bool,
+    daily: Option<(u32, u32)>,
     on_click: Option<Rc<dyn Fn()>>,
 }
 
@@ -248,7 +249,7 @@ impl Notification {
     pub fn new(title: &str) -> Self {
         thread_local!(static NEXT: Cell<u64> = const { Cell::new(1) });
         let n = NEXT.with(|c| c.replace(c.get() + 1));
-        Notification { id: format!("ferrokit-{n}"), title: title.into(), subtitle: String::new(), body: String::new(), sound: false, on_click: None }
+        Notification { id: format!("ferrokit-{n}"), title: title.into(), subtitle: String::new(), body: String::new(), sound: false, daily: None, on_click: None }
     }
 
     /// A second line under the title, in bold.
@@ -276,6 +277,14 @@ impl Notification {
         self
     }
 
+    /// Shows it every day at `hour:minute` local time (a habit's reminder)
+    /// instead of now, until [`cancel_notification`] with its
+    /// [`id`](Self::id). Posting another with the same id replaces it.
+    pub fn daily_at(mut self, hour: u32, minute: u32) -> Self {
+        self.daily = Some((hour.min(23), minute.min(59)));
+        self
+    }
+
     /// Runs `action` when the user clicks the notification (the app comes
     /// to the front first), while the app is still running.
     pub fn on_click(mut self, action: impl Fn() + 'static) -> Self {
@@ -297,6 +306,8 @@ pub struct SentNotification {
     pub body: String,
     /// Whether it plays a sound.
     pub sound: bool,
+    /// The time it repeats at every day, if it does.
+    pub daily: Option<(u32, u32)>,
 }
 
 thread_local! {
@@ -359,7 +370,8 @@ pub fn notify(notification: Notification) {
     }
     if HOLD.with(Cell::get) {
         let n = &notification;
-        SENT.with_borrow_mut(|s| s.push(SentNotification { id: n.id.clone(), title: n.title.clone(), subtitle: n.subtitle.clone(), body: n.body.clone(), sound: n.sound }));
+        SENT.with_borrow_mut(|s| s.retain(|old| old.id != n.id));
+        SENT.with_borrow_mut(|s| s.push(SentNotification { id: n.id.clone(), title: n.title.clone(), subtitle: n.subtitle.clone(), body: n.body.clone(), sound: n.sound, daily: n.daily }));
         return;
     }
     if !notifications_supported() {
@@ -381,7 +393,13 @@ pub fn notify(notification: Notification) {
     if notification.sound {
         content.setSound(Some(&UNNotificationSound::defaultSound()));
     }
-    let request = UNNotificationRequest::requestWithIdentifier_content_trigger(&NSString::from_str(&notification.id), &content, None);
+    let trigger = notification.daily.map(|(hour, minute)| {
+        let when = objc2_foundation::NSDateComponents::new();
+        when.setHour(hour as isize);
+        when.setMinute(minute as isize);
+        Retained::into_super(objc2_user_notifications::UNCalendarNotificationTrigger::triggerWithDateMatchingComponents_repeats(&when, true))
+    });
+    let request = UNNotificationRequest::requestWithIdentifier_content_trigger(&NSString::from_str(&notification.id), &content, trigger.as_deref());
     // Asking again is free once the user has answered; the request goes
     // out when they have.
     let block = RcBlock::new(move |granted: Bool, _e: *mut NSError| {
@@ -392,3 +410,19 @@ pub fn notify(notification: Notification) {
     center.requestAuthorizationWithOptions_completionHandler(UNAuthorizationOptions::Alert | UNAuthorizationOptions::Sound, &block);
 }
 
+/// Removes the notification `id`: a daily one stops repeating, and one
+/// already shown leaves Notification Center.
+pub fn cancel_notification(id: &str) {
+    CLICKS.with_borrow_mut(|c| c.remove(id));
+    if HOLD.with(Cell::get) {
+        SENT.with_borrow_mut(|s| s.retain(|n| n.id != id));
+        return;
+    }
+    if !notifications_supported() {
+        return;
+    }
+    let center = UNUserNotificationCenter::currentNotificationCenter();
+    let ids = NSArray::from_retained_slice(&[NSString::from_str(id)]);
+    center.removePendingNotificationRequestsWithIdentifiers(&ids);
+    center.removeDeliveredNotificationsWithIdentifiers(&ids);
+}

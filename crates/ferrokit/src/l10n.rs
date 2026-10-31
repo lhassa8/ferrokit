@@ -248,6 +248,51 @@ pub fn format_number_for(value: f64, decimals: usize, identifier: &str) -> Strin
     format_number_in(value, decimals, &NSLocale::localeWithLocaleIdentifier(&NSString::from_str(identifier)))
 }
 
+/// `seconds` since 1970 as the user's locale writes the date format
+/// `template`: `"EEEEdMMMM"` is "Friday, 31 October" in English and
+/// "Freitag, 31. Oktober" in German; `"MMMd"`, `"yMMM"`, `"EEE"`, `"jm"`
+/// (a time, 12 or 24 hours as the user prefers).
+pub fn format_date(seconds: f64, template: &str) -> String {
+    let f = objc2_foundation::NSDateFormatter::new();
+    f.setLocale(Some(&NSLocale::currentLocale()));
+    f.setLocalizedDateFormatFromTemplate(&NSString::from_str(template));
+    f.stringFromDate(&objc2_foundation::NSDate::dateWithTimeIntervalSince1970(seconds)).to_string()
+}
+
+/// The user's time zone's offset from UTC at `seconds` since 1970.
+pub(crate) fn local_offset(seconds: f64) -> f64 {
+    objc2_foundation::NSTimeZone::localTimeZone().secondsFromGMTForDate(&objc2_foundation::NSDate::dateWithTimeIntervalSince1970(seconds)) as f64
+}
+
+/// The calendar day `seconds` since 1970 falls on in the user's time zone,
+/// counted in days from 1 January 1970: a key for "done today", streaks
+/// and calendars that stays right through daylight saving.
+pub fn local_day(seconds: f64) -> i64 {
+    ((seconds + local_offset(seconds)) / 86_400.0).floor() as i64
+}
+
+/// Local midnight at the start of `day` (see [`local_day`]), in seconds
+/// since 1970.
+pub fn local_day_start(day: i64) -> f64 {
+    let midnight = day as f64 * 86_400.0;
+    // The offset at the result, not at UTC midnight (they differ on the
+    // day the clocks change).
+    let guess = midnight - local_offset(midnight);
+    midnight - local_offset(guess)
+}
+
+/// Today, as a [`local_day`].
+pub fn today() -> i64 {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
+    local_day(now)
+}
+
+/// The weekday of a [`local_day`], 0 for Monday to 6 for Sunday.
+pub fn weekday(day: i64) -> u32 {
+    // 1 January 1970 was a Thursday.
+    (day + 3).rem_euclid(7) as u32
+}
+
 fn format_number_in(value: f64, decimals: usize, locale: &NSLocale) -> String {
     let f = NSNumberFormatter::new();
     f.setNumberStyle(NSNumberFormatterStyle::DecimalStyle);
@@ -260,6 +305,20 @@ fn format_number_in(value: f64, decimals: usize, locale: &NSLocale) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_days() {
+        // 1970-01-01 was a Thursday; 2026-10-31 a Saturday.
+        assert_eq!(weekday(0), 3);
+        assert_eq!(weekday(20_757), 5);
+        // A day's start falls on that day, and the day before ends just before it.
+        for day in [0, 20_000, 20_757, 20_510] {
+            let start = local_day_start(day);
+            assert_eq!(local_day(start), day);
+            assert_eq!(local_day(start - 1.0), day - 1);
+        }
+        assert!(today() > 20_000);
+    }
 
     #[test]
     fn strings_format() {

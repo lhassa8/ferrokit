@@ -38,6 +38,9 @@ pub(crate) enum Shape {
     Rect { x: f64, y: f64, w: f64, h: f64, radius: f64 },
     Ellipse { x: f64, y: f64, w: f64, h: f64 },
     Path { points: Vec<(f64, f64)>, closed: bool },
+    /// Part of a circle, clockwise from `start` to `end` degrees (0 at the
+    /// top), drawn with round ends.
+    Arc { cx: f64, cy: f64, r: f64, start: f64, end: f64 },
 }
 
 /// Draws on a [`canvas`]: shapes and text, in points from the top-left
@@ -100,6 +103,16 @@ impl Painter {
     /// Outlines a circle around `cx, cy`.
     pub fn stroke_circle(&mut self, cx: f64, cy: f64, r: f64, color: Color, width: f64) {
         self.stroke(Shape::Ellipse { x: cx - r, y: cy - r, w: 2.0 * r, h: 2.0 * r }, color, width);
+    }
+
+    /// Part of a circle around `cx, cy`, clockwise through `degrees` with 0
+    /// at the top, with round ends: progress rings and gauges.
+    /// `stroke_arc(cx, cy, r, 0.0..360.0 * done, ..)` is a ring `done` full.
+    pub fn stroke_arc(&mut self, cx: f64, cy: f64, r: f64, degrees: std::ops::Range<f64>, color: Color, width: f64) {
+        let (start, end) = (degrees.start, degrees.end);
+        if end > start {
+            self.stroke(Shape::Arc { cx, cy, r, start, end: end.min(start + 360.0) }, color, width);
+        }
     }
 
     /// A straight line.
@@ -171,6 +184,19 @@ fn path(shape: &Shape) -> Retained<NSBezierPath> {
         }
         Shape::Rect { x, y, w, h, .. } => NSBezierPath::bezierPathWithRect(NSRect::new(NSPoint::new(*x, *y), NSSize::new(*w, *h))),
         Shape::Ellipse { x, y, w, h } => NSBezierPath::bezierPathWithOvalInRect(NSRect::new(NSPoint::new(*x, *y), NSSize::new(*w, *h))),
+        Shape::Arc { cx, cy, r, start, end } => {
+            // Points every 2 degrees (or closer): smooth at any ring size.
+            let steps = (((end - start) / 2.0).ceil() as usize).max(2);
+            let p = NSBezierPath::bezierPath();
+            for i in 0..=steps {
+                let a = (start + (end - start) * i as f64 / steps as f64).to_radians();
+                // Flipped: y grows down, so the top is cy - r.
+                let pt = NSPoint::new(cx + r * a.sin(), cy - r * a.cos());
+                if i == 0 { p.moveToPoint(pt) } else { p.lineToPoint(pt) }
+            }
+            p.setLineCapStyle(objc2_app_kit::NSLineCapStyle::Round);
+            p
+        }
         Shape::Path { points, closed } => {
             let p = NSBezierPath::bezierPath();
             for (i, &(x, y)) in points.iter().enumerate() {
@@ -341,9 +367,12 @@ define_class!(
             true
         }
 
+        // Without a description a canvas is decoration (a tinted circle
+        // behind a symbol): hidden from VoiceOver, as an image without one is.
         #[unsafe(method(isAccessibilityElement))]
         fn is_ax_element(&self) -> bool {
-            true
+            let view: &NSView = self;
+            objc2_app_kit::NSAccessibility::accessibilityLabel(view).is_some_and(|l| l.length() > 0)
         }
     }
 
@@ -581,6 +610,14 @@ fn export(node: &mut Node, view: &Retained<CanvasView>, name: &str, mtm: objc2::
 }
 
 /// What dragging a canvas would carry now (for checks).
+/// Runs a canvas's click handler at `x, y` (points from its top left), as
+/// a click there would; false if it has none.
+pub(crate) fn click_at(view: &NSView, x: f64, y: f64) -> bool {
+    let Some(f) = view.downcast_ref::<CanvasView>().and_then(|c| c.ivars().click.borrow().clone()) else { return false };
+    crate::signal::batch(|| f(x, y));
+    true
+}
+
 pub(crate) fn drag_item(view: &NSView) -> Option<crate::DragItem> {
     let drag = view.downcast_ref::<CanvasView>()?.ivars().drag.borrow().clone()?;
     drag()
@@ -595,6 +632,7 @@ pub(crate) fn describe(view: &NSView) -> Option<Vec<String>> {
         Shape::Rect { x, y, w, h, .. } => format!("rect {x:.0},{y:.0} {w:.0}x{h:.0}"),
         Shape::Ellipse { x, y, w, h } => format!("ellipse {:.0},{:.0} {w:.0}x{h:.0}", x + w / 2.0, y + h / 2.0),
         Shape::Path { points, .. } => format!("path {} points", points.len()),
+        Shape::Arc { cx, cy, r, start, end } => format!("arc {cx:.0},{cy:.0} r{r:.0} {start:.0}-{end:.0}"),
     };
     Some(
         c.ivars()

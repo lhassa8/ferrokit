@@ -44,6 +44,7 @@ chapters:
 | `materials` | materials, Liquid Glass over a picture, full-size windows |
 | `motion` | animated layout, fades and slides, hover highlights, clickable rows |
 | `components` | tabs, radio groups, tokens, ratings, gauges, path control, every chart |
+| `habits` | a habit tracker: cards, a progress ring, a history calendar, insights charts, a sheet, reminders, a menu-bar panel, a printed report |
 | `media` | a web page, a printed report in a PDF view, video, Share, Print, notifications, a menu-bar extra |
 | `native_csv` | a 200,000-row CSV browser: table, sidebar, search, sheet, notes |
 | `log_viewer` | a log tail at display rate: `on_frame`, `append`, filtering |

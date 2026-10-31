@@ -120,13 +120,13 @@ pub use surface::Shadow;
 pub use material::{Glass, Material, has_liquid_glass};
 pub use widgets::{Gauge, Link, PathControl, RadioGroup, TabStyle, Tabs, TokenField, gauge, link, path_control, radio_group, rating, tabs, token_field};
 pub use media::{PdfView, VideoControls, VideoPlayer, WebPage, WebView, pdf_view, pdf_view_data, video_player, video_stream, web_view};
-pub use services::{Notification, SentNotification, ShareButton, ShareItem, notifications_supported, notify, pdf_data, print, save_pdf, share_button};
+pub use services::{Notification, SentNotification, ShareButton, ShareItem, cancel_notification, notifications_supported, notify, pdf_data, print, save_pdf, share_button};
 pub use status::MenuBarExtra;
 pub use motion::{Animation, Transition, animated, animated_with, reduce_motion};
 pub use popover::Edge;
 pub use canvas::{Canvas, Painter, canvas};
 pub use transfer::{Clipboard, DragItem, WriteFile};
-pub use l10n::{format_number, format_number_for, language, parse_strings, plural_category, set_language, t, t_plural, t_with};
+pub use l10n::{format_date, format_number, format_number_for, local_day, local_day_start, today, weekday, language, parse_strings, plural_category, set_language, t, t_plural, t_with};
 pub use charts::{Chart, Format, Series, area_chart, bar_chart, line_chart, pie_chart, scatter_chart, stacked_bar_chart};
 pub use ferrokit_core::ViewId;
 /// The AppKit window type the window functions take and return.

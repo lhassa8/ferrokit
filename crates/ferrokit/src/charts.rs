@@ -9,7 +9,7 @@ use std::rc::Rc;
 use ferrokit_core::text::Color;
 
 use objc2::rc::Retained;
-use objc2_foundation::{NSDate, NSDateFormatter, NSLocale, NSNumber, NSNumberFormatter, NSNumberFormatterStyle, NSString, NSTimeZone};
+use objc2_foundation::{NSLocale, NSNumber, NSNumberFormatter, NSNumberFormatterStyle, NSString};
 
 use crate::canvas::{Canvas, Painter, canvas};
 use crate::signal::{Effect, Signal, keep_with_owner, untrack};
@@ -275,13 +275,8 @@ impl Format {
     }
 }
 
-/// `seconds` since 1970 as the user's locale writes `template` (a date
-/// format template: `"MMMd"`, `"jm"`).
 fn date_text(seconds: f64, template: &str) -> String {
-    let f = NSDateFormatter::new();
-    f.setLocale(Some(&NSLocale::currentLocale()));
-    f.setLocalizedDateFormatFromTemplate(&NSString::from_str(template));
-    f.stringFromDate(&NSDate::dateWithTimeIntervalSince1970(seconds)).to_string()
+    crate::l10n::format_date(seconds, template)
 }
 
 /// Days since 1970-01-01 for a civil date (proleptic Gregorian).
@@ -358,7 +353,7 @@ pub(crate) fn date_ticks(min: f64, max: f64, target: usize, offset: &dyn Fn(f64)
 
 /// The local time zone's offset from UTC at `seconds` since 1970.
 fn local_offset(seconds: f64) -> f64 {
-    NSTimeZone::localTimeZone().secondsFromGMTForDate(&NSDate::dateWithTimeIntervalSince1970(seconds)) as f64
+    crate::l10n::local_offset(seconds)
 }
 
 /// What a chart draws (see the chart functions).

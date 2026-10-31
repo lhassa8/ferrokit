@@ -84,6 +84,24 @@ let reset = button("Reset", || {}).tooltip("Clears the rating");
 # let _ = reset;
 ```
 
+## Disabled controls
+
+`.disabled(|| ..)` works on any view: its controls are disabled while the
+function returns true, following the signals it reads. SwiftUI's
+`disabled`.
+
+```rust,no_run
+use ferrokit::*;
+
+let remind = Signal::new(false);
+let hour = Signal::new(8);
+let row = hstack((
+    checkbox("Remind me at", &remind),
+    picker(&hour, vec![("8:00", 8), ("9:00", 9)]).disabled(move || !remind.get()),
+));
+# let _ = row;
+```
+
 ## Charts
 
 Every chart is drawn natively, redraws when the signals its data function

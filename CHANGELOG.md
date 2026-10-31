@@ -86,6 +86,32 @@ The app itself:
 - **German:** translations for all of the new text.
 - **Checks:** 5 new: the welcome window, its menu item, its recent list, the chart's legend, and the welcome window in German.
 
+### Habits, a new showcase app (Phase 3, S2)
+
+A habit tracker built to sit next to Apple's apps (`examples/habits.rs`), and what the framework gained on the way:
+- **`Painter::stroke_arc`:** part of a circle with round ends, for progress rings and gauges.
+- **Dates:**
+  - `format_date(seconds, template)` writes dates as the user's locale does ("Saturday, 31 October");
+  - `today()`, `local_day`, `local_day_start` and `weekday` count calendar days in the user's time zone, through daylight saving.
+- **`.disabled(|| ..)` on any view:** before, only buttons could be disabled.
+- **Daily notifications:** `Notification::daily_at(hour, minute)`, and `cancel_notification(id)`.
+- **`testing::canvas_click`:** runs a canvas's click handler at a point.
+- **Fixed:**
+  - `.hover_highlight` hid a view's own background (a selected row lost its selection colour), and now draws only where that background is clear;
+  - a canvas without a description was an unnamed image to VoiceOver, and is now skipped as decoration.
+
+The app:
+- **Window:** a sidebar in the system material.
+- **Today:** a summary card with a progress ring, and a card per habit with its streak, the week's dots and a check; a click marks it done, animated.
+- **Each habit:** stat cards, a six-month calendar you can click, a weekday chart, a daily reminder, Share and Delete.
+- **Insights:** an area chart, weekly stacked bars by habit with a legend, and a donut.
+- **Also:**
+  - a New Habit sheet;
+  - a menu-bar panel to check habits off;
+  - a printed or PDF report;
+  - storage in user defaults.
+- **Checks:** 17 self-checks, and captures in light and dark.
+
 ### ferrokit-core (was appkit-host)
 
 - **Fixed: typing over a selection in a highlighted editor could crash the app.** Restyling set the editor's typing attributes in the middle of the edit, while the text view still held the old selection; AppKit read attributes past the end of the shorter text and threw, which left TextKit 2's layout behind the text, so the typed text didn't show and the next redraw aborted. Typing attributes are now left alone during an edit, and highlighting runs in `willProcessEditing` as part of the edit itself.

@@ -164,6 +164,8 @@ The first notification makes macOS ask the user whether to allow the app's
 notifications. They show as banners while the app is in front too, and
 `.on_click(..)` runs when the user clicks one while the app is running.
 `.id(..)` replaces an earlier notification with the same id.
+`.daily_at(hour, minute)` repeats it every day at that time instead of
+showing it now (a habit's reminder), until `cancel_notification(id)`.
 
 Notifications need an app bundle with a bundle identifier
 (`cargo ferrokit bundle`, or `cargo ferrokit run`); from a plain `cargo
