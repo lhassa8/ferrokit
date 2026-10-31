@@ -205,6 +205,8 @@ pub struct Node {
     /// Forced flexibility (`fill_width` / `fill_height`).
     pub(crate) fill: (bool, bool),
     pub(crate) meta: Rc<Meta>,
+    /// Views behind the node's own (a surface), framed to its rectangle.
+    pub(crate) decor: Vec<NativeView>,
     effects: Vec<Effect>,
     keep: Vec<NativeObject>,
     held: Vec<Rc<dyn std::any::Any>>,
@@ -224,6 +226,7 @@ impl Node {
             fixed: (None, None),
             fill: (false, false),
             meta,
+            decor: Vec::new(),
             effects: Vec::new(),
             keep: Vec::new(),
             held: Vec::new(),
@@ -287,6 +290,21 @@ impl Node {
         }
     }
 
+    /// Every native view of this subtree: its leaves and their surfaces.
+    pub(crate) fn all_views(&self) -> Vec<NativeView> {
+        let mut out = self.decor.clone();
+        match &self.kind {
+            Kind::Leaf(l) => out.push(l.view.clone()),
+            Kind::Scroll { scroll, .. } => out.push(Native::scroll_as_view(scroll)),
+            Kind::Split { panes, .. } => panes.iter().for_each(|(_, n)| out.extend(n.all_views())),
+            Kind::Stack { children, .. } => children.iter().for_each(|c| out.extend(c.all_views())),
+            Kind::Grid { rows, .. } => rows.iter().flatten().for_each(|c| out.extend(c.all_views())),
+            Kind::Group(g) => g.borrow().iter().for_each(|c| out.extend(c.all_views())),
+            Kind::Spacer => {}
+        }
+        out
+    }
+
     /// Keeps a Rust value alive for as long as the node.
     pub(crate) fn hold<V: ?Sized + 'static>(&mut self, value: Rc<V>) {
         self.held.push(Rc::new(value));
@@ -298,6 +316,9 @@ impl Drop for Node {
         LIVE_NODES.with(|n| n.set(n.get() - 1));
         // Effects stop first (dropping them), then the native view leaves.
         self.effects.clear();
+        for d in &self.decor {
+            Native::remove(d);
+        }
         if let Kind::Scroll { scroll, .. } = &self.kind {
             Native::remove(&Native::scroll_as_view(scroll));
         }
@@ -381,26 +402,68 @@ pub trait ViewExt: View + Sized {
     fn accessibility_label(self, label: &str) -> Modified<Self> {
         Modified::new(self).accessibility_label(label)
     }
+
+    /// A background behind the view, its padding included: with
+    /// [`corner_radius`](Self::corner_radius) and [`shadow`](Self::shadow), a
+    /// card. `Color::ControlBackground` is the system's card colour.
+    fn background(self, color: crate::Color) -> Modified<Self> {
+        Modified::new(self).background(color)
+    }
+
+    /// Rounds the corners of the view's background and border, in points.
+    fn corner_radius(self, points: f64) -> Modified<Self> {
+        Modified::new(self).corner_radius(points)
+    }
+
+    /// A border `width` points wide around the view (inside its padding).
+    fn border(self, color: crate::Color, width: f64) -> Modified<Self> {
+        Modified::new(self).border(color, width)
+    }
+
+    /// A drop shadow under the view's background (give it a background).
+    fn shadow(self, shadow: crate::Shadow) -> Modified<Self> {
+        Modified::new(self).shadow(shadow)
+    }
+
+    /// The view at `opacity` (0 transparent, 1 opaque), all of it.
+    fn opacity(self, opacity: f64) -> Modified<Self> {
+        Modified::new(self).opacity(opacity)
+    }
 }
 
 impl<V: View> ViewExt for V {}
 
-/// A view with modifiers applied (see [`ViewExt`]).
+/// A view with modifiers applied (see [`ViewExt`]). Layout and look
+/// modifiers apply in the order written, as SwiftUI's do:
+/// `.frame(18.0, 18.0).padding(7.0)` is an 18-point view with 7 points
+/// around it, and `.padding(16.0).background(..)` puts the background under
+/// the padding too, while `.background(..).padding(16.0)` doesn't.
 pub struct Modified<V> {
     view: V,
-    padding: Option<f64>,
-    width: Option<f64>,
-    height: Option<f64>,
-    fill: (bool, bool),
+    ops: Vec<Op>,
     menu: Option<Vec<crate::chrome::MenuItem>>,
     label: Option<String>,
     responds: crate::commands::Responds,
     popover: Option<crate::popover::PopoverSpec>,
+    opacity: Option<f64>,
+}
+
+/// A layout or look modifier, in the order written.
+enum Op {
+    Padding(f64),
+    Width(f64),
+    Height(f64),
+    FillWidth,
+    FillHeight,
+    Background(crate::Color),
+    Radius(f64),
+    Border(crate::Color, f64),
+    Shadow(crate::Shadow),
 }
 
 impl<V: View> Modified<V> {
     fn new(view: V) -> Self {
-        Modified { view, padding: None, width: None, height: None, fill: (false, false), menu: None, label: None, responds: Default::default(), popover: None }
+        Modified { view, ops: Vec::new(), menu: None, label: None, responds: Default::default(), popover: None, opacity: None }
     }
 
     /// Shows `content` in a popover pointing at this view while `shown` is
@@ -453,31 +516,61 @@ impl<V: View> Modified<V> {
 
     /// Takes all the width its container offers.
     pub fn fill_width(mut self) -> Self {
-        self.fill.0 = true;
+        self.ops.push(Op::FillWidth);
         self
     }
 
     /// Takes all the height its container offers.
     pub fn fill_height(mut self) -> Self {
-        self.fill.1 = true;
+        self.ops.push(Op::FillHeight);
         self
     }
 
     /// Inset on all sides, in points.
     pub fn padding(mut self, points: f64) -> Self {
-        self.padding = Some(points);
+        self.ops.push(Op::Padding(points));
         self
     }
 
     /// A fixed width.
     pub fn width(mut self, points: f64) -> Self {
-        self.width = Some(points);
+        self.ops.push(Op::Width(points));
         self
     }
 
     /// A fixed height.
     pub fn height(mut self, points: f64) -> Self {
-        self.height = Some(points);
+        self.ops.push(Op::Height(points));
+        self
+    }
+
+    /// A background behind the view (see [`ViewExt::background`]).
+    pub fn background(mut self, color: crate::Color) -> Self {
+        self.ops.push(Op::Background(color));
+        self
+    }
+
+    /// Rounded corners for the background and border.
+    pub fn corner_radius(mut self, points: f64) -> Self {
+        self.ops.push(Op::Radius(points));
+        self
+    }
+
+    /// A border around the view.
+    pub fn border(mut self, color: crate::Color, width: f64) -> Self {
+        self.ops.push(Op::Border(color, width));
+        self
+    }
+
+    /// A drop shadow under the view's background.
+    pub fn shadow(mut self, shadow: crate::Shadow) -> Self {
+        self.ops.push(Op::Shadow(shadow));
+        self
+    }
+
+    /// The view at `opacity`.
+    pub fn opacity(mut self, opacity: f64) -> Self {
+        self.opacity = Some(opacity);
         self
     }
 }
@@ -485,11 +578,51 @@ impl<V: View> Modified<V> {
 impl<V: View> View for Modified<V> {
     fn build(self, cx: &mut Cx) -> Node {
         let mut node = self.view.build(cx);
-        if let Some(p) = self.padding {
-            node.padding = p;
+        // Look modifiers written one after another make one surface.
+        let mut look = crate::surface::Look::default();
+        let mut has_look = false;
+        for op in self.ops {
+            let is_look = matches!(op, Op::Background(_) | Op::Radius(_) | Op::Border(..) | Op::Shadow(_));
+            if !is_look && has_look {
+                node = add_surface(node, std::mem::take(&mut look), cx);
+                has_look = false;
+            }
+            match op {
+                Op::Padding(p) => {
+                    if node.padding > 0.0 || node.fixed != (None, None) || !node.decor.is_empty() {
+                        node = wrap(node);
+                    }
+                    node.padding = p;
+                }
+                Op::Width(w) => {
+                    if node.fixed.0.is_some() {
+                        node = wrap(node);
+                    }
+                    node.fixed.0 = Some(w);
+                }
+                Op::Height(h) => {
+                    if node.fixed.1.is_some() {
+                        node = wrap(node);
+                    }
+                    node.fixed.1 = Some(h);
+                }
+                Op::FillWidth => node.fill.0 = true,
+                Op::FillHeight => node.fill.1 = true,
+                Op::Background(c) => look.background = Some(c),
+                Op::Radius(r) => look.radius = r,
+                Op::Border(c, w) => look.border = Some((c, w)),
+                Op::Shadow(s) => look.shadow = Some(s),
+            }
+            has_look |= is_look;
         }
-        node.fixed = (self.width.or(node.fixed.0), self.height.or(node.fixed.1));
-        node.fill = (node.fill.0 || self.fill.0, node.fill.1 || self.fill.1);
+        if has_look {
+            node = add_surface(node, look, cx);
+        }
+        if let Some(alpha) = self.opacity {
+            for v in node.all_views() {
+                v.setAlphaValue(alpha);
+            }
+        }
         if let Some(items) = self.menu {
             let mut leaves = Vec::new();
             node.leaf_views(&mut leaves);
@@ -519,6 +652,32 @@ impl<V: View> View for Modified<V> {
         }
         node
     }
+}
+
+/// `node` inside a box of its own, so a modifier can go around what it
+/// already has (padding outside a frame or a background, a second frame).
+/// The box is laid out at `node`'s size and centres it when larger.
+fn wrap(node: Node) -> Node {
+    Node::new(Kind::Stack { axis: Axis::Vertical, spacing: 0.0, align: Some(Align::Center), children: vec![node] })
+}
+
+/// A surface behind `node`'s native views, framed to its rectangle (a
+/// node that already has one goes in a box first).
+fn add_surface(node: Node, look: crate::surface::Look, cx: &Cx) -> Node {
+    let mut node = if node.decor.is_empty() { node } else { wrap(node) };
+    let surface: NativeView = objc2::rc::Retained::into_super(crate::surface::Surface::new(cx.mtm, look));
+    // Below the lowest of the node's views in the container (they were
+    // added as it was built).
+    let views = node.all_views();
+    let subviews = cx.container.subviews();
+    let lowest = subviews.iter().find(|s| views.iter().any(|v| objc2::rc::Retained::as_ptr(v) == objc2::rc::Retained::as_ptr(s)));
+    match lowest {
+        Some(lowest) => cx.container.addSubview_positioned_relativeTo(&surface, objc2_app_kit::NSWindowOrderingMode::Below, Some(&lowest)),
+        None => Native::add_subview(&cx.container, &surface),
+    }
+    node.decor.push(surface);
+    node.meta.mark();
+    node
 }
 
 /// A list of child views: a tuple of views, or a `Vec<AnyView>`.

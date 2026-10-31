@@ -17,6 +17,16 @@ The old names get one last release (`appkit-ui` 0.4.0, `iced-appkit` 0.3.0, `app
 
 Also renamed, for anyone who relied on them: the Objective-C class prefixes (`AppKitUi…` → `Ferrokit…`, `AppKitHost…` → `FerrokitCore…`) and a few identifiers the framework stores, such as its recent-documents defaults key and the Settings window's autosave name, so recent documents and the Settings window's position start fresh.
 
+### Styling (Phase 3, V1)
+
+- **Text styles:** `text(..)` and `label(..)` take `.font(..)` and `.color(..)` (`label` also `.color_when(..)`). `Font` has the system's text styles (`large_title`, `title`, `headline`, `body`, `caption`…), `system`, `monospaced` and `named` fonts, with `.weight(Weight::..)`, `.bold()`, `.size(..)`, `.italic()` and `.monospaced_digits()`.
+- **Surfaces on any view:** `.background(..)`, `.corner_radius(..)`, `.border(..)`, `.shadow(Shadow::soft())` and `.opacity(..)`. Colours resolve again on appearance changes, so cards follow Dark Mode.
+- **Pictures:** `image_file(..)` and `image_data(..)`, fitted or `.fill()`ed, with `.corner_radius(..)`. SF Symbols take `.symbol_size(..)`, `.symbol_weight(..)`, `.color(..)`, `.hierarchical(..)`, `.palette(..)` and `.multicolor()`.
+- **`Color`** (was `TextColor`, and merges the colour well's `Color` struct): it adds `Quaternary`, `Accent`, `WindowBackground`, `ControlBackground`, `Clear`, `Rgba`, plus `Color::rgb`, `rgba`, `hex`, `.opacity(..)` and `.components()`.
+- **Changed: modifiers apply in the order written,** as in SwiftUI. A modifier that has to go around what's already there (padding outside a frame or background, a second frame) adds a box: `.frame(18.0, 18.0).padding(7.0)` is an 18-point view with 7 points around it. Before, all of a view's modifiers applied together.
+- **Changed: a stack's flexible children share its length equally.** A child whose own length is larger keeps it. So a row of cards that `fill_width()` come out the same width; before, each got its own width plus an equal share of the extra.
+- A new guide chapter, Styling, and a new example, `styles`, with 12 self-checks, from fonts read back to colours, corners and shadows sampled from real window captures in light and dark.
+
 ### ferrokit-core (was appkit-host)
 
 - **Fixed: typing over a selection in a highlighted editor could crash the app.** Restyling set the editor's typing attributes in the middle of the edit, while the text view still held the old selection; AppKit read attributes past the end of the shorter text and threw, which left TextKit 2's layout behind the text, so the typed text didn't show and the next redraw aborted. Typing attributes are now left alone during an edit, and highlighting runs in `willProcessEditing` as part of the edit itself.

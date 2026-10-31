@@ -211,6 +211,9 @@ pub(crate) fn place(node: &Node, x: f64, y: f64, w: f64, h: f64, snap: &Snap) {
         return;
     }
     bump(&PLACED);
+    for d in &node.decor {
+        Native::place(d, snapped(x, y, w, h, snap));
+    }
     let p = node.padding;
     let (ix, iy, iw, ih) = (x + p, y + p, (w - 2.0 * p).max(0.0), (h - 2.0 * p).max(0.0));
     match &node.kind {
@@ -259,6 +262,31 @@ fn finish(meta: &Meta, rect: [f64; 4]) {
     meta.dirty.set(false);
 }
 
+/// Gives a stack's flexible children equal lengths out of `total` (the
+/// stack's length less its spacing), so a row of cards that all fill come
+/// out the same width whatever their content. A child whose own length is
+/// more than its share keeps it, and the rest share what's left.
+fn share(lengths: &mut [f64], flex: &[bool], total: f64) {
+    let fixed: f64 = lengths.iter().zip(flex).filter(|(_, f)| !**f).map(|(l, _)| l).sum();
+    let mut pool = total - fixed;
+    let mut open: Vec<usize> = (0..lengths.len()).filter(|&i| flex[i]).collect();
+    loop {
+        if open.is_empty() {
+            return;
+        }
+        let each = pool / open.len() as f64;
+        let (big, small): (Vec<usize>, Vec<usize>) = open.iter().partition(|&&i| lengths[i] > each);
+        if big.is_empty() {
+            for i in small {
+                lengths[i] = each;
+            }
+            return;
+        }
+        pool -= big.iter().map(|&i| lengths[i]).sum::<f64>();
+        open = small;
+    }
+}
+
 /// Shares `extra` between the flexible tracks (or items).
 fn distribute(sizes: &mut [f64], flex: &[bool], extra: f64) {
     let n = flex.iter().filter(|f| **f).count();
@@ -282,7 +310,9 @@ fn place_stack(children: &[Node], axis: Axis, spacing: f64, align: Option<Align>
     let flex: Vec<bool> = kids.iter().map(|c| flexible(c, axis, Some(axis))).collect();
     let mut lengths: Vec<f64> = ideals.iter().map(|s| along(*s, axis)).collect();
     let used: f64 = lengths.iter().sum::<f64>() + spacing * kids.len().saturating_sub(1) as f64;
-    distribute(&mut lengths, &flex, len - used);
+    if len > used {
+        share(&mut lengths, &flex, len - spacing * kids.len().saturating_sub(1) as f64);
+    }
     let align = align.unwrap_or(if axis == Axis::Horizontal { Align::Center } else { Align::Start });
     let mut pos = 0.0;
     for ((child, s), a) in kids.iter().zip(&ideals).zip(&lengths) {

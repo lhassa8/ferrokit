@@ -9,7 +9,7 @@
 use std::collections::HashSet;
 use std::ops::Range;
 
-use ferrokit_core::text::{TextColor, TextStyle};
+use ferrokit_core::text::{Color, TextStyle};
 
 /// How to colour a language. Build one with [`Syntax::new`] and its
 /// methods, or start from [`Syntax::sql`] or [`Syntax::rust`].
@@ -18,12 +18,12 @@ use ferrokit_core::text::{TextColor, TextStyle};
 /// use ferrokit::*;
 ///
 /// let ini = Syntax::new()
-///     .keywords(&["true", "false"], TextStyle::new().color(TextColor::Purple))
-///     .strings("\"", TextStyle::new().color(TextColor::Red))
-///     .line_comment(";", TextStyle::new().color(TextColor::Gray))
-///     .numbers(TextStyle::new().color(TextColor::Blue));
+///     .keywords(&["true", "false"], TextStyle::new().color(Color::Purple))
+///     .strings("\"", TextStyle::new().color(Color::Red))
+///     .line_comment(";", TextStyle::new().color(Color::Gray))
+///     .numbers(TextStyle::new().color(Color::Blue));
 /// let runs = ini.highlight("debug = true ; for now");
-/// assert_eq!(runs[0], (8..12, TextStyle::new().color(TextColor::Purple)));
+/// assert_eq!(runs[0], (8..12, TextStyle::new().color(Color::Purple)));
 /// ```
 #[derive(Clone, Default)]
 pub struct Syntax {
@@ -115,28 +115,28 @@ impl Syntax {
     pub fn sql() -> Self {
         Syntax::new()
             .ignore_case()
-            .keywords(SQL_KEYWORDS, TextStyle::new().color(TextColor::Pink).bold())
-            .keywords(SQL_TYPES, TextStyle::new().color(TextColor::Purple))
-            .keywords(SQL_FUNCTIONS, TextStyle::new().color(TextColor::Indigo))
-            .strings("'", TextStyle::new().color(TextColor::Red))
+            .keywords(SQL_KEYWORDS, TextStyle::new().color(Color::Pink).bold())
+            .keywords(SQL_TYPES, TextStyle::new().color(Color::Purple))
+            .keywords(SQL_FUNCTIONS, TextStyle::new().color(Color::Indigo))
+            .strings("'", TextStyle::new().color(Color::Red))
             .doubled_quotes()
             .quoted_identifiers(&[('"', '"'), ('`', '`'), ('[', ']')])
-            .line_comment("--", TextStyle::new().color(TextColor::Gray).italic())
-            .block_comment("/*", "*/", TextStyle::new().color(TextColor::Gray).italic())
-            .numbers(TextStyle::new().color(TextColor::Blue))
+            .line_comment("--", TextStyle::new().color(Color::Gray).italic())
+            .block_comment("/*", "*/", TextStyle::new().color(Color::Gray).italic())
+            .numbers(TextStyle::new().color(Color::Blue))
     }
 
     /// Rust: keywords pink and bold, common types purple, strings red,
     /// numbers blue, comments gray and italic.
     pub fn rust() -> Self {
         Syntax::new()
-            .keywords(RUST_KEYWORDS, TextStyle::new().color(TextColor::Pink).bold())
-            .keywords(RUST_TYPES, TextStyle::new().color(TextColor::Purple))
-            .strings("\"", TextStyle::new().color(TextColor::Red))
+            .keywords(RUST_KEYWORDS, TextStyle::new().color(Color::Pink).bold())
+            .keywords(RUST_TYPES, TextStyle::new().color(Color::Purple))
+            .strings("\"", TextStyle::new().color(Color::Red))
             .escape('\\')
-            .line_comment("//", TextStyle::new().color(TextColor::Gray).italic())
-            .block_comment("/*", "*/", TextStyle::new().color(TextColor::Gray).italic())
-            .numbers(TextStyle::new().color(TextColor::Blue))
+            .line_comment("//", TextStyle::new().color(Color::Gray).italic())
+            .block_comment("/*", "*/", TextStyle::new().color(Color::Gray).italic())
+            .numbers(TextStyle::new().color(Color::Blue))
     }
 
     /// The styled runs of `text`, in order (UTF-8 byte ranges).
@@ -271,14 +271,14 @@ mod tests {
     #[test]
     fn sql_tokens() {
         let sql = Syntax::sql();
-        let kw = TextStyle::new().color(TextColor::Pink).bold();
+        let kw = TextStyle::new().color(Color::Pink).bold();
         let got = spans(&sql, "SELECT name, count(*) FROM \"select\" WHERE x = 'it''s' AND y > 1.5e-3 -- done\n/* a\nb */ limit 10");
         let texts: Vec<&str> = got.iter().map(|(t, _)| t.as_str()).collect();
         assert_eq!(texts, ["SELECT", "count", "FROM", "WHERE", "'it''s'", "AND", "1.5e-3", "-- done", "/* a\nb */", "limit", "10"]);
         assert_eq!(got[0].1, kw);
-        assert_eq!(got[1].1, TextStyle::new().color(TextColor::Indigo));
-        assert_eq!(got[4].1, TextStyle::new().color(TextColor::Red));
-        assert_eq!(got[6].1, TextStyle::new().color(TextColor::Blue));
+        assert_eq!(got[1].1, TextStyle::new().color(Color::Indigo));
+        assert_eq!(got[4].1, TextStyle::new().color(Color::Red));
+        assert_eq!(got[6].1, TextStyle::new().color(Color::Blue));
     }
 
     #[test]

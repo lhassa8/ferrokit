@@ -15,7 +15,7 @@ fn document() -> DocumentType<String> {
         model.set_font(Some("Menlo"), 13.0);
         let text = *doc.content();
         vstack((
-            text_editor(&model).bind(doc.content()).syntax(Syntax::new().line_comment("#", TextStyle::new().color(TextColor::Gray))).accessibility_label("Text"),
+            text_editor(&model).bind(doc.content()).syntax(Syntax::new().line_comment("#", TextStyle::new().color(Color::Gray))).accessibility_label("Text"),
             label(move || format!("{} words", text.with(|t| t.split_whitespace().count()))).padding(6.0),
         ))
     })

@@ -206,7 +206,7 @@ let editor = text_editor(&query).syntax(Syntax::sql()).accessibility_label("Quer
 ```
 
 For anything else, `.highlight(|text| runs)` returns UTF-8 byte ranges and
-their `TextStyle`s (a `TextColor`, a background, bold, italic, underline).
+their `TextStyle`s (a `Color`, a background, bold, italic, underline).
 The colours are the system's, so they follow Dark Mode. Styles are applied
 after every edit, before it's drawn, and only where they changed. If the
 function reads signals, it runs again when they change, here to mark a
@@ -222,7 +222,7 @@ let editor = text_editor(&doc).highlight(move |text| {
     let mut runs = rust.highlight(text);
     let t = term.get();
     if !t.is_empty() {
-        let mark = TextStyle::new().background(TextColor::Yellow);
+        let mark = TextStyle::new().background(Color::Yellow);
         runs.extend(text.match_indices(t.as_str()).map(|(at, m)| (at..at + m.len(), mark)));
     }
     runs
@@ -236,7 +236,7 @@ only, and the highlighter restyles what changed.
 ## Drawing and charts
 
 `canvas(|p| …)` draws with a `Painter`: rectangles, circles, lines,
-polygons and text, in points from the top-left corner, in `TextColor`s
+polygons and text, in points from the top-left corner, in `Color`s
 (the system's follow Dark Mode). The drawing is recorded and replayed by
 a native view. It's recorded again when signals it reads change or the
 canvas resizes, so a canvas is as reactive as a label.
@@ -246,8 +246,8 @@ use ferrokit::*;
 
 let level = Signal::new(0.4);
 let meter = canvas(move |p| {
-    p.fill_rounded_rect(0.0, 0.0, p.width(), p.height(), 6.0, TextColor::Separator);
-    p.fill_rounded_rect(0.0, 0.0, p.width() * level.get(), p.height(), 6.0, TextColor::Green);
+    p.fill_rounded_rect(0.0, 0.0, p.width(), p.height(), 6.0, Color::Separator);
+    p.fill_rounded_rect(0.0, 0.0, p.width() * level.get(), p.height(), 6.0, Color::Green);
 })
 .on_click(move |x, _y| println!("clicked at {x}"))
 .description(move || format!("Level {:.0}%", level.get() * 100.0))
@@ -292,7 +292,7 @@ canvas an image: right-click for Copy Image and Save Image…, or drag out
 use ferrokit::*;
 
 let rows = Signal::new(vec![("a".to_string(), 1.0), ("b".to_string(), 2.0)]);
-let chip = canvas(|p| p.text(4.0, 3.0, "data.csv", 11.0, TextColor::Secondary, Align::Start))
+let chip = canvas(|p| p.text(4.0, 3.0, "data.csv", 11.0, Color::Secondary, Align::Start))
     .draggable(move || {
         let csv: String = rows.get_untracked().iter().map(|(k, v)| format!("{k},{v}\n")).collect();
         Some(DragItem::promise("data.csv", move |path| std::fs::write(path, &csv)))

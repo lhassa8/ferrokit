@@ -21,7 +21,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSEdgeInsets, NSIndexPath, NSInteger, NSPoint, NSRect, NSSet, NSSize, NSString};
 
-use crate::controls::Color;
+use ferrokit_core::text::Color;
 use crate::signal::{Effect, Signal, batch, untrack};
 use crate::view::{Cx, Identifiable, Kind, Node, Size, View};
 
@@ -240,7 +240,7 @@ impl GridCell {
         let (image, swatch) = match &item.image {
             ItemImage::Symbol(name) => (NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str(name), None), None),
             ItemImage::FileIcon(path) => (Some(NSWorkspace::sharedWorkspace().iconForFile(&NSString::from_str(&path.to_string_lossy()))), None),
-            ItemImage::Color(c) => (None, Some(NSColor::colorWithSRGBRed_green_blue_alpha(c.r, c.g, c.b, c.a))),
+            ItemImage::Color(c) => (None, Some(c.ns())),
             ItemImage::None => (None, None),
         };
         p.image.setImage(image.as_deref());

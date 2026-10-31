@@ -146,41 +146,101 @@ pub(crate) fn remeasure(view: &NSView, leaf: &LeafHandle) {
     }
 }
 
+/// How a label's text looks: its font and colour.
+#[derive(Clone, Default)]
+struct TextLook {
+    font: Option<crate::Font>,
+    color: Option<crate::Color>,
+}
+
+impl TextLook {
+    fn apply(&self, field: &NSTextField) {
+        if let Some(font) = &self.font {
+            field.setFont(Some(&font.ns()));
+        }
+        if let Some(color) = self.color {
+            field.setTextColor(Some(&color.ns()));
+        }
+    }
+}
+
 /// A static label.
-pub struct Text(String);
+pub struct Text(String, TextLook);
+
+impl Text {
+    /// Its font: a text style (`Font::title()`, `Font::caption()`) or a
+    /// custom one.
+    pub fn font(mut self, font: crate::Font) -> Self {
+        self.1.font = Some(font);
+        self
+    }
+
+    /// Its colour (`Color::Secondary` for less prominent text).
+    pub fn color(mut self, color: crate::Color) -> Self {
+        self.1.color = Some(color);
+        self
+    }
+}
 
 impl View for Text {
     fn build(self, cx: &mut Cx) -> Node {
         let field = NSTextField::labelWithString(&NSString::from_str(&self.0), cx.mtm);
+        self.1.apply(&field);
         Node::leaf(cx, Retained::into_super(Retained::into_super(field)), (false, false), Size::default()).0
     }
 }
 
 /// A static label.
 pub fn text(s: impl Into<String>) -> Text {
-    Text(s.into())
+    Text(s.into(), TextLook::default())
 }
 
 /// A label computed from signals; updates in place.
-pub struct Label(Box<dyn Fn() -> String>);
+pub struct Label(Box<dyn Fn() -> String>, TextLook, Option<Box<dyn Fn() -> crate::Color>>);
+
+impl Label {
+    /// Its font (see [`Text::font`]).
+    pub fn font(mut self, font: crate::Font) -> Self {
+        self.1.font = Some(font);
+        self
+    }
+
+    /// Its colour (see [`Text::color`]).
+    pub fn color(mut self, color: crate::Color) -> Self {
+        self.1.color = Some(color);
+        self
+    }
+
+    /// A colour computed from signals, updated in place (a balance red when
+    /// it's negative).
+    pub fn color_when(mut self, f: impl Fn() -> crate::Color + 'static) -> Self {
+        self.2 = Some(Box::new(f));
+        self
+    }
+}
 
 impl View for Label {
     fn build(self, cx: &mut Cx) -> Node {
         let field = NSTextField::labelWithString(&NSString::from_str(""), cx.mtm);
+        self.1.apply(&field);
         let view: Retained<NSView> = Retained::into_super(Retained::into_super(field.clone()));
         let (mut node, handle) = Node::leaf(cx, view.clone(), (false, false), Size::default());
         let f = self.0;
+        let fld = field.clone();
         node.own(Effect::new(move || {
-            field.setStringValue(&NSString::from_str(&f()));
+            fld.setStringValue(&NSString::from_str(&f()));
             remeasure(&view, &handle);
         }));
+        if let Some(color) = self.2 {
+            node.own(Effect::new(move || field.setTextColor(Some(&color().ns()))));
+        }
         node
     }
 }
 
 /// A label computed from signals; updates in place.
 pub fn label(f: impl Fn() -> String + 'static) -> Label {
-    Label(Box::new(f))
+    Label(Box::new(f), TextLook::default(), None)
 }
 
 define_class!(

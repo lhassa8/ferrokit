@@ -11,6 +11,7 @@ use objc2_app_kit::{
 use objc2_foundation::{NSNotification, NSString};
 
 use crate::signal::{Effect, Signal, batch};
+use ferrokit_core::text::Color;
 use crate::appkit_views::{ActionTarget, text};
 use crate::view::{Cx, Node, Size, View, ViewExt, hstack};
 
@@ -358,10 +359,34 @@ pub fn progress(f: impl Fn() -> Option<f64> + 'static) -> Progress {
     Progress(Box::new(f))
 }
 
-/// An SF Symbol.
+/// An image: an SF Symbol ([`image`]), or a picture from a file or bytes
+/// ([`image_file`], [`image_data`]).
 pub struct Image {
-    symbol: String,
+    source: ImageSource,
     description: Option<String>,
+    symbol: SymbolLook,
+    fill: bool,
+    radius: f64,
+}
+
+enum ImageSource {
+    Symbol(String),
+    File(std::path::PathBuf),
+    Data(Vec<u8>),
+}
+
+#[derive(Default)]
+struct SymbolLook {
+    size: Option<f64>,
+    weight: Option<crate::Weight>,
+    color: Option<Color>,
+    rendering: Option<Rendering>,
+}
+
+enum Rendering {
+    Hierarchical(Color),
+    Palette(Vec<Color>),
+    Multicolor,
 }
 
 impl Image {
@@ -371,28 +396,152 @@ impl Image {
         self.description = Some(text.into());
         self
     }
+
+    /// A symbol's size in points (as text of that size would be).
+    pub fn symbol_size(mut self, points: f64) -> Self {
+        self.symbol.size = Some(points);
+        self
+    }
+
+    /// A symbol's stroke weight, to match the text beside it.
+    pub fn symbol_weight(mut self, weight: crate::Weight) -> Self {
+        self.symbol.weight = Some(weight);
+        self
+    }
+
+    /// A symbol's colour (one colour for all of it).
+    pub fn color(mut self, color: Color) -> Self {
+        self.symbol.color = Some(color);
+        self
+    }
+
+    /// A symbol in shades of `color`: its layers from full to faint.
+    pub fn hierarchical(mut self, color: Color) -> Self {
+        self.symbol.rendering = Some(Rendering::Hierarchical(color));
+        self
+    }
+
+    /// A symbol's layers in these colours, in order.
+    pub fn palette(mut self, colors: &[Color]) -> Self {
+        self.symbol.rendering = Some(Rendering::Palette(colors.to_vec()));
+        self
+    }
+
+    /// A symbol in its own colours, where it has them (`"cloud.sun.fill"`).
+    pub fn multicolor(mut self) -> Self {
+        self.symbol.rendering = Some(Rendering::Multicolor);
+        self
+    }
+
+    /// A picture fills its frame, cropping what doesn't fit (a cover, an
+    /// avatar). By default it fits inside, all of it shown.
+    pub fn fill(mut self) -> Self {
+        self.fill = true;
+        self
+    }
+
+    /// Rounds the picture's corners, in points (half its size for a
+    /// circle). For a background's corners, see
+    /// [`ViewExt::corner_radius`](crate::ViewExt::corner_radius).
+    pub fn corner_radius(mut self, points: f64) -> Self {
+        self.radius = points;
+        self
+    }
 }
 
 impl View for Image {
     fn build(self, cx: &mut Cx) -> Node {
-        let image = objc2_app_kit::NSImage::imageWithSystemSymbolName_accessibilityDescription(
-            &NSString::from_str(&self.symbol),
-            self.description.as_deref().map(NSString::from_str).as_deref(),
-        )
-        .unwrap_or_else(|| panic!("no SF Symbol named {:?}", self.symbol));
-        let view = objc2_app_kit::NSImageView::imageViewWithImage(&image, cx.mtm);
-        let view: Retained<NSView> = Retained::into_super(Retained::into_super(view));
+        use objc2_app_kit::{NSImage, NSImageSymbolConfiguration, NSImageView};
+        let description = self.description.as_deref().map(NSString::from_str);
+        let (view, size): (Retained<NSView>, Option<Size>) = match &self.source {
+            ImageSource::Symbol(name) => {
+                let image = NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str(name), description.as_deref())
+                    .unwrap_or_else(|| panic!("no SF Symbol named {name:?}"));
+                let view = NSImageView::imageViewWithImage(&image, cx.mtm);
+                let look = &self.symbol;
+                let mut config: Option<Retained<NSImageSymbolConfiguration>> = None;
+                let mut add = |c: Retained<NSImageSymbolConfiguration>| {
+                    config = Some(match config.take() {
+                        Some(prev) => prev.configurationByApplyingConfiguration(&c),
+                        None => c,
+                    });
+                };
+                if look.size.is_some() || look.weight.is_some() {
+                    let size = look.size.unwrap_or_else(objc2_app_kit::NSFont::systemFontSize);
+                    add(NSImageSymbolConfiguration::configurationWithPointSize_weight(size, look.weight.unwrap_or(crate::Weight::Regular).ns()));
+                }
+                match &look.rendering {
+                    Some(Rendering::Hierarchical(c)) => add(NSImageSymbolConfiguration::configurationWithHierarchicalColor(&c.ns())),
+                    Some(Rendering::Palette(cs)) => {
+                        let colors: Vec<_> = cs.iter().map(|c| c.ns()).collect();
+                        add(NSImageSymbolConfiguration::configurationWithPaletteColors(&objc2_foundation::NSArray::from_retained_slice(&colors)));
+                    }
+                    Some(Rendering::Multicolor) => add(NSImageSymbolConfiguration::configurationPreferringMulticolor()),
+                    None => {}
+                }
+                if let Some(config) = &config {
+                    view.setSymbolConfiguration(Some(config));
+                }
+                if let Some(c) = look.color {
+                    view.setContentTintColor(Some(&c.ns()));
+                }
+                (Retained::into_super(Retained::into_super(view)), None)
+            }
+            ImageSource::File(_) | ImageSource::Data(_) => {
+                let image = match &self.source {
+                    ImageSource::File(path) => NSImage::initWithContentsOfFile(objc2::AnyThread::alloc(), &NSString::from_str(&path.to_string_lossy())),
+                    ImageSource::Data(bytes) => NSImage::initWithData(objc2::AnyThread::alloc(), &objc2_foundation::NSData::with_bytes(bytes)),
+                    ImageSource::Symbol(_) => unreachable!(),
+                };
+                let size = image.as_ref().map(|i| i.size()).map(|s| Size { w: s.width, h: s.height });
+                let view = crate::surface::picture(cx.mtm, image, self.fill, self.radius);
+                if let Some(d) = &description {
+                    use objc2_app_kit::NSAccessibility;
+                    view.setAccessibilityElement(true);
+                    view.setAccessibilityRole(Some(unsafe { objc2_app_kit::NSAccessibilityImageRole }));
+                    view.setAccessibilityLabel(Some(d));
+                }
+                (view, size)
+            }
+        };
+        if self.radius > 0.0 && matches!(self.source, ImageSource::Symbol(_)) {
+            view.setWantsLayer(true);
+            if let Some(layer) = view.layer() {
+                layer.setCornerRadius(self.radius);
+                layer.setMasksToBounds(true);
+            }
+        }
         if self.description.is_none() {
             // Decorative: hidden from VoiceOver (`accessibility_label` shows it again).
             <crate::platform::Native as crate::platform::Platform>::set_accessibility_element(&view, false);
         }
-        Node::leaf(cx, view, (false, false), Size::default()).0
+        let (node, _) = Node::leaf(cx, view, (false, false), Size::default());
+        if let (Some(size), crate::view::Kind::Leaf(l)) = (size, &node.kind) {
+            l.content.set(Some(size));
+        }
+        node
     }
+}
+
+fn new_image(source: ImageSource) -> Image {
+    Image { source, description: None, symbol: SymbolLook::default(), fill: false, radius: 0.0 }
 }
 
 /// An SF Symbol by name (e.g. `"star.fill"`). Panics if the name is unknown.
 pub fn image(symbol: &str) -> Image {
-    Image { symbol: symbol.into(), description: None }
+    new_image(ImageSource::Symbol(symbol.into()))
+}
+
+/// A picture from a file (PNG, JPEG, HEIC, PDF…), shown at its own size
+/// unless given one (`.frame(..)`). An unreadable file shows nothing.
+pub fn image_file(path: impl AsRef<std::path::Path>) -> Image {
+    new_image(ImageSource::File(path.as_ref().to_path_buf()))
+}
+
+/// A picture from bytes in a file format (PNG, JPEG…): one built into the
+/// app with `include_bytes!`.
+pub fn image_data(bytes: &[u8]) -> Image {
+    new_image(ImageSource::Data(bytes.to_vec()))
 }
 
 // ---- G2: dates, colours, segments, combo boxes, search fields ----
@@ -476,36 +625,11 @@ pub fn date_picker(value: &Signal<std::time::SystemTime>) -> DatePicker {
     DatePicker { value: *value, time: false, calendar: false, range: None }
 }
 
-/// An sRGB colour, components from 0 to 1.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Color {
-    /// Red.
-    pub r: f64,
-    /// Green.
-    pub g: f64,
-    /// Blue.
-    pub b: f64,
-    /// Opacity.
-    pub a: f64,
-}
-
-impl Color {
-    /// An opaque colour.
-    pub fn rgb(r: f64, g: f64, b: f64) -> Self {
-        Color { r, g, b, a: 1.0 }
-    }
-
-    fn ns(self) -> Retained<objc2_app_kit::NSColor> {
-        objc2_app_kit::NSColor::colorWithSRGBRed_green_blue_alpha(self.r, self.g, self.b, self.a)
-    }
-
-    fn from_ns(c: &objc2_app_kit::NSColor) -> Option<Self> {
-        let c = c.colorUsingColorSpace(&objc2_app_kit::NSColorSpace::sRGBColorSpace())?;
-        Some(Color { r: c.redComponent(), g: c.greenComponent(), b: c.blueComponent(), a: c.alphaComponent() })
-    }
-
-    fn close_to(self, o: Color) -> bool {
-        [(self.r, o.r), (self.g, o.g), (self.b, o.b), (self.a, o.a)].iter().all(|(a, b)| (a - b).abs() < 1.0 / 512.0)
+/// Whether two colours look the same (within an 8-bit step).
+fn close_to(a: Color, b: Color) -> bool {
+    match (a.components(), b.components()) {
+        (Some(a), Some(b)) => [(a.0, b.0), (a.1, b.1), (a.2, b.2), (a.3, b.3)].iter().all(|(x, y)| (x - y).abs() < 1.0 / 512.0),
+        _ => a == b,
     }
 }
 
@@ -529,7 +653,7 @@ impl View for ColorWell {
         let value = self.0;
         node.own(Effect::new(move || {
             let want = value.get();
-            if !Color::from_ns(&well.color()).is_some_and(|c| c.close_to(want)) {
+            if !Color::from_ns(&well.color()).is_some_and(|c| close_to(c, want)) {
                 well.setColor(&want.ns());
             }
         }));

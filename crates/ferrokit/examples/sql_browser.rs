@@ -546,8 +546,8 @@ fn export_csv(b: Browser) {
 /// a CSV file, written where it's dropped.
 fn csv_chip(b: Browser) -> impl View {
     canvas(|p| {
-        p.fill_rounded_rect(0.0, 0.0, p.width(), p.height(), 5.0, TextColor::Separator);
-        p.text(p.width() / 2.0, 3.0, "results.csv", 11.0, TextColor::Secondary, Align::Center);
+        p.fill_rounded_rect(0.0, 0.0, p.width(), p.height(), 5.0, Color::Separator);
+        p.text(p.width() / 2.0, 3.0, "results.csv", 11.0, Color::Secondary, Align::Center);
     })
     .draggable(move || {
         let r = b.results.get_untracked()?;
@@ -932,7 +932,7 @@ mod self_checks {
                 format!("title {:?}; query {:?}; {} rows, columns {:?} after {ms:.0} ms", w.title(), untrack(|| b.query.get()), t.numberOfRows(), titles(&t)),
             );
             let editor = BROWSERS.with_borrow(|all| all.last().unwrap().1.clone());
-            let keyword = TextStyle::new().color(TextColor::Pink).bold();
+            let keyword = TextStyle::new().color(Color::Pink).bold();
             let (select, name) = (editor.style_at(0), editor.style_at(15));
             check("sql-highlight", select == keyword && name == TextStyle::new(), format!("SELECT {select:?}; the quoted \"customers\" {name:?}"));
             let problems = ax_audit(&w);

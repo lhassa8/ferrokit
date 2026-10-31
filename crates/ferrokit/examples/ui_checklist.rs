@@ -450,8 +450,8 @@ fn command_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 /// out of undo, restyled when a signal the highlighter reads changes, and
 /// byte ranges mapped across multi-byte characters.
 fn styled_text_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
-    use ferrokit::{Syntax, TextColor, TextModel, TextStyle};
-    let keyword = TextStyle::new().color(TextColor::Pink).bold();
+    use ferrokit::{Syntax, Color, TextModel, TextStyle};
+    let keyword = TextStyle::new().color(Color::Pink).bold();
     let model = TextModel::new(ViewId(70), "let x = 42; // hi");
     let term = Signal::new(String::new());
     let rust = Syntax::rust();
@@ -462,7 +462,7 @@ fn styled_text_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                     let mut runs = rust.highlight(text);
                     let t = term.get();
                     if !t.is_empty() {
-                        runs.extend(text.match_indices(t.as_str()).map(|(at, m)| (at..at + m.len(), TextStyle::new().background(TextColor::Yellow))));
+                        runs.extend(text.match_indices(t.as_str()).map(|(at, m)| (at..at + m.len(), TextStyle::new().background(Color::Yellow))));
                     }
                     runs
                 })
@@ -472,7 +472,7 @@ fn styled_text_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let s = |at| model.style_at(at);
     check(
         "styled-highlight",
-        s(0) == keyword && s(4) == TextStyle::new() && s(8) == TextStyle::new().color(TextColor::Blue) && s(12) == TextStyle::new().color(TextColor::Gray).italic(),
+        s(0) == keyword && s(4) == TextStyle::new() && s(8) == TextStyle::new().color(Color::Blue) && s(12) == TextStyle::new().color(Color::Gray).italic(),
         format!("let {:?}; x {:?}; 42 {:?}; comment {:?}", s(0), s(4), s(8), s(12)),
     );
 
@@ -485,7 +485,7 @@ fn styled_text_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     um.endUndoGrouping();
     let typed = (s(0) == keyword, s(3) == keyword, s(1) == keyword);
     um.undo();
-    let undone = model.text() == "let x = 42; // hi" && s(0) == keyword && s(12) == TextStyle::new().color(TextColor::Gray).italic() && !um.canUndo();
+    let undone = model.text() == "let x = 42; // hi" && s(0) == keyword && s(12) == TextStyle::new().color(Color::Gray).italic() && !um.canUndo();
     check(
         "styled-typing-undo",
         typed == (true, true, true) && undone,
@@ -494,7 +494,7 @@ fn styled_text_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 
     // A signal the highlighter reads restyles it.
     term.set("x".into());
-    let marked = s(4).background == Some(TextColor::Yellow);
+    let marked = s(4).background == Some(Color::Yellow);
     term.set(String::new());
     let cleared = s(4).background.is_none();
     check("styled-reactive", marked && cleared, format!("search term marks x: {marked}; clearing it unmarks: {cleared}"));
@@ -509,7 +509,7 @@ fn styled_text_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let at = model.text().find("let").unwrap();
     check(
         "styled-unicode",
-        s(at) == keyword && s(at + 2) == keyword && s(1) == TextStyle::new().color(TextColor::Red),
+        s(at) == keyword && s(at + 2) == keyword && s(1) == TextStyle::new().color(Color::Red),
         format!("set_text restyles; let at byte {at} {:?}; the string {:?}", s(at), s(1)),
     );
     // Cost: the whole text is restyled on each edit.
@@ -531,11 +531,11 @@ fn styled_text_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     um.beginUndoGrouping();
     unsafe { objc2::msg_send![&*tv, insertText: &*NSString::from_str("/*"), replacementRange: objc2_foundation::NSRange::new(0, 0)] }
     um.endUndoGrouping();
-    let commented = s(last_let(&model)) == TextStyle::new().color(TextColor::Gray).italic();
+    let commented = s(last_let(&model)) == TextStyle::new().color(Color::Gray).italic();
     um.beginUndoGrouping();
     unsafe { objc2::msg_send![&*tv, insertText: &*NSString::from_str(""), replacementRange: objc2_foundation::NSRange::new(0, 2)] }
     um.endUndoGrouping();
-    let restored = s(last_let(&model)) == keyword && s(model.text().len() - 3) == TextStyle::new().color(TextColor::Gray).italic();
+    let restored = s(last_let(&model)) == keyword && s(model.text().len() - 3) == TextStyle::new().color(Color::Gray).italic();
     check("styled-far-edit", commented && restored, format!("/* at the top comments out the last line: {commented}; removing it restores keywords and comments there: {restored}"));
     // Typing over a selection of everything, as key presses, drawing after
     // each. Restyling used to set typing attributes mid-edit, which read the
@@ -628,15 +628,15 @@ fn popover_teardown_check(events: Rc<RefCell<Vec<AppEvent>>>) {
 /// drawn pixels, clicks in its own coordinates, and VoiceOver's view of it.
 fn canvas_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     use ferrokit::testing::canvas_drawing;
-    use ferrokit::{Align, TextColor, canvas};
+    use ferrokit::{Align, Color, canvas};
     use objc2_app_kit::NSAccessibility;
     let level = Signal::new(0.5);
     let clicks = Rc::new(RefCell::new(Vec::new()));
     let c = clicks.clone();
     let w = open(Window::new("Canvas").size(300.0, 200.0).view(
         canvas(move |p| {
-            p.fill_rect(0.0, 0.0, p.width() * level.get(), p.height(), TextColor::Rgb(1.0, 0.0, 0.0));
-            p.text(4.0, 4.0, &format!("{:.0}%", level.get() * 100.0), 12.0, TextColor::Primary, Align::Start);
+            p.fill_rect(0.0, 0.0, p.width() * level.get(), p.height(), Color::Rgb(1.0, 0.0, 0.0));
+            p.text(4.0, 4.0, &format!("{:.0}%", level.get() * 100.0), 12.0, Color::Primary, Align::Start);
         })
         .on_click(move |x, y| c.borrow_mut().push((x.round(), y.round())))
         .description(move || format!("Level {:.0}%", level.get() * 100.0)),
@@ -707,7 +707,7 @@ fn canvas_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 /// drag items, and files dropped on a window.
 fn clipboard_drop_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     use ferrokit::testing::{canvas_drag, canvas_drawing, drop_on_view};
-    use ferrokit::{Clipboard, DragItem, TextColor, canvas};
+    use ferrokit::{Clipboard, DragItem, Color, canvas};
     let dir = std::env::temp_dir().join(format!("ferrokit-transfer-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let clip = Clipboard::private();
@@ -738,7 +738,7 @@ fn clipboard_drop_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
             .size(300.0, 160.0)
             .on_drop_files(&["CSV"], move |paths| g.borrow_mut().extend(paths.iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned())))
             .view(
-                canvas(|p| p.fill_rect(0.0, 0.0, p.width(), p.height(), TextColor::Separator))
+                canvas(|p| p.fill_rect(0.0, 0.0, p.width(), p.height(), Color::Separator))
                     .draggable(|| Some(DragItem::Text("dragged text".into())))
                     .min_size(100.0, 40.0),
             ),
@@ -1869,7 +1869,7 @@ fn controls_c_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     well.setColor(&objc2_app_kit::NSColor::colorWithSRGBRed_green_blue_alpha(0.0, 0.5, 1.0, 1.0));
     send_action(&well);
     let got = colour.get_untracked();
-    let chosen = (got.g - 0.5).abs() < 0.01 && (got.b - 1.0).abs() < 0.01 && got.r < 0.01;
+    let chosen = got.components().is_some_and(|(r, g, b, _)| (g - 0.5).abs() < 0.01 && (b - 1.0).abs() < 0.01 && r < 0.01);
     batch(|| colour.set(Color::rgb(0.2, 0.8, 0.2)));
     let back = well.color().colorUsingColorSpace(&srgb).is_some_and(|c| (c.greenComponent() - 0.8).abs() < 0.01);
     check("color-well", red && chosen && back, format!("starts red: {red}; picked → {got:?}; signal → well: {back}"));

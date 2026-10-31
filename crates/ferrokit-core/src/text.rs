@@ -239,16 +239,21 @@ struct Inner {
 type Highlighter = dyn Fn(&str) -> Runs;
 type Runs = Vec<(Range<usize>, TextStyle)>;
 
-/// A colour for styled text. The named ones are the system's colours: they
-/// follow Dark Mode and Increase Contrast.
+/// A colour: for text, backgrounds, borders, drawing. The named ones are the
+/// system's colours: they follow Dark Mode, Increase Contrast and the user's
+/// accent colour.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum TextColor {
+pub enum Color {
     /// The text colour (what unstyled text uses).
     Primary,
     /// Less prominent text.
     Secondary,
     /// Even less prominent text (comments, placeholders).
     Tertiary,
+    /// The least prominent text and fills.
+    Quaternary,
+    /// The user's accent colour (System Settings › Appearance).
+    Accent,
     /// Links.
     Link,
     /// System red.
@@ -279,65 +284,130 @@ pub enum TextColor {
     Gray,
     /// The background of content (text, tables): white, or dark in Dark Mode.
     Background,
+    /// The window's background (behind content).
+    WindowBackground,
+    /// The background of controls and grouped content: cards, panels.
+    ControlBackground,
     /// Separator lines and grids.
     Separator,
+    /// Fully transparent.
+    Clear,
     /// A fixed sRGB colour (components 0–1; the same in light and dark).
     Rgb(f64, f64, f64),
+    /// A fixed sRGB colour with opacity (components 0–1).
+    Rgba(f64, f64, f64, f64),
 }
 
-impl TextColor {
-    const NAMED: [TextColor; 19] = [
-        TextColor::Primary,
-        TextColor::Secondary,
-        TextColor::Tertiary,
-        TextColor::Link,
-        TextColor::Red,
-        TextColor::Orange,
-        TextColor::Yellow,
-        TextColor::Green,
-        TextColor::Mint,
-        TextColor::Teal,
-        TextColor::Cyan,
-        TextColor::Blue,
-        TextColor::Indigo,
-        TextColor::Purple,
-        TextColor::Pink,
-        TextColor::Brown,
-        TextColor::Gray,
-        TextColor::Background,
-        TextColor::Separator,
+impl Color {
+    const NAMED: [Color; 24] = [
+        Color::Primary,
+        Color::Secondary,
+        Color::Tertiary,
+        Color::Quaternary,
+        Color::Accent,
+        Color::Link,
+        Color::Red,
+        Color::Orange,
+        Color::Yellow,
+        Color::Green,
+        Color::Mint,
+        Color::Teal,
+        Color::Cyan,
+        Color::Blue,
+        Color::Indigo,
+        Color::Purple,
+        Color::Pink,
+        Color::Brown,
+        Color::Gray,
+        Color::Background,
+        Color::WindowBackground,
+        Color::ControlBackground,
+        Color::Separator,
+        Color::Clear,
     ];
+
+    /// An opaque sRGB colour (components 0–1).
+    pub const fn rgb(r: f64, g: f64, b: f64) -> Color {
+        Color::Rgb(r, g, b)
+    }
+
+    /// An sRGB colour with opacity (components 0–1).
+    pub const fn rgba(r: f64, g: f64, b: f64, a: f64) -> Color {
+        Color::Rgba(r, g, b, a)
+    }
+
+    /// A colour from a hex string: `"#3a7bd5"`, `"3a7bd5"`, or with opacity
+    /// `"#3a7bd580"`. Black for anything else.
+    pub fn hex(hex: &str) -> Color {
+        let h = hex.trim_start_matches('#');
+        let byte = |i: usize| h.get(i..i + 2).and_then(|b| u8::from_str_radix(b, 16).ok()).map_or(0.0, |b| f64::from(b) / 255.0);
+        match h.len() {
+            8 => Color::Rgba(byte(0), byte(2), byte(4), byte(6)),
+            6 => Color::Rgb(byte(0), byte(2), byte(4)),
+            _ => Color::Rgb(0.0, 0.0, 0.0),
+        }
+    }
+
+    /// The same colour at `opacity` (0–1), on top of its own.
+    pub fn opacity(self, opacity: f64) -> Color {
+        match self.components() {
+            Some((r, g, b, a)) => Color::Rgba(r, g, b, a * opacity),
+            None => self,
+        }
+    }
+
+    /// Its sRGB components (red, green, blue, opacity), resolved for the
+    /// current appearance for the named colours.
+    pub fn components(self) -> Option<(f64, f64, f64, f64)> {
+        match self {
+            Color::Rgb(r, g, b) => Some((r, g, b, 1.0)),
+            Color::Rgba(r, g, b, a) => Some((r, g, b, a)),
+            _ => {
+                let c = self.ns().colorUsingColorSpace(&objc2_app_kit::NSColorSpace::sRGBColorSpace())?;
+                Some((c.redComponent(), c.greenComponent(), c.blueComponent(), c.alphaComponent()))
+            }
+        }
+    }
 
     /// The `NSColor` (dynamic for the named colours).
     pub fn ns(self) -> Retained<NSColor> {
         match self {
-            TextColor::Primary => NSColor::textColor(),
-            TextColor::Secondary => NSColor::secondaryLabelColor(),
-            TextColor::Tertiary => NSColor::tertiaryLabelColor(),
-            TextColor::Link => NSColor::linkColor(),
-            TextColor::Red => NSColor::systemRedColor(),
-            TextColor::Orange => NSColor::systemOrangeColor(),
-            TextColor::Yellow => NSColor::systemYellowColor(),
-            TextColor::Green => NSColor::systemGreenColor(),
-            TextColor::Mint => NSColor::systemMintColor(),
-            TextColor::Teal => NSColor::systemTealColor(),
-            TextColor::Cyan => NSColor::systemCyanColor(),
-            TextColor::Blue => NSColor::systemBlueColor(),
-            TextColor::Indigo => NSColor::systemIndigoColor(),
-            TextColor::Purple => NSColor::systemPurpleColor(),
-            TextColor::Pink => NSColor::systemPinkColor(),
-            TextColor::Brown => NSColor::systemBrownColor(),
-            TextColor::Gray => NSColor::systemGrayColor(),
-            TextColor::Background => NSColor::textBackgroundColor(),
-            TextColor::Separator => NSColor::separatorColor(),
-            TextColor::Rgb(r, g, b) => NSColor::colorWithSRGBRed_green_blue_alpha(r, g, b, 1.0),
+            Color::Primary => NSColor::textColor(),
+            Color::Secondary => NSColor::secondaryLabelColor(),
+            Color::Tertiary => NSColor::tertiaryLabelColor(),
+            Color::Quaternary => NSColor::quaternaryLabelColor(),
+            Color::Accent => NSColor::controlAccentColor(),
+            Color::Link => NSColor::linkColor(),
+            Color::Red => NSColor::systemRedColor(),
+            Color::Orange => NSColor::systemOrangeColor(),
+            Color::Yellow => NSColor::systemYellowColor(),
+            Color::Green => NSColor::systemGreenColor(),
+            Color::Mint => NSColor::systemMintColor(),
+            Color::Teal => NSColor::systemTealColor(),
+            Color::Cyan => NSColor::systemCyanColor(),
+            Color::Blue => NSColor::systemBlueColor(),
+            Color::Indigo => NSColor::systemIndigoColor(),
+            Color::Purple => NSColor::systemPurpleColor(),
+            Color::Pink => NSColor::systemPinkColor(),
+            Color::Brown => NSColor::systemBrownColor(),
+            Color::Gray => NSColor::systemGrayColor(),
+            Color::Background => NSColor::textBackgroundColor(),
+            Color::WindowBackground => NSColor::windowBackgroundColor(),
+            Color::ControlBackground => NSColor::controlBackgroundColor(),
+            Color::Separator => NSColor::separatorColor(),
+            Color::Clear => NSColor::clearColor(),
+            Color::Rgb(r, g, b) => NSColor::colorWithSRGBRed_green_blue_alpha(r, g, b, 1.0),
+            Color::Rgba(r, g, b, a) => NSColor::colorWithSRGBRed_green_blue_alpha(r, g, b, a),
         }
     }
 
-    fn from_ns(color: &NSColor) -> Option<TextColor> {
+    /// The colour an `NSColor` is: a named one if it's one of those, else
+    /// its sRGB components.
+    pub fn from_ns(color: &NSColor) -> Option<Color> {
         Self::NAMED.into_iter().find(|c| c.ns().isEqual(Some(color))).or_else(|| {
             let c = color.colorUsingColorSpace(&objc2_app_kit::NSColorSpace::sRGBColorSpace())?;
-            Some(TextColor::Rgb(c.redComponent(), c.greenComponent(), c.blueComponent()))
+            let (r, g, b, a) = (c.redComponent(), c.greenComponent(), c.blueComponent(), c.alphaComponent());
+            Some(if a >= 1.0 { Color::Rgb(r, g, b) } else { Color::Rgba(r, g, b, a) })
         })
     }
 }
@@ -347,9 +417,9 @@ impl TextColor {
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct TextStyle {
     /// The text colour.
-    pub color: Option<TextColor>,
+    pub color: Option<Color>,
     /// A background behind the run.
-    pub background: Option<TextColor>,
+    pub background: Option<Color>,
     /// Bold (the font's bold face).
     pub bold: bool,
     /// Italic (the font's italic face, where it has one).
@@ -365,13 +435,13 @@ impl TextStyle {
     }
 
     /// With this text colour.
-    pub fn color(mut self, color: TextColor) -> Self {
+    pub fn color(mut self, color: Color) -> Self {
         self.color = Some(color);
         self
     }
 
     /// With this background.
-    pub fn background(mut self, color: TextColor) -> Self {
+    pub fn background(mut self, color: Color) -> Self {
         self.background = Some(color);
         self
     }
@@ -813,9 +883,9 @@ impl TextModel {
             let at = |key| storage.attribute_atIndex_effectiveRange(key, index, std::ptr::null_mut());
             style.color = at(NSForegroundColorAttributeName)
                 .and_then(|c| c.downcast::<NSColor>().ok())
-                .and_then(|c| TextColor::from_ns(&c))
-                .filter(|c| *c != TextColor::Primary);
-            style.background = at(NSBackgroundColorAttributeName).and_then(|c| c.downcast::<NSColor>().ok()).and_then(|c| TextColor::from_ns(&c));
+                .and_then(|c| Color::from_ns(&c))
+                .filter(|c| *c != Color::Primary);
+            style.background = at(NSBackgroundColorAttributeName).and_then(|c| c.downcast::<NSColor>().ok()).and_then(|c| Color::from_ns(&c));
             if let Some(font) = at(NSFontAttributeName).and_then(|f| f.downcast::<NSFont>().ok()) {
                 let traits = objc2_app_kit::NSFontManager::sharedFontManager(mtm()).traitsOfFont(&font);
                 style.bold = traits.contains(objc2_app_kit::NSFontTraitMask::BoldFontMask);

@@ -6,22 +6,22 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use ferrokit_core::text::TextColor;
+use ferrokit_core::text::Color;
 
 use crate::canvas::{Canvas, Painter, canvas};
 use crate::signal::{Effect, Signal, keep_with_owner, untrack};
 use crate::view::Align;
 
 /// Colours of the series, in order.
-const PALETTE: [TextColor; 8] = [
-    TextColor::Blue,
-    TextColor::Orange,
-    TextColor::Green,
-    TextColor::Pink,
-    TextColor::Purple,
-    TextColor::Teal,
-    TextColor::Yellow,
-    TextColor::Brown,
+const PALETTE: [Color; 8] = [
+    Color::Blue,
+    Color::Orange,
+    Color::Green,
+    Color::Pink,
+    Color::Purple,
+    Color::Teal,
+    Color::Yellow,
+    Color::Brown,
 ];
 
 const FONT: f64 = 11.0;
@@ -111,8 +111,8 @@ fn y_axis(p: &mut Painter, lo: f64, hi: f64, top: f64, bottom: f64) -> (Plot, im
     let to_y = move |v: f64| py + ph - (v - t0) / (t1 - t0).max(f64::MIN_POSITIVE) * ph;
     for (t, label) in ticks.iter().zip(&labels) {
         let y = to_y(*t);
-        p.line(plot.x, y, plot.x + plot.w, y, TextColor::Separator, 1.0);
-        p.text(plot.x - 6.0, y - FONT * 0.65, label, FONT, TextColor::Secondary, Align::End);
+        p.line(plot.x, y, plot.x + plot.w, y, Color::Separator, 1.0);
+        p.text(plot.x - 6.0, y - FONT * 0.65, label, FONT, Color::Secondary, Align::End);
     }
     (plot, to_y)
 }
@@ -124,16 +124,16 @@ fn tooltip(p: &mut Painter, x: f64, y: f64, lines: &[String]) {
     let bx = if x + 12.0 + w > p.width() { x - 12.0 - w } else { x + 12.0 };
     let by = (y - h / 2.0).clamp(0.0, (p.height() - h).max(0.0));
     p.set_opacity(0.95);
-    p.fill_rounded_rect(bx, by, w, h, 5.0, TextColor::Background);
+    p.fill_rounded_rect(bx, by, w, h, 5.0, Color::Background);
     p.set_opacity(1.0);
-    p.stroke_rect(bx, by, w, h, TextColor::Separator, 1.0);
+    p.stroke_rect(bx, by, w, h, Color::Separator, 1.0);
     for (i, l) in lines.iter().enumerate() {
-        p.text(bx + 6.0, by + 4.0 + i as f64 * (FONT + 4.0), l, FONT, TextColor::Primary, Align::Start);
+        p.text(bx + 6.0, by + 4.0 + i as f64 * (FONT + 4.0), l, FONT, Color::Primary, Align::Start);
     }
 }
 
 fn no_data(p: &mut Painter) {
-    p.text(p.width() / 2.0, p.height() / 2.0 - FONT, &crate::t("No data"), FONT + 2.0, TextColor::Secondary, Align::Center);
+    p.text(p.width() / 2.0, p.height() / 2.0 - FONT, &crate::t("No data"), FONT + 2.0, Color::Secondary, Align::Center);
 }
 
 /// Keeps `data()` in a signal, recomputed when what it reads changes (so
@@ -175,16 +175,16 @@ pub fn bar_chart(data: impl Fn() -> Vec<(String, f64)> + 'static) -> Canvas {
         for (i, (_, v)) in bars.iter().enumerate() {
             let x = plot.x + i as f64 * slot + (slot - bar_w) / 2.0;
             let (top, bottom) = (to_y(*v).min(zero), to_y(*v).max(zero));
-            let color = if hovered == Some(i) { TextColor::Indigo } else { TextColor::Blue };
+            let color = if hovered == Some(i) { Color::Indigo } else { Color::Blue };
             p.fill_rect(x, top, bar_w, (bottom - top).max(0.5), color);
         }
         // Labels under the bars: every k-th one so they don't overlap.
         let widest = bars.iter().map(|b| p.measure(&b.0, FONT).0).fold(0.0, f64::max) + 6.0;
         let every = ((widest / slot).ceil() as usize).max(1);
         for (i, (label, _)) in bars.iter().enumerate().step_by(every) {
-            p.text(plot.x + (i as f64 + 0.5) * slot, plot.y + plot.h + 4.0, label, FONT, TextColor::Secondary, Align::Center);
+            p.text(plot.x + (i as f64 + 0.5) * slot, plot.y + plot.h + 4.0, label, FONT, Color::Secondary, Align::Center);
         }
-        p.line(plot.x, zero, plot.x + plot.w, zero, TextColor::Secondary, 1.0);
+        p.line(plot.x, zero, plot.x + plot.w, zero, Color::Secondary, 1.0);
         if let Some((i, (x, y))) = hovered.zip(hover.get()).filter(|(i, _)| *i < bars.len()) {
             tooltip(p, x, y, &[format!("{}: {}", bars[i].0, value_label(bars[i].1))]);
         }
@@ -292,7 +292,7 @@ pub fn line_chart(series: impl Fn() -> Vec<Series> + 'static) -> Canvas {
         // X ticks.
         let (xt, xstep) = ticks(x0, x1, (plot.w / 90.0).clamp(2.0, 10.0) as usize);
         for t in xt.iter().filter(|t| **t >= x0 - xstep * 1e-9 && **t <= x1 + xstep * 1e-9) {
-            p.text(to_x(*t), plot.y + plot.h + 4.0, &tick_label(*t, xstep), FONT, TextColor::Secondary, Align::Center);
+            p.text(to_x(*t), plot.y + plot.h + 4.0, &tick_label(*t, xstep), FONT, Color::Secondary, Align::Center);
         }
         // Lines, decimated once per data and width.
         let key = (Rc::as_ptr(&all) as usize, plot.w.round() as i64);
@@ -320,14 +320,14 @@ pub fn line_chart(series: impl Fn() -> Vec<Series> + 'static) -> Canvas {
             let mut x = plot.x;
             for (i, s) in all.iter().enumerate() {
                 p.fill_rounded_rect(x, 4.0, 10.0, 10.0, 2.0, PALETTE[i % PALETTE.len()]);
-                p.text(x + 14.0, 2.0, &s.name, FONT, TextColor::Secondary, Align::Start);
+                p.text(x + 14.0, 2.0, &s.name, FONT, Color::Secondary, Align::Start);
                 x += 24.0 + p.measure(&s.name, FONT).0;
             }
         }
         // The values under the pointer.
         if let Some((hx, hy)) = hover.get().filter(|&(x, _)| x >= plot.x && x <= plot.x + plot.w) {
             let at = x0 + (hx - plot.x) / plot.w * span;
-            p.line(hx, plot.y, hx, plot.y + plot.h, TextColor::Secondary, 1.0);
+            p.line(hx, plot.y, hx, plot.y + plot.h, Color::Secondary, 1.0);
             let mut lines = Vec::new();
             let mut nearest_x = None;
             for (i, s) in all.iter().enumerate() {

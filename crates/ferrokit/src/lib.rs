@@ -61,6 +61,8 @@ mod popover;
 mod resource;
 mod signal;
 mod store;
+mod style;
+mod surface;
 mod syntax;
 mod transfer;
 mod undo;
@@ -90,8 +92,8 @@ pub use commands::{Command, can_perform, can_perform_in, focused_value, focused_
 pub use resource::{Cancel, Load, Resource};
 pub use signal::{Effect, Memo, Signal, after_batch, batch, effect_runs, live_signals, untrack};
 pub use controls::{
-    Color, ColorWell, ComboBox, DatePicker, SearchField, Segmented, color_well, combo_box, date_picker, search_field, segmented,
-    Checkbox, Image, Picker, Progress, Slider, Stepper, TextField, checkbox, image, picker, progress, secure_field, slider,
+    ColorWell, ComboBox, DatePicker, SearchField, Segmented, color_well, combo_box, date_picker, search_field, segmented,
+    Checkbox, Image, Picker, Progress, Slider, Stepper, TextField, checkbox, image, image_data, image_file, picker, progress, secure_field, slider,
     stepper, text_field, toggle,
 };
 pub use chrome::{MenuItem, Modifier, Split, dynamic_submenu, submenu, ToolbarItem, menu_item, menu_separator, split, toolbar_button, toolbar_search, toolbar_space};
@@ -104,8 +106,10 @@ pub use models::{Table, TextEditor, table, text_editor};
 pub use outline::{Outline, TreeNode, outline, sidebar};
 pub use collection::{Collection, CollectionItem, ItemImage, collection, collection_cells_made};
 pub use ferrokit_core::table::{CellImage, Column, ColumnState, Sort, TableModel};
-pub use ferrokit_core::text::{TextColor, TextModel, TextStyle};
+pub use ferrokit_core::text::{Color, TextModel, TextStyle};
 pub use syntax::Syntax;
+pub use style::{Font, Weight};
+pub use surface::Shadow;
 pub use popover::Edge;
 pub use canvas::{Canvas, Painter, canvas};
 pub use transfer::{Clipboard, DragItem, WriteFile};
@@ -859,4 +863,6 @@ mod guide {
     mod live_data {}
     #[doc = include_str!("../guide/08-testing-and-shipping.md")]
     mod testing_and_shipping {}
+    #[doc = include_str!("../guide/09-styling.md")]
+    mod styling {}
 }

@@ -5,12 +5,12 @@
 //! built on it.
 //!
 //! Coordinates are points from the top-left corner. Colours are
-//! [`TextColor`]s: the system's (they follow Dark Mode) or fixed sRGB.
+//! [`Color`]s: the system's (they follow Dark Mode) or fixed sRGB.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use ferrokit_core::text::TextColor;
+use ferrokit_core::text::Color;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject};
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send};
@@ -28,9 +28,9 @@ use crate::view::{Align, Cx, Node, Size, View};
 /// One drawing operation (recorded, then replayed when AppKit draws).
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Op {
-    Fill { shape: Shape, color: TextColor, opacity: f64 },
-    Stroke { shape: Shape, color: TextColor, opacity: f64, width: f64 },
-    Text { x: f64, y: f64, text: String, size: f64, bold: bool, color: TextColor, opacity: f64, align: Align },
+    Fill { shape: Shape, color: Color, opacity: f64 },
+    Stroke { shape: Shape, color: Color, opacity: f64, width: f64 },
+    Text { x: f64, y: f64, text: String, size: f64, bold: bool, color: Color, opacity: f64, align: Align },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -69,53 +69,53 @@ impl Painter {
         self.opacity = opacity.clamp(0.0, 1.0);
     }
 
-    fn fill(&mut self, shape: Shape, color: TextColor) {
+    fn fill(&mut self, shape: Shape, color: Color) {
         self.ops.push(Op::Fill { shape, color, opacity: self.opacity });
     }
 
-    fn stroke(&mut self, shape: Shape, color: TextColor, width: f64) {
+    fn stroke(&mut self, shape: Shape, color: Color, width: f64) {
         self.ops.push(Op::Stroke { shape, color, opacity: self.opacity, width });
     }
 
     /// Fills a rectangle.
-    pub fn fill_rect(&mut self, x: f64, y: f64, w: f64, h: f64, color: TextColor) {
+    pub fn fill_rect(&mut self, x: f64, y: f64, w: f64, h: f64, color: Color) {
         self.fill(Shape::Rect { x, y, w, h, radius: 0.0 }, color);
     }
 
     /// Fills a rectangle with rounded corners.
-    pub fn fill_rounded_rect(&mut self, x: f64, y: f64, w: f64, h: f64, radius: f64, color: TextColor) {
+    pub fn fill_rounded_rect(&mut self, x: f64, y: f64, w: f64, h: f64, radius: f64, color: Color) {
         self.fill(Shape::Rect { x, y, w, h, radius }, color);
     }
 
     /// Outlines a rectangle.
-    pub fn stroke_rect(&mut self, x: f64, y: f64, w: f64, h: f64, color: TextColor, width: f64) {
+    pub fn stroke_rect(&mut self, x: f64, y: f64, w: f64, h: f64, color: Color, width: f64) {
         self.stroke(Shape::Rect { x, y, w, h, radius: 0.0 }, color, width);
     }
 
     /// Fills a circle around `cx, cy`.
-    pub fn fill_circle(&mut self, cx: f64, cy: f64, r: f64, color: TextColor) {
+    pub fn fill_circle(&mut self, cx: f64, cy: f64, r: f64, color: Color) {
         self.fill(Shape::Ellipse { x: cx - r, y: cy - r, w: 2.0 * r, h: 2.0 * r }, color);
     }
 
     /// Outlines a circle around `cx, cy`.
-    pub fn stroke_circle(&mut self, cx: f64, cy: f64, r: f64, color: TextColor, width: f64) {
+    pub fn stroke_circle(&mut self, cx: f64, cy: f64, r: f64, color: Color, width: f64) {
         self.stroke(Shape::Ellipse { x: cx - r, y: cy - r, w: 2.0 * r, h: 2.0 * r }, color, width);
     }
 
     /// A straight line.
-    pub fn line(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, color: TextColor, width: f64) {
+    pub fn line(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, color: Color, width: f64) {
         self.stroke(Shape::Path { points: vec![(x1, y1), (x2, y2)], closed: false }, color, width);
     }
 
     /// Lines through `points`.
-    pub fn polyline(&mut self, points: &[(f64, f64)], color: TextColor, width: f64) {
+    pub fn polyline(&mut self, points: &[(f64, f64)], color: Color, width: f64) {
         if points.len() >= 2 {
             self.stroke(Shape::Path { points: points.to_vec(), closed: false }, color, width);
         }
     }
 
     /// Fills the polygon through `points`.
-    pub fn fill_polygon(&mut self, points: &[(f64, f64)], color: TextColor) {
+    pub fn fill_polygon(&mut self, points: &[(f64, f64)], color: Color) {
         if points.len() >= 3 {
             self.fill(Shape::Path { points: points.to_vec(), closed: true }, color);
         }
@@ -123,12 +123,12 @@ impl Painter {
 
     /// Text in the system font at `size` points. `x` is its start, centre
     /// or end (`align`); `y` is its top.
-    pub fn text(&mut self, x: f64, y: f64, text: &str, size: f64, color: TextColor, align: Align) {
+    pub fn text(&mut self, x: f64, y: f64, text: &str, size: f64, color: Color, align: Align) {
         self.ops.push(Op::Text { x, y, text: text.into(), size, bold: false, color, opacity: self.opacity, align });
     }
 
     /// Bold text (see [`text`](Self::text)).
-    pub fn bold_text(&mut self, x: f64, y: f64, text: &str, size: f64, color: TextColor, align: Align) {
+    pub fn bold_text(&mut self, x: f64, y: f64, text: &str, size: f64, color: Color, align: Align) {
         self.ops.push(Op::Text { x, y, text: text.into(), size, bold: true, color, opacity: self.opacity, align });
     }
 
@@ -142,7 +142,7 @@ fn font(size: f64, bold: bool) -> Retained<NSFont> {
     if bold { NSFont::boldSystemFontOfSize(size) } else { NSFont::systemFontOfSize(size) }
 }
 
-fn attributes(size: f64, bold: bool, color: Option<(TextColor, f64)>) -> Retained<objc2_foundation::NSDictionary<NSString, AnyObject>> {
+fn attributes(size: f64, bold: bool, color: Option<(Color, f64)>) -> Retained<objc2_foundation::NSDictionary<NSString, AnyObject>> {
     use objc2_app_kit::{NSFontAttributeName, NSForegroundColorAttributeName};
     let font: Retained<AnyObject> = Retained::into_super(Retained::into_super(font(size, bold)));
     // SAFETY: the standard attribute keys, with a font and a colour.
@@ -191,7 +191,7 @@ fn path(shape: &Shape) -> Retained<NSBezierPath> {
 /// The colour at `opacity`, on top of its own alpha: system colours such as
 /// the separator are partly transparent, and `colorWithAlphaComponent`
 /// alone would make them solid. Resolved in the current drawing appearance.
-fn faded(color: TextColor, opacity: f64) -> Retained<NSColor> {
+fn faded(color: Color, opacity: f64) -> Retained<NSColor> {
     let c = color.ns();
     if opacity >= 1.0 {
         return c;
@@ -273,7 +273,7 @@ define_class!(
         #[unsafe(method(drawRect:))]
         fn draw_rect(&self, _dirty: NSRect) {
             if self.ivars().opaque.get() {
-                TextColor::Background.ns().setFill();
+                Color::Background.ns().setFill();
                 NSBezierPath::fillRect(self.bounds());
             }
             replay(&self.ivars().ops.borrow());
@@ -469,9 +469,9 @@ impl Canvas {
 /// let level = Signal::new(0.4);
 /// let meter = canvas(move |p| {
 ///     let w = p.width() * level.get();
-///     p.fill_rounded_rect(0.0, 0.0, p.width(), p.height(), 6.0, TextColor::Separator);
-///     p.fill_rounded_rect(0.0, 0.0, w, p.height(), 6.0, TextColor::Green);
-///     p.text(p.width() / 2.0, 4.0, &format!("{:.0}%", level.get() * 100.0), 12.0, TextColor::Primary, Align::Center);
+///     p.fill_rounded_rect(0.0, 0.0, p.width(), p.height(), 6.0, Color::Separator);
+///     p.fill_rounded_rect(0.0, 0.0, w, p.height(), 6.0, Color::Green);
+///     p.text(p.width() / 2.0, 4.0, &format!("{:.0}%", level.get() * 100.0), 12.0, Color::Primary, Align::Center);
 /// })
 /// .description(move || format!("Level {:.0}%", level.get() * 100.0));
 /// # let _ = meter;

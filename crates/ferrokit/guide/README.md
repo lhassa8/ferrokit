@@ -21,6 +21,8 @@ the guide can't drift from the API.
 7. [Live data](07-live-data.md): per-frame updates and growing tables.
 8. [Testing and shipping](08-testing-and-shipping.md): self-checks,
    accessibility audits, packaging and notarisation.
+9. [Styling](09-styling.md): text styles, colours, cards, shadows, symbols
+   and pictures.
 
 The example apps in `crates/ferrokit/examples` are the long form of these
 chapters:
@@ -28,6 +30,7 @@ chapters:
 | Example | Shows |
 | --- | --- |
 | `settings` | a settings form: grid layout, validation, background work |
+| `styles` | a styled screen: type hierarchy, cards, symbols, pictures |
 | `native_csv` | a 200,000-row CSV browser: table, sidebar, search, sheet, notes |
 | `log_viewer` | a log tail at display rate: `on_frame`, `append`, filtering |
 | `hands_on` | drag and drop, the clipboard, panels, undo, input methods |
