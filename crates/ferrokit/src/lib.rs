@@ -159,6 +159,21 @@ pub struct Window {
     drops: Option<FileDrop>,
     chrome: WindowChrome,
     panel: Option<PanelStyle>,
+    tabbing: Option<(Tabbing, Option<String>)>,
+    full_screen: bool,
+}
+
+/// Whether a window opens as a tab of its app's other windows
+/// ([`Window::tabbing`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Tabbing {
+    /// As the user set in System Settings ▸ Desktop & Dock ("Prefer tabs").
+    Automatic,
+    /// Always as a tab, as Safari's and the Finder's windows do.
+    Preferred,
+    /// Never as a tab, and no tab bar (a settings window, a viewer).
+    Disallowed,
 }
 
 /// A panel's kind ([`Window::panel`]): a secondary window serving the main
@@ -289,7 +304,25 @@ impl Window {
             drops: None,
             chrome: WindowChrome::default(),
             panel: None,
+            tabbing: None,
+            full_screen: true,
         }
+    }
+
+    /// How the window joins its app's other windows as tabs. Windows join
+    /// those with the same `group` (all the app's, if `None`); the Window
+    /// menu's Show Tab Bar, Merge All Windows and the tab bar's + work as in
+    /// any Mac app.
+    pub fn tabbing(mut self, tabbing: Tabbing, group: Option<&str>) -> Self {
+        self.tabbing = Some((tabbing, group.map(Into::into)));
+        self
+    }
+
+    /// No full screen: the green button only zooms (a palette, a small
+    /// utility). Resizable windows can go full screen by default.
+    pub fn no_full_screen(mut self) -> Self {
+        self.full_screen = false;
+        self
     }
 
     /// Makes it a panel (`NSPanel`): floating above the app's windows,
@@ -421,6 +454,21 @@ impl Window {
         // must not release them on close.
         unsafe { window.setReleasedWhenClosed(false) };
         window.setTitle(&NSString::from_str(&self.title));
+        if let Some((tabbing, group)) = &self.tabbing {
+            use objc2_app_kit::NSWindowTabbingMode;
+            window.setTabbingMode(match tabbing {
+                Tabbing::Automatic => NSWindowTabbingMode::Automatic,
+                Tabbing::Preferred => NSWindowTabbingMode::Preferred,
+                Tabbing::Disallowed => NSWindowTabbingMode::Disallowed,
+            });
+            if let Some(g) = group {
+                window.setTabbingIdentifier(&NSString::from_str(g));
+            }
+        }
+        if !self.full_screen {
+            use objc2_app_kit::NSWindowCollectionBehavior;
+            window.setCollectionBehavior((window.collectionBehavior() - NSWindowCollectionBehavior::FullScreenPrimary) | NSWindowCollectionBehavior::FullScreenNone);
+        }
         let mut toolbar_delegate = None;
         if !self.toolbar.is_empty() {
             let delegate = chrome::install_toolbar(&window, self.toolbar);
@@ -710,12 +758,13 @@ pub struct App {
     extras: Vec<MenuBarExtra>,
     menu_bar_only: bool,
     welcome: Option<Rc<dyn Fn() -> Window>>,
+    dock_menu: Option<Rc<dyn Fn() -> Vec<MenuItem>>>,
 }
 
 impl App {
     /// An app called `name` (shown in the menu bar).
     pub fn new(name: &str) -> Self {
-        App { name: name.into(), windows: Vec::new(), on_launch: None, menus: Vec::new(), settings: None, documents: None, extras: Vec::new(), menu_bar_only: false, welcome: None }
+        App { name: name.into(), windows: Vec::new(), on_launch: None, menus: Vec::new(), settings: None, documents: None, extras: Vec::new(), menu_bar_only: false, welcome: None, dock_menu: None }
     }
 
     /// Opens `window` at launch. Call more than once for several windows.
@@ -785,6 +834,14 @@ impl App {
         self
     }
 
+    /// Items for the Dock icon's menu (Control-click or a long press on the
+    /// icon), above the system's own: "New Window", a recent item. `items`
+    /// runs each time the menu opens, so it can read the app's state.
+    pub fn dock_menu(mut self, items: impl Fn() -> Vec<MenuItem> + 'static) -> Self {
+        self.dock_menu = Some(Rc::new(items));
+        self
+    }
+
     /// Runs `f` on the first run-loop pass after the windows are on screen.
     pub fn on_launch(mut self, f: impl FnOnce() + 'static) -> Self {
         self.on_launch = Some(Box::new(f));
@@ -846,6 +903,10 @@ impl App {
         for extra in self.extras {
             status::install(extra, &self.name);
         }
+        if let Some(items) = self.dock_menu {
+            documents::DOCK_MENU.with_borrow_mut(|d| *d = Some(items));
+            documents::install_delegate();
+        }
         after_batch(|| {
             motion::run_layout(|| {
                 if view::LAYOUT_DIRTY.with(Cell::get) {
@@ -897,6 +958,37 @@ fn emit(event: AppEvent) {
     for h in handlers {
         h(event.clone());
     }
+}
+
+/// Opens `window` as a new tab of `beside` (the tab bar's + and a "New
+/// Tab" command use this).
+pub fn open_tab(beside: &NSWindow, window: Window) -> Retained<NSWindow> {
+    let w = open(window);
+    beside.addTabbedWindow_ordered(&w, objc2_app_kit::NSWindowOrderingMode::Above);
+    w.makeKeyAndOrderFront(None);
+    w
+}
+
+/// Puts `window` into full screen, or takes it out (as the green button
+/// and View ▸ Enter Full Screen do).
+pub fn toggle_full_screen(window: &NSWindow) {
+    window.toggleFullScreen(None);
+}
+
+/// Whether `window` is in full screen.
+pub fn is_full_screen(window: &NSWindow) -> bool {
+    window.styleMask().contains(NSWindowStyleMask::FullScreen)
+}
+
+/// The Dock icon's badge: a count or a short word (`Some("3")`), or none.
+pub fn set_dock_badge(badge: Option<&str>) {
+    let tile = NSApplication::sharedApplication(mtm()).dockTile();
+    tile.setBadgeLabel(badge.map(NSString::from_str).as_deref());
+}
+
+/// The Dock icon's badge, if any.
+pub fn dock_badge() -> Option<String> {
+    NSApplication::sharedApplication(mtm()).dockTile().badgeLabel().map(|b| b.to_string())
 }
 
 /// Opens `window` now (while the app runs) and returns it.

@@ -2191,6 +2191,47 @@ fn window_panel_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     for w in &panels {
         ferrokit::close_window(w);
     }
+    after_events(move || tabs_and_dock_checks(events.clone()));
+}
+
+/// C5: windows as tabs, no full screen, the Dock badge and the Dock menu.
+fn tabs_and_dock_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use ferrokit::{Tabbing, dock_badge, is_full_screen, open_tab, set_dock_badge};
+    use objc2_app_kit::{NSWindowCollectionBehavior, NSWindowTabbingMode};
+    let a = open(Window::new("Tab A").size(360.0, 200.0).tabbing(Tabbing::Preferred, Some("checklist-docs")).view(text("A")));
+    let b = open_tab(&a, Window::new("Tab B").size(360.0, 200.0).tabbing(Tabbing::Preferred, Some("checklist-docs")).view(text("B")));
+    let tabs: Vec<String> = a.tabbedWindows().map(|t| t.iter().map(|w| w.title().to_string()).collect()).unwrap_or_default();
+    let grouped = a.tabbingIdentifier().to_string() == "checklist-docs" && a.tabbingMode() == NSWindowTabbingMode::Preferred;
+    check("window-tabs", tabs.len() == 2 && tabs.contains(&"Tab B".to_string()) && grouped && b.isVisible(), format!("tabs {tabs:?}; group and mode {grouped}"));
+    ferrokit::close_window(&b);
+    ferrokit::close_window(&a);
+
+    let palette = open(Window::new("Palette").size(200.0, 120.0).no_full_screen().view(text("Tools")));
+    let behaviour = palette.collectionBehavior();
+    let normal = open(Window::new("Normal").size(200.0, 120.0).view(text("Doc")));
+    let can = !normal.collectionBehavior().contains(NSWindowCollectionBehavior::FullScreenNone);
+    check(
+        "full-screen-option",
+        behaviour.contains(NSWindowCollectionBehavior::FullScreenNone) && !behaviour.contains(NSWindowCollectionBehavior::FullScreenPrimary) && can && !is_full_screen(&normal),
+        format!("palette {behaviour:?}; a normal window can go full screen {can}"),
+    );
+    ferrokit::close_window(&palette);
+    ferrokit::close_window(&normal);
+
+    set_dock_badge(Some("3"));
+    let shown = dock_badge();
+    set_dock_badge(None);
+    check("dock-badge", shown.as_deref() == Some("3") && dock_badge().is_none(), format!("set 3 → {shown:?}; cleared → {:?}", dock_badge()));
+
+    // The Dock asks the app's delegate for its menu each time it opens.
+    let app = objc2_app_kit::NSApplication::sharedApplication(objc2::MainThreadMarker::new().unwrap());
+    let menu: Option<Retained<objc2_app_kit::NSMenu>> = app.delegate().and_then(|d| {
+        // SAFETY: Ferrokit's app delegate answers applicationDockMenu:.
+        unsafe { objc2::msg_send![&*d, applicationDockMenu: &*app] }
+    });
+    let items: Vec<String> = menu.map(|m| m.itemArray().iter().map(|i| i.title().to_string()).collect()).unwrap_or_default();
+    let fresh = items.get(1).is_some_and(|t| t.ends_with("windows open"));
+    check("dock-menu", items.first().map(String::as_str) == Some("New Checklist Window") && fresh, format!("{items:?}"));
     after_events(move || rich_table_checks(events.clone()));
 }
 
@@ -4254,6 +4295,8 @@ fn main() {
             ("de", "\"Rename Item\" = \"Objekt umbenennen\";\n\"Save\" = \"Speichern (App)\";\n\"{n} file\" = \"{n} Datei\";\n\"{n} files\" = \"{n} Dateien\";"),
             ("ru", "\"{n} files#one\" = \"{n} файл\";\n\"{n} files#few\" = \"{n} файла\";\n\"{n} files#many\" = \"{n} файлов\";"),
         ])
+        // C5: the Dock icon's menu, read when it opens.
+        .dock_menu(|| vec![ferrokit::menu_item("New Checklist Window", || {}), ferrokit::menu_item(format!("{} windows open", ferrokit::windows().len()), || {})])
         .window(Window::new("First").size(480.0, 200.0).content(|| field("hello world")))
         .window(Window::new("Second").size(360.0, 160.0))
         .window(Window::new("Views").size(320.0, 420.0).view(views_window()))

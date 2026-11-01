@@ -682,6 +682,17 @@ define_class!(
             });
         }
 
+        // The Dock icon's menu (App::dock_menu), built when it's opened.
+        #[unsafe(method_id(applicationDockMenu:))]
+        fn dock_menu(&self, _app: &NSApplication) -> Option<Retained<objc2_app_kit::NSMenu>> {
+            let items = DOCK_MENU.with_borrow(Clone::clone);
+            items.map(|items| {
+                let (menu, targets) = crate::chrome::build_menu(MainThreadMarker::from(self), items());
+                DOCK_TARGETS.with_borrow_mut(|t| *t = targets);
+                menu
+            })
+        }
+
         #[unsafe(method(applicationShouldTerminate:))]
         fn should_terminate(&self, _app: &NSApplication) -> NSApplicationTerminateReply {
             if !DOCS.with_borrow(|docs| docs.iter().any(|d| d.edited())) {
@@ -694,11 +705,26 @@ define_class!(
     }
 );
 
+thread_local! {
+    /// The Dock menu's items ([`App::dock_menu`](crate::App::dock_menu)).
+    pub(crate) static DOCK_MENU: RefCell<Option<Rc<dyn Fn() -> Vec<crate::MenuItem>>>> = const { RefCell::new(None) };
+    /// The last Dock menu's action targets, alive while it can be used.
+    static DOCK_TARGETS: RefCell<Vec<Retained<NSObject>>> = const { RefCell::new(Vec::new()) };
+}
+
 /// Makes the app a document app for `kind` (see
 /// [`App::documents`](crate::App::documents)): installs the app delegate.
 pub(crate) fn install<T: Clone + PartialEq + 'static>(kind: DocumentType<T>) {
     let opener: Rc<dyn Opener> = Rc::new(Rc::new(kind));
     OPENER.with_borrow_mut(|o| *o = Some(opener));
+    install_delegate();
+}
+
+/// Installs the app delegate (documents, the Dock menu), once.
+pub(crate) fn install_delegate() {
+    if DELEGATE.with_borrow(Option::is_some) {
+        return;
+    }
     let mtm = MainThreadMarker::new().expect("main thread");
     let delegate = AppDelegate::alloc(mtm).set_ivars(());
     // SAFETY: NSObject's designated initialiser.

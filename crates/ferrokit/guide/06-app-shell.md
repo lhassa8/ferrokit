@@ -316,6 +316,29 @@ window). Closing a window clears its history.
 - `quit()` ends the app, as ⌘Q does (starting on the next run-loop pass, so
   a document app's save prompts don't block the UI).
 
+## Tabs, full screen and the Dock
+
+```rust,no_run
+use ferrokit::*;
+
+App::new("Notes")
+    // The Dock icon's menu, built each time it opens.
+    .dock_menu(|| vec![menu_item("New Note", || {})])
+    .window(Window::new("Note").tabbing(Tabbing::Preferred, Some("notes")).view(text("…")))
+    .on_launch(|| set_dock_badge(Some("2")))
+    .run();
+```
+
+- **Tabs:** `.tabbing(Tabbing::Preferred, group)` opens windows as tabs of
+  the group's other windows (`Automatic` follows the user's "Prefer tabs"
+  setting; `Disallowed` never). `open_tab(&window, Window::new(..))` adds
+  one. The Window menu's tab commands work as in any Mac app.
+- **Full screen:** resizable windows can go full screen; `.no_full_screen()`
+  stops it for palettes and small utilities. `toggle_full_screen(&w)` and
+  `is_full_screen(&w)` for your own commands.
+- **Dock:** `set_dock_badge(Some("3"))` shows a badge on the Dock icon
+  (`None` clears it); `App::dock_menu` adds items above the system's.
+
 ## Languages
 
 Strings the user reads go through `t`, with the English text as the key.
