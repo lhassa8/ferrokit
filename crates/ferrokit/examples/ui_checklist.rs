@@ -2471,7 +2471,101 @@ fn filter_kind_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
             let problems = ferrokit::testing::ax_audit(&w3);
             check("filter-editor-voiceover", problems.is_empty(), format!("{problems:?}"));
             ferrokit::close_window(&w3);
-            rich_table_checks(events.clone());
+            browser_kind_checks(events.clone());
+        });
+    });
+}
+
+#[derive(Clone)]
+struct Spot(&'static str, &'static str);
+
+impl Identifiable for Spot {
+    type Id = &'static str;
+    fn id(&self) -> &'static str {
+        self.0
+    }
+}
+
+/// C13: the column browser opens the columns down to a path set in code,
+/// a click sets the path, the tree updates under it keeping the path, and
+/// a double-click activates an item.
+fn browser_kind_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use ferrokit::column_browser;
+    use objc2_app_kit::NSBrowser;
+    let leaf = |n, i| TreeNode::leaf(Spot(n, i));
+    let tree = move |finland: bool| {
+        let mut roots = vec![
+            TreeNode::branch(Spot("Norway", "flag"), vec![
+                TreeNode::branch(Spot("Lofoten", "mountain.2"), vec![leaf("Reine", "house"), leaf("Å", "house")]),
+                TreeNode::branch(Spot("Nordland", "map"), vec![leaf("Bodø", "house")]),
+            ]),
+            TreeNode::branch(Spot("Sweden", "flag"), vec![leaf("Kiruna", "house")]),
+        ];
+        if finland {
+            roots.push(leaf("Finland", "flag"));
+        }
+        roots
+    };
+    let (finland, path, opened) = (Signal::new(false), Signal::new(Vec::<&'static str>::new()), Signal::new(None::<&'static str>));
+    let w = open(
+        Window::new("Browser").size(720.0, 320.0).view(
+            column_browser(move || tree(finland.get()), |p: &Spot| p.0.to_string())
+                .icon(|p| Some(p.1.to_string()))
+                .selection(&path)
+                .on_activate(move |p| opened.set(Some(p.0)))
+                .accessibility_label("Places")
+                .padding(12.0),
+        ),
+    );
+    let b = all_views(&w.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<NSBrowser>().ok()).unwrap();
+    let rows = |b: &NSBrowser| b.selectionIndexPath().map(|p| (0..p.length()).map(|i| p.indexAtPosition(i)).collect::<Vec<_>>()).unwrap_or_default();
+    let first = (b.lastColumn(), rows(&b));
+    batch(|| path.set(vec!["Norway", "Lofoten", "Å"]));
+    let w2 = w.clone();
+    after_events(move || {
+        let opened_to = rows(&b);
+        let columns = b.lastColumn();
+        // A cell's symbol, from the delegate as the row is shown.
+        // (Text cells on macOS 27: the symbol is an attachment before the title.)
+        let cell: Option<Retained<objc2_app_kit::NSCell>> = unsafe { objc2::msg_send![&*b, loadedCellAtRow: 0isize, column: 0isize] };
+        let icon = cell.as_ref().is_some_and(|c| c.attributedStringValue().string().to_string().starts_with('\u{FFFC}'));
+        check(
+            "browser-columns",
+            first == (0, vec![]) && opened_to == [0, 0, 1] && columns >= 2 && icon,
+            format!("at first: last column {}, selection {:?}; set to Norway › Lofoten › Å: rows {opened_to:?}, {columns} as last column; icons {icon}", first.0, first.1),
+        );
+        // A click on Sweden in the first column sets the path.
+        let app = NSApplication::sharedApplication(mtm());
+        b.selectRow_inColumn(1, 0);
+        unsafe { app.sendAction_to_from(b.action().unwrap(), b.target().as_deref(), Some(&b)) };
+        let clicked = path.get_untracked();
+        // The tree changes: the path stays.
+        batch(|| finland.set(true));
+        let w3 = w2.clone();
+        let events = events.clone();
+        let b = b.clone();
+        after_events(move || {
+            let kept = rows(&b);
+            check("browser-click", clicked == ["Sweden"] && kept == [1] && path.get_untracked() == ["Sweden"], format!("click on Sweden → {clicked:?}; after Finland was added, still {kept:?}"));
+            // A double-click on Bodø activates it.
+            batch(|| path.set(vec!["Norway", "Nordland", "Bodø"]));
+            let (b2, w3, events) = (b.clone(), w3.clone(), events.clone());
+            after_events(move || {
+                let app = NSApplication::sharedApplication(mtm());
+                unsafe { app.sendAction_to_from(b2.doubleAction().unwrap(), b2.target().as_deref(), Some(&b2)) };
+                let problems = ferrokit::testing::ax_audit(&w3);
+                let role = objc2_app_kit::NSAccessibility::accessibilityRole(&*b2).map(|r| r.to_string());
+                check(
+                    "browser-activate",
+                    opened.get_untracked() == Some("Bodø") && rows(&b2) == [0, 1, 0] && problems.is_empty() && role.as_deref() == Some("AXBrowser"),
+                    format!("double-click → {:?}; rows {:?}; VoiceOver role {role:?}, audit {problems:?}", opened.get_untracked(), rows(&b2)),
+                );
+                if let Ok(dir) = std::env::var("SNAP") {
+                    snapshot_windows(&dir);
+                }
+                ferrokit::close_window(&w3);
+                rich_table_checks(events.clone());
+            });
         });
     });
 }

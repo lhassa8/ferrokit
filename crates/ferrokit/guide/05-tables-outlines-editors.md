@@ -154,6 +154,37 @@ let view = sidebar(tree, |f: &Folder| f.name.clone()).icon(|_| Some("folder".int
 # let _ = view;
 ```
 
+### Column browser
+
+`column_browser(roots, title)` shows the same kind of tree as Finder's
+column view (`NSBrowser`): the roots in the first column, and the selected
+item's children in the next. `.selection(&path)` binds the selected item's
+path, the ids from the first column down, both ways; setting it opens the
+columns to that item. `.on_activate(|item| ..)` runs on a double-click, and
+`.icon(|item| ..)` gives an SF Symbol per item. Arrow keys move through it
+and typing selects an item by its title.
+
+```rust,no_run
+use ferrokit::*;
+
+#[derive(Clone)]
+struct Place(String);
+impl Identifiable for Place {
+    type Id = String;
+    fn id(&self) -> String { self.0.clone() }
+}
+let p = |s: &str| Place(s.into());
+let path = Signal::new(vec!["Norway".to_string(), "Lofoten".to_string()]);
+let places = column_browser(move || vec![
+    TreeNode::branch(p("Norway"), vec![TreeNode::branch(p("Lofoten"), vec![TreeNode::leaf(p("Reine"))])]),
+], |place: &Place| place.0.clone())
+.icon(|_| Some("mappin".into()))
+.selection(&path)
+.on_activate(|place| println!("open {}", place.0))
+.accessibility_label("Places");
+# let _ = places;
+```
+
 ## Collections: grids of items
 
 `collection(items, describe)` shows items in a grid (`NSCollectionView`),
