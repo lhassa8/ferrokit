@@ -185,6 +185,35 @@ are what VoiceOver reads and what the overflow menu shows. With
 `ToolbarStyle::Expanded` or `Preference` (a Settings window), the labels
 show under the symbols.
 
+### A sidebar and an inspector: the window shell
+
+`Window::sidebar(view)` and `Window::inspector(view)` lay the window out
+as Mail, Notes and Keynote are: AppKit's split view controller, with a
+full-height sidebar on the sidebar material, the window's `view` beside
+it, and an inspector after it. The title starts beside the sidebar,
+Toggle Sidebar leads the toolbar and Toggle Inspector ends it, and the
+user can drag either pane wider, narrower or shut.
+`.sidebar_hidden(&signal)` and `.inspector_hidden(&signal)` bind whether
+they're hidden, both ways.
+
+```rust,no_run
+use ferrokit::*;
+
+let (no_sidebar, no_inspector) = (Signal::new(false), Signal::new(true));
+let window = Window::new("Library")
+    .toolbar(vec![toolbar_button("add", "Add", "plus", || {})])
+    .sidebar(text("Mailboxes"))
+    .sidebar_hidden(&no_sidebar)
+    .view(text("Messages"))
+    .inspector(text("Details"))
+    .inspector_hidden(&no_inspector);
+# let _ = window;
+```
+
+Each pane has its own tree; a closed window leaves no more behind than a
+plain AppKit one built the same way (about 1 KB). The `split` view below
+is for splits inside a window's content.
+
 ### Groups, pickers and customisation
 
 `toolbar_group` puts related buttons in one capsule (zoom out and in,

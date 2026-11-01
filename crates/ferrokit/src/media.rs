@@ -31,10 +31,10 @@ fn file_url(path: &Path) -> Retained<NSURL> {
 }
 
 /// A block-based notification observer, removed when dropped.
-struct Observer(Retained<ProtocolObject<dyn NSObjectProtocol>>);
+pub(crate) struct Observer(Retained<ProtocolObject<dyn NSObjectProtocol>>);
 
 impl Observer {
-    fn new(name: &objc2_foundation::NSNotificationName, object: Option<&AnyObject>, f: impl Fn() + 'static) -> Observer {
+    pub(crate) fn new(name: &objc2_foundation::NSNotificationName, object: Option<&AnyObject>, f: impl Fn() + 'static) -> Observer {
         let block = RcBlock::new(move |_: NonNull<NSNotification>| batch(&f));
         // SAFETY: delivered on the main queue, where the block's state lives.
         let token = unsafe { NSNotificationCenter::defaultCenter().addObserverForName_object_queue_usingBlock(Some(name), object, Some(&NSOperationQueue::mainQueue()), &block) };

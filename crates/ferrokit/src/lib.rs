@@ -170,6 +170,9 @@ pub struct Window {
     panel: Option<PanelStyle>,
     tabbing: Option<(Tabbing, Option<String>)>,
     full_screen: bool,
+    /// The sidebar and inspector shell's panes, and their hidden signals.
+    sidebar: Option<(AnyView, Option<Signal<bool>>)>,
+    inspector: Option<(AnyView, Option<Signal<bool>>)>,
 }
 
 /// Whether a window opens as a tab of its app's other windows
@@ -316,7 +319,46 @@ impl Window {
             panel: None,
             tabbing: None,
             full_screen: true,
+            sidebar: None,
+            inspector: None,
         }
+    }
+
+    /// A sidebar beside the window's [`view`](Self::view), as in Mail,
+    /// Notes and the Finder (AppKit's split view controller): full height,
+    /// under the title bar, on the sidebar material; the title and toolbar
+    /// items start beside it, a Toggle Sidebar button leads the toolbar,
+    /// and the user can drag it narrower, wider or shut. Put an
+    /// [`outline`] or a source-list [`sidebar`](fn@crate::sidebar) in it.
+    pub fn sidebar(mut self, view: impl View) -> Self {
+        self.sidebar = Some((AnyView::new(view), self.sidebar.and_then(|s| s.1)));
+        self
+    }
+
+    /// Whether the sidebar is hidden, bound two ways: setting it shows or
+    /// hides the sidebar (animated), and the user's toggling sets it.
+    pub fn sidebar_hidden(mut self, hidden: &Signal<bool>) -> Self {
+        if let Some(s) = &mut self.sidebar {
+            s.1 = Some(*hidden);
+        }
+        self
+    }
+
+    /// An inspector after the window's [`view`](Self::view), as in Keynote
+    /// and Xcode (AppKit's inspector split item, macOS 14): full height, a
+    /// Toggle Inspector button ending the toolbar, the user can drag it
+    /// wider or shut.
+    pub fn inspector(mut self, view: impl View) -> Self {
+        self.inspector = Some((AnyView::new(view), self.inspector.and_then(|s| s.1)));
+        self
+    }
+
+    /// Whether the inspector is hidden, bound two ways.
+    pub fn inspector_hidden(mut self, hidden: &Signal<bool>) -> Self {
+        if let Some(s) = &mut self.inspector {
+            s.1 = Some(*hidden);
+        }
+        self
     }
 
     /// How the window joins its app's other windows as tabs. Windows join
@@ -441,7 +483,13 @@ impl Window {
         self
     }
 
-    pub(crate) fn open(self, mtm: MainThreadMarker) -> Retained<NSWindow> {
+    pub(crate) fn open(mut self, mtm: MainThreadMarker) -> Retained<NSWindow> {
+        let (sidebar, inspector) = (self.sidebar.take(), self.inspector.take());
+        let shell = (sidebar.is_some(), inspector.is_some());
+        // A sidebar runs up under the title bar.
+        if shell.0 {
+            self.chrome.full_size_content = true;
+        }
         let rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(self.size.0, self.size.1));
         let mut style = if self.fixed {
             NSWindowStyleMask::Titled | NSWindowStyleMask::Closable
@@ -493,7 +541,7 @@ impl Window {
         }
         let mut toolbar_delegate = None;
         if !self.toolbar.is_empty() {
-            let delegate = chrome::install_toolbar(&window, self.toolbar, self.customizable_toolbar);
+            let delegate = chrome::install_toolbar(&window, self.toolbar, self.customizable_toolbar, shell);
             toolbar_delegate = Some(delegate.clone());
             WINDOW_EXTRAS.with_borrow_mut(|e| e.push((window.clone(), delegate)));
         }
@@ -519,6 +567,97 @@ impl Window {
         window.setAutorecalculatesKeyViewLoop(true);
         if let Some(build) = self.content {
             window.setContentView(Some(&build()));
+        }
+        // (Taken only for a shell: other windows build it below.)
+        if let Some(view) = if shell.0 || shell.1 { self.view.take() } else { None } {
+            let make = |v: AnyView| {
+                // SAFETY: NSView's designated initialiser.
+                let root: Retained<RootView> = unsafe { msg_send![RootView::alloc(mtm), initWithFrame: rect] };
+                let node = undo::building(&undo, || batch(|| Node::build_owned(v, &mut Cx::new(Retained::into_super(root.clone())))));
+                (root, node)
+            };
+            let (croot, mut cnode) = make(view);
+            {
+                let mut r = cnode.meta.responds.borrow_mut();
+                r.commands.splice(0..0, std::mem::take(&mut self.responds.commands));
+                r.values.splice(0..0, std::mem::take(&mut self.responds.values));
+            }
+            let controller = objc2_app_kit::NSSplitViewController::new(mtm);
+            let item = |root: &RootView, kind: u8| {
+                let vc = objc2_app_kit::NSViewController::new(mtm);
+                vc.setView(root);
+                match kind {
+                    0 => objc2_app_kit::NSSplitViewItem::sidebarWithViewController(&vc),
+                    2 => objc2_app_kit::NSSplitViewItem::inspectorWithViewController(&vc),
+                    _ => objc2_app_kit::NSSplitViewItem::splitViewItemWithViewController(&vc),
+                }
+            };
+            let mut panes: Vec<(Retained<objc2_app_kit::NSSplitViewItem>, Option<Signal<bool>>)> = Vec::new();
+            let mut roots = Vec::new();
+            // The sidebar and inspector start at their usual widths; the
+            // content takes the rest, and gives way first as the window resizes.
+            if let Some((v, hidden)) = sidebar {
+                let (root, node) = make(v);
+                root.setFrameSize(NSSize::new(220.0, rect.size.height));
+                let it = item(&root, 0);
+                it.setMinimumThickness(180.0);
+                it.setMaximumThickness(400.0);
+                controller.addSplitViewItem(&it);
+                panes.push((it, hidden));
+                roots.push((root, node));
+            }
+            let content_item = item(&croot, 1);
+            content_item.setMinimumThickness(300.0);
+            content_item.setHoldingPriority(objc2_app_kit::NSLayoutPriorityDefaultLow - 10.0);
+            croot.setFrameSize(NSSize::new((rect.size.width - 220.0 * f64::from(u8::from(shell.0)) - 260.0 * f64::from(u8::from(shell.1))).max(300.0), rect.size.height));
+            controller.addSplitViewItem(&content_item);
+            if let Some((v, hidden)) = inspector {
+                let (root, node) = make(v);
+                root.setFrameSize(NSSize::new(260.0, rect.size.height));
+                let it = item(&root, 2);
+                it.setMinimumThickness(220.0);
+                it.setMaximumThickness(420.0);
+                controller.addSplitViewItem(&it);
+                panes.push((it, hidden));
+                roots.push((root, node));
+            }
+            // The hidden signals, both ways: set, the pane slides shut or
+            // open; the user's toggling or dragging sets them.
+            for (it, hidden) in &panes {
+                let Some(hidden) = *hidden else { continue };
+                it.setCollapsed(hidden.get_untracked());
+                let it = it.clone();
+                cnode.own(signal::Effect::new(move || {
+                    let h = hidden.get();
+                    if it.isCollapsed() != h {
+                        // SAFETY: the item's animator proxy takes its setters.
+                        unsafe {
+                            let a: Retained<objc2::runtime::AnyObject> = msg_send![&*it, animator];
+                            let () = msg_send![&*a, setCollapsed: h];
+                        }
+                    }
+                }));
+            }
+            let followed: Vec<(Retained<objc2_app_kit::NSSplitViewItem>, Signal<bool>)> = panes.iter().filter_map(|(i, h)| h.map(|h| (i.clone(), h))).collect();
+            if !followed.is_empty() {
+                // SAFETY: AppKit's notification name.
+                let name = unsafe { objc2_app_kit::NSSplitViewDidResizeSubviewsNotification };
+                let observer = media::Observer::new(name, Some(&controller.splitView()), move || {
+                    for (it, h) in &followed {
+                        h.set_if_changed(it.isCollapsed());
+                    }
+                });
+                cnode.hold(Rc::new(observer));
+            }
+            SHELL_ROOTS.with_borrow_mut(|s| s.push((Retained::as_ptr(&window) as usize, Retained::into_super(croot.clone()))));
+            SHELL_PANES.with_borrow_mut(|p| p.extend(std::iter::once(&croot).chain(roots.iter().map(|(r, _)| r)).map(|r| Retained::as_ptr(r) as usize)));
+            ROOTS.with_borrow_mut(|r| {
+                r.push((croot.clone(), cnode));
+                r.extend(roots);
+            });
+            window.setContentViewController(Some(&controller));
+            window.setContentSize(rect.size);
+            relayout_all();
         }
         if let Some(view) = self.view {
             // SAFETY: NSView's designated initialiser.
@@ -672,29 +811,60 @@ fn relayout(root: &RootView) {
 /// How far a window with full-size content has its title bar and toolbar
 /// over `root`, its content view (0 for other windows).
 fn title_bar_inset(window: &NSWindow, root: &RootView) -> f64 {
-    if !window.styleMask().contains(NSWindowStyleMask::FullSizeContentView) || window.contentView().is_none_or(|c| !std::ptr::eq(&*c, &**root)) {
+    if !window.styleMask().contains(NSWindowStyleMask::FullSizeContentView) {
         return 0.0;
     }
-    (root.bounds().size.height - window.contentLayoutRect().size.height).max(0.0)
+    // The window's content view, or a shell's pane (in the split view that
+    // is the content view): both run the window's full height, up under
+    // the title bar and toolbar.
+    let Some(content) = window.contentView() else { return 0.0 };
+    let key = root as *const RootView as usize;
+    let pane = SHELL_PANES.with_borrow(|p| p.contains(&key));
+    if !std::ptr::eq(&*content, &**root) && !pane {
+        return 0.0;
+    }
+    (content.bounds().size.height - window.contentLayoutRect().size.height).max(0.0)
+}
+
+/// The root view of `window`'s main tree: its content view, or a shell's
+/// content pane.
+fn main_root(window: &NSWindow) -> Option<Retained<NSView>> {
+    let key = window as *const NSWindow as usize;
+    SHELL_ROOTS.with_borrow(|s| s.iter().find(|(w, _)| *w == key).map(|(_, r)| r.clone())).or_else(|| window.contentView())
 }
 
 /// The root node of `window`'s view tree.
 pub(crate) fn root_meta(window: &NSWindow) -> Option<Rc<view::Meta>> {
-    let content = window.contentView()?;
+    let content = main_root(window)?;
     ROOTS.with_borrow(|r| r.iter().find(|(v, _)| std::ptr::eq(&***v as *const NSView, &*content as *const NSView)).map(|(_, n)| n.meta.clone()))
 }
 
 /// Tears down the view tree of `window`'s content (its node is dropped:
 /// effects stop, native views go).
 pub(crate) fn drop_root(window: &NSWindow) {
-    let Some(content) = window.contentView() else { return };
+    let Some(content) = main_root(window) else { return };
     let key = Retained::as_ptr(&content) as usize;
     DROPS.with_borrow_mut(|d| d.retain(|(k, _)| *k != key));
-    let node = ROOTS.with_borrow_mut(|r| {
-        let i = r.iter().position(|(v, _)| std::ptr::eq(&***v as *const NSView, &*content as *const NSView))?;
-        Some(r.remove(i))
+    // The window's roots: its content view's, or each of its shell's panes'.
+    let wkey = window as *const NSWindow as usize;
+    SHELL_ROOTS.with_borrow_mut(|s| s.retain(|(w, _)| *w != wkey));
+    let nodes: Vec<(Retained<RootView>, Node)> = ROOTS.with_borrow_mut(|r| {
+        let mut gone = Vec::new();
+        let mut i = 0;
+        while i < r.len() {
+            let mine = std::ptr::eq(&**r[i].0 as *const NSView, &*content as *const NSView) || r[i].0.window().is_some_and(|w| std::ptr::eq(&*w, window));
+            if mine {
+                gone.push(r.remove(i));
+            } else {
+                i += 1;
+            }
+        }
+        gone
     });
-    drop(node);
+    SHELL_PANES.with_borrow_mut(|p| p.retain(|k| !nodes.iter().any(|(r, _)| Retained::as_ptr(r) as usize == *k)));
+    drop(nodes);
+    // The shell's controller goes with its window.
+    window.setContentViewController(None);
 }
 
 /// Builds `view` (under its own owner) in a new root view of `size`
@@ -770,6 +940,11 @@ pub fn layout_passes() -> u64 {
 }
 
 thread_local! {
+    /// Windows with a sidebar or inspector shell, and their content pane's
+    /// root (their main tree's).
+    static SHELL_ROOTS: RefCell<Vec<(usize, Retained<NSView>)>> = const { RefCell::new(Vec::new()) };
+    /// The root views of shells' panes (each AppKit wraps in a view of its own).
+    static SHELL_PANES: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
     static HANDLERS: RefCell<Vec<Handler>> = const { RefCell::new(Vec::new()) };
     static WINDOWS: RefCell<Vec<Retained<NSWindow>>> = const { RefCell::new(Vec::new()) };
 }

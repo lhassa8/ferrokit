@@ -911,6 +911,20 @@ pub(crate) struct ToolbarState {
     tracks_sidebar: std::cell::Cell<bool>,
     /// Where a customisable toolbar's layout is remembered.
     remember: Option<String>,
+    /// The window's shell has a sidebar, an inspector: their toggles and
+    /// tracking separators lead and end the toolbar.
+    shell: (bool, bool),
+}
+
+/// AppKit's own items for a shell's sidebar and inspector.
+fn shell_ids(shell: (bool, bool)) -> (Vec<String>, Vec<String>) {
+    // SAFETY: AppKit's identifier constants.
+    unsafe {
+        use objc2_app_kit::*;
+        let lead = if shell.0 { vec![NSToolbarToggleSidebarItemIdentifier.to_string(), NSToolbarSidebarTrackingSeparatorItemIdentifier.to_string()] } else { Vec::new() };
+        let end = if shell.1 { vec![NSToolbarInspectorTrackingSeparatorItemIdentifier.to_string(), NSToolbarFlexibleSpaceItemIdentifier.to_string(), NSToolbarToggleInspectorItemIdentifier.to_string()] } else { Vec::new() };
+        (lead, end)
+    }
 }
 
 /// The toolbar item that keeps the title beside a sidebar.
@@ -975,7 +989,8 @@ define_class!(
 
 impl ToolbarDelegate {
     fn with_spacer(&self, ids: Vec<String>) -> Retained<NSArray<NSString>> {
-        let mut ids: Vec<Retained<NSString>> = ids.iter().map(|s| NSString::from_str(s)).collect();
+        let (lead, end) = shell_ids(self.ivars().shell);
+        let mut ids: Vec<Retained<NSString>> = lead.iter().chain(ids.iter()).chain(end.iter()).map(|s| NSString::from_str(s)).collect();
         if self.ivars().tracks_sidebar.get() {
             ids.insert(0, NSString::from_str(SIDEBAR_SPACER));
         }
@@ -1002,13 +1017,22 @@ impl ToolbarDelegate {
         let Some(key) = self.key() else { return };
         let Some(window) = self.ivars().window.load() else { return };
         let defaults: Vec<String> = self.ivars().entries.iter().filter(|e| !e.optional).map(|e| e.id.clone()).collect();
+        let shell = self.ivars().shell;
         let had = NSUserDefaults::standardUserDefaults().stringArrayForKey(&key).map(|l| l.iter().map(|s| s.to_string()).collect::<Vec<_>>());
         let window = objc2::rc::Weak::from(&*window);
         crate::spawn(
             || (),
             move |()| {
                 let Some(toolbar) = window.load().and_then(|w| w.toolbar()) else { return };
-                let ids: Vec<String> = toolbar.items().iter().map(|i| i.itemIdentifier().to_string()).filter(|i| i != SIDEBAR_SPACER).collect();
+                // The shell's own items come back with it: not saved.
+                let (lead, end) = shell_ids(shell);
+                let mut ids: Vec<String> = toolbar.items().iter().map(|i| i.itemIdentifier().to_string()).filter(|i| i != SIDEBAR_SPACER).collect();
+                if ids.starts_with(&lead) {
+                    ids.drain(..lead.len());
+                }
+                if ids.ends_with(&end) {
+                    ids.truncate(ids.len() - end.len());
+                }
                 // The app's own layout isn't saved (a later version's would
                 // then show), only the user's.
                 if had.as_ref() == Some(&ids) || (had.is_none() && ids == defaults) {
@@ -1147,11 +1171,11 @@ fn group_item(mtm: MainThreadMarker, id: &NSString, label: &str, parts: &[(Strin
 /// Gives `window` a unified toolbar with `items` (kept alive by the window
 /// list for the app's lifetime); `remember` makes it customisable, its
 /// layout saved under that name.
-pub(crate) fn install_toolbar(window: &NSWindow, items: Vec<ToolbarItem>, remember: Option<String>) -> Retained<NSObject> {
+pub(crate) fn install_toolbar(window: &NSWindow, items: Vec<ToolbarItem>, remember: Option<String>, shell: (bool, bool)) -> Retained<NSObject> {
     let mtm = MainThreadMarker::from(window);
     let entries = items.into_iter().map(ToolbarEntry::new).collect();
     let customizable = remember.is_some();
-    let state = ToolbarState { entries, live: RefCell::default(), window: objc2::rc::Weak::from(window), spacer: RefCell::default(), tracks_sidebar: std::cell::Cell::new(false), remember };
+    let state = ToolbarState { entries, live: RefCell::default(), window: objc2::rc::Weak::from(window), spacer: RefCell::default(), tracks_sidebar: std::cell::Cell::new(false), remember, shell };
     let delegate = ToolbarDelegate::alloc(mtm).set_ivars(state);
     // SAFETY: NSObject's designated initialiser.
     let delegate: Retained<ToolbarDelegate> = unsafe { msg_send![super(delegate), init] };

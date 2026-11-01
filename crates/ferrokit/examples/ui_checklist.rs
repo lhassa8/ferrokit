@@ -2564,11 +2564,208 @@ fn browser_kind_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                     snapshot_windows(&dir);
                 }
                 ferrokit::close_window(&w3);
-                rich_table_checks(events.clone());
+                shell_kind_checks(events.clone());
             });
         });
     });
 }
+
+/// A window with C15's shell: a sidebar, the content, an inspector, a
+/// toolbar with one button.
+fn shell_window(title: &str, sidebar_hidden: Signal<bool>, inspector_hidden: Signal<bool>) -> Window {
+    Window::new(title)
+        .size(900.0, 420.0)
+        .toolbar(vec![toolbar_button("add", "Add", "plus", || {})])
+        .sidebar(vstack((text("Library"), text("Recent"))).padding(12.0))
+        .sidebar_hidden(&sidebar_hidden)
+        .view(vstack((text("Shell content"), text("Rows go here"))).padding(12.0))
+        .inspector(vstack((text("Inspector"),)).padding(12.0))
+        .inspector_hidden(&inspector_hidden)
+}
+
+/// C15: the shell is AppKit's split view controller (a sidebar item, the
+/// content, an inspector item); the hidden signals and AppKit's toggles
+/// follow each other; and a closed shell window leaves no more behind than
+/// a plain AppKit one built the same way.
+fn shell_kind_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use objc2_app_kit::{NSSplitViewController, NSSplitViewItemBehavior};
+    let (side, insp) = (Signal::new(false), Signal::new(false));
+    let w = open(shell_window("Shell", side, insp));
+    let controller = w.contentViewController().and_then(|c| c.downcast::<NSSplitViewController>().ok());
+    let behaviours: Vec<NSSplitViewItemBehavior> = controller.as_ref().map(|c| c.splitViewItems().iter().map(|i| i.behavior()).collect()).unwrap_or_default();
+    let ids: Vec<String> = w.toolbar().map(|t| t.items().iter().map(|i| i.itemIdentifier().to_string()).collect()).unwrap_or_default();
+    let w2 = w.clone();
+    after_events(move || {
+        // The content sits below the title bar and toolbar, the sidebar's
+        // list too (they run up under it).
+        let label = |t: &str| all_views(&w2.contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string() == t);
+        let layout_top = { let r = w2.contentLayoutRect(); r.origin.y + r.size.height };
+        let below = |t: &str| label(t).and_then(|l| unsafe { l.superview() }.map(|s| s.convertRect_toView(l.frame(), None))).is_some_and(|r| r.origin.y + r.size.height <= layout_top + 0.5);
+        check(
+            "shell-layout",
+            behaviours == [NSSplitViewItemBehavior::Sidebar, NSSplitViewItemBehavior::Default, NSSplitViewItemBehavior::Inspector]
+                && ids.first().map(String::as_str) == Some("NSToolbarToggleSidebarItem")
+                && ids.get(1).map(String::as_str) == Some("NSToolbarSidebarTrackingSeparatorItemIdentifier")
+                && ids.last().map(String::as_str) == Some("NSToolbarToggleInspectorItem")
+                && below("Shell content") && below("Library") && below("Inspector"),
+            format!("items {behaviours:?}; toolbar {ids:?}; below the title bar: content {}, sidebar {}, inspector {}", below("Shell content"), below("Library"), below("Inspector")),
+        );
+        if let Ok(dir) = std::env::var("SNAP") {
+            snapshot_windows(&dir);
+        }
+        // The signals hide the panes; AppKit's own toggle sets them back.
+        batch(|| {
+            side.set(true);
+            insp.set(true);
+        });
+        let (w3, events) = (w2.clone(), events.clone());
+        spawn(|| std::thread::sleep(std::time::Duration::from_millis(900)), move |()| {
+            let c = w3.contentViewController().and_then(|c| c.downcast::<NSSplitViewController>().ok()).unwrap();
+            let items = c.splitViewItems();
+            let hidden = items.objectAtIndex(0).isCollapsed() && items.objectAtIndex(2).isCollapsed();
+            unsafe { c.toggleSidebar(None) };
+            let w4 = w3.clone();
+            spawn(|| std::thread::sleep(std::time::Duration::from_millis(900)), move |()| {
+                let shown = !c.splitViewItems().objectAtIndex(0).isCollapsed();
+                check(
+                    "shell-hide",
+                    hidden && shown && !side.get_untracked() && insp.get_untracked(),
+                    format!("signals hid both {hidden}; Toggle Sidebar showed it {shown}, signal now {}; inspector still hidden {}", side.get_untracked(), insp.get_untracked()),
+                );
+                ferrokit::close_window(&w4);
+                shell_memory(events.clone());
+            });
+        });
+    });
+}
+
+/// Runs `cycle` 40 times to warm AppKit's caches, then 30 more, and calls
+/// `then` with the heap kept per cycle (KB), once closed windows are freed.
+fn measure_cycles(cycle: Rc<dyn Fn()>, then: Rc<dyn Fn(f64)>) {
+    const WARM: u32 = 40;
+    const ROUNDS: u32 = 70;
+    fn step(round: u32, base: f64, cycle: Rc<dyn Fn()>, then: Rc<dyn Fn(f64)>) {
+        if round == WARM && base == 0.0 {
+            return settled_heap(move |b| step(round, b, cycle, then));
+        }
+        if round == ROUNDS {
+            return settled_heap(move |now| then((now - base) * 1024.0 / (ROUNDS - WARM) as f64));
+        }
+        cycle();
+        after_idle(move || step(round + 1, base, cycle.clone(), then.clone()));
+    }
+    step(0, 0.0, cycle, then);
+}
+
+/// The memory a closed shell window keeps, against a plain AppKit window
+/// with a split view controller of the same three panes and a toolbar with
+/// the same tracking separators (in round 2 of the hands-on checks, an
+/// earlier shell kept 0.6 to 1.1 MB per window).
+fn shell_memory(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let plain: Rc<dyn Fn()> = Rc::new(plain_shell_cycle);
+    measure_cycles(plain, Rc::new(move |floor| {
+        let (side, insp) = (Signal::new(false), Signal::new(false));
+        let ours: Rc<dyn Fn()> = Rc::new(move || {
+            let w = open(shell_window("Shell cycle", side, insp));
+            w.performClose(None);
+        });
+        let events = events.clone();
+        measure_cycles(ours, Rc::new(move |per| {
+            check(
+                "shell-close-memory",
+                per < floor.max(0.0) + 16.0,
+                format!("30 shell windows closed: heap kept {per:+.1} KB each; a plain AppKit split view controller window {floor:+.1} KB (budget: plain + 16)"),
+            );
+            rich_table_checks(events.clone());
+        }));
+    }));
+}
+
+/// A plain AppKit window like `shell_window`: a split view controller with
+/// a sidebar, content and inspector item (labels in each), a toolbar with
+/// the sidebar's and inspector's toggles and tracking separators.
+fn plain_shell_cycle() {
+    use objc2::MainThreadOnly;
+    use objc2_app_kit::{NSBackingStoreType, NSSplitViewController, NSSplitViewItem, NSViewController, NSWindow, NSWindowStyleMask};
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+    let mtm = MainThreadMarker::new().unwrap();
+    objc2::rc::autoreleasepool(|_| {
+        let rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(900.0, 420.0));
+        let style = NSWindowStyleMask::Titled | NSWindowStyleMask::Closable | NSWindowStyleMask::Resizable | NSWindowStyleMask::FullSizeContentView;
+        let w = unsafe { NSWindow::initWithContentRect_styleMask_backing_defer(NSWindow::alloc(mtm), rect, style, NSBackingStoreType::Buffered, false) };
+        unsafe { w.setReleasedWhenClosed(false) };
+        let pane = |title: &str| {
+            let vc = NSViewController::new(mtm);
+            let v = NSView::initWithFrame(NSView::alloc(mtm), NSRect::new(NSPoint::ZERO, NSSize::new(300.0, 420.0)));
+            v.addSubview(&NSTextField::labelWithString(&NSString::from_str(title), mtm));
+            vc.setView(&v);
+            vc
+        };
+        let c = NSSplitViewController::new(mtm);
+        c.addSplitViewItem(&NSSplitViewItem::sidebarWithViewController(&pane("Library")));
+        c.addSplitViewItem(&NSSplitViewItem::splitViewItemWithViewController(&pane("Content")));
+        c.addSplitViewItem(&NSSplitViewItem::inspectorWithViewController(&pane("Inspector")));
+        w.setContentViewController(Some(&c));
+        let delegate: Retained<ShellToolbar> = unsafe { objc2::msg_send![ShellToolbar::alloc(mtm), init] };
+        let toolbar = objc2_app_kit::NSToolbar::initWithIdentifier(objc2_app_kit::NSToolbar::alloc(mtm), &NSString::from_str("plain-shell"));
+        toolbar.setDelegate(Some(objc2::runtime::ProtocolObject::from_ref(&*delegate)));
+        w.setToolbar(Some(&toolbar));
+        w.makeKeyAndOrderFront(None);
+        w.performClose(None);
+        toolbar.setDelegate(None);
+        w.setContentViewController(None);
+        drop(delegate);
+    });
+}
+
+mod shell_toolbar {
+    use objc2::rc::Retained;
+    use objc2::runtime::NSObjectProtocol;
+    use objc2::{MainThreadMarker, MainThreadOnly, define_class};
+    use objc2_app_kit::{NSImage, NSToolbar, NSToolbarDelegate, NSToolbarItem};
+    use objc2_foundation::{NSArray, NSObject, NSString};
+
+    fn ids() -> Retained<NSArray<NSString>> {
+        let names = ["NSToolbarToggleSidebarItem", "NSToolbarSidebarTrackingSeparatorItemIdentifier", "add", "NSToolbarInspectorTrackingSeparatorItemIdentifier", "NSToolbarFlexibleSpaceItem", "NSToolbarToggleInspectorItem"];
+        NSArray::from_retained_slice(&names.map(NSString::from_str))
+    }
+
+    define_class!(
+        // The plain shell window's toolbar: the shell's standard items and
+        // an "Add" button.
+        #[unsafe(super(NSObject))]
+        #[thread_kind = MainThreadOnly]
+        #[name = "ChecklistShellToolbar"]
+        pub struct ShellToolbar;
+
+        unsafe impl NSObjectProtocol for ShellToolbar {}
+
+        unsafe impl NSToolbarDelegate for ShellToolbar {
+            #[unsafe(method_id(toolbar:itemForItemIdentifier:willBeInsertedIntoToolbar:))]
+            fn item(&self, _toolbar: &NSToolbar, id: &NSString, _insert: bool) -> Option<Retained<NSToolbarItem>> {
+                // AppKit makes its own items; only "add" is ours.
+                (id.to_string() == "add").then(|| {
+                    let mtm = MainThreadMarker::new().unwrap();
+                    let item = NSToolbarItem::initWithItemIdentifier(NSToolbarItem::alloc(mtm), id);
+                    item.setLabel(&NSString::from_str("Add"));
+                    item.setImage(NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str("plus"), None).as_deref());
+                    item
+                })
+            }
+
+            #[unsafe(method_id(toolbarDefaultItemIdentifiers:))]
+            fn defaults(&self, _toolbar: &NSToolbar) -> Retained<NSArray<NSString>> {
+                ids()
+            }
+
+            #[unsafe(method_id(toolbarAllowedItemIdentifiers:))]
+            fn allowed(&self, _toolbar: &NSToolbar) -> Retained<NSArray<NSString>> {
+                ids()
+            }
+        }
+    );
+}
+use shell_toolbar::ShellToolbar;
 
 #[derive(Clone)]
 struct Task {
