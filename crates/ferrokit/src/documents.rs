@@ -705,9 +705,12 @@ define_class!(
     }
 );
 
+/// Builds the Dock menu's items when it opens.
+pub(crate) type DockItems = Rc<dyn Fn() -> Vec<crate::MenuItem>>;
+
 thread_local! {
     /// The Dock menu's items ([`App::dock_menu`](crate::App::dock_menu)).
-    pub(crate) static DOCK_MENU: RefCell<Option<Rc<dyn Fn() -> Vec<crate::MenuItem>>>> = const { RefCell::new(None) };
+    pub(crate) static DOCK_MENU: RefCell<Option<DockItems>> = const { RefCell::new(None) };
     /// The last Dock menu's action targets, alive while it can be used.
     static DOCK_TARGETS: RefCell<Vec<Retained<NSObject>>> = const { RefCell::new(Vec::new()) };
 }
