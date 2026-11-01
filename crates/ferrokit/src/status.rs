@@ -129,12 +129,17 @@ pub(crate) fn install(extra: MenuBarExtra, app_name: &str) {
             controller.setView(&r);
             p.setContentViewController(Some(&controller));
             p.setContentSize(size);
-            let (p2, b) = (p.clone(), button.clone());
+            let (p2, b, r2) = (p.clone(), button.clone(), r.clone());
             let target = ActionTarget::new(mtm, move || {
                 if p2.isShown() {
                     // SAFETY: closing a popover on the main thread.
                     unsafe { p2.performClose(None) };
                 } else {
+                    // Measured again: the panel is built once, and its
+                    // content (a list) may have grown or shrunk since.
+                    if let Some(size) = crate::hosted_ideal(&r2) {
+                        p2.setContentSize(size);
+                    }
                     p2.showRelativeToRect_ofView_preferredEdge(b.bounds(), &b, NSRectEdge::MinY);
                 }
             });

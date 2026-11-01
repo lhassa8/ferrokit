@@ -368,7 +368,8 @@ pub fn ax_elements(window: &objc2_app_kit::NSWindow) -> Vec<AxElement> {
 
 /// What VoiceOver users would miss in `window`: controls with no name to
 /// read (fields, editors, sliders, pop-ups, checkboxes, switches, buttons,
-/// steppers) and images read as a symbol name ("speaker.wave.2"). Empty
+/// steppers), and images and controls read as a symbol name
+/// ("speaker.wave.2"). Empty
 /// when every control can be told apart by ear.
 pub fn ax_audit(window: &objc2_app_kit::NSWindow) -> Vec<String> {
     const NEEDS_NAME: &[&str] =
@@ -395,7 +396,9 @@ pub fn ax_audit(window: &objc2_app_kit::NSWindow) -> Vec<String> {
             // named date picker, are parts VoiceOver names itself.
             let part = ["AXIncrementArrow", "AXDecrementArrow", "AXIncrementPage", "AXDecrementPage"].contains(&e.subrole.as_str()) || in_named_date(i);
             let unnamed = NEEDS_NAME.contains(&e.role.as_str()) && !part && e.name.trim().is_empty();
-            let symbol = e.role == "AXImage" && (e.name.is_empty() || symbol_like(&e.name));
+            // A control is only flagged for a real symbol's name: "sample.sqlite" is a file's.
+            let is_symbol = |n: &str| e.role == "AXImage" || objc2_app_kit::NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str(n), None).is_some();
+            let symbol = (e.role == "AXImage" && e.name.is_empty()) || (symbol_like(&e.name) && is_symbol(&e.name));
             (unnamed || symbol).then(|| {
                 let what = if e.subrole.is_empty() { e.role.clone() } else { format!("{} {}", e.role, e.subrole) };
                 if symbol { format!("#{i} {what} named {:?}", e.name) } else { format!("#{i} {what} without a name") }

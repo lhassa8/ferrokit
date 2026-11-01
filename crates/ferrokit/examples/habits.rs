@@ -16,6 +16,8 @@ use ferrokit::t as tr;
 const PALETTE: [Color; 8] = [Color::Green, Color::Orange, Color::Blue, Color::Purple, Color::Indigo, Color::Pink, Color::Teal, Color::Red];
 const SYMBOLS: [&str; 10] =
     ["figure.walk", "book.fill", "drop.fill", "brain.head.profile", "bed.double.fill", "dumbbell.fill", "leaf.fill", "pencil", "music.note", "sun.max.fill"];
+/// What VoiceOver reads for each of `SYMBOLS`.
+const SYMBOL_NAMES: [&str; 10] = ["Walking", "Book", "Water", "Mind", "Bed", "Weights", "Leaf", "Pencil", "Music", "Sun"];
 
 const NEW_HABIT: Command = Command::new("new-habit");
 const PRINT_REPORT: Command = Command::new("print-report");
@@ -760,7 +762,8 @@ fn new_habit(t: Tracker) {
                 ))
                 .frame(36.0, 36.0)
                 .on_click(move || symbol.set(i))
-                .accessibility_label(s),
+                .accessibility_label(&tr(SYMBOL_NAMES[i]))
+                .accessibility_value(move || if symbol.get() == i { tr("Selected") } else { String::new() }),
             )
         })
         .collect();
@@ -776,10 +779,12 @@ fn new_habit(t: Tracker) {
                         p.stroke_circle(cx, cy, 13.5, c, 2.0);
                     }
                 })
-                .description(move || format!("{c:?}"))
-                .on_click(move |_, _| color.set(i))
                 .min_size(30.0, 30.0)
-                .frame(30.0, 30.0),
+                .frame(30.0, 30.0)
+                // A button to VoiceOver, like the symbols (a canvas's own click is an image's).
+                .on_click(move || color.set(i))
+                .accessibility_label(&tr(&format!("{c:?}")))
+                .accessibility_value(move || if color.get() == i { tr("Selected") } else { String::new() }),
             )
         })
         .collect();
@@ -806,7 +811,7 @@ fn new_habit(t: Tracker) {
     .spacing(10.0)
     .alignment(Align::Start)
     .padding(20.0);
-    let handle = sheet(&w, Window::new(&tr("New Habit")).size(440.0, 300.0).view(content), || {});
+    let handle = sheet(&w, Window::new(&tr("New Habit")).size(440.0, 262.0).view(content), || {});
     SHEET.with_borrow_mut(|s| *s = Some(handle));
 }
 
@@ -1583,10 +1588,32 @@ mod self_checks {
                         enabled && habits.len() == 6 && new.as_ref().is_some_and(|h| h.name == "Stretch") && page == Page::Habit(6) && w.attachedSheet().is_none() && texts(&w).contains(&"Stretch".to_string()),
                         format!("Add enabled {enabled}; {} habits, last {:?}; page {page:?}", habits.len(), new.map(|h| h.name)),
                     );
-                    untrack(|| t.delete(6));
-                    later_ms(500, move || {
-                        check("delete-habit", untrack(|| t.habits.with(Vec::len)) == 5 && untrack(|| t.page.get()) == Page::Today, format!("{} habits", untrack(|| t.habits.with(Vec::len))));
-                        insights_phase(w, t, check, failed);
+                    // The menu bar's panel, built at launch with 5 rows, fits the 6th.
+                    let mtm = objc2::MainThreadMarker::new().unwrap();
+                    let (item, popover) = menu_bar_extras()[0].clone();
+                    if let Some(b) = item.button(mtm) {
+                        // SAFETY: clicking a button on the main thread.
+                        unsafe { b.performClick(None) };
+                    }
+                    later_ms(400, move || {
+                        let content = popover.as_ref().and_then(|p| p.contentViewController()).map(|c| c.view());
+                        let row = content.as_ref().and_then(|c| {
+                            let mut out = Vec::new();
+                            all(c, &mut out);
+                            let f = out.into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSTextField>().ok()).find(|f| f.stringValue().to_string() == "Stretch")?;
+                            Some(f.convertRect_toView(f.bounds(), Some(c)))
+                        });
+                        let bounds = content.as_ref().map(|c| c.bounds());
+                        let inside = row.zip(bounds).is_some_and(|(r, b)| r.origin.y >= b.origin.y && r.origin.y + r.size.height <= b.origin.y + b.size.height);
+                        check("menu-bar-grows", inside, format!("Stretch at {row:?} in {bounds:?}"));
+                        if let Some(p) = &popover {
+                            p.close();
+                        }
+                        untrack(|| t.delete(6));
+                        later_ms(500, move || {
+                            check("delete-habit", untrack(|| t.habits.with(Vec::len)) == 5 && untrack(|| t.page.get()) == Page::Today, format!("{} habits", untrack(|| t.habits.with(Vec::len))));
+                            insights_phase(w, t, check, failed);
+                        });
                     });
                 });
             });
@@ -1664,6 +1691,10 @@ mod self_checks {
                             later_ms(700, move || {
                                 let sheet = w.attachedSheet();
                                 if let Some(s) = &sheet {
+                                    // Every symbol and colour is a button VoiceOver can name and press.
+                                    let buttons = ferrokit::testing::ax_elements(s).into_iter().filter(|e| e.role == "AXButton").count();
+                                    let problems = ax_audit(s);
+                                    check("new-habit-sheet-ax", buttons == super::SYMBOLS.len() + super::PALETTE.len() + 2 && problems.is_empty(), format!("{buttons} buttons; {problems:?}"));
                                     input::type_text(s, "Yoga");
                                 }
                                 later_ms(300, move || {
