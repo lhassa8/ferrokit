@@ -470,6 +470,18 @@ pub fn canvas_click(view: &objc2_app_kit::NSView, x: f64, y: f64) -> bool {
     crate::canvas::click_at(view, x, y)
 }
 
+/// Scrolls a [`canvas`](crate::canvas) (or chart) by `dx, dy` points with
+/// the pointer at `x, y`, as a trackpad would; false if it didn't use it.
+pub fn canvas_scroll(view: &objc2_app_kit::NSView, dx: f64, dy: f64, x: f64, y: f64) -> bool {
+    crate::canvas::scroll_at(view, dx, dy, x, y)
+}
+
+/// Pinches a [`canvas`](crate::canvas) (or chart) by `amount` (0.5 is 50%
+/// larger) at `x, y`; false if it didn't use it.
+pub fn canvas_magnify(view: &objc2_app_kit::NSView, amount: f64, x: f64, y: f64) -> bool {
+    crate::canvas::magnify_at(view, amount, x, y)
+}
+
 /// What dragging a canvas would carry now (its `draggable`, or the image
 /// of an `exportable` one), without a drag session.
 pub fn canvas_drag(view: &objc2_app_kit::NSView) -> Option<crate::DragItem> {

@@ -154,6 +154,36 @@ colours in order, and `Series::color(..)` gives one series its own.
 `.no_legend()` hides the legend. A heatmap shades its first colour, with
 a scale from the lowest value to the highest above it.
 
+**Selection:** `.selection(&signal)` makes a bar, stacked bar, pie,
+histogram or heatmap chart selectable: clicking a mark sets the signal to
+its index (a heatmap's cell is row × columns + column), clicking off the
+marks to `None`, and the other marks dim while one is selected. On line,
+area and scatter charts, `.x_selection(&signal)` sets the clicked x (the
+nearest point's) and marks it with a line and each series' value. Both
+work the other way too: setting the signal selects. VoiceOver's summary
+says what's selected.
+
+**Zooming and scrolling:** `.zoomable()` lets the user pinch (or ⌘-scroll)
+a line, area or scatter chart to zoom in around the pointer, scroll
+sideways to move along it, and pinch out to see it all again; vertical
+scrolling still scrolls what the chart is in. `.x_range(&signal)` binds
+the range shown (`None` is everything), so the app can zoom too. The value
+axis fits what's shown, and a million points stay quick: only those in
+range are drawn, a few per pixel column.
+
+```rust,no_run
+use ferrokit::*;
+
+let picked = Signal::new(None::<usize>);
+let months = bar_chart(|| vec![("Jan".to_string(), 1180.0), ("Feb".to_string(), 1110.0)]).selection(&picked);
+
+let range = Signal::new(None::<(f64, f64)>);
+let day = Signal::new(None::<f64>);
+let readings: Vec<(f64, f64)> = (0..100_000).map(|i| (i as f64, (i as f64 / 500.0).sin())).collect();
+let trace = line_chart(move || vec![Series::new("Signal", readings.clone())]).zoomable().x_range(&range).x_selection(&day);
+# let _ = (months, trace);
+```
+
 **Rules** mark a threshold, a target or an average: `Rule::y(value)`
 runs across the chart, `Rule::x(x)` down it (on line, area and scatter
 charts and histograms). The chart's range takes them in, their labels sit

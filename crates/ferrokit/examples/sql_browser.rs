@@ -531,6 +531,8 @@ fn chart(b: Browser) -> impl View {
                 })
                 .value_format(format)
                 .colors(&palette)
+                // Pinch to look closer at a million points.
+                .zoomable()
                 .exportable("chart"),
             ),
             2 => AnyView::new(
@@ -1676,7 +1678,40 @@ mod self_checks {
                 points > 100 && (points as f64) <= width * 4.0 + 8.0 && label.starts_with("Line chart of total, 1000000 points"),
                 format!("1,000,000 rows drawn as a {points}-point line ({width:.0} pt wide) {ms:.0} ms after Run; VoiceOver: {label:?}"),
             );
-            legend_check(w, b, dir);
+            zoom_check(w, b, dir);
+        });
+    }
+
+    /// C9: pinching the million-point line zooms in (the line still drawn
+    /// at a few points per pixel column), and pinching out shows it all.
+    fn zoom_check(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
+        let Some(view) = chart_view(&w) else { return legend_check(w, b, dir) };
+        let (cw, ch) = (view.frame().size.width, view.frame().size.height);
+        let start = Instant::now();
+        let used = ferrokit::testing::canvas_magnify(&view, 9.0, cw / 2.0, ch / 2.0);
+        let label = |v: &NSView| v.accessibilityLabel().map(|l| l.to_string()).unwrap_or_default();
+        let w2 = w.clone();
+        when(move || chart_view(&w2).is_some_and(|v| label(&v).contains("showing x from")), 5_000, move |_| {
+            let ms = start.elapsed().as_secs_f64() * 1000.0;
+            let d = drawing(&w);
+            let points: usize = d.iter().filter(|t| t.starts_with("stroke path") && t.ends_with("Blue")).filter_map(|t| t.split(' ').nth(2)?.parse::<usize>().ok()).sum();
+            let zoomed = label(&view);
+            let out = ferrokit::testing::canvas_magnify(&view, -0.95, cw / 2.0, ch / 2.0);
+            let w3 = w.clone();
+            when(move || chart_view(&w3).is_some_and(|v| !label(&v).contains("showing")), 5_000, move |_| {
+                let all = chart_view(&w).map(|v| label(&v)).unwrap_or_default();
+                // A tenth of the ids, around the pointer.
+                let span = zoomed.split("showing x from ").nth(1).and_then(|r| {
+                    let (a, b) = r.split_once(" to ")?;
+                    Some(b.replace(',', "").parse::<f64>().ok()? - a.replace(',', "").parse::<f64>().ok()?)
+                });
+                check(
+                    "chart-zoom-million",
+                    used && out && span.is_some_and(|s| (s / 99_999.9 - 1.0).abs() < 0.01) && points > 100 && (points as f64) <= cw * 4.0 + 8.0 && !all.contains("showing"),
+                    format!("pinched in: {zoomed:?}, a {points}-point line, {ms:.0} ms; pinched out: whole again {}", !all.contains("showing")),
+                );
+                legend_check(w, b, dir);
+            });
         });
     }
 

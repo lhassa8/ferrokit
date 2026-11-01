@@ -18,7 +18,16 @@ fn usd() -> Format {
     Format::Currency("USD".into())
 }
 
-fn overview() -> impl View {
+/// What's selected and zoomed in the charts (C9).
+#[derive(Clone, Copy)]
+struct Picks {
+    month: Signal<Option<usize>>,
+    share: Signal<Option<usize>>,
+    zoom: Signal<Option<(f64, f64)>>,
+    day: Signal<Option<f64>>,
+}
+
+fn overview(k: Picks) -> impl View {
     let spending = || vec![("Lodging".to_string(), 1240.0), ("Food".to_string(), 520.0), ("Transport".to_string(), 410.0), ("Activities".to_string(), 330.0)];
     let months = || {
         vec![
@@ -29,19 +38,20 @@ fn overview() -> impl View {
         ]
     };
     hstack((
-        pie_chart(spending).donut().value_format(usd()).colors(&[Color::Indigo, Color::Orange, Color::Teal, Color::Pink]).min_size(320.0, 220.0),
+        pie_chart(spending).donut().value_format(usd()).colors(&[Color::Indigo, Color::Orange, Color::Teal, Color::Pink]).selection(&k.share).min_size(320.0, 220.0),
         stacked_bar_chart(months)
             .series_names(&["Lodging", "Food", "Transport"])
             .value_format(usd())
             .colors(&[Color::Indigo, Color::Orange, Color::Teal])
             .rule(Rule::y(1300.0).label("Budget"))
+            .selection(&k.month)
             .min_size(300.0, 220.0),
     ))
     .spacing(16.0)
     .padding(4.0)
 }
 
-fn trends() -> impl View {
+fn trends(k: Picks) -> impl View {
     // A balance falling over 90 days, and two moving averages.
     let balance: Vec<(f64, f64)> = (0..90).map(|d| (START + d as f64 * DAY, 4200.0 - d as f64 * 31.0 + (d as f64 / 6.0).sin() * 180.0)).collect();
     let lodging: Vec<(f64, f64)> = (0..90).map(|d| (START + d as f64 * DAY, 40.0 + (d as f64 / 9.0).sin() * 12.0)).collect();
@@ -52,10 +62,13 @@ fn trends() -> impl View {
             .x_format(Format::Date)
             .rule(Rule::y(1500.0).label("Keep in reserve").color(Color::Orange))
             .rule(Rule::x(START + 59.0 * DAY).label("Flights").color(Color::Secondary))
+            .zoomable()
+            .x_range(&k.zoom)
             .min_size(560.0, 170.0),
         line_chart(move || vec![Series::new("Lodging", lodging.clone()).color(Color::Indigo), Series::new("Food", food.clone()).color(Color::Orange)])
             .value_format(usd())
             .x_format(Format::Date)
+            .x_selection(&k.day)
             .min_size(560.0, 170.0),
     ))
     .spacing(12.0)
@@ -149,16 +162,18 @@ fn main() {
         storage: Signal::new(62.0),
         folder: Signal::new(std::env::temp_dir()),
     };
+    let k = Picks { month: Signal::new(None), share: Signal::new(None), zoom: Signal::new(None), day: Signal::new(None) };
     if checks {
         self_checks::STATE.with(|c| c.set(Some((page, s))));
+        self_checks::PICKS.with(|c| c.set(Some(k)));
     }
     App::new("Components")
         .window(Window::new("Trip budget").size(700.0, 480.0).view(
             vstack((
                 text("Lofoten, summer 2026").font(Font::title2().weight(Weight::Bold)),
                 tabs(&page, vec![
-                    ("Overview", 0, AnyView::new(overview())),
-                    ("Trends", 1, AnyView::new(trends())),
+                    ("Overview", 0, AnyView::new(overview(k))),
+                    ("Trends", 1, AnyView::new(trends(k))),
                     ("Rides", 2, AnyView::new(details())),
                     ("Settings", 3, AnyView::new(settings(s))),
                     ("Analysis", 4, AnyView::new(analysis())),
@@ -189,16 +204,17 @@ mod self_checks {
     use std::path::PathBuf;
     use std::rc::Rc;
 
-    use ferrokit::testing::{ax_audit, ax_tree, canvas_drawing, has_ax, send_action};
+    use ferrokit::testing::{ax_audit, ax_tree, canvas_click, canvas_drawing, canvas_magnify, canvas_scroll, has_ax, send_action};
     use ferrokit::*;
     use objc2::rc::Retained;
     use objc2_app_kit::{NSAccessibility, NSButton, NSLevelIndicator, NSPathControl, NSSegmentedControl, NSTabView, NSTabViewType, NSTextField, NSTokenField, NSView, NSWindow};
     use objc2_foundation::{NSArray, NSString};
 
-    use super::Settings;
+    use super::{Picks, Settings};
 
     thread_local! {
         pub static STATE: Cell<Option<(Signal<i32>, Settings)>> = const { Cell::new(None) };
+        pub static PICKS: Cell<Option<Picks>> = const { Cell::new(None) };
     }
 
     type Check = Rc<dyn Fn(&str, bool, String)>;
@@ -345,6 +361,37 @@ mod self_checks {
         // and taken into the range (the tallest month is 1,370).
         let rule = stacked.as_ref().is_some_and(|(_, d, l)| d.iter().any(|o| o.starts_with("stroke path 2 points Red")) && d.iter().any(|o| o == "text \"Budget\" 11pt") && l.contains("Budget at $1,300"));
         check("chart-rule", rule, format!("{:?}", stacked.as_ref().map(|s| s.2.clone())));
+        // C9: clicking a bar selects its month; clicking off clears it.
+        let k = PICKS.with(Cell::get).unwrap();
+        if let Some((v, _, _)) = &stacked {
+            let (cw, ch) = (v.frame().size.width, v.frame().size.height);
+            // Mar, the third of four columns (past the axis labels).
+            canvas_click(v, 55.0 + (cw - 67.0) * 0.625, ch * 0.7);
+        }
+        if let Some((v, _, _)) = &donut {
+            // The ring's left edge, at nine o'clock: three quarters round from
+            // twelve, in Transport (from 70.4% to 86.8%).
+            let ch = v.frame().size.height;
+            canvas_click(v, 18.0, ch / 2.0);
+        }
+        // (VoiceOver's labels follow when this callback returns.)
+        let (bars, ring) = (stacked.as_ref().map(|s| s.0.clone()), donut.as_ref().map(|s| s.0.clone()));
+        let check2 = check.clone();
+        later_ms(60, move || {
+            let check = check2;
+            if let (Ok(dir), Some(v)) = (std::env::var("SNAP"), &bars) {
+                let _ = std::fs::write(format!("{dir}/components-bars-selected.png"), ferrokit::testing::canvas_png(v).unwrap_or_default());
+            }
+            let said = |v: &Option<Retained<NSView>>| v.as_ref().and_then(|v| v.accessibilityLabel()).map(|l| l.to_string()).unwrap_or_default();
+            let (bar_said, slice_said) = (said(&bars), said(&ring));
+            let picked = k.month.get();
+            if let Some(v) = &bars {
+                canvas_click(v, 2.0, 2.0);
+            }
+            check("chart-select", picked == Some(2) && bar_said.ends_with("; selected Mar ($1,370)") && k.month.get().is_none(), format!("clicked Mar → {picked:?}; VoiceOver {bar_said:?}; off the bars → {:?}", k.month.get()));
+            check("chart-select-slice", k.share.get() == Some(2) && slice_said.ends_with("; selected Transport ($410)"), format!("{:?}; {slice_said:?}", k.share.get()));
+            k.share.set(None);
+        });
         let images = drawings.iter().filter(|(v, _, l)| v.accessibilityRole().is_some_and(|r| r.to_string() == "AXImage") && !l.is_empty()).count();
         check("charts-voiceover", images == 9, format!("{images} of 9 charts are images with a description"));
         page.set(1);
@@ -365,14 +412,55 @@ mod self_checks {
             let colours = line.as_ref().is_some_and(|(_, d)| d.iter().any(|o| o.starts_with("stroke path") && o.ends_with("Indigo")) && d.iter().any(|o| o.starts_with("stroke path") && o.ends_with("Orange")));
             let legend = line.as_ref().is_some_and(|(_, d)| d.iter().any(|o| o.contains("\"Lodging\"")) && d.iter().any(|o| o.contains("\"Food\"")));
             check("chart-series-colours", colours && legend, format!("series in their own colours {colours}; legend {legend}"));
-            page.set(2);
+            // C9: pinch to zoom the area chart, scroll sideways along it,
+            // pinch out to see it all; click the line chart to pick a day.
+            let k = PICKS.with(Cell::get).unwrap();
+            let full = 89.0 * super::DAY;
+            if let Some((v, _)) = &area {
+                let (cw, ch) = (v.frame().size.width, v.frame().size.height);
+                let pinched = canvas_magnify(v, 1.0, cw / 2.0, ch / 2.0);
+                let zoomed = k.zoom.get();
+                let half = zoomed.is_some_and(|(a, b)| ((b - a) / full - 0.5).abs() < 0.01);
+                let vertical = canvas_scroll(v, 0.0, -40.0, cw / 2.0, ch / 2.0);
+                let moved = canvas_scroll(v, -100.0, 0.0, cw / 2.0, ch / 2.0);
+                let later = k.zoom.get().zip(zoomed).is_some_and(|(n, o)| n.0 > o.0 && ((n.1 - n.0) - (o.1 - o.0)).abs() < 1.0);
+                let out = canvas_magnify(v, -0.95, cw / 2.0, ch / 2.0);
+                check(
+                    "chart-zoom",
+                    pinched && half && !vertical && moved && later && out && k.zoom.get().is_none(),
+                    format!("pinched {pinched}: half the days {half}; vertical scroll passed on {}; sideways moved later {later}; pinched out → {:?}", !vertical, k.zoom.get()),
+                );
+                k.zoom.set(Some((super::START + 10.0 * super::DAY, super::START + 20.0 * super::DAY)));
+            }
+            if let Some((v, _)) = &line {
+                let (cw, ch) = (v.frame().size.width, v.frame().size.height);
+                canvas_click(v, cw / 2.0, ch / 2.0);
+                let day = k.day.get();
+                let midway = day.is_some_and(|d| ((d - super::START) / super::DAY - 44.5).abs() < 3.0 && (d - super::START) % super::DAY == 0.0);
+                check("chart-select-x", midway, format!("clicked the middle → day {:?}", day.map(|d| (d - super::START) / super::DAY)));
+            }
+            let w5 = w.clone();
             later_ms(80, move || {
+                snap(&w5, "trends-zoomed");
+                page.set(2);
+            });
+            later_ms(160, move || {
                 snap(&w, "rides");
                 page.set(3);
                 let scatter = get("Scatter chart");
                 let w3 = w.clone();
                 let dots = scatter.as_ref().map(|(_, d)| d.iter().filter(|o| o.starts_with("fill ellipse") && o.ends_with("Purple")).count());
                 check("chart-scatter", dots == Some(8), format!("{dots:?} dots (8); {:?}", scatter.map(|s| s.0.accessibilityLabel())));
+                // The zoom and day set before: drawn, and read by VoiceOver.
+                let k = PICKS.with(Cell::get).unwrap();
+                let area = get("Area chart");
+                let label = area.as_ref().and_then(|(v, _)| v.accessibilityLabel()).map(|l| l.to_string()).unwrap_or_default();
+                let ticks = area.as_ref().map(|(_, d)| d.iter().filter(|o| o.starts_with("text \"Jan") || o.starts_with("text \"Feb")).count()).unwrap_or(0);
+                let line = get("Line chart");
+                let marked = line.as_ref().is_some_and(|(_, d)| d.iter().any(|o| o.starts_with("stroke path 2 points Accent")));
+                let read = line.as_ref().and_then(|(v, _)| v.accessibilityLabel()).is_some_and(|l| l.to_string().contains("; selected x "));
+                check("chart-zoom-drawn", label.contains("; showing x from Jan 1") && ticks >= 3 && marked && read, format!("{label:?}; {ticks} day ticks; day marked {marked}, read {read}"));
+                k.zoom.set(None);
                 page.set(4);
                 later_ms(120, move || analysis_checks(w3, check, failed));
             });

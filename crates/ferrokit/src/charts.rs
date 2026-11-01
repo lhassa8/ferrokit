@@ -501,19 +501,86 @@ struct Options {
     legend: bool,
     rules: Vec<Rule>,
     bins: usize,
+    selection: Option<Signal<Option<usize>>>,
+    x_selection: Option<Signal<Option<f64>>>,
+    x_range: Option<Signal<Option<(f64, f64)>>>,
+    zoomable: bool,
 }
 
 impl Options {
     fn color(&self, i: usize) -> Color {
         if self.colors.is_empty() { PALETTE[i % PALETTE.len()] } else { self.colors[i % self.colors.len()] }
     }
+
+    /// The selected mark, if the chart has a [selection](Chart::selection).
+    fn selected(&self) -> Option<usize> {
+        self.selection.and_then(|s| s.get())
+    }
+
+    /// Mark `i`'s opacity: dimmed while another is selected.
+    fn emphasis(&self, i: usize) -> f64 {
+        match self.selected() {
+            Some(s) if s != i => 0.35,
+            _ => 1.0,
+        }
+    }
+}
+
+/// What's under a click: the mark's index, from the layout last drawn.
+type Hit = Rc<RefCell<Option<Rc<dyn Fn(f64, f64) -> Option<usize>>>>>;
+
+/// Clicking selects the mark under the pointer, or nothing off the marks.
+fn selectable(c: Canvas, o: &Options, hit: &Hit) -> Canvas {
+    let Some(selection) = o.selection else { return c };
+    let hit = hit.clone();
+    c.on_click(move |x, y| {
+        let i = hit.borrow().as_ref().and_then(|h| h(x, y));
+        selection.set(i);
+    })
+}
+
+/// "; selected Mar ($1,370)", for VoiceOver.
+fn selected_text(o: &Options, label: impl Fn(usize) -> Option<String>) -> String {
+    o.selected().and_then(label).map(|l| format!("; selected {l}")).unwrap_or_default()
+}
+
+/// `range` kept within `full` and at least a millionth of it wide; `None`
+/// when it covers all of it.
+pub(crate) fn clamp_range((a, b): (f64, f64), (f0, f1): (f64, f64)) -> Option<(f64, f64)> {
+    let full = f1 - f0;
+    if !(a.is_finite() && b.is_finite()) || full <= 0.0 {
+        return None;
+    }
+    let span = (b - a).abs().max(full * 1e-6);
+    if span >= full * 0.999 {
+        return None;
+    }
+    let a = a.min(b).clamp(f0, f1 - span);
+    Some((a, a + span))
+}
+
+/// The points of a sorted series within `a..=b`; for a line, with points
+/// at `a` and `b` where its segments cross them.
+fn visible(points: &[(f64, f64)], a: f64, b: f64, line: bool) -> Vec<(f64, f64)> {
+    let lo = points.partition_point(|p| p.0 < a);
+    let hi = points.partition_point(|p| p.0 <= b);
+    let at = |p: (f64, f64), q: (f64, f64), x: f64| (x, p.1 + (q.1 - p.1) * (x - p.0) / (q.0 - p.0));
+    let mut out = Vec::with_capacity(hi.saturating_sub(lo) + 2);
+    if line && lo > 0 && lo < points.len() && points[lo].0 > a {
+        out.push(at(points[lo - 1], points[lo], a));
+    }
+    out.extend_from_slice(&points[lo..hi.max(lo)]);
+    if line && hi > 0 && hi < points.len() && points[hi - 1].0 < b {
+        out.push(at(points[hi - 1], points[hi], b));
+    }
+    out
 }
 
 impl Chart {
     fn new(data: Data) -> Chart {
         Chart {
             data,
-            options: Options { values: Format::Number, x: Format::Number, colors: Vec::new(), names: Vec::new(), grouped: false, donut: false, legend: true, rules: Vec::new(), bins: 10 },
+            options: Options { values: Format::Number, x: Format::Number, colors: Vec::new(), names: Vec::new(), grouped: false, donut: false, legend: true, rules: Vec::new(), bins: 10, selection: None, x_selection: None, x_range: None, zoomable: false },
             min: None,
             export: None,
         }
@@ -566,6 +633,41 @@ impl Chart {
         self
     }
 
+    /// Clicking a bar, a stacked bar's category, a slice, a histogram's
+    /// bin or a heatmap's cell (row × columns + column) sets `selected` to
+    /// its index, and clicking off the marks to `None`; the others dim
+    /// while one is selected. Setting the signal selects from code.
+    pub fn selection(mut self, selected: &Signal<Option<usize>>) -> Self {
+        self.options.selection = Some(*selected);
+        self
+    }
+
+    /// Clicking a line, area or scatter chart sets `x` to the nearest
+    /// point's x (on a scatter chart, the point's under the pointer), and
+    /// clicking off it to `None`; a line marks it, with each series' value.
+    pub fn x_selection(mut self, x: &Signal<Option<f64>>) -> Self {
+        self.options.x_selection = Some(*x);
+        self
+    }
+
+    /// The x range a line, area or scatter chart shows, bound two ways:
+    /// `None` shows all of it; `Some((from, to))` zooms in (the value axis
+    /// fits what's shown). With [`zoomable`](Chart::zoomable), pinching and
+    /// scrolling change it.
+    pub fn x_range(mut self, range: &Signal<Option<(f64, f64)>>) -> Self {
+        self.options.x_range = Some(*range);
+        self
+    }
+
+    /// Pinching (or ⌘-scrolling) zooms a line, area or scatter chart in and
+    /// out around the pointer, and scrolling sideways moves along; zooming
+    /// out all the way shows everything again. Vertical scrolling still
+    /// scrolls what the chart is in.
+    pub fn zoomable(mut self) -> Self {
+        self.options.zoomable = true;
+        self
+    }
+
     /// About how many bins a [`histogram`] sorts its values into (10
     /// unless set); their edges fall on round numbers.
     pub fn bins(mut self, bins: usize) -> Self {
@@ -596,7 +698,10 @@ impl Chart {
 }
 
 impl crate::view::View for Chart {
-    fn build(self, cx: &mut crate::view::Cx) -> crate::view::Node {
+    fn build(mut self, cx: &mut crate::view::Cx) -> crate::view::Node {
+        if self.options.zoomable && self.options.x_range.is_none() {
+            self.options.x_range = Some(Signal::new(None));
+        }
         let o = Rc::new(self.options);
         let mut c = match self.data {
             Data::Bars(f) => bars(f, o),
@@ -763,10 +868,13 @@ pub fn sparkline(values: impl Fn() -> Vec<f64> + 'static) -> Chart {
 }
 
 fn bars(data: Box<dyn Fn() -> Vec<(String, f64)>>, o: Rc<Options>) -> Canvas {
+    let o3 = o.clone();
     let data = hold(data);
     let hover = Signal::new(None::<(f64, f64)>);
     let o2 = o.clone();
-    canvas(move |p| {
+    let hit: Hit = Rc::default();
+    let h2 = hit.clone();
+    let c = canvas(move |p| {
         let Some(bars) = data.get().filter(|b| !b.is_empty()) else { return no_data(p) };
         let lo = bars.iter().map(|b| b.1).fold(0.0, f64::min);
         let hi = bars.iter().map(|b| b.1).fold(0.0, f64::max);
@@ -777,6 +885,8 @@ fn bars(data: Box<dyn Fn() -> Vec<(String, f64)>>, o: Rc<Options>) -> Canvas {
         let bar_w = (slot * 0.75).max(1.0);
         let zero = to_y(0.0);
         let hovered = hover.get().filter(|&(x, y)| x >= plot.x && x < plot.x + plot.w && y >= 0.0).map(|(x, _)| ((x - plot.x) / slot) as usize);
+        let (px, py, ph, count) = (plot.x, plot.y, plot.h, bars.len());
+        *h2.borrow_mut() = Some(Rc::new(move |x, y| (x >= px && y >= py && y <= py + ph).then(|| ((x - px) / slot) as usize).filter(|i| *i < count)));
         let base = o.colors.first().copied();
         for (i, (_, v)) in bars.iter().enumerate() {
             let x = plot.x + i as f64 * slot + (slot - bar_w) / 2.0;
@@ -787,9 +897,7 @@ fn bars(data: Box<dyn Fn() -> Vec<(String, f64)>>, o: Rc<Options>) -> Canvas {
                 None => Color::Blue,
                 Some(c) => c,
             };
-            if lit && base.is_some() {
-                p.set_opacity(0.75);
-            }
+            p.set_opacity(o.emphasis(i) * if lit && base.is_some() { 0.75 } else { 1.0 });
             p.fill_rect(x, top, bar_w, (bottom - top).max(0.5), color);
             p.set_opacity(1.0);
         }
@@ -808,11 +916,13 @@ fn bars(data: Box<dyn Fn() -> Vec<(String, f64)>>, o: Rc<Options>) -> Canvas {
         match (min, max) {
             (Some(min), Some(max)) => {
                 let rules = rules_text(&o2, &o2.x, &o2.values);
-                format!("Bar chart, {} bars, from {} ({}) to {} ({}){rules}", bars.len(), o2.values.value(min.1), min.0, o2.values.value(max.1), max.0)
+                let selected = selected_text(&o2, |i| bars.get(i).map(|b| format!("{} ({})", b.0, o2.values.value(b.1))));
+                format!("Bar chart, {} bars, from {} ({}) to {} ({}){rules}{selected}", bars.len(), o2.values.value(min.1), min.0, o2.values.value(max.1), max.0)
             }
             _ => "Bar chart, no data".into(),
         }
-    })
+    });
+    selectable(c, &o3, &hit)
 }
 
 /// Category labels under the bars: every k-th one so they don't overlap.
@@ -827,11 +937,14 @@ fn category_labels<'a>(p: &mut Painter, plot: &Plot, labels: impl Iterator<Item 
 }
 
 fn stacked(data: Box<dyn Fn() -> Vec<(String, Vec<f64>)>>, o: Rc<Options>) -> Canvas {
+    let o3 = o.clone();
     let data = hold(data);
     let hover = Signal::new(None::<(f64, f64)>);
     let o2 = o.clone();
+    let hit: Hit = Rc::default();
+    let h2 = hit.clone();
     let name = |o: &Options, j: usize| o.names.get(j).cloned().unwrap_or_else(|| format!("Series {}", j + 1));
-    canvas(move |p| {
+    let c = canvas(move |p| {
         let Some(rows) = data.get().filter(|b| !b.is_empty()) else { return no_data(p) };
         let series = rows.iter().map(|r| r.1.len()).max().unwrap_or(0);
         let items: Vec<(String, Color)> = (0..series).map(|j| (name(&o, j), o.color(j))).collect();
@@ -852,6 +965,8 @@ fn stacked(data: Box<dyn Fn() -> Vec<(String, Vec<f64>)>>, o: Rc<Options>) -> Ca
         let bar_w = (slot * 0.75).max(1.0);
         let zero = to_y(0.0);
         let hovered = hover.get().filter(|&(x, y)| x >= plot.x && x < plot.x + plot.w && y >= plot.y).map(|(x, _)| ((x - plot.x) / slot) as usize);
+        let (px, py, ph, count) = (plot.x, plot.y, plot.h, rows.len());
+        *h2.borrow_mut() = Some(Rc::new(move |x, y| (x >= px && y >= py && y <= py + ph).then(|| ((x - px) / slot) as usize).filter(|i| *i < count)));
         for (i, (_, vs)) in rows.iter().enumerate() {
             let x = plot.x + i as f64 * slot + (slot - bar_w) / 2.0;
             if hovered == Some(i) {
@@ -872,7 +987,9 @@ fn stacked(data: Box<dyn Fn() -> Vec<(String, Vec<f64>)>>, o: Rc<Options>) -> Ca
                     (down - v, down, x, bar_w)
                 };
                 let (y1, y2) = (to_y(a), to_y(b));
+                p.set_opacity(o.emphasis(i));
                 p.fill_rect(bx, y1.min(y2), bw, (y1 - y2).abs().max(0.5), o.color(j));
+                p.set_opacity(1.0);
             }
         }
         category_labels(p, &plot, rows.iter().map(|r| r.0.as_str()));
@@ -899,15 +1016,33 @@ fn stacked(data: Box<dyn Fn() -> Vec<(String, Vec<f64>)>>, o: Rc<Options>) -> Ca
         let totals: Vec<(String, f64)> = rows.iter().map(|(l, vs)| (l.clone(), vs.iter().sum())).collect();
         let max = totals.iter().max_by(|a, b| a.1.total_cmp(&b.1)).unwrap();
         format!(
-            "{} bar chart of {}, {} categories; the largest total is {} ({}){}",
+            "{} bar chart of {}, {} categories; the largest total is {} ({}){}{}",
             if o2.grouped { "Grouped" } else { "Stacked" },
             names.join(", "),
             rows.len(),
             o2.values.value(max.1),
             max.0,
-            rules_text(&o2, &o2.x, &o2.values)
+            rules_text(&o2, &o2.x, &o2.values),
+            selected_text(&o2, |i| totals.get(i).map(|t| format!("{} ({})", t.0, o2.values.value(t.1))))
         )
-    })
+    });
+    selectable(c, &o3, &hit)
+}
+
+/// A line chart's layout as last drawn, for clicks, scrolling and pinching.
+#[derive(Clone, Copy, Default)]
+struct Layout {
+    plot: (f64, f64, f64, f64),
+    /// The x range of all the data (and rules down).
+    full: (f64, f64),
+    /// The x range shown.
+    shown: (f64, f64),
+}
+
+/// The point of a sorted series nearest `at` in x.
+fn nearest(points: &[(f64, f64)], at: f64) -> Option<(f64, f64)> {
+    let j = points.partition_point(|q| q.0 < at);
+    [j.wrapping_sub(1), j].into_iter().filter_map(|k| points.get(k)).min_by(|a, b| (a.0 - at).abs().total_cmp(&(b.0 - at).abs())).copied()
 }
 
 fn lines(series: Box<dyn Fn() -> Vec<Series>>, mark: Mark, o: Rc<Options>) -> Canvas {
@@ -924,27 +1059,40 @@ fn lines(series: Box<dyn Fn() -> Vec<Series>>, mark: Mark, o: Rc<Options>) -> Ca
             .collect::<Vec<_>>()
     });
     let hover = Signal::new(None::<(f64, f64)>);
-    // The decimated lines, for the data and plot width they were made for.
-    type Cache = Option<(usize, i64, Rc<Vec<Vec<(f64, f64)>>>)>;
+    // The decimated lines, for the data, plot width and x range they were made for.
+    type Cache = Option<((usize, i64, u64, u64), Rc<Vec<Vec<(f64, f64)>>>)>;
     let cache: Rc<RefCell<Cache>> = Rc::default();
+    let layout: Rc<std::cell::Cell<Layout>> = Rc::default();
     let o2 = o.clone();
-    canvas(move |p| {
+    let o3 = o.clone();
+    let lay = layout.clone();
+    let range = o.x_range;
+    let c = canvas(move |p| {
         let Some(all) = data.get() else { return no_data(p) };
         let points = || all.iter().flat_map(|s| s.points.iter());
         if points().next().is_none() {
             return no_data(p);
         }
         let color = |i: usize| all[i].color.unwrap_or_else(|| o.color(i));
-        let (x0, x1) = points().fold((f64::MAX, f64::MIN), |(a, b), &(x, _)| (a.min(x), b.max(x)));
-        let (x0, x1) = with_rules(&o, true, x0, x1);
-        let (mut y0, y1) = points().fold((f64::MAX, f64::MIN), |(a, b), &(_, y)| (a.min(y), b.max(y)));
+        let full = points().fold((f64::MAX, f64::MIN), |(a, b), &(x, _)| (a.min(x), b.max(x)));
+        let full = with_rules(&o, true, full.0, full.1);
+        // Zoomed in: the points within the range (and where lines cross
+        // its ends); the value axis fits them.
+        let zoom = range.and_then(|r| r.get()).and_then(|r| clamp_range(r, full));
+        let (x0, x1) = zoom.unwrap_or(full);
+        let shown: Option<Vec<Vec<(f64, f64)>>> = zoom.map(|(a, b)| all.iter().map(|s| visible(&s.points, a, b, mark != Mark::Points)).collect());
+        let series_points = |i: usize| -> &[(f64, f64)] { shown.as_ref().map_or(&all[i].points, |v| &v[i]) };
+        let in_view = || (0..all.len()).flat_map(|i| series_points(i).iter());
+        let (y0, y1) = in_view().fold((f64::MAX, f64::MIN), |(a, b), &(_, y)| (a.min(y), b.max(y)));
+        let (mut y0, mut y1) = if y0 > y1 { (0.0, 1.0) } else { (y0, y1) };
         if mark == Mark::Area {
             y0 = y0.min(0.0); // areas fill down to zero
         }
-        let (y0, y1) = with_rules(&o, false, y0, y1);
+        (y0, y1) = with_rules(&o, false, y0, y1);
         let items: Vec<(String, Color)> = all.iter().enumerate().map(|(i, s)| (s.name.clone(), color(i))).collect();
         let top = 10.0 + if o.legend && all.len() > 1 { legend(p, &items, 8.0, 2.0, p.width() - 16.0) } else { 0.0 };
         let (plot, to_y) = y_axis(p, y0, y1, top, 22.0, &o.values);
+        lay.set(Layout { plot: (plot.x, plot.y, plot.w, plot.h), full, shown: (x0, x1) });
         let span = (x1 - x0).max(f64::MIN_POSITIVE);
         let to_x = |x: f64| plot.x + (x - x0) / span * plot.w;
         // X ticks: dates on whole days, months…; numbers on round values.
@@ -959,15 +1107,15 @@ fn lines(series: Box<dyn Fn() -> Vec<Series>>, mark: Mark, o: Rc<Options>) -> Ca
         for (t, label) in &xticks {
             p.text(to_x(*t), plot.y + plot.h + 4.0, label, FONT, Color::Secondary, Align::Center);
         }
-        // Lines, decimated once per data and width.
-        let key = (Rc::as_ptr(&all) as usize, plot.w.round() as i64);
+        // Lines, decimated once per data, width and range.
+        let key = (Rc::as_ptr(&all) as usize, plot.w.round() as i64, x0.to_bits(), x1.to_bits());
         let lines = {
             let mut c = cache.borrow_mut();
             match c.as_ref() {
-                Some((k, w, lines)) if (*k, *w) == key => lines.clone(),
+                Some((k, lines)) if *k == key => lines.clone(),
                 _ => {
-                    let lines = Rc::new(all.iter().map(|s| decimate(&s.points, x0, x1 + span * 1e-9, plot.w.ceil() as usize)).collect::<Vec<_>>());
-                    *c = Some((key.0, key.1, lines.clone()));
+                    let lines = Rc::new((0..all.len()).map(|i| decimate(series_points(i), x0, x1 + span * 1e-9, plot.w.ceil() as usize)).collect::<Vec<_>>());
+                    *c = Some((key, lines.clone()));
                     lines
                 }
             }
@@ -995,13 +1143,25 @@ fn lines(series: Box<dyn Fn() -> Vec<Series>>, mark: Mark, o: Rc<Options>) -> Ca
             }
         }
         draw_rules(p, &o, &plot, &to_y, Some(&to_x));
+        // The selected x: a line down, each series' value marked.
+        if let Some(sx) = o.x_selection.and_then(|s| s.get()).filter(|x| *x >= x0 && *x <= x1) {
+            let hx = to_x(sx);
+            p.line(hx, plot.y, hx, plot.y + plot.h, Color::Accent, 1.5);
+            for (i, s) in all.iter().enumerate() {
+                if let Some((x, y)) = nearest(&s.points, sx).filter(|q| mark != Mark::Points || q.0 == sx) {
+                    p.fill_circle(to_x(x), to_y(y), 4.5, Color::Background);
+                    p.fill_circle(to_x(x), to_y(y), 3.5, color(i));
+                }
+            }
+            let label = o.x.value(sx);
+            let end = hx + 5.0 + p.measure(&label, FONT).0 > plot.x + plot.w;
+            rule_label(p, if end { hx - 5.0 } else { hx + 5.0 }, plot.y + 1.0, &label, Color::Accent, if end { Align::End } else { Align::Start });
+        }
         let Some((hx, hy)) = hover.get().filter(|&(x, _)| x >= plot.x && x <= plot.x + plot.w) else { return };
         if mark == Mark::Points {
             // The point nearest the pointer, if it's close.
-            let near = all
-                .iter()
-                .enumerate()
-                .flat_map(|(i, s)| s.points.iter().map(move |q| (i, *q)))
+            let near = (0..all.len())
+                .flat_map(|i| series_points(i).iter().map(move |q| (i, *q)))
                 .map(|(i, (x, y))| (i, x, y, (to_x(x) - hx).hypot(to_y(y) - hy)))
                 .min_by(|a, b| a.3.total_cmp(&b.3))
                 .filter(|n| n.3 < 14.0);
@@ -1021,9 +1181,7 @@ fn lines(series: Box<dyn Fn() -> Vec<Series>>, mark: Mark, o: Rc<Options>) -> Ca
         let mut lines = Vec::new();
         let mut nearest_x = None;
         for (i, s) in all.iter().enumerate() {
-            let j = s.points.partition_point(|q| q.0 < at);
-            let near = [j.wrapping_sub(1), j].into_iter().filter_map(|k| s.points.get(k)).min_by(|a, b| (a.0 - at).abs().total_cmp(&(b.0 - at).abs()));
-            if let Some(&(x, y)) = near {
+            if let Some((x, y)) = nearest(&s.points, at) {
                 p.fill_circle(to_x(x), to_y(y), 3.5, color(i));
                 nearest_x.get_or_insert(x);
                 lines.push(if all.len() > 1 { format!("{}: {}", s.name, o.values.value(y)) } else { o.values.value(y) });
@@ -1051,8 +1209,11 @@ fn lines(series: Box<dyn Fn() -> Vec<Series>>, mark: Mark, o: Rc<Options>) -> Ca
         let (x0, x1) = pts().fold((f64::MAX, f64::MIN), |(a, b), &(x, _)| (a.min(x), b.max(x)));
         let (y0, y1) = pts().fold((f64::MAX, f64::MIN), |(a, b), &(_, y)| (a.min(y), b.max(y)));
         let names: Vec<&str> = all.iter().map(|s| s.name.as_str()).collect();
+        let zoom = range.and_then(|r| r.get()).and_then(|r| clamp_range(r, with_rules(o, true, x0, x1)));
+        let zoom = zoom.map(|(a, b)| format!("; showing x from {} to {}", o.x.value(a), o.x.value(b))).unwrap_or_default();
+        let selected = o.x_selection.and_then(|s| s.get()).map(|x| format!("; selected x {}", o.x.value(x))).unwrap_or_default();
         format!(
-            "{kind} of {}, {n} points, x from {} to {}, values from {} to {}{}",
+            "{kind} of {}, {n} points, x from {} to {}, values from {} to {}{}{zoom}{selected}",
             names.join(", "),
             o.x.value(x0),
             o.x.value(x1),
@@ -1060,6 +1221,53 @@ fn lines(series: Box<dyn Fn() -> Vec<Series>>, mark: Mark, o: Rc<Options>) -> Ca
             o.values.value(y1),
             rules_text(o, &o.x, &o.values)
         )
+    });
+    // Clicking selects the nearest x (a scatter chart's point under the pointer).
+    let c = match o3.x_selection {
+        Some(selection) => {
+            let lay = layout.clone();
+            c.on_click(move |x, y| {
+                let l = lay.get();
+                let (px, py, pw, ph) = l.plot;
+                let inside = x >= px && x <= px + pw && y >= py && y <= py + ph;
+                let all = data.get_untracked().unwrap_or_default();
+                let at = l.shown.0 + (x - px) / pw.max(1.0) * (l.shown.1 - l.shown.0);
+                let picked = if !inside {
+                    None
+                } else if mark == Mark::Points {
+                    // Within 14 points, as the hover readout finds it.
+                    let per_x = pw / (l.shown.1 - l.shown.0).max(f64::MIN_POSITIVE);
+                    all.iter().flat_map(|s| s.points.iter()).filter(|q| ((q.0 - at) * per_x).abs() < 14.0).min_by(|a, b| (a.0 - at).abs().total_cmp(&(b.0 - at).abs())).map(|q| q.0)
+                } else {
+                    all.iter().filter_map(|s| nearest(&s.points, at)).min_by(|a, b| (a.0 - at).abs().total_cmp(&(b.0 - at).abs())).map(|q| q.0)
+                };
+                selection.set(picked);
+            })
+        }
+        None => c,
+    };
+    let Some(range) = range.filter(|_| o3.zoomable) else { return c };
+    let (l1, l2) = (layout.clone(), layout);
+    // The range as it is now (the drawing may not have caught up).
+    let shown = move |l: Layout| range.get_untracked().and_then(|r| clamp_range(r, l.full)).unwrap_or(l.full);
+    c.on_magnify(move |amount, x, _| {
+        let l = l1.get();
+        let (a, b) = shown(l);
+        let factor = (1.0 + amount).max(0.1);
+        let anchor = a + ((x - l.plot.0) / l.plot.2.max(1.0)).clamp(0.0, 1.0) * (b - a);
+        range.set(clamp_range((anchor - (anchor - a) / factor, anchor + (b - anchor) / factor), l.full));
+        true
+    })
+    .on_scroll(move |dx, dy, _, _| {
+        // Sideways scrolling moves along a zoomed chart; the rest scrolls on.
+        let l = l2.get();
+        let (a, b) = shown(l);
+        if dx.abs() <= dy.abs() || (a, b) == l.full {
+            return false;
+        }
+        let shift = -dx / l.plot.2.max(1.0) * (b - a);
+        range.set(clamp_range((a + shift, b + shift), l.full));
+        true
     })
 }
 
@@ -1071,10 +1279,13 @@ fn arc(cx: f64, cy: f64, r: f64, a0: f64, a1: f64) -> Vec<(f64, f64)> {
 }
 
 fn pie(data: Box<dyn Fn() -> Vec<(String, f64)>>, o: Rc<Options>) -> Canvas {
+    let o3 = o.clone();
     let data = hold(move || data().into_iter().filter(|(_, v)| *v > 0.0 && v.is_finite()).collect::<Vec<_>>());
     let hover = Signal::new(None::<(f64, f64)>);
     let o2 = o.clone();
-    canvas(move |p| {
+    let hit: Hit = Rc::default();
+    let h2 = hit.clone();
+    let c = canvas(move |p| {
         let Some(slices) = data.get().filter(|s| !s.is_empty()) else { return no_data(p) };
         let total: f64 = slices.iter().map(|s| s.1).sum();
         let percent = |v: f64| Format::Percent.value((v / total * 1000.0).round() / 1000.0);
@@ -1085,31 +1296,38 @@ fn pie(data: Box<dyn Fn() -> Vec<(String, f64)>>, o: Rc<Options>) -> Canvas {
         let (cx, cy) = (8.0 + r, p.height() / 2.0);
         let inner = if o.donut { r * 0.58 } else { 0.0 };
         let start = -std::f64::consts::FRAC_PI_2;
-        // The slice under the pointer.
-        let hovered = hover.get().and_then(|(x, y)| {
+        // The slice under a point.
+        let ends: Vec<f64> = slices
+            .iter()
+            .scan(0.0, |acc, s| {
+                *acc += s.1 / total * std::f64::consts::TAU;
+                Some(*acc)
+            })
+            .collect();
+        let under = move |x: f64, y: f64| {
             let d = (x - cx).hypot(y - cy);
             if d > r || d < inner {
                 return None;
             }
             let a = ((y - cy).atan2(x - cx) - start).rem_euclid(std::f64::consts::TAU);
-            let mut acc = 0.0;
-            slices.iter().position(|s| {
-                acc += s.1 / total * std::f64::consts::TAU;
-                a < acc
-            })
-        });
+            ends.iter().position(|e| a < *e)
+        };
+        let hovered = hover.get().and_then(|(x, y)| under(x, y));
+        *h2.borrow_mut() = Some(Rc::new(under));
         let mut a = start;
         for (i, (_, v)) in slices.iter().enumerate() {
             let sweep = v / total * std::f64::consts::TAU;
-            // The hovered slice moves out a little.
-            let (dx, dy) = if hovered == Some(i) { let m = a + sweep / 2.0; (4.0 * m.cos(), 4.0 * m.sin()) } else { (0.0, 0.0) };
+            // The hovered (or selected) slice moves out a little.
+            let (dx, dy) = if hovered == Some(i) || o.selected() == Some(i) { let m = a + sweep / 2.0; (4.0 * m.cos(), 4.0 * m.sin()) } else { (0.0, 0.0) };
             let mut shape = arc(cx + dx, cy + dy, r, a, a + sweep);
             if inner > 0.0 {
                 shape.extend(arc(cx + dx, cy + dy, inner, a + sweep, a));
             } else {
                 shape.push((cx + dx, cy + dy));
             }
+            p.set_opacity(o.emphasis(i));
             p.fill_polygon(&shape, o.color(i));
+            p.set_opacity(1.0);
             // A thin gap between slices.
             if slices.len() > 1 {
                 p.line(cx + inner * a.cos(), cy + inner * a.sin(), cx + r * a.cos(), cy + r * a.sin(), Color::Background, 1.5);
@@ -1142,8 +1360,10 @@ fn pie(data: Box<dyn Fn() -> Vec<(String, f64)>>, o: Rc<Options>) -> Canvas {
         }
         let total: f64 = slices.iter().map(|s| s.1).sum();
         let parts: Vec<String> = slices.iter().map(|(n, v)| format!("{n} {}", Format::Percent.value((v / total * 1000.0).round() / 1000.0))).collect();
-        format!("{} chart, {} slices, total {}: {}", if o2.donut { "Donut" } else { "Pie" }, slices.len(), o2.values.value(total), parts.join(", "))
-    })
+        let selected = selected_text(&o2, |i| slices.get(i).map(|s| format!("{} ({})", s.0, o2.values.value(s.1))));
+        format!("{} chart, {} slices, total {}: {}{selected}", if o2.donut { "Donut" } else { "Pie" }, slices.len(), o2.values.value(total), parts.join(", "))
+    });
+    selectable(c, &o3, &hit)
 }
 
 /// `values` sorted into bins on round-number edges, about `target` of
@@ -1168,11 +1388,14 @@ pub(crate) fn bin(values: &[f64], target: usize) -> (Vec<f64>, Vec<usize>) {
 }
 
 fn histogram_canvas(values: Box<dyn Fn() -> Vec<f64>>, o: Rc<Options>) -> Canvas {
+    let o3 = o.clone();
     let bins = o.bins;
     let data = hold(move || bin(&values(), bins));
     let hover = Signal::new(None::<(f64, f64)>);
     let o2 = o.clone();
-    canvas(move |p| {
+    let hit: Hit = Rc::default();
+    let h2 = hit.clone();
+    let c = canvas(move |p| {
         let Some(h) = data.get().filter(|h| !h.1.is_empty()) else { return no_data(p) };
         let (edges, counts) = (&h.0, &h.1);
         let most = counts.iter().copied().max().unwrap_or(0) as f64;
@@ -1182,14 +1405,14 @@ fn histogram_canvas(values: Box<dyn Fn() -> Vec<f64>>, o: Rc<Options>) -> Canvas
         let to_x = move |x: f64| plot.x + (x - x0) / (x1 - x0) * plot.w;
         let n = counts.len();
         let hovered = hover.get().filter(|&(x, y)| x >= plot.x && x < plot.x + plot.w && y >= plot.y).map(|(x, _)| (((x - plot.x) / plot.w * n as f64) as usize).min(n - 1));
+        let (px, pw, py, ph) = (plot.x, plot.w, plot.y, plot.h);
+        *h2.borrow_mut() = Some(Rc::new(move |x, y| (x >= px && x < px + pw && y >= py && y <= py + ph).then(|| (((x - px) / pw * n as f64) as usize).min(n - 1))));
         let color = o.colors.first().copied().unwrap_or(Color::Blue);
         let zero = to_y(0.0);
         for (i, &c) in counts.iter().enumerate().filter(|(_, c)| **c > 0) {
             let (a, b) = (to_x(edges[i]), to_x(edges[i + 1]));
             let top = to_y(c as f64);
-            if hovered == Some(i) {
-                p.set_opacity(0.75);
-            }
+            p.set_opacity(o.emphasis(i) * if hovered == Some(i) { 0.75 } else { 1.0 });
             p.fill_rect(a + 0.5, top, (b - a - 1.0).max(0.5), (zero - top).max(0.5), color);
             p.set_opacity(1.0);
         }
@@ -1214,16 +1437,18 @@ fn histogram_canvas(values: Box<dyn Fn() -> Vec<f64>>, o: Rc<Options>) -> Canvas
         let Some((i, most)) = counts.iter().enumerate().max_by_key(|(i, c)| (**c, std::cmp::Reverse(*i))) else { return "Histogram, no data".into() };
         let v = |x: f64| o2.values.value(x);
         format!(
-            "Histogram of {} values in {} bins from {} to {}; the most, {most}, from {} to {}{}",
+            "Histogram of {} values in {} bins from {} to {}; the most, {most}, from {} to {}{}{}",
             counts.iter().sum::<usize>(),
             counts.len(),
             v(edges[0]),
             v(edges[counts.len()]),
             v(edges[i]),
             v(edges[i + 1]),
-            rules_text(&o2, &o2.values, &Format::Number)
+            rules_text(&o2, &o2.values, &Format::Number),
+            selected_text(&o2, |i| counts.get(i).map(|c| format!("{} to {} ({c})", v(edges[i]), v(edges[i + 1]))))
         )
-    })
+    });
+    selectable(c, &o3, &hit)
 }
 
 /// A heatmap's cells by row and column, in the order they first appeared.
@@ -1273,10 +1498,13 @@ impl Cells {
 }
 
 fn heatmap_canvas(cells: Box<dyn Fn() -> Vec<(String, String, f64)>>, o: Rc<Options>) -> Canvas {
+    let o3 = o.clone();
     let data = hold(move || Cells::new(cells()));
     let hover = Signal::new(None::<(f64, f64)>);
     let o2 = o.clone();
-    canvas(move |p| {
+    let hit: Hit = Rc::default();
+    let h2 = hit.clone();
+    let c = canvas(move |p| {
         let Some(g) = data.get().filter(|g| !g.values.is_empty()) else { return no_data(p) };
         let Some((lo, hi)) = g.range() else { return no_data(p) };
         let color = o.colors.first().copied().unwrap_or(Color::Blue);
@@ -1305,10 +1533,17 @@ fn heatmap_canvas(cells: Box<dyn Fn() -> Vec<(String, String, f64)>>, o: Rc<Opti
             .get()
             .filter(|&(x, y)| x >= plot.x && x < plot.x + plot.w && y >= plot.y && y < plot.y + plot.h)
             .map(|(x, y)| ((((y - plot.y) / ch) as usize).min(nr - 1), (((x - plot.x) / cw) as usize).min(nc - 1)));
+        let (px, py, pw, ph) = (plot.x, plot.y, plot.w, plot.h);
+        let present: Vec<bool> = g.values.iter().map(Option::is_some).collect();
+        *h2.borrow_mut() = Some(Rc::new(move |x, y| {
+            let inside = x >= px && x < px + pw && y >= py && y < py + ph;
+            let i = (((y - py) / ch) as usize).min(nr - 1) * nc + (((x - px) / cw) as usize).min(nc - 1);
+            (inside && present.get(i) == Some(&true)).then_some(i)
+        }));
         for (i, v) in g.values.iter().enumerate() {
             let Some(v) = v else { continue };
             let (r, c) = (i / nc, i % nc);
-            p.set_opacity(shade(*v));
+            p.set_opacity(shade(*v) * o.emphasis(i));
             p.fill_rect(plot.x + c as f64 * cw + gap / 2.0, plot.y + r as f64 * ch + gap / 2.0, (cw - gap).max(0.5), (ch - gap).max(0.5), color);
             p.set_opacity(1.0);
         }
@@ -1338,10 +1573,14 @@ fn heatmap_canvas(cells: Box<dyn Fn() -> Vec<(String, String, f64)>>, o: Rc<Opti
                 o2.values.value(hi.2),
                 hi.0,
                 hi.1
-            ),
+            ) + &selected_text(&o2, |i| {
+                let (n, v) = (g.columns.len(), g.values.get(i).copied().flatten()?);
+                Some(format!("{}, {} ({})", g.rows[i / n], g.columns[i % n], o2.values.value(v)))
+            }),
             _ => "Heatmap, no data".into(),
         }
-    })
+    });
+    selectable(c, &o3, &hit)
 }
 
 fn spark(values: Box<dyn Fn() -> Vec<f64>>, o: Rc<Options>) -> Canvas {
@@ -1462,6 +1701,26 @@ mod tests {
         assert_eq!(g.values, vec![Some(1.0), Some(4.0), Some(2.0), None]);
         assert_eq!(g.extreme(true), Some(("Mon", "10", 4.0)));
         assert_eq!(g.range(), Some((1.0, 4.0)));
+    }
+
+    #[test]
+    fn ranges_stay_inside_the_data() {
+        assert_eq!(clamp_range((20.0, 40.0), (0.0, 100.0)), Some((20.0, 40.0)));
+        // Moved past an end: kept inside, the same width.
+        assert_eq!(clamp_range((90.0, 110.0), (0.0, 100.0)), Some((80.0, 100.0)));
+        assert_eq!(clamp_range((40.0, 20.0), (0.0, 100.0)), Some((20.0, 40.0)));
+        // All of it (or more) is no zoom.
+        assert_eq!(clamp_range((-10.0, 120.0), (0.0, 100.0)), None);
+        assert_eq!(clamp_range((f64::NAN, 1.0), (0.0, 100.0)), None);
+    }
+
+    #[test]
+    fn visible_points_meet_the_edges() {
+        let pts = [(0.0, 0.0), (10.0, 10.0), (20.0, 0.0)];
+        assert_eq!(visible(&pts, 5.0, 15.0, true), vec![(5.0, 5.0), (10.0, 10.0), (15.0, 5.0)]);
+        assert_eq!(visible(&pts, 5.0, 15.0, false), vec![(10.0, 10.0)]);
+        // A range between two points: the segment across it.
+        assert_eq!(visible(&pts, 2.0, 4.0, true), vec![(2.0, 2.0), (4.0, 4.0)]);
     }
 
     #[test]

@@ -262,6 +262,10 @@ fn replay(ops: &[Op]) {
 type Draw = Rc<dyn Fn(&mut Painter)>;
 type Hover = Rc<dyn Fn(Option<(f64, f64)>)>;
 type Click = Rc<dyn Fn(f64, f64)>;
+/// Scrolled by `dx, dy` points with the pointer at `x, y`; true if used.
+type Scroll = Rc<dyn Fn(f64, f64, f64, f64) -> bool>;
+/// Pinched by `amount` (0.1 is 10% larger) at `x, y`; true if used.
+type Magnify = Rc<dyn Fn(f64, f64, f64) -> bool>;
 
 type Drag = Rc<dyn Fn() -> Option<crate::DragItem>>;
 
@@ -270,6 +274,8 @@ pub(crate) struct CanvasState {
     size: Cell<Option<Signal<(f64, f64)>>>,
     hover: RefCell<Option<Hover>>,
     click: RefCell<Option<Click>>,
+    scroll: RefCell<Option<Scroll>>,
+    magnify: RefCell<Option<Magnify>>,
     drag: RefCell<Option<Drag>>,
     /// Where the mouse went down, until a drag starts.
     down: Cell<Option<NSPoint>>,
@@ -362,6 +368,37 @@ define_class!(
             }
         }
 
+        // Scrolling the canvas goes to its handler; what it doesn't use (or
+        // all of it, without one) goes on to an enclosing scroll view.
+        // ⌘-scroll zooms, for a mouse without pinch.
+        #[unsafe(method(scrollWheel:))]
+        fn scroll_wheel(&self, event: &NSEvent) {
+            let p = self.convertPoint_fromView(event.locationInWindow(), None);
+            let scale = if event.hasPreciseScrollingDeltas() { 1.0 } else { 10.0 };
+            let (dx, dy) = (event.scrollingDeltaX() * scale, event.scrollingDeltaY() * scale);
+            let used = if event.modifierFlags().contains(objc2_app_kit::NSEventModifierFlags::Command) {
+                let magnify = self.ivars().magnify.borrow().clone();
+                magnify.is_some_and(|f| crate::signal::batch(|| f(dy / 200.0, p.x, p.y)))
+            } else {
+                let scroll = self.ivars().scroll.borrow().clone();
+                scroll.is_some_and(|f| crate::signal::batch(|| f(dx, dy, p.x, p.y)))
+            };
+            if !used {
+                // SAFETY: NSResponder's own handling (passes it up the chain).
+                let _: () = unsafe { msg_send![super(self), scrollWheel: event] };
+            }
+        }
+
+        #[unsafe(method(magnifyWithEvent:))]
+        fn magnify_with(&self, event: &NSEvent) {
+            let p = self.convertPoint_fromView(event.locationInWindow(), None);
+            let magnify = self.ivars().magnify.borrow().clone();
+            if !magnify.is_some_and(|f| crate::signal::batch(|| f(event.magnification(), p.x, p.y))) {
+                // SAFETY: as for scrolling.
+                let _: () = unsafe { msg_send![super(self), magnifyWithEvent: event] };
+            }
+        }
+
         #[unsafe(method(acceptsFirstMouse:))]
         fn accepts_first_mouse(&self, _event: Option<&NSEvent>) -> bool {
             true
@@ -439,6 +476,8 @@ pub struct Canvas {
     draw: Draw,
     hover: Option<Hover>,
     click: Option<Click>,
+    scroll: Option<Scroll>,
+    magnify: Option<Magnify>,
     description: Option<Rc<dyn Fn() -> String>>,
     min: Size,
     drag: Option<Drag>,
@@ -458,6 +497,23 @@ impl Canvas {
     /// Called with the position of a click.
     pub fn on_click(mut self, f: impl Fn(f64, f64) + 'static) -> Self {
         self.click = Some(Rc::new(f));
+        self
+    }
+
+    /// Called with how far the user scrolls over the canvas (`dx, dy` in
+    /// points, positive to the right and down… as the content would move)
+    /// and the pointer's position; returns whether it used the scroll.
+    /// What it doesn't use scrolls an enclosing scroll view.
+    pub fn on_scroll(mut self, f: impl Fn(f64, f64, f64, f64) -> bool + 'static) -> Self {
+        self.scroll = Some(Rc::new(f));
+        self
+    }
+
+    /// Called as the user pinches (or ⌘-scrolls) over the canvas: how much
+    /// larger (0.1 is 10%; negative is smaller) and the pointer's position;
+    /// returns whether it used it.
+    pub fn on_magnify(mut self, f: impl Fn(f64, f64, f64) -> bool + 'static) -> Self {
+        self.magnify = Some(Rc::new(f));
         self
     }
 
@@ -514,7 +570,7 @@ impl Canvas {
 /// # let _ = meter;
 /// ```
 pub fn canvas(draw: impl Fn(&mut Painter) + 'static) -> Canvas {
-    Canvas { draw: Rc::new(draw), hover: None, click: None, description: None, min: Size { w: 200.0, h: 120.0 }, drag: None, export: None, grows: (true, true) }
+    Canvas { draw: Rc::new(draw), hover: None, click: None, scroll: None, magnify: None, description: None, min: Size { w: 200.0, h: 120.0 }, drag: None, export: None, grows: (true, true) }
 }
 
 impl View for Canvas {
@@ -526,6 +582,8 @@ impl View for Canvas {
             size: Cell::new(Some(size)),
             hover: RefCell::new(self.hover.clone()),
             click: RefCell::new(self.click),
+            scroll: RefCell::new(self.scroll),
+            magnify: RefCell::new(self.magnify),
             drag: RefCell::new(self.drag),
             down: Cell::new(None),
             opaque: Cell::new(false),
@@ -624,6 +682,19 @@ pub(crate) fn click_at(view: &NSView, x: f64, y: f64) -> bool {
     let Some(f) = view.downcast_ref::<CanvasView>().and_then(|c| c.ivars().click.borrow().clone()) else { return false };
     crate::signal::batch(|| f(x, y));
     true
+}
+
+/// Runs a canvas's scroll handler, as a scroll there would; false if it
+/// has none or didn't use it.
+pub(crate) fn scroll_at(view: &NSView, dx: f64, dy: f64, x: f64, y: f64) -> bool {
+    let Some(f) = view.downcast_ref::<CanvasView>().and_then(|c| c.ivars().scroll.borrow().clone()) else { return false };
+    crate::signal::batch(|| f(dx, dy, x, y))
+}
+
+/// Runs a canvas's pinch handler, as a pinch there would.
+pub(crate) fn magnify_at(view: &NSView, amount: f64, x: f64, y: f64) -> bool {
+    let Some(f) = view.downcast_ref::<CanvasView>().and_then(|c| c.ivars().magnify.borrow().clone()) else { return false };
+    crate::signal::batch(|| f(amount, x, y))
 }
 
 pub(crate) fn drag_item(view: &NSView) -> Option<crate::DragItem> {
