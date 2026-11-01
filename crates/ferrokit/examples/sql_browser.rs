@@ -778,11 +778,14 @@ fn database() -> DocumentType<Db> {
                 toolbar_space(),
                 toolbar_command("chart", &t("Chart"), "chart.xyaxis.line", TOGGLE_CHART),
                 toolbar_command("inspector", &t("Inspector"), "sidebar.right", TOGGLE_INSPECTOR),
+                // Offered in Customize Toolbar…, not shown at first.
+                toolbar_command("export", &t("Export"), "square.and.arrow.up", EXPORT_CSV).optional(),
+                toolbar_command("copy", &t("Copy"), "doc.on.doc", COPY_CSV).optional(),
             ]
         })
         .size(1100.0, 700.0)
         // The sidebar runs up under the title bar, as in Mail and Notes.
-        .window(|w| w.full_size_content().toolbar_style(ToolbarStyle::Unified))
+        .window(|w| w.full_size_content().toolbar_style(ToolbarStyle::Unified).customizable_toolbar("database"))
 }
 
 /// Where the sample database lives (made on first use).
@@ -919,6 +922,8 @@ fn main() {
                 menu_command(|| shown_title("Sidebar", |b| b.no_sidebar), TOGGLE_SIDEBAR).key_with("s", &[Modifier::Control]),
                 menu_command(|| shown_title("Inspector", |b| b.no_inspector), TOGGLE_INSPECTOR).key_with("i", &[Modifier::Option]),
                 menu_command(|| shown_title("Chart", |b| b.no_chart), TOGGLE_CHART).key_with("k", &[Modifier::Option]),
+                menu_separator(),
+                customize_toolbar_item(),
             ],
         )
         .on_launch(move || {
@@ -1138,8 +1143,8 @@ mod self_checks {
         let view_items = menu_titles(&view);
         check(
             "l10n-view-menu",
-            view_items == ["Seitenleiste ausblenden", "Inspektor ausblenden", "Diagramm einblenden"],
-            format!("{view_items:?} (a new window shows its sidebar and inspector, not its chart)"),
+            view_items == ["Seitenleiste ausblenden", "Inspektor ausblenden", "Diagramm einblenden", "", "Symbolleiste anpassen …"],
+            format!("{view_items:?} (a new window shows its sidebar and inspector, not its chart; then Customize Toolbar…)"),
         );
         run_query(&w, b, "SELECT 1 AS a");
         let w2 = w.clone();

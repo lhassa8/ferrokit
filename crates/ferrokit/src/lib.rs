@@ -104,7 +104,7 @@ pub use controls::{
     Checkbox, Image, Picker, Progress, Slider, Stepper, SymbolEffect, TextField, checkbox, image, image_data, image_file, picker, progress, secure_field, slider,
     stepper, text_field, toggle,
 };
-pub use chrome::{MenuItem, Modifier, Split, dynamic_submenu, submenu, ToolbarItem, menu_item, menu_separator, split, toolbar_button, toolbar_search, toolbar_space};
+pub use chrome::{MenuItem, Modifier, Split, customize_toolbar_item, dynamic_submenu, submenu, ToolbarItem, menu_item, menu_separator, split, toolbar_button, toolbar_fixed_space, toolbar_group, toolbar_picker, toolbar_search, toolbar_space};
 pub use dialogs::{Alert, OpenOptions, SheetHandle, alert, open_panel, save_panel, sheet};
 pub use documents::{
     Document, DocumentType, choose_documents, document_edited, new_document, open_document, recent_documents, revert_document, save_document, save_document_as, show_welcome, welcome_window,
@@ -153,6 +153,7 @@ pub struct Window {
     content: Option<Box<dyn FnOnce() -> Retained<NSView>>>,
     view: Option<AnyView>,
     toolbar: Vec<ToolbarItem>,
+    customizable_toolbar: Option<String>,
     autosave: Option<String>,
     fixed: bool,
     responds: commands::Responds,
@@ -298,6 +299,7 @@ impl Window {
             content: None,
             view: None,
             toolbar: Vec::new(),
+            customizable_toolbar: None,
             autosave: None,
             fixed: false,
             responds: commands::Responds::default(),
@@ -391,6 +393,18 @@ impl Window {
         self
     }
 
+    /// Lets the user customise the toolbar: Customize Toolbar… on its
+    /// right-click menu (and in a View menu, with
+    /// [`customize_toolbar_item`]) opens AppKit's sheet, where items can be
+    /// added, removed and moved, including [optional](ToolbarItem::optional)
+    /// ones and spaces; Command-dragging moves them too. The layout is
+    /// remembered under `name` across launches; until the user changes it,
+    /// the app's own layout shows.
+    pub fn customizable_toolbar(mut self, name: &str) -> Self {
+        self.customizable_toolbar = Some(name.into());
+        self
+    }
+
     /// Handles `command` while this window is focused and nothing nearer the
     /// focus handles it (see [`Command`]).
     pub fn on_command(mut self, command: Command, action: impl Fn() + 'static) -> Self {
@@ -471,7 +485,7 @@ impl Window {
         }
         let mut toolbar_delegate = None;
         if !self.toolbar.is_empty() {
-            let delegate = chrome::install_toolbar(&window, self.toolbar);
+            let delegate = chrome::install_toolbar(&window, self.toolbar, self.customizable_toolbar);
             toolbar_delegate = Some(delegate.clone());
             WINDOW_EXTRAS.with_borrow_mut(|e| e.push((window.clone(), delegate)));
         }

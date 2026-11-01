@@ -431,6 +431,23 @@ pub fn menu_item(title: impl crate::IntoValue<String>, action: impl Fn() + 'stat
     MenuItem(Entry::Action { title, action: Box::new(action), enabled: None, checked: None, titled, key: None })
 }
 
+/// Customize Toolbar…, for a View menu: opens the main window's toolbar
+/// customisation sheet; enabled when that toolbar is customisable (see
+/// [`Window::customizable_toolbar`](crate::Window::customizable_toolbar)).
+pub fn customize_toolbar_item() -> MenuItem {
+    let toolbar = || {
+        let mtm = MainThreadMarker::new()?;
+        objc2_app_kit::NSApplication::sharedApplication(mtm).mainWindow()?.toolbar().filter(|t| t.allowsUserCustomization())
+    };
+    menu_item(crate::t("Customize Toolbar…"), move || {
+        if let Some(t) = toolbar() {
+            // SAFETY: opening the sheet AppKit's own menu item opens.
+            unsafe { t.runCustomizationPalette(None) };
+        }
+    })
+    .disabled(move || toolbar().is_none())
+}
+
 /// A separator line.
 pub fn menu_separator() -> MenuItem {
     MenuItem(Entry::Separator)
@@ -554,7 +571,9 @@ pub(crate) fn menu_host(view: &NSView) -> Retained<NSView> {
 
 // ---- toolbar ----
 
-/// An item of a window's toolbar.
+/// An item of a window's toolbar: made by [`toolbar_button`],
+/// [`toolbar_group`], [`toolbar_picker`], [`toolbar_search`],
+/// [`toolbar_space`] or [`toolbar_fixed_space`].
 pub enum ToolbarItem {
     /// A button with an SF Symbol and a label.
     Button {
@@ -571,6 +590,8 @@ pub enum ToolbarItem {
     },
     /// Flexible space between items.
     FlexibleSpace,
+    /// A fixed space between items.
+    Space,
     /// A search field bound to a signal.
     Search {
         /// Stable identifier.
@@ -578,6 +599,33 @@ pub enum ToolbarItem {
         /// The query.
         query: Signal<String>,
     },
+    /// Buttons side by side in one capsule, as one item (see
+    /// [`toolbar_group`]).
+    Group {
+        /// Stable identifier.
+        id: String,
+        /// The group's label (the overflow menu and customisation sheet).
+        label: String,
+        /// Its buttons, each made by [`toolbar_button`] (their own
+        /// identifiers and disabled states aren't used).
+        buttons: Vec<ToolbarItem>,
+    },
+    /// A choice of one, shown as segments (see [`toolbar_picker`]).
+    Picker {
+        /// Stable identifier.
+        id: String,
+        /// The picker's label.
+        label: String,
+        /// Each choice's label and SF Symbol.
+        choices: Vec<(String, String)>,
+        /// The chosen index (reading signals).
+        selected: Box<dyn Fn() -> usize>,
+        /// Called with the index the user chose.
+        choose: Box<dyn Fn(usize)>,
+    },
+    /// An item the user can add from the customisation sheet, not in the
+    /// toolbar at first (see [`ToolbarItem::optional`]).
+    Optional(Box<ToolbarItem>),
 }
 
 impl ToolbarItem {
@@ -588,17 +636,28 @@ impl ToolbarItem {
                 let when = when.into_value();
                 ToolbarItem::Button { id, label, symbol, action, disabled: Some(Box::new(move || when.get())) }
             }
+            ToolbarItem::Optional(item) => ToolbarItem::Optional(Box::new(item.disabled(when))),
             other => other,
         }
     }
 
-    fn id(&self) -> String {
+    /// Offered in the customisation sheet (with
+    /// [`Window::customizable_toolbar`](crate::Window::customizable_toolbar)),
+    /// but not in the toolbar until the user adds it.
+    pub fn optional(self) -> Self {
         match self {
-            ToolbarItem::Button { id, .. } | ToolbarItem::Search { id, .. } => id.clone(),
-            ToolbarItem::FlexibleSpace => {
-                // SAFETY: AppKit's identifier constant.
-                unsafe { objc2_app_kit::NSToolbarFlexibleSpaceItemIdentifier }.to_string()
-            }
+            ToolbarItem::Optional(_) => self,
+            other => ToolbarItem::Optional(Box::new(other)),
+        }
+    }
+
+    fn id(&self) -> String {
+        // SAFETY: AppKit's identifier constants.
+        match self {
+            ToolbarItem::Button { id, .. } | ToolbarItem::Search { id, .. } | ToolbarItem::Group { id, .. } | ToolbarItem::Picker { id, .. } => id.clone(),
+            ToolbarItem::FlexibleSpace => unsafe { objc2_app_kit::NSToolbarFlexibleSpaceItemIdentifier }.to_string(),
+            ToolbarItem::Space => unsafe { objc2_app_kit::NSToolbarSpaceItemIdentifier }.to_string(),
+            ToolbarItem::Optional(item) => item.id(),
         }
     }
 }
@@ -613,14 +672,123 @@ pub fn toolbar_space() -> ToolbarItem {
     ToolbarItem::FlexibleSpace
 }
 
+/// A fixed space in the toolbar.
+pub fn toolbar_fixed_space() -> ToolbarItem {
+    ToolbarItem::Space
+}
+
 /// A toolbar search field bound two ways to `query`.
 pub fn toolbar_search(id: &str, query: &Signal<String>) -> ToolbarItem {
     ToolbarItem::Search { id: id.into(), query: *query }
 }
 
-/// A toolbar button's action and its enabled state, both in its own window.
+/// Related buttons in one capsule (zoom out and in, back and forward), made
+/// by [`toolbar_button`]; one item to the overflow menu and the
+/// customisation sheet, under `label`.
+///
+/// ```no_run
+/// use ferrokit::*;
+///
+/// let zoom = Signal::new(1.0);
+/// let item = toolbar_group("zoom", "Zoom", vec![
+///     toolbar_button("out", "Zoom Out", "minus.magnifyingglass", move || zoom.update(|z| *z /= 1.25)),
+///     toolbar_button("in", "Zoom In", "plus.magnifyingglass", move || zoom.update(|z| *z *= 1.25)),
+/// ]);
+/// # let _ = item;
+/// ```
+pub fn toolbar_group(id: &str, label: &str, buttons: Vec<ToolbarItem>) -> ToolbarItem {
+    ToolbarItem::Group { id: id.into(), label: label.into(), buttons }
+}
+
+/// A choice of one in the toolbar, as segments with SF Symbols (Finder's
+/// view modes): `value` is set to the chosen choice's value, and the
+/// segment follows it. Each choice is a label (for VoiceOver, tooltips and
+/// the overflow menu), a symbol and a value.
+///
+/// ```no_run
+/// use ferrokit::*;
+///
+/// #[derive(Clone, Copy, PartialEq)]
+/// enum Mode { List, Grid }
+/// let mode = Signal::new(Mode::List);
+/// let item = toolbar_picker("mode", "View", &mode, vec![("List", "list.bullet", Mode::List), ("Grid", "square.grid.2x2", Mode::Grid)]);
+/// # let _ = item;
+/// ```
+pub fn toolbar_picker<T: Clone + PartialEq + 'static>(id: &str, label: &str, value: &Signal<T>, choices: Vec<(&str, &str, T)>) -> ToolbarItem {
+    let value = *value;
+    let values: Rc<Vec<T>> = Rc::new(choices.iter().map(|c| c.2.clone()).collect());
+    let v2 = values.clone();
+    ToolbarItem::Picker {
+        id: id.into(),
+        label: label.into(),
+        choices: choices.iter().map(|(l, s, _)| (l.to_string(), s.to_string())).collect(),
+        selected: Box::new(move || value.with(|v| values.iter().position(|c| c == v).unwrap_or(0))),
+        choose: Box::new(move |i| {
+            if let Some(v) = v2.get(i) {
+                value.set(v.clone());
+            }
+        }),
+    }
+}
+
+/// A toolbar item as the delegate keeps it, to make it again (for the
+/// customisation sheet, and when the user adds it back).
+enum Spec {
+    Button { label: String, symbol: String, action: Rc<dyn Fn(isize)>, disabled: Option<Rc<dyn Fn() -> bool>> },
+    Search { query: Signal<String> },
+    Group { label: String, buttons: Vec<(String, String)>, action: Rc<dyn Fn(isize)> },
+    Picker { label: String, choices: Vec<(String, String)>, selected: Rc<dyn Fn() -> usize>, choose: Rc<dyn Fn(isize)> },
+    Standard,
+}
+
+struct ToolbarEntry {
+    id: String,
+    spec: Spec,
+    optional: bool,
+}
+
+impl ToolbarEntry {
+    fn new(item: ToolbarItem) -> ToolbarEntry {
+        let id = item.id();
+        // Actions run with the owner of the window being built.
+        let act = |f: Box<dyn Fn()>| -> Rc<dyn Fn(isize)> {
+            let f = crate::signal::with_current_owner(f);
+            Rc::new(move |_| f())
+        };
+        let (spec, optional) = match item {
+            ToolbarItem::Optional(item) => (ToolbarEntry::new(*item).spec, true),
+            ToolbarItem::Button { label, symbol, action, disabled, .. } => (Spec::Button { label, symbol, action: act(action), disabled: disabled.map(Rc::from) }, false),
+            ToolbarItem::Search { query, .. } => (Spec::Search { query }, false),
+            ToolbarItem::Group { label, buttons, .. } => {
+                let (mut shown, mut actions) = (Vec::new(), Vec::new());
+                for b in buttons {
+                    if let ToolbarItem::Button { label, symbol, action, .. } = b {
+                        shown.push((label, symbol));
+                        actions.push(action);
+                    }
+                }
+                let actions: Vec<Box<dyn Fn()>> = actions.into_iter().map(|a| Box::new(crate::signal::with_current_owner(a)) as Box<dyn Fn()>).collect();
+                let action = move |i: isize| {
+                    if let Some(a) = usize::try_from(i).ok().and_then(|i| actions.get(i)) {
+                        a();
+                    }
+                };
+                (Spec::Group { label, buttons: shown, action: Rc::new(action) }, false)
+            }
+            ToolbarItem::Picker { label, choices, selected, choose, .. } => {
+                let choose: Rc<dyn Fn(usize)> = Rc::from(choose);
+                (Spec::Picker { label, choices, selected: Rc::from(selected), choose: Rc::new(move |i| choose(i.max(0) as usize)) }, false)
+            }
+            ToolbarItem::FlexibleSpace | ToolbarItem::Space => (Spec::Standard, false),
+        };
+        ToolbarEntry { id, spec, optional }
+    }
+}
+
+/// A toolbar item's action and its enabled state, both in its own window.
 pub(crate) struct ToolbarAction {
-    action: Box<dyn Fn()>,
+    /// Called with the segment clicked (a group's), else 0.
+    action: Rc<dyn Fn(isize)>,
     disabled: Option<Rc<dyn Fn() -> bool>>,
     window: objc2::rc::Weak<NSWindow>,
 }
@@ -637,10 +805,11 @@ define_class!(
 
     impl ToolbarTarget {
         #[unsafe(method(fire:))]
-        fn fire(&self, _sender: Option<&AnyObject>) {
+        fn fire(&self, sender: Option<&AnyObject>) {
             crate::models::flush();
+            let index = sender.and_then(|s| s.downcast_ref::<objc2_app_kit::NSToolbarItemGroup>()).map_or(0, |g| g.selectedIndex());
             let a = self.ivars();
-            crate::commands::acting_in(a.window.load(), || batch(|| (a.action)()));
+            crate::commands::acting_in(a.window.load(), || batch(|| (a.action)(index)));
         }
 
         #[unsafe(method(validateToolbarItem:))]
@@ -651,8 +820,7 @@ define_class!(
 );
 
 impl ToolbarTarget {
-    fn new(mtm: MainThreadMarker, action: Box<dyn Fn()>, disabled: Option<Rc<dyn Fn() -> bool>>, window: objc2::rc::Weak<NSWindow>) -> Retained<Self> {
-        let action = Box::new(crate::signal::with_current_owner(action)) as Box<dyn Fn()>;
+    fn new(mtm: MainThreadMarker, action: Rc<dyn Fn(isize)>, disabled: Option<Rc<dyn Fn() -> bool>>, window: objc2::rc::Weak<NSWindow>) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(ToolbarAction { action, disabled, window });
         // SAFETY: NSObject's designated initialiser.
         unsafe { msg_send![super(this), init] }
@@ -664,12 +832,18 @@ impl ToolbarTarget {
     }
 }
 
+/// What an item in the toolbar keeps alive and up to date.
+#[derive(Default)]
+struct Live {
+    keep: Vec<Retained<NSObject>>,
+    effects: Vec<Effect>,
+}
+
 pub(crate) struct ToolbarState {
-    items: RefCell<Vec<ToolbarItem>>,
-    order: Vec<String>,
-    /// What the created items need kept alive.
-    keep: RefCell<Vec<Retained<NSObject>>>,
-    effects: RefCell<Vec<Effect>>,
+    entries: Vec<ToolbarEntry>,
+    /// What each item in the toolbar needs, by identifier (replaced when
+    /// the user adds it again).
+    live: RefCell<std::collections::HashMap<String, Live>>,
     /// The toolbar's window: its buttons act there.
     window: objc2::rc::Weak<NSWindow>,
     /// The width of the space before the title, over a sidebar (see
@@ -677,6 +851,8 @@ pub(crate) struct ToolbarState {
     spacer: RefCell<Option<Retained<objc2_app_kit::NSLayoutConstraint>>>,
     /// Whether the toolbar has that space.
     tracks_sidebar: std::cell::Cell<bool>,
+    /// Where a customisable toolbar's layout is remembered.
+    remember: Option<String>,
 }
 
 /// The toolbar item that keeps the title beside a sidebar.
@@ -693,33 +869,98 @@ define_class!(
 
     unsafe impl NSToolbarDelegate for ToolbarDelegate {
         #[unsafe(method_id(toolbar:itemForItemIdentifier:willBeInsertedIntoToolbar:))]
-        fn item_for(&self, _toolbar: &NSToolbar, id: &NSString, _insert: bool) -> Option<Retained<NSToolbarItem>> {
+        fn item_for(&self, _toolbar: &NSToolbar, id: &NSString, insert: bool) -> Option<Retained<NSToolbarItem>> {
             if id.to_string() == SIDEBAR_SPACER {
                 Some(self.spacer_item(id))
             } else {
-                self.make_item(&id.to_string())
+                self.make_item(&id.to_string(), insert)
             }
         }
 
         #[unsafe(method_id(toolbarDefaultItemIdentifiers:))]
         fn default_ids(&self, _toolbar: &NSToolbar) -> Retained<NSArray<NSString>> {
-            self.ids()
+            let saved = self.saved();
+            let ids = saved.unwrap_or_else(|| self.ivars().entries.iter().filter(|e| !e.optional).map(|e| e.id.clone()).collect());
+            self.with_spacer(ids)
         }
 
         #[unsafe(method_id(toolbarAllowedItemIdentifiers:))]
         fn allowed_ids(&self, _toolbar: &NSToolbar) -> Retained<NSArray<NSString>> {
-            self.ids()
+            let mut ids: Vec<String> = self.ivars().entries.iter().filter(|e| !matches!(e.spec, Spec::Standard)).map(|e| e.id.clone()).collect();
+            // SAFETY: AppKit's identifier constants.
+            ids.extend([unsafe { objc2_app_kit::NSToolbarSpaceItemIdentifier }.to_string(), unsafe { objc2_app_kit::NSToolbarFlexibleSpaceItemIdentifier }.to_string()]);
+            self.with_spacer(ids)
+        }
+
+        // The space that keeps the title beside a sidebar stays first.
+        #[unsafe(method_id(toolbarImmovableItemIdentifiers:))]
+        fn immovable_ids(&self, _toolbar: &NSToolbar) -> Retained<objc2_foundation::NSSet<NSString>> {
+            objc2_foundation::NSSet::from_retained_slice(&[NSString::from_str(SIDEBAR_SPACER)])
+        }
+
+        #[unsafe(method(toolbarWillAddItem:))]
+        fn will_add(&self, _notification: &NSNotification) {
+            self.save_soon();
+        }
+
+        #[unsafe(method(toolbarDidRemoveItem:))]
+        fn did_remove(&self, notification: &NSNotification) {
+            // A removed item's effects and targets go with it.
+            let item = notification.userInfo().and_then(|u| u.objectForKey(&NSString::from_str("item"))).and_then(|i| i.downcast::<NSToolbarItem>().ok());
+            if let Some(item) = item {
+                self.ivars().live.borrow_mut().remove(&item.itemIdentifier().to_string());
+            }
+            self.save_soon();
         }
     }
 );
 
 impl ToolbarDelegate {
-    fn ids(&self) -> Retained<NSArray<NSString>> {
-        let mut ids: Vec<Retained<NSString>> = self.ivars().order.iter().map(|s| NSString::from_str(s)).collect();
+    fn with_spacer(&self, ids: Vec<String>) -> Retained<NSArray<NSString>> {
+        let mut ids: Vec<Retained<NSString>> = ids.iter().map(|s| NSString::from_str(s)).collect();
         if self.ivars().tracks_sidebar.get() {
             ids.insert(0, NSString::from_str(SIDEBAR_SPACER));
         }
         NSArray::from_retained_slice(&ids)
+    }
+
+    fn key(&self) -> Option<Retained<NSString>> {
+        self.ivars().remember.as_ref().map(|n| NSString::from_str(&format!("ferrokit.toolbar.{n}")))
+    }
+
+    /// The layout the user saved, without items the app no longer has.
+    fn saved(&self) -> Option<Vec<String>> {
+        let list = NSUserDefaults::standardUserDefaults().stringArrayForKey(&*self.key()?)?;
+        let known = |id: &str| {
+            // SAFETY: AppKit's identifier constants.
+            let standard = [unsafe { objc2_app_kit::NSToolbarSpaceItemIdentifier }.to_string(), unsafe { objc2_app_kit::NSToolbarFlexibleSpaceItemIdentifier }.to_string()];
+            standard.iter().any(|s| s == id) || self.ivars().entries.iter().any(|e| e.id == id)
+        };
+        Some(list.iter().map(|s| s.to_string()).filter(|s| known(s)).collect())
+    }
+
+    /// Saves a customisable toolbar's layout once the change is in.
+    fn save_soon(&self) {
+        let Some(key) = self.key() else { return };
+        let Some(window) = self.ivars().window.load() else { return };
+        let defaults: Vec<String> = self.ivars().entries.iter().filter(|e| !e.optional).map(|e| e.id.clone()).collect();
+        let had = NSUserDefaults::standardUserDefaults().stringArrayForKey(&key).map(|l| l.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        let window = objc2::rc::Weak::from(&*window);
+        crate::spawn(
+            || (),
+            move |()| {
+                let Some(toolbar) = window.load().and_then(|w| w.toolbar()) else { return };
+                let ids: Vec<String> = toolbar.items().iter().map(|i| i.itemIdentifier().to_string()).filter(|i| i != SIDEBAR_SPACER).collect();
+                // The app's own layout isn't saved (a later version's would
+                // then show), only the user's.
+                if had.as_ref() == Some(&ids) || (had.is_none() && ids == defaults) {
+                    return;
+                }
+                let list = NSArray::from_retained_slice(&ids.iter().map(|s| NSString::from_str(s)).collect::<Vec<_>>());
+                // SAFETY: an array of strings is a property list.
+                unsafe { NSUserDefaults::standardUserDefaults().setObject_forKey(Some(&list), &key) };
+            },
+        );
     }
 
     /// An empty navigational item (those come before the title), as wide
@@ -742,62 +983,117 @@ impl ToolbarDelegate {
         item
     }
 
-    fn make_item(&self, id: &str) -> Option<Retained<NSToolbarItem>> {
+    /// Makes the item `id`: live (acting, following its signals) when it's
+    /// going into the toolbar, a picture of itself for the customisation
+    /// sheet otherwise.
+    fn make_item(&self, id: &str, insert: bool) -> Option<Retained<NSToolbarItem>> {
         let mtm = MainThreadMarker::from(self);
         let state = self.ivars();
-        let mut items = state.items.borrow_mut();
-        let index = items.iter().position(|i| i.id() == id)?;
-        // Each item is created once (the toolbar asks once per identifier).
-        let item = items.remove(index);
-        drop(items);
+        let entry = state.entries.iter().find(|e| e.id == id)?;
         let ns_id = NSString::from_str(id);
-        match item {
-            ToolbarItem::Button { label, symbol, action, disabled, .. } => {
+        let mut live = Live::default();
+        let symbol = |name: &str, label: &str| NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str(name), Some(&NSString::from_str(label)));
+        use objc2::Message as _;
+        let target = |live: &mut Live, item: &NSToolbarItem, action: &Rc<dyn Fn(isize)>, disabled: Option<Rc<dyn Fn() -> bool>>| {
+            let t = ToolbarTarget::new(mtm, action.clone(), disabled.clone(), state.window.clone());
+            // SAFETY: the target responds to `fire:`; kept alive in `live`.
+            unsafe {
+                item.setTarget(Some(&t));
+                item.setAction(Some(sel!(fire:)));
+            }
+            if disabled.is_some() {
+                // Validated as events arrive, and at once when signals it reads change.
+                let (i, t) = (item.retain(), t.clone());
+                live.effects.push(Effect::new(move || i.setEnabled(t.enabled())));
+            }
+            live.keep.push(Retained::into_super(t));
+        };
+        let item: Retained<NSToolbarItem> = match &entry.spec {
+            Spec::Button { label, symbol: name, action, disabled } => {
                 let ti = NSToolbarItem::initWithItemIdentifier(NSToolbarItem::alloc(mtm), &ns_id);
-                ti.setLabel(&NSString::from_str(&label));
-                ti.setToolTip(Some(&NSString::from_str(&label)));
-                ti.setImage(NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str(&symbol), Some(&NSString::from_str(&label))).as_deref());
-                let disabled: Option<Rc<dyn Fn() -> bool>> = disabled.map(Rc::from);
-                let target = ToolbarTarget::new(mtm, action, disabled.clone(), state.window.clone());
-                // SAFETY: the target responds to `fire:`; kept alive below.
-                unsafe {
-                    ti.setTarget(Some(&target));
-                    ti.setAction(Some(sel!(fire:)));
-                }
-                if disabled.is_some() {
-                    // Validated as events arrive, and at once when signals it reads change.
-                    let (t, target) = (ti.clone(), target.clone());
-                    state.effects.borrow_mut().push(Effect::new(move || t.setEnabled(target.enabled())));
-                }
-                state.keep.borrow_mut().push(Retained::into_super(target));
-                Some(ti)
+                ti.setLabel(&NSString::from_str(label));
+                ti.setToolTip(Some(&NSString::from_str(label)));
+                ti.setImage(symbol(name, label).as_deref());
+                target(&mut live, &ti, action, disabled.clone());
+                ti
             }
-            ToolbarItem::Search { query, .. } => {
+            Spec::Search { query } => {
                 let si = NSSearchToolbarItem::initWithItemIdentifier(NSSearchToolbarItem::alloc(mtm), &ns_id);
-                let field = si.searchField();
-                let delegate = FieldDelegate::new(mtm, query);
-                // SAFETY: the delegate is weak in AppKit; kept alive below.
-                unsafe { field.setDelegate(Some(ProtocolObject::from_ref(&*delegate))) };
-                state.effects.borrow_mut().push(Effect::new(move || {
-                    let v = query.get();
-                    if field.stringValue().to_string() != v {
-                        field.setStringValue(&NSString::from_str(&v));
-                    }
-                }));
-                state.keep.borrow_mut().push(Retained::into_super(delegate));
-                Some(Retained::into_super(si))
+                if insert {
+                    let query = *query;
+                    let field = si.searchField();
+                    let delegate = FieldDelegate::new(mtm, query);
+                    // SAFETY: the delegate is weak in AppKit; kept alive in `live`.
+                    unsafe { field.setDelegate(Some(ProtocolObject::from_ref(&*delegate))) };
+                    live.effects.push(Effect::new(move || {
+                        let v = query.get();
+                        if field.stringValue().to_string() != v {
+                            field.setStringValue(&NSString::from_str(&v));
+                        }
+                    }));
+                    live.keep.push(Retained::into_super(delegate));
+                }
+                Retained::into_super(si)
             }
-            ToolbarItem::FlexibleSpace => None,
+            Spec::Group { label, buttons, action } => {
+                let group = group_item(mtm, &ns_id, label, buttons, objc2_app_kit::NSToolbarItemGroupSelectionMode::Momentary);
+                target(&mut live, &group, action, None);
+                group
+            }
+            Spec::Picker { label, choices, selected, choose } => {
+                let group = group_item(mtm, &ns_id, label, choices, objc2_app_kit::NSToolbarItemGroupSelectionMode::SelectOne);
+                target(&mut live, &group, choose, None);
+                if let Some(g) = group.downcast_ref::<objc2_app_kit::NSToolbarItemGroup>().map(|g| g.retain()) {
+                    let selected = selected.clone();
+                    live.effects.push(Effect::new(move || g.setSelectedIndex(selected() as isize)));
+                }
+                group
+            }
+            Spec::Standard => return None,
+        };
+        if insert {
+            state.live.borrow_mut().insert(id.to_string(), live);
         }
+        Some(item)
     }
 }
 
+/// A group of segments with SF Symbols, each labelled (VoiceOver, tooltips,
+/// the overflow menu), under `label`.
+fn group_item(mtm: MainThreadMarker, id: &NSString, label: &str, parts: &[(String, String)], mode: objc2_app_kit::NSToolbarItemGroupSelectionMode) -> Retained<NSToolbarItem> {
+    let images: Vec<Retained<NSImage>> = parts
+        .iter()
+        .map(|(l, s)| NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str(s), Some(&NSString::from_str(l))).unwrap_or_default())
+        .collect();
+    let labels: Vec<Retained<NSString>> = parts.iter().map(|(l, _)| NSString::from_str(l)).collect();
+    // SAFETY: images and labels match in count; the target and action are
+    // set by the caller.
+    let group = unsafe {
+        objc2_app_kit::NSToolbarItemGroup::groupWithItemIdentifier_images_selectionMode_labels_target_action(
+            id,
+            &NSArray::from_retained_slice(&images),
+            mode,
+            Some(&NSArray::from_retained_slice(&labels)),
+            None,
+            None,
+            mtm,
+        )
+    };
+    group.setLabel(&NSString::from_str(label));
+    for (sub, (l, _)) in group.subitems().iter().zip(parts) {
+        sub.setToolTip(Some(&NSString::from_str(l)));
+    }
+    Retained::into_super(group)
+}
+
 /// Gives `window` a unified toolbar with `items` (kept alive by the window
-/// list for the app's lifetime).
-pub(crate) fn install_toolbar(window: &NSWindow, items: Vec<ToolbarItem>) -> Retained<NSObject> {
+/// list for the app's lifetime); `remember` makes it customisable, its
+/// layout saved under that name.
+pub(crate) fn install_toolbar(window: &NSWindow, items: Vec<ToolbarItem>, remember: Option<String>) -> Retained<NSObject> {
     let mtm = MainThreadMarker::from(window);
-    let order = items.iter().map(ToolbarItem::id).collect();
-    let state = ToolbarState { items: RefCell::new(items), order, keep: RefCell::default(), effects: RefCell::default(), window: objc2::rc::Weak::from(window), spacer: RefCell::default(), tracks_sidebar: std::cell::Cell::new(false) };
+    let entries = items.into_iter().map(ToolbarEntry::new).collect();
+    let customizable = remember.is_some();
+    let state = ToolbarState { entries, live: RefCell::default(), window: objc2::rc::Weak::from(window), spacer: RefCell::default(), tracks_sidebar: std::cell::Cell::new(false), remember };
     let delegate = ToolbarDelegate::alloc(mtm).set_ivars(state);
     // SAFETY: NSObject's designated initialiser.
     let delegate: Retained<ToolbarDelegate> = unsafe { msg_send![super(delegate), init] };
@@ -812,7 +1108,7 @@ pub(crate) fn install_toolbar(window: &NSWindow, items: Vec<ToolbarItem>) -> Ret
     });
     let toolbar = NSToolbar::initWithIdentifier(NSToolbar::alloc(mtm), &NSString::from_str(&format!("ferrokit.toolbar.{n}")));
     toolbar.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
-    toolbar.setAllowsUserCustomization(false);
+    toolbar.setAllowsUserCustomization(customizable);
     // Symbols alone, as Apple's apps show them (the labels stay for
     // VoiceOver, tooltips and the overflow menu).
     toolbar.setDisplayMode(objc2_app_kit::NSToolbarDisplayMode::IconOnly);

@@ -185,6 +185,41 @@ are what VoiceOver reads and what the overflow menu shows. With
 `ToolbarStyle::Expanded` or `Preference` (a Settings window), the labels
 show under the symbols.
 
+### Groups, pickers and customisation
+
+`toolbar_group` puts related buttons in one capsule (zoom out and in,
+back and forward); `toolbar_picker` is a choice of one as segments,
+bound to a signal (Finder's view modes). `toolbar_fixed_space()` is a
+fixed gap, `toolbar_space()` a flexible one.
+
+`Window::customizable_toolbar(name)` lets the user change the toolbar:
+Customize Toolbar… on its right-click menu, or `customize_toolbar_item()`
+in a View menu, opens AppKit's sheet, where items and spaces can be added,
+removed and moved. Items marked `.optional()` are offered there without
+being shown at first. The user's layout is remembered under `name`;
+until they change it, the app's own layout shows (so a later version's
+new default still reaches them).
+
+```rust,no_run
+use ferrokit::*;
+
+#[derive(Clone, Copy, PartialEq)]
+enum Mode { List, Grid }
+let (zoom, mode) = (Signal::new(1.0), Signal::new(Mode::List));
+let window = Window::new("Photos")
+    .toolbar(vec![
+        toolbar_group("zoom", "Zoom", vec![
+            toolbar_button("out", "Zoom Out", "minus.magnifyingglass", move || zoom.update(|z| *z /= 1.25)),
+            toolbar_button("in", "Zoom In", "plus.magnifyingglass", move || zoom.update(|z| *z *= 1.25)),
+        ]),
+        toolbar_space(),
+        toolbar_picker("mode", "View", &mode, vec![("List", "list.bullet", Mode::List), ("Grid", "square.grid.2x2", Mode::Grid)]),
+        toolbar_button("share", "Share", "square.and.arrow.up", || {}).optional(),
+    ])
+    .customizable_toolbar("photos");
+# let _ = window;
+```
+
 `.remember(name)` keeps the divider's position across launches;
 `Window::remember_frame(name)` does the same for the window's frame.
 

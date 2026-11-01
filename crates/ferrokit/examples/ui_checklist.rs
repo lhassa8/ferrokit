@@ -2232,7 +2232,108 @@ fn tabs_and_dock_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let items: Vec<String> = menu.map(|m| m.itemArray().iter().map(|i| i.title().to_string()).collect()).unwrap_or_default();
     let fresh = items.get(1).is_some_and(|t| t.ends_with("windows open"));
     check("dock-menu", items.first().map(String::as_str) == Some("New Checklist Window") && fresh, format!("{items:?}"));
-    after_events(move || rich_table_checks(events.clone()));
+    after_events(move || toolbar_kind_checks(events.clone()));
+}
+
+/// C7: toolbar groups, a picker, and a customisable toolbar whose layout is
+/// remembered, with an optional item.
+fn toolbar_kind_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use ferrokit::{toolbar_fixed_space, toolbar_group, toolbar_picker};
+    use objc2_app_kit::{NSToolbarItemGroup, NSToolbarItemGroupSelectionMode};
+    #[derive(Clone, Copy, PartialEq, Debug)]
+    enum Mode {
+        List,
+        Grid,
+    }
+    const KEY: &str = "ferrokit.toolbar.checklist-tools";
+    let forget = || objc2_foundation::NSUserDefaults::standardUserDefaults().removeObjectForKey(&NSString::from_str(KEY));
+    forget();
+    let (zoomed, mode, shared) = (Signal::new(0), Signal::new(Mode::List), Signal::new(0));
+    let tools = move |title: &str| {
+        Window::new(title)
+            .size(520.0, 200.0)
+            .toolbar(vec![
+                toolbar_group("zoom", "Zoom", vec![
+                    toolbar_button("out", "Zoom Out", "minus.magnifyingglass", move || zoomed.update(|z| *z -= 1)),
+                    toolbar_button("in", "Zoom In", "plus.magnifyingglass", move || zoomed.update(|z| *z += 1)),
+                ]),
+                toolbar_fixed_space(),
+                toolbar_picker("mode", "View", &mode, vec![("List", "list.bullet", Mode::List), ("Grid", "square.grid.2x2", Mode::Grid)]),
+                toolbar_space(),
+                toolbar_button("share", "Share", "square.and.arrow.up", move || shared.update(|n| *n += 1)).optional(),
+            ])
+            .customizable_toolbar("checklist-tools")
+            .view(text("Tools"))
+    };
+    let w = open(tools("Tools"));
+    let tb = w.toolbar().unwrap();
+    let ids = |tb: &objc2_app_kit::NSToolbar| tb.items().iter().map(|i| i.itemIdentifier().to_string()).collect::<Vec<String>>();
+    let group = |id: &str| tb.items().iter().find(|i| i.itemIdentifier().to_string() == id).and_then(|i| i.downcast::<NSToolbarItemGroup>().ok());
+    let app = NSApplication::sharedApplication(mtm());
+    let send = |item: &NSToolbarItemGroup| unsafe { app.sendAction_to_from(item.action().unwrap(), item.target().as_deref(), Some(item)) };
+
+    // A group: one item of two segments; a segment runs its button.
+    let zoom = group("zoom").unwrap();
+    let labels: Vec<String> = zoom.subitems().iter().map(|i| i.label().to_string()).collect();
+    zoom.setSelectedIndex(1);
+    let fired_in = send(&zoom);
+    let after_in = zoomed.get_untracked();
+    zoom.setSelectedIndex(0);
+    send(&zoom);
+    check(
+        "toolbar-group",
+        labels == ["Zoom Out", "Zoom In"] && zoom.selectionMode() == NSToolbarItemGroupSelectionMode::Momentary && fired_in && after_in == 1 && zoomed.get_untracked() == 0 && zoom.label().to_string() == "Zoom",
+        format!("segments {labels:?}; Zoom In → {after_in}, then Zoom Out → {}", zoomed.get_untracked()),
+    );
+
+    // A picker: the segment follows the signal; choosing one sets it.
+    let picker = group("mode").unwrap();
+    let first = picker.selectedIndex();
+    batch(|| mode.set(Mode::Grid));
+    let followed = picker.selectedIndex();
+    picker.setSelectedIndex(0);
+    send(&picker);
+    check(
+        "toolbar-picker",
+        first == 0 && followed == 1 && mode.get_untracked() == Mode::List && picker.selectionMode() == NSToolbarItemGroupSelectionMode::SelectOne,
+        format!("shows {first}; Grid → segment {followed}; choosing List → {:?}", mode.get_untracked()),
+    );
+
+    // Customisable: the optional item is offered, not shown; adding it (as
+    // the sheet does) makes a live item, and the layout is remembered.
+    let delegate = tb.delegate().unwrap();
+    // SAFETY: the toolbar's delegate answers this NSToolbarDelegate method.
+    let allowed: Retained<objc2_foundation::NSArray<NSString>> = unsafe { objc2::msg_send![&*delegate, toolbarAllowedItemIdentifiers: &*tb] };
+    let offered = allowed.iter().any(|i| i.to_string() == "share");
+    let before = ids(&tb);
+    tb.insertItemWithItemIdentifier_atIndex(&NSString::from_str("share"), tb.items().count() as isize);
+    let share = tb.items().iter().find(|i| i.itemIdentifier().to_string() == "share");
+    let acts = share.is_some_and(|i| unsafe { app.sendAction_to_from(i.action().unwrap(), i.target().as_deref(), Some(&i)) }) && shared.get_untracked() == 1;
+    let customizable = tb.allowsUserCustomization();
+    spawn(
+        || std::thread::sleep(std::time::Duration::from_millis(150)),
+        move |()| {
+            let saved: Vec<String> = objc2_foundation::NSUserDefaults::standardUserDefaults().stringArrayForKey(&NSString::from_str(KEY)).map(|l| l.iter().map(|s| s.to_string()).collect()).unwrap_or_default();
+            // A new window of the same toolbar starts with the user's layout.
+            let again = open(tools("Tools Again"));
+            let restored = again.toolbar().map(|t| ids(&t)).unwrap_or_default();
+            check(
+                "toolbar-customize",
+                customizable && offered && !before.contains(&"share".to_string()) && acts && saved.last().map(String::as_str) == Some("share") && restored == saved,
+                format!("customisable {customizable}; Share offered {offered}, not shown {:?}; added, it acts {acts}; saved {saved:?}; a new window has {restored:?}", before),
+            );
+            if let Ok(dir) = std::env::var("SNAP") {
+                snapshot_windows(&dir);
+            }
+            ferrokit::close_window(&again);
+            ferrokit::close_window(&w);
+            forget();
+            after_events({
+                let events = events.clone();
+                move || rich_table_checks(events.clone())
+            });
+        },
+    );
 }
 
 #[derive(Clone)]
