@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use objc2::rc::{Retained, Weak};
-use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
+use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{NSApplication, NSApplicationDelegate, NSApplicationTerminateReply, NSWindow};
 use objc2_foundation::{NSString, NSURL, NSUserDefaults};
@@ -667,6 +667,28 @@ define_class!(
     struct AppDelegate;
 
     unsafe impl NSObjectProtocol for AppDelegate {}
+
+    // (Not NSApplicationDelegate's: QLPreviewPanelController's, an informal
+    // protocol.)
+    impl AppDelegate {
+        // The Quick Look panel looks along the responder chain, which ends
+        // here, for what controls it ([`quick_look`](crate::quick_look)).
+        #[unsafe(method(acceptsPreviewPanelControl:))]
+        fn accepts_preview(&self, _panel: &AnyObject) -> bool {
+            crate::quicklook::source().is_some()
+        }
+
+        #[unsafe(method(beginPreviewPanelControl:))]
+        fn begin_preview(&self, panel: &AnyObject) {
+            if let Some(source) = crate::quicklook::source() {
+                // SAFETY: the panel holds its data source weakly; it's kept by quicklook.
+                let _: () = unsafe { msg_send![panel, setDataSource: &*source] };
+            }
+        }
+
+        #[unsafe(method(endPreviewPanelControl:))]
+        fn end_preview(&self, _panel: &AnyObject) {}
+    }
 
     unsafe impl NSApplicationDelegate for AppDelegate {
         // Files opened from the Finder (double-click, drop on the Dock icon,

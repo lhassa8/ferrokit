@@ -98,6 +98,30 @@ let player = video_player(|| Some("trailer.mov".into()))
 - **`video_stream(|| Some(url))`** plays from a web address (an HLS
   playlist or a video file on a server).
 
+## Quick Look
+
+`quick_look(paths, index)` opens the panel Finder opens with Space,
+previewing the files (PDFs, pictures, video, documents, folders), at
+`paths[index]`: the arrow keys move between them, and the panel offers
+Open With and Share. If it's open, it shows the new files.
+`close_quick_look()` and `is_quick_look_open()` do what they say.
+
+`thumbnail(|| path)` is a file's picture as Finder draws it: a PDF's first
+page, a frame of a video, a photo. Its icon shows until Quick Look has
+made the thumbnail on a worker thread; VoiceOver reads the file's name.
+
+```rust,no_run
+use ferrokit::*;
+
+let report = std::path::PathBuf::from("report.pdf");
+let r = report.clone();
+let row = hstack((
+    thumbnail(move || Some(r.clone())).size(28.0, 36.0),
+    button("Quick Look", move || quick_look(vec![report.clone()], 0)).symbol("eye"),
+));
+# let _ = row;
+```
+
 ## Sharing
 
 `share_button` shows the system's Share menu (Mail, Messages, AirDrop,
@@ -205,4 +229,6 @@ instead of posting them (no permission prompt), `sent_notifications()`
 reads them and `click_notification(id)` runs a click.
 `testing::shared_items(button)` says what a share button would share, and
 `testing::menu_bar_extras()` returns the status items and their panels'
-popovers. The `media` example's `CHECK=all` uses all of them.
+popovers. `testing::thumbnails_made()` counts finished thumbnails, and
+`testing::quick_look_state()` says what the Quick Look panel was given
+and shows. The `media` example's `CHECK=all` uses all of them.

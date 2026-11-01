@@ -1,7 +1,7 @@
 //! V5: the advanced components, in a trip briefing: a guide in a web view,
 //! a report printed to PDF and shown in a PDF view, a clip in a video
-//! player, the Share menu, printing, a reminder notification and a
-//! countdown in the menu bar.
+//! player, the Share menu, printing, a reminder notification, a countdown
+//! in the menu bar, and the report's Quick Look thumbnail and preview (C8).
 //! `cargo run -p ferrokit --example media`; `CHECK=all` runs its
 //! self-checks. Notifications need an app bundle
 //! (`scripts/bundle-example.sh media`).
@@ -116,6 +116,8 @@ fn report_tab(s: &State) -> impl View {
     let (page, pages, find) = (s.pdf_page, s.pdf_pages, s.find);
     vstack((
         hstack((
+            thumbnail(|| report_path().exists().then(report_path)).size(28.0, 36.0),
+            button("Quick Look", || quick_look(vec![report_path()], 0)).symbol("eye").tooltip("Preview the report as Finder does"),
             search_field(&find).placeholder("Find in report"),
             spacer(),
             button("Previous", move || page.set(page.get().saturating_sub(1))).disabled(move || page.get() == 0),
@@ -317,7 +319,37 @@ mod self_checks {
                     check("pdf-find", found == 2, format!("{found} matches highlighted (2)"));
                     snap(&w2, "report-find");
                     find.set(String::new());
-                    clip_phase(w2, s, days_left, check, failed);
+                    quick_look_phase(w2, s, days_left, check, failed);
+                });
+            });
+        });
+    }
+
+    /// C8: the report's thumbnail, then the Quick Look panel on it.
+    fn quick_look_phase(w: Retained<NSWindow>, s: State, days_left: Signal<i32>, check: Check, failed: Rc<Cell<u32>>) {
+        use ferrokit::testing::{quick_look_state, thumbnails_made};
+        let c = check.clone();
+        wait_for(5000, || thumbnails_made() >= 1, move |made| {
+            // The PDF's first page, white and taller than wide, not its icon.
+            let view = all_in(&w.contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSImageView>().ok()).find(|v| objc2_app_kit::NSAccessibility::accessibilityLabel(&**v).is_some_and(|l| l.to_string() == "Lofoten report.pdf"));
+            let size = view.as_ref().and_then(|v| v.image()).map(|i| i.size());
+            let page_shaped = size.is_some_and(|s| s.height > s.width * 1.2);
+            c("thumbnail", made && page_shaped, format!("made {made}; image {size:?} (a page, taller than wide); VoiceOver reads the file's name {}", view.is_some()));
+            let button = buttons(&w).into_iter().find(|b| b.title().to_string() == "Quick Look").unwrap();
+            // SAFETY: a click on a button of this window.
+            unsafe { button.performClick(None) };
+            let c2 = c.clone();
+            wait_for(3000, || quick_look_state().1.is_some(), move |open| {
+                let (files, shown) = quick_look_state();
+                if let Ok(dir) = std::env::var("SNAP") {
+                    ferrokit::testing::snapshot_windows(&dir);
+                }
+                c2("quick-look", open && files == [super::report_path()] && shown == Some(0) && is_quick_look_open(), format!("open {open}; files {files:?}; showing {shown:?}"));
+                close_quick_look();
+                let c3 = c2.clone();
+                wait_for(2000, || !is_quick_look_open(), move |closed| {
+                    c3("quick-look-close", closed, format!("closed {closed}"));
+                    clip_phase(w, s, days_left, c3, failed);
                 });
             });
         });

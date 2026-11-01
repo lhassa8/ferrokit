@@ -110,6 +110,17 @@ pub fn symbol_effects() -> (isize, usize) {
     crate::controls::SYMBOL_EFFECTS.with(std::cell::Cell::get)
 }
 
+/// Quick Look thumbnails made so far ([`thumbnail`](crate::thumbnail)).
+pub fn thumbnails_made() -> usize {
+    crate::quicklook::THUMBNAILS.with(std::cell::Cell::get)
+}
+
+/// The files the Quick Look panel was given, and the one it shows (`None`
+/// while it's closed).
+pub fn quick_look_state() -> (Vec<std::path::PathBuf>, Option<usize>) {
+    crate::quicklook::quick_look_state()
+}
+
 /// Renders every window to `<dir>/<title>.png` (AppKit's own drawing, no
 /// screen-recording permission needed). The window's frame view is drawn, so
 /// the image includes the title bar and the window background (which the
