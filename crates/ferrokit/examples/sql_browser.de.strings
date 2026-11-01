@@ -50,3 +50,8 @@
 "Hide Chart" = "Diagramm ausblenden";
 "Export" = "Exportieren";
 "Copy" = "Kopieren";
+"Filter…" = "Filtern …";
+"Rows of {table} where" = "Zeilen von {table}, bei denen";
+"Clear" = "Löschen";
+"Show Rows" = "Zeilen zeigen";
+"Select a table to filter" = "Wähle eine Tabelle zum Filtern";

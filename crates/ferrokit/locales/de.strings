@@ -47,3 +47,7 @@
 "Welcome to {app}" = "Willkommen bei {app}";
 "No value" = "Kein Wert";
 "Customize Toolbar…" = "Symbolleiste anpassen …";
+"Match" = "Übereinstimmung";
+"Field" = "Feld";
+"Test" = "Bedingung";
+"Value" = "Wert";

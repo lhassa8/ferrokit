@@ -47,3 +47,7 @@
 "Welcome to {app}" = "Bienvenue dans {app}";
 "No value" = "Aucune valeur";
 "Customize Toolbar…" = "Personnaliser la barre d’outils…";
+"Match" = "Correspondance";
+"Field" = "Champ";
+"Test" = "Condition";
+"Value" = "Valeur";

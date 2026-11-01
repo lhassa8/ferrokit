@@ -47,3 +47,7 @@
 "Welcome to {app}" = "{app} へようこそ";
 "No value" = "値なし";
 "Customize Toolbar…" = "ツールバーをカスタマイズ…";
+"Match" = "一致";
+"Field" = "フィールド";
+"Test" = "条件";
+"Value" = "値";

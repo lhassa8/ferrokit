@@ -258,6 +258,11 @@ struct Browser {
     /// Queries run, newest first.
     history: Signal<Vec<String>>,
     history_shown: Signal<bool>,
+    /// C11: the filter builder's rules, the table they filter (once
+    /// applied), and whether its popover is open.
+    filter: Signal<Filter>,
+    filtered: Signal<Option<String>>,
+    filter_shown: Signal<bool>,
 }
 
 impl Browser {
@@ -277,6 +282,9 @@ impl Browser {
             no_chart: Signal::new(true),
             history: Signal::new(Vec::new()),
             history_shown: Signal::new(false),
+            filter: Signal::new(Filter::default()),
+            filtered: Signal::new(None),
+            filter_shown: Signal::new(false),
         }
     }
 
@@ -310,7 +318,30 @@ impl Browser {
     }
 
     fn show(&self, source: &str) {
+        // Another table: its own filter, from none.
+        if self.filtered.get_untracked().is_some_and(|f| f != source) {
+            self.filtered.set(None);
+            self.filter.set(Filter::default());
+        }
         self.query.set(format!("SELECT * FROM {};", quote(source)));
+        self.run();
+    }
+
+    /// The table or view the filter applies to: the one selected, or the
+    /// one last filtered (a filtered query isn't the table's any more).
+    fn filter_source(&self) -> Option<String> {
+        let selected = self.selected.get().and_then(|id| id.split_once(':').filter(|(k, _)| *k == "table" || *k == "view").map(|(_, n)| n.to_string()));
+        selected.or_else(|| self.filtered.get())
+    }
+
+    /// Shows the rows of the source that pass the filter.
+    fn apply_filter(&self) {
+        let Some(source) = untrack(|| self.filter_source()) else { return };
+        self.filtered.set(Some(source.clone()));
+        let condition = self.filter.get_untracked().to_sql();
+        let table = quote(&source);
+        self.query.set(if condition == "1" { format!("SELECT * FROM {table};") } else { format!("SELECT * FROM {table} WHERE {condition};") });
+        self.filter_shown.set(false);
         self.run();
     }
 
@@ -437,6 +468,10 @@ fn database_view(doc: &Document<Db>) -> impl View + use<> {
                     text(move || b.timing()).font(Font::caption().monospaced_digits()).color(Color::Secondary),
                     spacer(),
                     csv_chip(b),
+                    button(t("Filter…"), move || b.filter_shown.set(true))
+                        .symbol("line.3.horizontal.decrease.circle")
+                        .disabled(move || b.filter_source().is_none())
+                        .popover(&b.filter_shown, move || filter_popover(b)),
                     button(t("History"), move || b.history_shown.set(true)).popover(&b.history_shown, move || history(b)),
                 ))
                 .spacing(8.0)
@@ -754,6 +789,41 @@ fn history(b: Browser) -> impl View {
         })
         .collect();
     AnyView::new(vstack(items).alignment(Align::Start).padding(12.0))
+}
+
+/// C11: the filter builder for the table shown, its columns as fields
+/// (numbers for numeric types, text otherwise).
+fn filter_popover(b: Browser) -> impl View {
+    let Some(source) = untrack(|| b.filter_source()) else { return AnyView::new(text(t("Select a table to filter")).padding(12.0)) };
+    let fields = filter_fields(b, &source);
+    AnyView::new(
+        vstack((
+            text(t_with("Rows of {table} where", &[("table", &source)])).font(Font::headline()),
+            filter_editor(&b.filter, fields),
+            hstack((button(t("Clear"), move || b.filter.set(Filter::default())), spacer(), button(t("Show Rows"), move || b.apply_filter()).default_action())),
+        ))
+        .spacing(10.0)
+        .alignment(Align::Start)
+        .padding(14.0)
+        .width(600.0),
+    )
+}
+
+fn filter_fields(b: Browser, source: &str) -> Vec<FilterField> {
+    fn node<'a>(nodes: &'a [TreeNode<Item>], id: &str) -> Option<&'a TreeNode<Item>> {
+        nodes.iter().find_map(|n| if n.value.id == id { Some(n) } else { node(&n.children, id) })
+    }
+    let schema = untrack(|| b.schema.get()).unwrap_or_default();
+    let Some(table) = node(&schema, &format!("table:{source}")).or_else(|| node(&schema, &format!("view:{source}"))) else { return Vec::new() };
+    table
+        .children
+        .iter()
+        .map(|c| {
+            let (name, ty) = c.value.title.split_once("  ").unwrap_or((&c.value.title, ""));
+            let numeric = ["int", "real", "floa", "doub", "num", "dec"].iter().any(|k| ty.contains(k));
+            if numeric { FilterField::number(name, name) } else { FilterField::text(name, name) }
+        })
+        .collect()
 }
 
 /// "Show Sidebar" or "Hide Sidebar", for the focused window.
@@ -1559,9 +1629,47 @@ mod self_checks {
                     }
                     when(|| popover_windows().is_empty(), 3000, move |_| {
                         check("popover-escape", !untrack(|| b.history_shown.get()) && popover_windows().is_empty(), format!("Escape closed it: signal {}", untrack(|| b.history_shown.get())));
-                        chart_checks(w2, b, dir);
+                        filter_check(w2, b, dir);
                     });
                 }));
+            });
+        });
+    }
+
+    /// C11: the Filter… popover builds a WHERE for the table shown, from
+    /// its columns; the rows that pass show.
+    fn filter_check(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
+        // As the sidebar does when the table is picked.
+        b.selected.set(Some("table:customers".into()));
+        b.show("customers");
+        let w2 = w.clone();
+        when(move || idle(b)() && results(&w2).numberOfRows() == 10_000, 5000, move |_| {
+            b.filter.set(Filter {
+                combine: Match::All,
+                rules: vec![
+                    FilterRule::Field { field: "name".into(), test: FilterTest::BeginsWith("D".into()) },
+                    FilterRule::Field { field: "id".into(), test: FilterTest::AtMost(500.0) },
+                ],
+            });
+            b.filter_shown.set(true);
+            let w3 = w.clone();
+            when(|| !popover_windows().is_empty(), 3000, move |_| {
+                let editor = popover_windows().iter().flat_map(|p| all(p)).find_map(|v| v.downcast::<objc2_app_kit::NSPredicateEditor>().ok());
+                let shown = editor.as_ref().and_then(|e| e.predicate()).map(|p| p.predicateFormat().to_string()).unwrap_or_default();
+                b.apply_filter();
+                let w4 = w3.clone();
+                when(move || idle(b)() && !untrack(|| b.query.get()).ends_with("\"customers\";"), 5000, move |_| {
+                    let query = untrack(|| b.query.get());
+                    let rows = results(&w4).numberOfRows();
+                    let names = (0..rows.min(50)).all(|r| cell(&results(&w4), r, 1).starts_with('D'));
+                    let still = untrack(|| b.filter_source()).as_deref() == Some("customers");
+                    check(
+                        "filter-rows",
+                        shown == r#"name BEGINSWITH[c] "D" AND id <= 500"# && query == r#"SELECT * FROM "customers" WHERE ("name" LIKE 'D%' ESCAPE '\' AND "id" <= 500);"# && rows > 0 && rows < 500 && names && still,
+                        format!("editor {shown:?}; ran {query:?}: {rows} rows, names start with D {names}; the filter still knows the table {still}"),
+                    );
+                    when(|| popover_windows().is_empty(), 3000, move |_| chart_checks(w4, b, dir));
+                });
             });
         });
     }

@@ -89,6 +89,35 @@ let view = table(&model).accessibility_label("Downloads");
   Finder.
 - `.on_paste(|text| …)` handles ⌘V.
 
+### Filtering: the filter builder
+
+`filter_editor(&filter, fields)` is AppKit's filter builder (as in Mail's
+rules and Finder's smart folders), editing a `Filter`: a line choosing
+whether all, any or none of the rules must hold, then a row per rule, with
++ and − to add and remove them (Option with + adds a nested group). It
+grows with its rows. Fields are `FilterField::text`, `number` or `choice`,
+each with a key and a title.
+
+A `Filter` is plain data. `filter.matches(|key| value)` tests a row, and
+`filter.to_sql()` makes a SQL condition for a `WHERE`, with column names and
+values quoted so what the user types can't change the query. A number rule
+the user hasn't filled in yet is left out.
+
+```rust,no_run
+use ferrokit::*;
+
+let filter = Signal::new(Filter::default());
+let editor = filter_editor(&filter, vec![
+    FilterField::text("name", "Name"),
+    FilterField::number("total", "Total"),
+    FilterField::choice("city", "City", &["Oslo", "Bergen", "Tromsø"]),
+]);
+let sql = move || format!("SELECT * FROM orders WHERE {};", filter.get().to_sql());
+# let _ = (editor, sql);
+```
+
+The SQL browser's Filter… button opens one for the table shown.
+
 ## Outlines and the sidebar
 
 `outline(roots, title)` shows a tree of `Identifiable` values; expansion and

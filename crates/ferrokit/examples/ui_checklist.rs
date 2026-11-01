@@ -2401,6 +2401,76 @@ fn form_kind_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                 format!("closed at first {closed}; the triangle opened it {opened}, showing a stepper named {stepper_named:?}; closed from code: gone {gone}, triangle follows {follows}"),
             );
             ferrokit::close_window(&w3);
+            filter_kind_checks(events.clone());
+        });
+    });
+}
+
+/// C11: the filter builder shows a filter set from code, with fields by
+/// their titles and as tall as its rows; the user's rows set the filter.
+fn filter_kind_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use ferrokit::{Filter, FilterField, FilterRule, FilterTest, Match, filter_editor};
+    use objc2_app_kit::{NSPopUpButton, NSPredicateEditor};
+    let filter = Signal::new(Filter::default());
+    let w = open(
+        Window::new("Filter").size(620.0, 300.0).view(
+            vstack((
+                filter_editor(&filter, vec![FilterField::text("name", "Name"), FilterField::number("total", "Total"), FilterField::choice("city", "City", &["Oslo", "Bergen"])]),
+                text(move || filter.get().to_sql()),
+            ))
+            .alignment(Align::Start)
+            .padding(16.0),
+        ),
+    );
+    let editor = all_views(&w.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<NSPredicateEditor>().ok()).unwrap();
+    let empty_rows = editor.numberOfRows();
+    batch(|| {
+        filter.set(Filter {
+            combine: Match::Any,
+            rules: vec![
+                FilterRule::Field { field: "name".into(), test: FilterTest::Contains("ad".into()) },
+                FilterRule::Field { field: "total".into(), test: FilterTest::AtLeast(100.0) },
+                FilterRule::Field { field: "city".into(), test: FilterTest::Is("Bergen".into()) },
+            ],
+        })
+    });
+    let w2 = w.clone();
+    after_events(move || {
+        let format = editor.predicate().map(|p| p.predicateFormat().to_string()).unwrap_or_default();
+        let rows = editor.numberOfRows();
+        let tall = (editor.frame().size.height - rows as f64 * editor.rowHeight()).abs() < 1.0;
+        let titles: Vec<String> = all_views(&editor).into_iter().filter_map(|v| v.downcast::<NSPopUpButton>().ok()).filter_map(|p| p.titleOfSelectedItem()).map(|t| t.to_string()).collect();
+        let named = ["Name", "Total", "City"].iter().all(|t| titles.iter().any(|s| s == t));
+        check(
+            "filter-editor-shows",
+            empty_rows == 2 && rows == 4 && format == r#"name CONTAINS[c] "ad" OR total >= 100 OR city == "Bergen""# && tall && named,
+            format!("empty: {empty_rows} rows (the line and one rule); set: {rows} rows, {format:?}; as tall as its rows {tall}; fields by title {named} {titles:?}"),
+        );
+        // The user removes a row, then adds one: the filter follows.
+        let app = NSApplication::sharedApplication(mtm());
+        let send = |e: &NSPredicateEditor| unsafe { app.sendAction_to_from(e.action().unwrap(), e.target().as_deref(), Some(e)) };
+        editor.removeRowAtIndex(2);
+        send(&editor);
+        let after_remove = filter.get_untracked();
+        unsafe { editor.addRow(None) };
+        send(&editor);
+        let after_add = filter.get_untracked();
+        let sql = after_remove.to_sql();
+        let (w3, editor) = (w2.clone(), editor.clone());
+        let events = events.clone();
+        after_events(move || {
+            let grew = (editor.frame().size.height - editor.numberOfRows() as f64 * editor.rowHeight()).abs() < 1.0;
+            check(
+                "filter-editor-edits",
+                after_remove.combine == Match::Any && after_remove.rules.len() == 2 && sql == r#"("name" LIKE '%ad%' ESCAPE '\' OR "city" = 'Bergen')"# && after_add.rules.len() == 3 && grew,
+                format!("removed the total row: {} rules, SQL {sql}; added a row: {} rules; grew with it {grew}", after_remove.rules.len(), after_add.rules.len()),
+            );
+            if let Ok(dir) = std::env::var("SNAP") {
+                snapshot_windows(&dir);
+            }
+            let problems = ferrokit::testing::ax_audit(&w3);
+            check("filter-editor-voiceover", problems.is_empty(), format!("{problems:?}"));
+            ferrokit::close_window(&w3);
             rich_table_checks(events.clone());
         });
     });
