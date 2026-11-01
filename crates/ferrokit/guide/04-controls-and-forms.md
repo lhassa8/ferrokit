@@ -154,6 +154,45 @@ let panel = hstack((
 A spinner spins while its closure returns `None` and fills a circle with
 `Some(fraction)`; a bar does the same as a stripe.
 
+## Forms
+
+`form` lays out labelled rows in sections, as Mac settings do. Each
+`form_row(label, control)` names its control for VoiceOver by the label
+(unless the control has a name of its own); `form_content(view)` is a row
+with no label; `.help("…")` adds a line of smaller text under a row, and a
+section's `.footer("…")` one under the section.
+
+```rust,no_run
+use ferrokit::*;
+
+let (name, sync, size, beta) = (Signal::new(String::new()), Signal::new(true), Signal::new(12.0), Signal::new(false));
+let settings = form(vec![
+    section("Account", vec![
+        form_row("Name", text_field(&name)),
+        form_row("Sync", toggle("", &sync)).help("Keeps your library the same on every Mac."),
+    ]),
+    section("Appearance", vec![form_row("Text size", slider(&size, 9.0, 24.0))]).footer("Applies to new windows."),
+    section("", vec![form_content(checkbox("Try new features", &beta))]),
+]);
+# let _ = settings;
+```
+
+Two styles:
+- **`FormStyle::Grouped`** (the default) is System Settings: each section
+  a rounded box, labels on the left, controls on the right, lines between
+  rows.
+- **`FormStyle::Columns`** (`.style(FormStyle::Columns)`) is the classic
+  settings window: labels right-aligned in one column ending in a colon,
+  controls after them, lined up across sections. The `settings` example
+  uses it.
+
+`group_box("Title", content)` is a titled box on the fill for grouped
+content (SwiftUI's `GroupBox`). `disclosure("Advanced", &open, || content)`
+is a title with a disclosure triangle: clicking either shows the content,
+built when it's shown; the signal says whether it's open, both ways.
+
+`toggle("", &value)` is the switch alone, for a form row to name.
+
 ## Tab order, shortcuts, input methods
 
 Tab and Shift-Tab follow the views' positions, top-left to bottom-right.
@@ -168,6 +207,7 @@ of its own: the text is a separate view. Name such controls with
 `.accessibility_label("…")`:
 
 - a `text_field`, `picker`, `slider` or `stepper` beside a text label
+  (a [form row](#forms) names its control for you)
 - an editor or a table that isn't otherwise titled
 - an icon-only button
 

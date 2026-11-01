@@ -71,7 +71,7 @@ impl Cx {
         Cx { container, mtm: MainThread::new().expect("main thread") }
     }
 
-    fn child(&self) -> Cx {
+    pub(crate) fn child(&self) -> Cx {
         Cx { container: self.container.clone(), mtm: self.mtm }
     }
 }

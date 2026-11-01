@@ -1,4 +1,5 @@
-//! F1.8 exit check: a settings form written with ferrokit only.
+//! F1.8 exit check: a settings form written with ferrokit only (since C10,
+//! with `form`, in the classic columns style).
 //! `cargo run -p ferrokit --example settings`; `CHECK=all` runs its
 //! self-checks; `SNAP=<dir>` also saves light and dark window images.
 
@@ -49,42 +50,30 @@ impl Settings {
     }
 }
 
-fn account(s: &Settings) -> impl View {
+fn account(s: &Settings) -> Section {
     let s1 = s.clone();
-    vstack((
-        text("Account"),
-        grid([
-            (text("Name:"), text_field(&s.name).placeholder("Full name")),
-            (text("Email:"), text_field(&s.email).placeholder("name@example.com")),
-            (text("Password:"), secure_field(&s.password).placeholder("Required")),
-        ])
-        .align_column(0, Align::End),
-        text(move || if s1.email_ok() { String::new() } else { "Enter a valid email address.".into() }),
-    ))
+    section("Account", vec![
+        form_row("Name", text_field(&s.name).placeholder("Full name")),
+        form_row("Email", text_field(&s.email).placeholder("name@example.com")),
+        form_row("Password", secure_field(&s.password).placeholder("Required")),
+        form_content(text(move || if s1.email_ok() { String::new() } else { "Enter a valid email address.".into() })),
+    ])
 }
 
-fn appearance(s: &Settings) -> impl View {
-    let theme = s.theme;
+fn appearance(s: &Settings) -> Section {
     let options = vec![("System", Appearance::System), ("Light", Appearance::Light), ("Dark", Appearance::Dark)];
-    vstack((
-        text("Appearance"),
-        grid([(text("Theme:"), picker(&s.theme, options).accessibility_label("Theme"))]).align_column(0, Align::End),
-        watch(move || set_appearance(theme.get())),
-    ))
+    section("Appearance", vec![form_row("Theme", picker(&s.theme, options).accessibility_label("Theme"))])
 }
 
-fn notifications(s: &Settings) -> impl View {
+fn notifications(s: &Settings) -> Section {
     let days = s.keep_days;
-    vstack((
-        text("Notifications"),
-        toggle("Show notifications", &s.notify),
-        checkbox("Play sounds", &s.sounds),
-        grid([
-            (text("Volume:"), hstack((image("speaker.fill"), slider(&s.volume, 0.0, 1.0).accessibility_label("Volume")))),
-            (text("Keep for:"), hstack((stepper(&s.keep_days, 1.0, 365.0, 1.0).accessibility_label("Keep for"), text(move || format!("{} days", days.get()))))),
-        ])
-        .align_column(0, Align::End),
-    ))
+    section("Notifications", vec![
+        form_content(toggle("Show notifications", &s.notify)),
+        form_content(checkbox("Play sounds", &s.sounds)),
+        // VoiceOver names the slider and stepper by their rows' labels.
+        form_row("Volume", hstack((image("speaker.fill"), slider(&s.volume, 0.0, 1.0)))),
+        form_row("Keep for", hstack((stepper(&s.keep_days, 1.0, 365.0, 1.0), text(move || format!("{} days", days.get()))))).help("Older notifications are deleted."),
+    ])
 }
 
 fn sync_row(s: &Settings) -> impl View {
@@ -99,12 +88,10 @@ fn sync_row(s: &Settings) -> impl View {
 fn settings_view(s: &Settings) -> impl View {
     let s1 = s.clone();
     let can_save = move || s1.email_ok() && !s1.name.with(String::is_empty);
+    let theme = s.theme;
     vstack((
-        account(s),
-        divider(),
-        appearance(s),
-        divider(),
-        notifications(s),
+        form(vec![account(s), appearance(s), notifications(s)]).style(FormStyle::Columns),
+        watch(move || set_appearance(theme.get())),
         divider(),
         sync_row(s),
         spacer(),

@@ -170,6 +170,19 @@ impl View for Checkbox {
     }
 }
 
+/// An on-off button (a disclosure triangle…) bound two ways to `value`.
+pub(crate) fn bound_toggle(cx: &mut Cx, view: Retained<objc2_app_kit::NSView>, b: Retained<NSButton>, value: Signal<bool>) -> Node {
+    let (b1, b2) = (b.clone(), b.clone());
+    let (mut node, target) = bound_switch(cx, view, move |s| b1.setState(s), move || b2.state(), value);
+    // SAFETY: the target responds to `fire:`; the node keeps it alive.
+    unsafe {
+        b.setTarget(Some(&target));
+        b.setAction(Some(sel!(fire:)));
+    }
+    node.keep(target);
+    node
+}
+
 /// A checkbox titled `title`, bound two ways to `value`.
 pub fn checkbox(title: &str, value: &Signal<bool>) -> Checkbox {
     Checkbox { title: title.into(), value: *value }
@@ -199,10 +212,14 @@ impl View for SwitchView {
     }
 }
 
-/// A labelled switch (`NSSwitch`) bound two ways to `value`.
+/// A labelled switch (`NSSwitch`) bound two ways to `value`. With an
+/// empty title, the switch alone (a [`form_row`](crate::form_row) names it).
 pub fn toggle(title: &str, value: &Signal<bool>) -> impl View {
+    if title.is_empty() {
+        return crate::view::AnyView::new(SwitchView(*value));
+    }
     // The switch itself is named too: VoiceOver reads it apart from the text.
-    hstack((text(title), SwitchView(*value).accessibility_label(title)))
+    crate::view::AnyView::new(hstack((text(title), SwitchView(*value).accessibility_label(title))))
 }
 
 /// Wires `control` to call `f` (in a batch) when the user changes it.

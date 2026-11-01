@@ -2330,10 +2330,80 @@ fn toolbar_kind_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
             forget();
             after_events({
                 let events = events.clone();
-                move || rich_table_checks(events.clone())
+                move || form_kind_checks(events.clone())
             });
         },
     );
+}
+
+/// C10: a grouped form (rows, lines between them, help and a footer), its
+/// controls named by their labels, a titled box, and a disclosure group.
+fn form_kind_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use ferrokit::{disclosure, form, form_content, form_row, group_box, section};
+    use objc2_app_kit::{NSBox, NSStepper, NSSwitch};
+    let (name, sync, beta, open_, retries) = (Signal::new("Ada".to_string()), Signal::new(true), Signal::new(false), Signal::new(false), Signal::new(3.0));
+    let w = open(
+        Window::new("Form").size(480.0, 520.0).view(
+            vstack((
+                form(vec![
+                    section("General", vec![form_row("Name", text_field(&name)), form_row("Sync", toggle("", &sync)).help("Keeps your library the same on every Mac.")]).footer("Changes apply at once."),
+                    section("", vec![form_content(checkbox("Try new features", &beta))]),
+                ]),
+                group_box("Totals", text("3 libraries, 1,204 books")),
+                disclosure("Advanced", &open_, move || form(vec![section("", vec![form_row("Retries", stepper(&retries, 0.0, 10.0, 1.0))])])),
+            ))
+            .spacing(16.0)
+            .alignment(Align::Start)
+            .padding(20.0),
+        ),
+    );
+    let all = || all_views(&w.contentView().unwrap());
+    let label = |t: &str| all().into_iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string() == t);
+    let switch = all().into_iter().find_map(|v| v.downcast::<NSSwitch>().ok()).unwrap();
+    let lines = all().into_iter().filter_map(|v| v.downcast::<NSBox>().ok()).filter(|b| b.boxType() == objc2_app_kit::NSBoxType::Separator).count();
+    let in_window = |v: &NSView| v.convertRect_toView(v.bounds(), None);
+    let (sync_label, help, footer) = (label("Sync"), label("Keeps your library the same on every Mac."), label("Changes apply at once."));
+    let row = sync_label.as_ref().map(|l| in_window(l));
+    let control = in_window(&switch);
+    // Label on the left, control on the right, help under them.
+    let laid_out = row.is_some_and(|r| r.origin.x < 60.0 && control.origin.x > 300.0) && help.as_ref().zip(row).is_some_and(|(h, r)| in_window(h).origin.y < r.origin.y);
+    check(
+        "form-grouped",
+        laid_out && lines == 1 && footer.is_some() && label("General").is_some(),
+        format!("Sync label at {:?}, switch at x {:.0}; {lines} line between rows (1); help under the row; footer {}", row.map(|r| r.origin), control.origin.x, footer.is_some()),
+    );
+    let named = objc2_app_kit::NSAccessibility::accessibilityLabel(&*switch).map(|l| l.to_string());
+    let problems = ferrokit::testing::ax_audit(&w);
+    check("form-voiceover", named.as_deref() == Some("Sync") && problems.is_empty(), format!("the switch is read as {named:?}; audit {problems:?}"));
+    check("group-box", label("Totals").is_some() && label("3 libraries, 1,204 books").is_some(), "title and content shown".into());
+
+    // Disclosure: closed, its content not built; the triangle opens it.
+    let triangle = all().into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).find(|b| b.bezelStyle() == objc2_app_kit::NSBezelStyle::Disclosure).unwrap();
+    let closed = !all().into_iter().any(|v| v.downcast::<NSStepper>().is_ok());
+    unsafe { triangle.performClick(None) };
+    let opened = open_.get_untracked();
+    let w2 = w.clone();
+    after_events(move || {
+        let stepper = all_views(&w2.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<NSStepper>().ok());
+        let stepper_named = stepper.as_ref().and_then(|s| objc2_app_kit::NSAccessibility::accessibilityLabel(&**s)).map(|l| l.to_string());
+        if let Ok(dir) = std::env::var("SNAP") {
+            snapshot_windows(&dir);
+        }
+        batch(|| open_.set(false));
+        let (w3, triangle) = (w2.clone(), triangle.clone());
+        let events = events.clone();
+        after_events(move || {
+            let gone = !all_views(&w3.contentView().unwrap()).into_iter().any(|v| v.downcast::<NSStepper>().is_ok());
+            let follows = triangle.state() == objc2_app_kit::NSControlStateValueOff;
+            check(
+                "disclosure",
+                closed && opened && stepper_named.as_deref() == Some("Retries") && gone && follows,
+                format!("closed at first {closed}; the triangle opened it {opened}, showing a stepper named {stepper_named:?}; closed from code: gone {gone}, triangle follows {follows}"),
+            );
+            ferrokit::close_window(&w3);
+            rich_table_checks(events.clone());
+        });
+    });
 }
 
 #[derive(Clone)]
