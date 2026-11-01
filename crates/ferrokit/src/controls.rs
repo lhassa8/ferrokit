@@ -256,10 +256,55 @@ pub fn picker<T: PartialEq + Clone + 'static>(value: &Signal<T>, options: Vec<(&
     Picker { value: *value, options: options.into_iter().map(|(t, v)| (t.to_string(), v)).collect() }
 }
 
-/// A continuous slider bound two ways to `value`.
+/// A slider bound two ways to `value`.
 pub struct Slider {
     value: Signal<f64>,
     range: (f64, f64),
+    ticks: usize,
+    snap: bool,
+    shape: SliderShape,
+    size: crate::ControlSize,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum SliderShape {
+    Horizontal,
+    Vertical,
+    Circular,
+}
+
+impl Slider {
+    /// `n` tick marks along it, from end to end (a 0–100 slider with 11
+    /// ticks marks every 10).
+    pub fn ticks(mut self, n: usize) -> Self {
+        self.ticks = n;
+        self
+    }
+
+    /// Only the tick marks' values can be picked (give it [`ticks`](Self::ticks)).
+    pub fn snap_to_ticks(mut self) -> Self {
+        self.snap = true;
+        self
+    }
+
+    /// Upright, filling the height it's given (a volume or level control).
+    pub fn vertical(mut self) -> Self {
+        self.shape = SliderShape::Vertical;
+        self
+    }
+
+    /// A dial, turned around its centre (an angle or a rotation); `min` is
+    /// at the top.
+    pub fn circular(mut self) -> Self {
+        self.shape = SliderShape::Circular;
+        self
+    }
+
+    /// Mini, small, regular or large.
+    pub fn control_size(mut self, size: crate::ControlSize) -> Self {
+        self.size = size;
+        self
+    }
 }
 
 impl View for Slider {
@@ -268,10 +313,26 @@ impl View for Slider {
         slider.setMinValue(self.range.0);
         slider.setMaxValue(self.range.1);
         slider.setContinuous(true);
+        slider.setControlSize(self.size.ns());
+        if self.ticks > 0 {
+            slider.setNumberOfTickMarks(self.ticks as isize);
+            slider.setAllowsTickMarkValuesOnly(self.snap);
+        }
+        // Grows along its length; a dial keeps its own size.
+        let (grow, base) = match self.shape {
+            SliderShape::Horizontal => ((true, false), Size { w: 100.0, h: 0.0 }),
+            SliderShape::Vertical => {
+                slider.setVertical(true);
+                ((false, true), Size { w: 0.0, h: 100.0 })
+            }
+            SliderShape::Circular => {
+                slider.setSliderType(objc2_app_kit::NSSliderType::Circular);
+                ((false, false), Size::default())
+            }
+        };
         let (value, s) = (self.value, slider.clone());
         let target = on_action(cx, &slider, move || value.set(s.doubleValue()));
-        let (mut node, _) =
-            Node::leaf(cx, Retained::into_super(Retained::into_super(slider.clone())), (true, false), Size { w: 100.0, h: 0.0 });
+        let (mut node, _) = Node::leaf(cx, Retained::into_super(Retained::into_super(slider.clone())), grow, base);
         let value = self.value;
         node.own(Effect::new(move || {
             let v = value.get();
@@ -284,9 +345,11 @@ impl View for Slider {
     }
 }
 
-/// A slider over `min..=max`, bound two ways to `value`.
+/// A slider over `min..=max`, bound two ways to `value`: horizontal and
+/// continuous unless given [`ticks`](Slider::ticks), [`vertical`](Slider::vertical)
+/// or [`circular`](Slider::circular).
 pub fn slider(value: &Signal<f64>, min: f64, max: f64) -> Slider {
-    Slider { value: *value, range: (min, max) }
+    Slider { value: *value, range: (min, max), ticks: 0, snap: false, shape: SliderShape::Horizontal, size: crate::ControlSize::Regular }
 }
 
 /// Up/down arrows stepping `value` within a range.
@@ -324,18 +387,52 @@ pub fn stepper(value: &Signal<f64>, min: f64, max: f64, step: f64) -> Stepper {
     Stepper { value: *value, range: (min, max), step }
 }
 
-/// A progress bar: `Some(fraction)` (0–1) or `None` for indeterminate.
-pub struct Progress(Box<dyn Fn() -> Option<f64>>);
+/// A progress bar or spinner: `Some(fraction)` (0–1) or `None` for
+/// indeterminate.
+pub struct Progress {
+    f: Box<dyn Fn() -> Option<f64>>,
+    spinner: bool,
+    size: crate::ControlSize,
+}
+
+impl Progress {
+    /// A spinner instead of a bar: spinning while the amount is unknown, a
+    /// filling circle while it's known. For "loading" beside a label or in a
+    /// toolbar.
+    pub fn spinner(mut self) -> Self {
+        self.spinner = true;
+        self
+    }
+
+    /// Mini, small, regular or large (a small spinner suits a text line).
+    pub fn control_size(mut self, size: crate::ControlSize) -> Self {
+        self.size = size;
+        self
+    }
+}
 
 impl View for Progress {
     fn build(self, cx: &mut Cx) -> Node {
+        use objc2_app_kit::NSProgressIndicatorStyle;
         let bar = objc2_app_kit::NSProgressIndicator::new(cx.mtm);
-        bar.setStyle(objc2_app_kit::NSProgressIndicatorStyle::Bar);
+        bar.setStyle(if self.spinner { NSProgressIndicatorStyle::Spinning } else { NSProgressIndicatorStyle::Bar });
+        bar.setControlSize(self.size.ns());
         bar.setMinValue(0.0);
         bar.setMaxValue(1.0);
-        let (mut node, _) =
-            Node::leaf(cx, Retained::into_super(bar.clone()), (true, false), Size { w: 100.0, h: 0.0 });
-        let f = self.0;
+        let (grow, base) = if self.spinner {
+            bar.sizeToFit();
+            let s = bar.frame().size;
+            ((false, false), Size { w: s.width, h: s.height })
+        } else {
+            ((true, false), Size { w: 100.0, h: 0.0 })
+        };
+        let (mut node, _) = Node::leaf(cx, Retained::into_super(bar.clone()), grow, base);
+        if self.spinner
+            && let crate::view::Kind::Leaf(l) = &node.kind
+        {
+            l.content.set(Some(base));
+        }
+        let f = self.f;
         node.own(Effect::new(move || match f() {
             Some(v) => {
                 // SAFETY: nil sender.
@@ -354,9 +451,10 @@ impl View for Progress {
 }
 
 /// A progress bar driven by `f` (reading signals): `Some(0.0..=1.0)` or
-/// `None` while the amount is unknown.
+/// `None` while the amount is unknown. [`spinner`](Progress::spinner) makes
+/// it a spinner.
 pub fn progress(f: impl Fn() -> Option<f64> + 'static) -> Progress {
-    Progress(Box::new(f))
+    Progress { f: Box::new(f), spinner: false, size: crate::ControlSize::Regular }
 }
 
 /// An image: an SF Symbol ([`image`]), or a picture from a file or bytes

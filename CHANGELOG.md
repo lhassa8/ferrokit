@@ -160,6 +160,14 @@ The review is in `docs/Q3_API_REVIEW.md`. Changes:
 - **`.accessibility_value(..)`:** what VoiceOver reads after a view's name; Habits' cards say whether they're done.
 - **A new `values` suite** with 11 checks; the examples, guide and templates use the new names.
 
+### New controls (the C queue, after the coverage review)
+
+- **Button styles and sizes:** `.style(ButtonStyle::…)` (borderless, inline, recessed, circular, toolbar, Liquid Glass), `.control_size(ControlSize::…)` and `.destructive()`.
+- **`menu_button`:** a pull-down button with a menu of actions, using the menu bar's `MenuItem`s; a title, a symbol or both.
+- **`help_button`:** AppKit's round "?" button, named "Help" for VoiceOver.
+- **Sliders:** `.ticks(n)`, `.snap_to_ticks()`, `.vertical()`, `.circular()` (a dial) and `.control_size(..)`.
+- **`progress(..).spinner()`:** a spinner (spinning while the amount is unknown, a filling circle when known), with `.control_size(..)`.
+
 ### Fixed in the hands-on checks (Phase 3, Q4)
 
 - **Typing in the middle of highlighted text moved the caret** to the end of the restyled span (in the SQL browser's query, typing after `SELECT ` jumped past the next word). An edit now styles only its own characters during the edit and the rest just after it.

@@ -38,6 +38,8 @@ let form = vstack((
 | `progress` | `NSProgressIndicator` | a closure: `Some(fraction)` or `None` |
 | `image` | `NSImageView` with an SF Symbol | – |
 | `button` | `NSButton` | an action |
+| `menu_button` | `NSPopUpButton`, pulling down | menu items |
+| `help_button` | `NSButton`, help bezel | an action |
 | `date_picker` | `NSDatePicker` | `Signal<SystemTime>` |
 | `time_picker` | `NSDatePicker` (hour and minute) | `Signal<(u32, u32)>` |
 | `color_well` | `NSColorWell` | `Signal<Color>` |
@@ -99,6 +101,58 @@ let save = button("Save", || println!("saved"))
 ```
 
 `text_field(…).on_submit(f)` runs `f` on Return in that field.
+
+A button's look and size, a menu of actions, and the help button:
+
+```rust,no_run
+use ferrokit::*;
+
+let bar = hstack((
+    button("Unread", || {}).style(ButtonStyle::Recessed),         // a filter bar's look
+    button("Delete", || {}).destructive().control_size(ControlSize::Small),
+    menu_button("Export", vec![
+        menu_item("CSV…", || println!("csv")),
+        menu_item("PDF…", || println!("pdf")),
+    ]),
+    menu_button("", vec![menu_item("Rename", || {})])
+        .symbol("ellipsis.circle")
+        .style(ButtonStyle::Borderless)
+        .accessibility_label("More"),
+    help_button(|| println!("help")),
+));
+# let _ = bar;
+```
+
+- `ButtonStyle`: `Standard`, `Borderless`, `Inline` (a capsule inside a
+  row), `Recessed`, `Circular` (a symbol alone), `Toolbar`, `Glass` (Liquid
+  Glass on macOS 26; standard before).
+- `ControlSize`: `Mini`, `Small` (inspectors), `Regular`, `Large`.
+- `.destructive()` marks Delete and Discard: AppKit never presses it for
+  Return, and draws it red where the style does.
+- `menu_button` items are the menu bar's: `.disabled(..)`, `.checked(..)`,
+  key equivalents and separators work the same.
+
+## Sliders and progress
+
+```rust,no_run
+use ferrokit::*;
+
+let quality = Signal::new(50.0);
+let volume = Signal::new(0.5);
+let angle = Signal::new(0.0);
+let loaded = Signal::new(None::<f64>);
+
+let panel = hstack((
+    slider(&quality, 0.0, 100.0).ticks(11).snap_to_ticks(),   // stops at 0, 10, … 100
+    slider(&volume, 0.0, 1.0).vertical(),                     // fills the height it's given
+    slider(&angle, 0.0, 360.0).circular(),                    // a dial
+    progress(move || loaded.get()).spinner().control_size(ControlSize::Small),
+));
+# let _ = panel;
+```
+
+A spinner spins while its closure returns `None` and fills a circle with
+`Some(fraction)`; a bar does the same as a stripe.
 
 ## Tab order, shortcuts, input methods
 

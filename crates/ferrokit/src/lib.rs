@@ -140,7 +140,7 @@ pub use view::{
     dynamic, for_each, grid, hstack, zstack, Layers, live_nodes, spacer, vstack, watch, Watch,
 };
 #[allow(deprecated)]
-pub use appkit_views::{Button, Divider, Label, Scroll, Text, button, divider, label, scroll, text};
+pub use appkit_views::{Button, ButtonStyle, ControlSize, Divider, HelpButton, Label, MenuButton, Scroll, Text, button, divider, help_button, label, menu_button, scroll, text};
 
 fn mtm() -> MainThreadMarker {
     MainThreadMarker::new().expect("ferrokit must be used on the main thread")

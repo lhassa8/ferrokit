@@ -306,6 +306,69 @@ impl ActionTarget {
     }
 }
 
+/// How a button is drawn ([`Button::style`], [`MenuButton::style`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum ButtonStyle {
+    /// The standard rounded push button.
+    #[default]
+    Standard,
+    /// No bezel: the title or symbol alone, highlighted when pressed.
+    Borderless,
+    /// A small capsule, for buttons inside text or a list row.
+    Inline,
+    /// A bezel that shows only on hover and press, for filter bars
+    /// (Mail's "All" and "Unread" above a list).
+    Recessed,
+    /// A round button, for a symbol alone.
+    Circular,
+    /// The toolbar's look, for buttons in a bar of the content.
+    Toolbar,
+    /// Liquid Glass (macOS 26); the standard style before it.
+    Glass,
+}
+
+impl ButtonStyle {
+    fn apply(self, b: &NSButton) {
+        use objc2_app_kit::NSBezelStyle;
+        match self {
+            ButtonStyle::Standard => b.setBezelStyle(NSBezelStyle::Push),
+            ButtonStyle::Borderless => b.setBordered(false),
+            ButtonStyle::Inline => b.setBezelStyle(NSBezelStyle::Badge),
+            ButtonStyle::Recessed => b.setBezelStyle(NSBezelStyle::AccessoryBar),
+            ButtonStyle::Circular => b.setBezelStyle(NSBezelStyle::Circular),
+            ButtonStyle::Toolbar => b.setBezelStyle(NSBezelStyle::Toolbar),
+            ButtonStyle::Glass => b.setBezelStyle(if crate::has_liquid_glass() { NSBezelStyle::Glass } else { NSBezelStyle::Push }),
+        }
+    }
+}
+
+/// A control's size, as in Apple's apps: small controls in inspectors and
+/// dense panels, large ones for a welcome window's main actions.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum ControlSize {
+    /// The smallest, for tight spaces.
+    Mini,
+    /// Inspectors and panels.
+    Small,
+    /// The usual size.
+    #[default]
+    Regular,
+    /// Prominent actions.
+    Large,
+}
+
+impl ControlSize {
+    pub(crate) fn ns(self) -> objc2_app_kit::NSControlSize {
+        use objc2_app_kit::NSControlSize;
+        match self {
+            ControlSize::Mini => NSControlSize::Mini,
+            ControlSize::Small => NSControlSize::Small,
+            ControlSize::Regular => NSControlSize::Regular,
+            ControlSize::Large => NSControlSize::Large,
+        }
+    }
+}
+
 /// A push button.
 pub struct Button {
     title: crate::Value<String>,
@@ -313,6 +376,9 @@ pub struct Button {
     disabled: Option<crate::Value<bool>>,
     default_action: bool,
     symbol: Option<crate::Value<String>>,
+    style: ButtonStyle,
+    size: ControlSize,
+    destructive: bool,
 }
 
 impl Button {
@@ -337,6 +403,26 @@ impl Button {
         self.default_action = true;
         self
     }
+
+    /// How it's drawn: borderless, inline, recessed, circular, toolbar,
+    /// glass.
+    pub fn style(mut self, style: ButtonStyle) -> Self {
+        self.style = style;
+        self
+    }
+
+    /// Mini, small, regular or large.
+    pub fn control_size(mut self, size: ControlSize) -> Self {
+        self.size = size;
+        self
+    }
+
+    /// Marks the action as destructive (Delete, Discard): AppKit draws it in
+    /// red where the style allows, and it's never pressed by Return.
+    pub fn destructive(mut self) -> Self {
+        self.destructive = true;
+        self
+    }
 }
 
 impl View for Button {
@@ -348,6 +434,11 @@ impl View for Button {
         };
         if self.default_action {
             button.setKeyEquivalent(&NSString::from_str("\r"));
+        }
+        self.style.apply(&button);
+        button.setControlSize(self.size.ns());
+        if self.destructive {
+            button.setHasDestructiveAction(true);
         }
         let view: Retained<NSView> = Retained::into_super(Retained::into_super(button.clone()));
         let (mut node, handle) = Node::leaf(cx, view.clone(), (false, false), Size::default());
@@ -379,5 +470,114 @@ impl View for Button {
 /// A push button; `action` runs inside a batch. The title is fixed, or a
 /// closure computing it from signals ("Show Sidebar" or "Hide Sidebar").
 pub fn button(title: impl crate::IntoValue<String>, action: impl Fn() + 'static) -> Button {
-    Button { title: title.into_value(), action: Box::new(action), disabled: None, default_action: false, symbol: None }
+    Button {
+        title: title.into_value(),
+        action: Box::new(action),
+        disabled: None,
+        default_action: false,
+        symbol: None,
+        style: ButtonStyle::Standard,
+        size: ControlSize::Regular,
+        destructive: false,
+    }
+}
+
+/// The round "?" button that opens help for the window or panel it's in
+/// (put it in the bottom corner of a settings pane or sheet). VoiceOver
+/// reads it as "Help".
+pub fn help_button(action: impl Fn() + 'static) -> HelpButton {
+    HelpButton(Box::new(action))
+}
+
+/// See [`help_button`].
+pub struct HelpButton(Box<dyn Fn()>);
+
+impl View for HelpButton {
+    fn build(self, cx: &mut Cx) -> Node {
+        let target = ActionTarget::new(cx.mtm, self.0);
+        // SAFETY: the target responds to `fire:` and the node keeps it alive.
+        let button = unsafe { NSButton::buttonWithTitle_target_action(&NSString::from_str(""), Some(&target), Some(sel!(fire:)), cx.mtm) };
+        button.setBezelStyle(objc2_app_kit::NSBezelStyle::HelpButton);
+        objc2_app_kit::NSAccessibility::setAccessibilityLabel(&*button, Some(&NSString::from_str(&crate::t("Help"))));
+        let (mut node, _) = Node::leaf(cx, Retained::into_super(Retained::into_super(button)), (false, false), Size::default());
+        node.keep(Retained::into_super(target));
+        node
+    }
+}
+
+/// A button showing a menu of actions when clicked (a pull-down button:
+/// "Export" with "CSV…", "JSON…", "PDF…"). The items are menu items, as in
+/// the menu bar: enabled, checked and with key equivalents.
+pub fn menu_button(title: &str, items: Vec<crate::MenuItem>) -> MenuButton {
+    MenuButton { title: title.into(), items, symbol: None, style: ButtonStyle::Standard, size: ControlSize::Regular, disabled: None }
+}
+
+/// See [`menu_button`].
+pub struct MenuButton {
+    title: String,
+    items: Vec<crate::MenuItem>,
+    symbol: Option<String>,
+    style: ButtonStyle,
+    size: ControlSize,
+    disabled: Option<crate::Value<bool>>,
+}
+
+impl MenuButton {
+    /// An SF Symbol before the title, or alone when the title is empty
+    /// (give it an `accessibility_label` then): `"ellipsis.circle"` for a
+    /// "More" menu.
+    pub fn symbol(mut self, name: &str) -> Self {
+        self.symbol = Some(name.into());
+        self
+    }
+
+    /// How it's drawn ([`ButtonStyle`]); borderless suits a symbol alone.
+    pub fn style(mut self, style: ButtonStyle) -> Self {
+        self.style = style;
+        self
+    }
+
+    /// Mini, small, regular or large.
+    pub fn control_size(mut self, size: ControlSize) -> Self {
+        self.size = size;
+        self
+    }
+
+    /// Disables it: `true`, or a closure reading signals.
+    pub fn disabled(mut self, when: impl crate::IntoValue<bool>) -> Self {
+        self.disabled = Some(when.into_value());
+        self
+    }
+}
+
+impl View for MenuButton {
+    fn build(self, cx: &mut Cx) -> Node {
+        let mtm = cx.mtm;
+        let button = objc2_app_kit::NSPopUpButton::initWithFrame_pullsDown(objc2_app_kit::NSPopUpButton::alloc(mtm), objc2_foundation::NSRect::ZERO, true);
+        let (menu, targets) = crate::chrome::build_menu(mtm, self.items);
+        // A pull-down button shows its first item as its title.
+        let head = objc2_app_kit::NSMenuItem::new(mtm);
+        head.setTitle(&NSString::from_str(&self.title));
+        if let Some(name) = &self.symbol {
+            head.setImage(objc2_app_kit::NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str(name), Some(&NSString::from_str(&self.title))).as_deref());
+        }
+        menu.insertItem_atIndex(&head, 0);
+        button.setMenu(Some(&menu));
+        if self.symbol.is_some() && self.title.is_empty() {
+            button.setImagePosition(objc2_app_kit::NSCellImagePosition::ImageOnly);
+        }
+        self.style.apply(&button);
+        button.setControlSize(self.size.ns());
+        let view: Retained<NSView> = Retained::into_super(Retained::into_super(Retained::into_super(button.clone())));
+        let (mut node, _) = Node::leaf(cx, view, (false, false), Size::default());
+        match self.disabled {
+            Some(crate::Value::Fixed(d)) => button.setEnabled(!d),
+            Some(disabled) => node.own(Effect::new(move || button.setEnabled(!disabled.get()))),
+            None => {}
+        }
+        for t in targets {
+            node.keep(t);
+        }
+        node
+    }
 }

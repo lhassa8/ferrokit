@@ -1951,6 +1951,170 @@ fn controls_c_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let segments: Vec<String> = elements.iter().filter(|e| e.role == "AXRadioButton").map(|e| e.name.clone()).collect();
     check("controls-c-accessibility", problems.is_empty() && segments == ["List", "Grid", "Columns"], format!("unnamed: {problems:?}; segments {segments:?}"));
     ferrokit::close_window(&w);
+    after_events(move || button_kind_checks(events.clone()));
+}
+
+/// C1: button styles and sizes, a destructive button, the help button, a
+/// menu (pull-down) button whose items act, check and disable.
+fn button_kind_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use ferrokit::{ButtonStyle, ControlSize, button, help_button, menu_button, menu_item, menu_separator};
+    use objc2::ClassType;
+    use objc2_foundation::NSObjectProtocol;
+    use objc2_app_kit::{NSBezelStyle, NSButton, NSControlSize, NSPopUpButton};
+    let helped = Signal::new(0u32);
+    let exported = Signal::new(String::new());
+    let busy = Signal::new(false);
+    let (h2, e2, e3) = (helped, exported, exported);
+    let w = open(Window::new("Buttons").size(520.0, 220.0).view(
+        vstack((
+            hstack((
+                button("Standard", || {}),
+                button("Borderless", || {}).style(ButtonStyle::Borderless),
+                button("Inline", || {}).style(ButtonStyle::Inline),
+                button("Recessed", || {}).style(ButtonStyle::Recessed),
+                button("", || {}).symbol("plus").style(ButtonStyle::Circular).accessibility_label("Add"),
+            ))
+            .spacing(8.0),
+            hstack((
+                button("Toolbar", || {}).style(ButtonStyle::Toolbar),
+                button("Glass", || {}).style(ButtonStyle::Glass),
+                button("Small", || {}).control_size(ControlSize::Small),
+                button("Large", || {}).control_size(ControlSize::Large),
+                button("Delete", || {}).destructive(),
+            ))
+            .spacing(8.0),
+            hstack((
+                menu_button(
+                    "Export",
+                    vec![
+                        menu_item("CSV…", move || e2.set("csv".into())),
+                        menu_separator(),
+                        menu_item("PDF…", move || e3.set("pdf".into())).disabled(move || busy.get()),
+                    ],
+                ),
+                menu_button("", vec![menu_item("Rename", || {})]).symbol("ellipsis.circle").style(ButtonStyle::Borderless).accessibility_label("More"),
+                help_button(move || h2.update(|n| *n += 1)),
+            ))
+            .spacing(8.0),
+        ))
+        .spacing(12.0)
+        .padding(16.0),
+    ));
+    let all = all_views(&w.contentView().unwrap());
+    let pulls: Vec<Retained<NSPopUpButton>> = all.iter().filter_map(|v| v.clone().downcast::<NSPopUpButton>().ok()).collect();
+    let buttons: Vec<Retained<NSButton>> = all.iter().filter_map(|v| v.clone().downcast::<NSButton>().ok()).filter(|b: &Retained<NSButton>| !b.isKindOfClass(NSPopUpButton::class())).collect();
+    let by_title = |t: &str| buttons.iter().find(|b| b.title().to_string() == t).cloned();
+    let style_of = |t: &str| by_title(t).map(|b| b.bezelStyle());
+    let glass = if ferrokit::has_liquid_glass() { NSBezelStyle::Glass } else { NSBezelStyle::Push };
+    let styles = style_of("Standard") == Some(NSBezelStyle::Push)
+        && by_title("Borderless").is_some_and(|b| !b.isBordered())
+        && style_of("Inline") == Some(NSBezelStyle::Badge)
+        && style_of("Recessed") == Some(NSBezelStyle::AccessoryBar)
+        && style_of("Toolbar") == Some(NSBezelStyle::Toolbar)
+        && style_of("Glass") == Some(glass)
+        && buttons.iter().any(|b| b.bezelStyle() == NSBezelStyle::Circular);
+    let sizes = by_title("Small").map(|b| b.controlSize()) == Some(NSControlSize::Small) && by_title("Large").map(|b| b.controlSize()) == Some(NSControlSize::Large);
+    let destructive = by_title("Delete").is_some_and(|b| b.hasDestructiveAction());
+    check("button-styles", styles && sizes && destructive, format!("styles {styles}; sizes {sizes}; destructive {destructive}"));
+
+    // Help: AppKit's round "?" button, named, and it acts.
+    let help = buttons.iter().find(|b| b.bezelStyle() == NSBezelStyle::HelpButton).cloned();
+    if let Some(h) = &help {
+        // SAFETY: clicking a button on the main thread.
+        unsafe { h.performClick(None) };
+    }
+    let help_name = help.as_ref().and_then(|h| objc2_app_kit::NSAccessibility::accessibilityLabel(&**h)).map(|l| l.to_string());
+    check("help-button", help.is_some() && helped.get_untracked() == 1 && help_name.as_deref() == Some("Help"), format!("found {}; pressed {}; named {help_name:?}", help.is_some(), helped.get_untracked()));
+
+    // Menu button: a pull-down showing its title; an item acts; a disabled
+    // condition is read when the menu opens.
+    let export = pulls.iter().find(|p| p.titleOfSelectedItem().is_some_and(|t| t.to_string() == "Export") || p.itemTitleAtIndex(0).to_string() == "Export").cloned();
+    let titles: Vec<String> = export.as_ref().map(|p| p.itemTitles().iter().map(|t| t.to_string()).collect()).unwrap_or_default();
+    let pulls_down = export.as_ref().is_some_and(|p| p.pullsDown());
+    if let Some(menu) = export.as_ref().and_then(|p| p.menu()) {
+        menu.performActionForItemAtIndex(1);
+    }
+    let acted = exported.get_untracked() == "csv";
+    batch(|| busy.set(true));
+    let pdf_enabled_when_busy = export.as_ref().and_then(|p| p.menu()).map(|m| {
+        m.update();
+        m.itemAtIndex(3).is_some_and(|i| i.isEnabled())
+    });
+    let n = pulls.len();
+    check(
+        "menu-button",
+        n == 2 && pulls_down && titles.first().map(String::as_str) == Some("Export") && acted && pdf_enabled_when_busy == Some(false),
+        format!("{n} pull-downs; pulls down {pulls_down}; items {titles:?}; CSV… acts {acted}; PDF… enabled while busy {pdf_enabled_when_busy:?}"),
+    );
+
+    let problems = ferrokit::testing::ax_audit(&w);
+    check("buttons-accessibility", problems.is_empty(), format!("{problems:?}"));
+    if let Ok(dir) = std::env::var("SNAP") {
+        snapshot_windows(&dir);
+    }
+    ferrokit::close_window(&w);
+    after_events(move || slider_kind_checks(events.clone()));
+}
+
+/// C2: tick marks, a vertical slider and a dial, a spinner, control sizes.
+fn slider_kind_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use ferrokit::{ControlSize, progress, slider};
+    use objc2_app_kit::{NSControlSize, NSProgressIndicator, NSProgressIndicatorStyle, NSSlider, NSSliderType};
+    let level = Signal::new(50.0);
+    let volume = Signal::new(0.3);
+    let angle = Signal::new(90.0);
+    let loading = Signal::new(None::<f64>);
+    let w = open(Window::new("Sliders").size(420.0, 220.0).view(
+        hstack((
+            vstack((
+                slider(&level, 0.0, 100.0).ticks(11).snap_to_ticks().accessibility_label("Level"),
+                slider(&level, 0.0, 100.0).control_size(ControlSize::Small).accessibility_label("Level, small"),
+                hstack((progress(move || loading.get()).spinner().accessibility_label("Loading"), text("Loading…"))).spacing(6.0),
+            ))
+            .spacing(12.0),
+            slider(&volume, 0.0, 1.0).vertical().accessibility_label("Volume"),
+            slider(&angle, 0.0, 360.0).circular().accessibility_label("Angle"),
+        ))
+        .spacing(16.0)
+        .padding(16.0),
+    ));
+    let all = all_views(&w.contentView().unwrap());
+    let sliders: Vec<Retained<NSSlider>> = all.iter().filter_map(|v| v.clone().downcast::<NSSlider>().ok()).collect();
+    let ticked = sliders.iter().find(|s| s.numberOfTickMarks() == 11).cloned();
+    let small = sliders.iter().find(|s| s.controlSize() == NSControlSize::Small).cloned();
+    let vertical = sliders.iter().find(|s| s.isVertical()).cloned();
+    let dial = sliders.iter().find(|s| s.sliderType() == NSSliderType::Circular).cloned();
+    let ticks = ticked.as_ref().is_some_and(|s| s.allowsTickMarkValuesOnly()) && small.is_some();
+    // The vertical slider fills the content's height; the dial keeps its size.
+    let tall = vertical.as_ref().map(|s| s.frame().size);
+    let upright = tall.is_some_and(|f| f.height > 150.0 && f.height > f.width * 3.0);
+    let round = dial.as_ref().map(|s| s.frame().size).is_some_and(|f| (f.width - f.height).abs() < 4.0 && f.width < 60.0);
+    if let Some(d) = &dial {
+        d.setDoubleValue(270.0);
+        send_action(d);
+    }
+    batch(|| volume.set(0.8));
+    let both_ways = angle.get_untracked() == 270.0 && vertical.as_ref().is_some_and(|s| (s.doubleValue() - 0.8).abs() < 1e-9);
+    check(
+        "slider-kinds",
+        sliders.len() == 4 && ticks && upright && round && both_ways,
+        format!("{} sliders; ticks and snap {ticks}; vertical {tall:?}; dial round {round}; dial → {}, signal → vertical {both_ways}", sliders.len(), angle.get_untracked()),
+    );
+
+    // The spinner: spinning while unknown, then a filling circle.
+    let spinner = all.iter().find_map(|v| v.clone().downcast::<NSProgressIndicator>().ok());
+    let spinning = spinner.as_ref().is_some_and(|p| p.style() == NSProgressIndicatorStyle::Spinning && p.isIndeterminate());
+    batch(|| loading.set(Some(0.4)));
+    let known = spinner.as_ref().is_some_and(|p| !p.isIndeterminate() && (p.doubleValue() - 0.4).abs() < 1e-9);
+    let size = spinner.as_ref().map(|p| p.frame().size);
+    check("spinner", spinning && known && size.is_some_and(|s| s.width > 8.0 && s.width < 40.0), format!("spinning while unknown {spinning}; 0.4 shown {known}; size {size:?}"));
+
+    let problems = ferrokit::testing::ax_audit(&w);
+    check("sliders-accessibility", problems.is_empty(), format!("{problems:?}"));
+    if let Ok(dir) = std::env::var("SNAP") {
+        snapshot_windows(&dir);
+    }
+    ferrokit::close_window(&w);
     after_events(move || rich_table_checks(events.clone()));
 }
 
