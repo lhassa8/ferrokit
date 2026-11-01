@@ -728,7 +728,7 @@ impl ToolbarDelegate {
         let mtm = MainThreadMarker::from(self);
         let view = NSView::new(mtm);
         view.setTranslatesAutoresizingMaskIntoConstraints(false);
-        let before = self.ivars().spacer.borrow().as_ref().map_or(0.0, |w| w.constant());
+        let before = self.ivars().spacer.borrow().as_ref().map_or(MIN_SPACE, |w| w.constant());
         let width = view.widthAnchor().constraintEqualToConstant(before);
         width.setActive(true);
         view.heightAnchor().constraintEqualToConstant(1.0).setActive(true);
@@ -851,6 +851,10 @@ pub(crate) fn track_sidebar(window: &NSWindow, delegate: &NSObject, split: &NSSp
     info.ivars().on_resize.replace(Some(Box::new(fit)));
 }
 
+/// The space's narrowest width: AppKit warns about toolbar item views of
+/// zero width.
+const MIN_SPACE: f64 = 1.0;
+
 /// Sizes the space before the title so the title starts 18 points past the
 /// sidebar's edge (none while the sidebar is hidden). Measured, not
 /// computed: AppKit's spacing around toolbar items varies by version.
@@ -860,17 +864,17 @@ fn fit_title(window: &NSWindow, split: &NSSplitView, width: &objc2_app_kit::NSLa
     let title = window.title().to_string();
     for _ in 0..3 {
         if sidebar < 1.0 {
-            width.setConstant(0.0);
+            width.setConstant(MIN_SPACE);
             return;
         }
         frame.layoutSubtreeIfNeeded();
         let Some(label) = title_label(&frame, &title) else {
             // No title shown: start the items past the traffic lights' area.
-            width.setConstant((sidebar - 80.0).max(0.0));
+            width.setConstant((sidebar - 80.0).max(MIN_SPACE));
             return;
         };
         let x = label.convertRect_toView(label.bounds(), None).origin.x;
-        let want = (width.constant() + sidebar + 18.0 - x).max(0.0);
+        let want = (width.constant() + sidebar + 18.0 - x).max(MIN_SPACE);
         if (want - width.constant()).abs() < 0.5 {
             return;
         }
