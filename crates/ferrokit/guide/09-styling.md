@@ -113,6 +113,28 @@ let icons = hstack((
 - `.palette(&[..])` for a colour per layer;
 - `.multicolor()` for the symbol's own colours.
 
+**Symbol effects** (macOS 14; AppKit draws them and tones them down under
+Reduce motion):
+
+```rust,no_run
+use ferrokit::*;
+
+let searching = Signal::new(true);
+let unread = Signal::new(0u32);
+let status = hstack((
+    // Runs while `searching` is true.
+    image("wifi").effect(SymbolEffect::VariableColor, move || searching.get()),
+    // Plays once each time `unread` changes.
+    image("bell.fill").effect_on(SymbolEffect::Bounce, move || unread.get()),
+));
+# let _ = status;
+```
+
+Repeating effects (`.effect`): `Pulse`, `VariableColor`, `Scale`,
+`Rotate`, `Breathe`. One-shot effects (`.effect_on`): `Bounce`, `Wiggle`,
+`Rotate`. `Wiggle`, `Rotate` and `Breathe` need macOS 15; on older systems
+an effect does nothing.
+
 **Pictures,** from a file or from bytes built into the app:
 
 ```rust,no_run

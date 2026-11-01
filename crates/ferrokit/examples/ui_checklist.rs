@@ -2115,6 +2115,46 @@ fn slider_kind_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         snapshot_windows(&dir);
     }
     ferrokit::close_window(&w);
+    after_events(move || symbol_effect_checks(events.clone()));
+}
+
+/// C3: SF Symbol effects: one running while a signal is true, one played
+/// when a value changes (not when the view is built).
+fn symbol_effect_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use ferrokit::testing::symbol_effects;
+    use ferrokit::{SymbolEffect, image};
+    fn animating(layer: &objc2_quartz_core::CALayer) -> bool {
+        // SAFETY: reading a layer's sublayers on the main thread.
+        let subs = unsafe { layer.sublayers() };
+        layer.animationKeys().is_some_and(|k| k.count() > 0) || subs.is_some_and(|s| s.iter().any(|l| animating(&l)))
+    }
+    let searching = Signal::new(false);
+    let unread = Signal::new(0u32);
+    let before = symbol_effects();
+    let w = open(Window::new("Symbol effects").size(240.0, 100.0).view(
+        hstack((
+            image("wifi").symbol_size(28.0).effect(SymbolEffect::VariableColor, move || searching.get()).description("Wi-Fi"),
+            image("bell.fill").symbol_size(28.0).effect_on(SymbolEffect::Bounce, move || unread.get()).description("Notifications"),
+        ))
+        .spacing(20.0)
+        .padding(20.0),
+    ));
+    let supported = objc2::runtime::AnyClass::get(c"NSSymbolBounceEffect").is_some();
+    let built = symbol_effects();
+    batch(|| searching.set(true));
+    let on = symbol_effects();
+    let wifi = all_views(&w.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSImageView>().ok());
+    let layers = wifi.as_ref().and_then(|v| v.layer()).is_some_and(|l| animating(&l));
+    batch(|| searching.set(false));
+    let off = symbol_effects();
+    batch(|| unread.set(3));
+    let bounced = symbol_effects();
+    check(
+        "symbol-effects",
+        supported && built == before && on.0 == before.0 + 1 && off.0 == before.0 && bounced.1 == before.1 + 1,
+        format!("before {before:?}; built {built:?}; searching {on:?} (layers animating {layers}); stopped {off:?}; after a change {bounced:?}"),
+    );
+    ferrokit::close_window(&w);
     after_events(move || rich_table_checks(events.clone()));
 }
 

@@ -104,6 +104,12 @@ pub fn post_edit(field: &NSTextField, text: &str) {
 pub fn send_action(control: &objc2_app_kit::NSControl) -> bool {
     unsafe { control.sendAction_to(control.action(), control.target().as_deref()) }
 }
+/// Symbol effects running ([`Image::effect`](crate::Image::effect) while
+/// active) and one-shot effects played so far ([`Image::effect_on`](crate::Image::effect_on)).
+pub fn symbol_effects() -> (isize, usize) {
+    crate::controls::SYMBOL_EFFECTS.with(std::cell::Cell::get)
+}
+
 /// Renders every window to `<dir>/<title>.png` (AppKit's own drawing, no
 /// screen-recording permission needed). The window's frame view is drawn, so
 /// the image includes the title bar and the window background (which the

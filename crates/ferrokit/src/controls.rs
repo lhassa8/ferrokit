@@ -465,6 +465,63 @@ pub struct Image {
     symbol: SymbolLook,
     fill: bool,
     radius: f64,
+    effects: Vec<(SymbolEffect, EffectWhen)>,
+}
+
+/// An SF Symbol animation ([`Image::effect`], [`Image::effect_on`]), drawn
+/// by AppKit (macOS 14; Wiggle, Rotate and Breathe from macOS 15; nothing
+/// on older systems). AppKit tones them down under Reduce motion.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SymbolEffect {
+    /// A bounce: a new message, an item added.
+    Bounce,
+    /// A fade in and out: waiting, recording.
+    Pulse,
+    /// Layers lit one after another: searching, connecting (`"wifi"`).
+    VariableColor,
+    /// Grown slightly while it lasts: selected, hovered.
+    Scale,
+    /// A shake: an error, attention needed.
+    Wiggle,
+    /// A turn: syncing, refreshing (`"arrow.triangle.2.circlepath"`).
+    Rotate,
+    /// A slow swell: alive, listening.
+    Breathe,
+}
+
+impl SymbolEffect {
+    fn class_name(self) -> &'static std::ffi::CStr {
+        match self {
+            SymbolEffect::Bounce => c"NSSymbolBounceEffect",
+            SymbolEffect::Pulse => c"NSSymbolPulseEffect",
+            SymbolEffect::VariableColor => c"NSSymbolVariableColorEffect",
+            SymbolEffect::Scale => c"NSSymbolScaleEffect",
+            SymbolEffect::Wiggle => c"NSSymbolWiggleEffect",
+            SymbolEffect::Rotate => c"NSSymbolRotateEffect",
+            SymbolEffect::Breathe => c"NSSymbolBreatheEffect",
+        }
+    }
+
+    /// `[NSSymbol…Effect effect]`, if this macOS has it.
+    fn object(self) -> Option<Retained<objc2::runtime::AnyObject>> {
+        let class = objc2::runtime::AnyClass::get(self.class_name())?;
+        // SAFETY: every NSSymbolEffect subclass answers +effect with an instance.
+        unsafe { msg_send![class, effect] }
+    }
+}
+
+enum EffectWhen {
+    /// Runs while the value is true.
+    While(crate::Value<bool>),
+    /// Plays once each time the closure's result changes.
+    On(Box<dyn Fn() -> u64>),
+}
+
+thread_local! {
+    /// Symbol effects started and not stopped, and one-shot effects
+    /// played, for tests ([`testing::symbol_effects`](crate::testing::symbol_effects)):
+    /// AppKit doesn't say which are running.
+    pub(crate) static SYMBOL_EFFECTS: std::cell::Cell<(isize, usize)> = const { std::cell::Cell::new((0, 0)) };
 }
 
 enum ImageSource {
@@ -538,6 +595,30 @@ impl Image {
         self
     }
 
+    /// A symbol effect running while `active` is true (`true`, or a
+    /// closure reading signals): `image("wifi").effect(SymbolEffect::VariableColor,
+    /// move || searching.get())`. For the repeating effects: pulse, variable
+    /// colour, scale, rotate, breathe.
+    pub fn effect(mut self, effect: SymbolEffect, active: impl crate::IntoValue<bool>) -> Self {
+        self.effects.push((effect, EffectWhen::While(active.into_value())));
+        self
+    }
+
+    /// A symbol effect played once each time `trigger`'s value changes
+    /// (it reads signals): `image("bell").effect_on(SymbolEffect::Bounce,
+    /// move || unread.get())`. For the one-shot effects: bounce, wiggle,
+    /// rotate.
+    pub fn effect_on<T: std::hash::Hash>(mut self, effect: SymbolEffect, trigger: impl Fn() -> T + 'static) -> Self {
+        self.effects.push((
+            effect,
+            EffectWhen::On(Box::new(move || {
+                use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+                BuildHasherDefault::<DefaultHasher>::default().hash_one(trigger())
+            })),
+        ));
+        self
+    }
+
     /// Rounds the picture's corners, in points (half its size for a
     /// circle). For a background's corners, see
     /// [`ViewExt::corner_radius`](crate::ViewExt::corner_radius).
@@ -548,8 +629,9 @@ impl Image {
 }
 
 impl View for Image {
-    fn build(self, cx: &mut Cx) -> Node {
+    fn build(mut self, cx: &mut Cx) -> Node {
         use objc2_app_kit::{NSImage, NSImageSymbolConfiguration, NSImageView};
+        let mut effects: Vec<Effect> = Vec::new();
         let description = self.description.as_deref().map(NSString::from_str);
         let (view, size): (Retained<NSView>, Option<Size>) = match &self.source {
             ImageSource::Symbol(name) => {
@@ -583,6 +665,54 @@ impl View for Image {
                 if let Some(c) = look.color {
                     view.setContentTintColor(Some(&c.ns()));
                 }
+                for (effect, when) in std::mem::take(&mut self.effects) {
+                    let Some(object) = effect.object() else { continue };
+                    let v = view.clone();
+                    // SAFETY: NSSymbolEffectOptions answers +options.
+                    let options: Option<Retained<objc2::runtime::AnyObject>> = objc2::runtime::AnyClass::get(c"NSSymbolEffectOptions").and_then(|c| unsafe { msg_send![c, options] });
+                    let Some(options) = options else { continue };
+                    match when {
+                        EffectWhen::While(active) => {
+                            let on = std::cell::Cell::new(false);
+                            effects.push(Effect::new(move || {
+                                let want = active.get();
+                                if want == on.replace(want) {
+                                    return;
+                                }
+                                // SAFETY: NSImageView's symbol-effect methods (macOS 14),
+                                // with an effect and options from the classes above.
+                                unsafe {
+                                    if want {
+                                        let _: () = msg_send![&*v, addSymbolEffect: &*object, options: &*options, animated: true];
+                                    } else {
+                                        let _: () = msg_send![&*v, removeSymbolEffectOfType: &*object, options: &*options, animated: true];
+                                    }
+                                }
+                                SYMBOL_EFFECTS.with(|c| {
+                                    let (running, played) = c.get();
+                                    c.set((running + if want { 1 } else { -1 }, played));
+                                });
+                            }));
+                        }
+                        EffectWhen::On(trigger) => {
+                            let last = std::cell::Cell::new(None);
+                            effects.push(Effect::new(move || {
+                                let now = trigger();
+                                // Not on the first run: only changes play it.
+                                if last.replace(Some(now)).is_some_and(|before| before != now) {
+                                    // SAFETY: as above.
+                                    unsafe {
+                                        let _: () = msg_send![&*v, addSymbolEffect: &*object, options: &*options, animated: true];
+                                    }
+                                    SYMBOL_EFFECTS.with(|c| {
+                                        let (running, played) = c.get();
+                                        c.set((running, played + 1));
+                                    });
+                                }
+                            }));
+                        }
+                    }
+                }
                 (Retained::into_super(Retained::into_super(view)), None)
             }
             ImageSource::File(_) | ImageSource::Data(_) => {
@@ -613,16 +743,19 @@ impl View for Image {
             // Decorative: hidden from VoiceOver (`accessibility_label` shows it again).
             <crate::platform::Native as crate::platform::Platform>::set_accessibility_element(&view, false);
         }
-        let (node, _) = Node::leaf(cx, view, (false, false), Size::default());
+        let (mut node, _) = Node::leaf(cx, view, (false, false), Size::default());
         if let (Some(size), crate::view::Kind::Leaf(l)) = (size, &node.kind) {
             l.content.set(Some(size));
+        }
+        for e in effects {
+            node.own(e);
         }
         node
     }
 }
 
 fn new_image(source: ImageSource) -> Image {
-    Image { source, description: None, symbol: SymbolLook::default(), fill: false, radius: 0.0 }
+    Image { source, description: None, symbol: SymbolLook::default(), fill: false, radius: 0.0, effects: Vec::new() }
 }
 
 /// An SF Symbol by name (e.g. `"star.fill"`). Panics if the name is unknown.

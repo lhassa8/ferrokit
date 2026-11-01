@@ -101,7 +101,7 @@ pub use resource::{Cancel, Load, Resource};
 pub use signal::{Effect, Memo, Signal, after_batch, batch, effect_runs, live_signals, untrack};
 pub use controls::{
     ColorWell, ComboBox, DatePicker, SearchField, Segmented, TimePicker, color_well, combo_box, date_picker, search_field, segmented, time_picker,
-    Checkbox, Image, Picker, Progress, Slider, Stepper, TextField, checkbox, image, image_data, image_file, picker, progress, secure_field, slider,
+    Checkbox, Image, Picker, Progress, Slider, Stepper, SymbolEffect, TextField, checkbox, image, image_data, image_file, picker, progress, secure_field, slider,
     stepper, text_field, toggle,
 };
 pub use chrome::{MenuItem, Modifier, Split, dynamic_submenu, submenu, ToolbarItem, menu_item, menu_separator, split, toolbar_button, toolbar_search, toolbar_space};
