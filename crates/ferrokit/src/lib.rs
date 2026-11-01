@@ -385,8 +385,10 @@ impl Window {
         // must not release them on close.
         unsafe { window.setReleasedWhenClosed(false) };
         window.setTitle(&NSString::from_str(&self.title));
+        let mut toolbar_delegate = None;
         if !self.toolbar.is_empty() {
             let delegate = chrome::install_toolbar(&window, self.toolbar);
+            toolbar_delegate = Some(delegate.clone());
             WINDOW_EXTRAS.with_borrow_mut(|e| e.push((window.clone(), delegate)));
         }
         if let Some(style) = self.chrome.toolbar_style {
@@ -423,6 +425,13 @@ impl Window {
                 r.commands.splice(0..0, self.responds.commands);
                 r.values.splice(0..0, self.responds.values);
             }
+            // Side-by-side panes at the top: the first is a sidebar, and the
+            // toolbar's title and items start beside it (once it's in the
+            // window).
+            let sidebar = match &node.kind {
+                view::Kind::Split { split, panes, stacked: false, .. } if panes.len() >= 2 => Some(split.clone()),
+                _ => None,
+            };
             ROOTS.with_borrow_mut(|r| r.push((root.clone(), node)));
             if let Some(drop) = self.drops {
                 // SAFETY: AppKit's pasteboard type constant.
@@ -431,6 +440,9 @@ impl Window {
             }
             window.setContentView(Some(&root));
             relayout_all();
+            if let (Some(split), Some(delegate)) = (sidebar, toolbar_delegate.as_ref()) {
+                chrome::track_sidebar(&window, delegate, &split);
+            }
         }
         window.center();
         if let Some(name) = &self.autosave {

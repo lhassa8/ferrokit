@@ -300,6 +300,15 @@ impl Browser {
         });
     }
 
+    /// Counts the last query's rows by `column`, most first: a result the
+    /// chart can draw.
+    fn count_by(&self, column: &str) {
+        let last = self.ran.get_untracked().1;
+        let inner = last.trim().trim_end_matches(';').trim();
+        self.query.set(format!("SELECT {c}, count(*) AS count FROM ({inner}) GROUP BY {c} ORDER BY count DESC;", c = quote(column)));
+        self.run();
+    }
+
     fn show(&self, source: &str) {
         self.query.set(format!("SELECT * FROM {};", quote(source)));
         self.run();
@@ -546,9 +555,41 @@ fn chart(b: Browser) -> impl View {
                     .exportable("chart"),
                 )
             }
-            _ => AnyView::new(text(t("Charts need a first column and a number column after it")).padding(12.0)),
+            _ => AnyView::new(no_chart(b)),
         }
     })
+}
+
+/// A text column worth counting by: the one with the fewest distinct
+/// values (2 to 50) among the first rows, as a city or a category.
+fn count_column(r: &Results) -> Option<String> {
+    let sample = r.rows.min(5_000) as u32;
+    (0..r.names.len())
+        .filter(|&i| matches!(r.kinds[i], ColKind::Text))
+        .map(|i| (i, (0..sample).map(|row| r.text(row, i)).collect::<std::collections::HashSet<_>>().len()))
+        .filter(|&(_, n)| (2..=50).contains(&n))
+        .min_by_key(|&(_, n)| n)
+        .map(|(i, _)| r.names[i].clone())
+}
+
+/// The chart's place without a result it can draw: what it needs, and a
+/// button counting the rows by one of their columns, which it can.
+fn no_chart(b: Browser) -> impl View {
+    let column = Memo::new(move || b.results.with(|r| r.as_ref().and_then(|r| count_column(r))));
+    vstack((
+        spacer(),
+        image("chart.bar.xaxis").symbol_size(30.0).color(Color::Tertiary),
+        text(t("No Chart")).font(Font::title3()).color(Color::Secondary),
+        text(t("A chart needs a column of labels, then a column of numbers.")).font(Font::caption()).color(Color::Tertiary),
+        dynamic(move || match column.get() {
+            Some(c) => AnyView::new(button(t_with("Count Rows by {column}", &[("column", &c)]), move || b.count_by(&c)).padding_xy(0.0, 6.0)),
+            None => AnyView::new(spacer().height(0.0)),
+        }),
+        spacer(),
+    ))
+    .spacing(6.0)
+    .padding(16.0)
+    .fill_width()
 }
 
 /// A result as CSV (RFC 4180): a header line, then the rows; fields with
@@ -1317,6 +1358,38 @@ mod self_checks {
         outer(w).arrangedSubviews().iter().map(|p| if p.isHidden() { 0.0 } else { p.frame().size.width.round() }).collect()
     }
 
+    /// Where the window's title starts, in window points.
+    fn title_x(w: &NSWindow) -> Option<f64> {
+        fn find(v: &NSView, title: &str) -> Option<f64> {
+            for s in v.subviews().iter() {
+                if let Ok(f) = s.clone().downcast::<objc2_app_kit::NSTextField>()
+                    && f.stringValue().to_string() == title
+                {
+                    return Some(f.convertRect_toView(f.bounds(), None).origin.x);
+                }
+                if s.class().name().to_str() != Ok("FerrokitRootView")
+                    && let Some(x) = find(&s, title)
+                {
+                    return Some(x);
+                }
+            }
+            None
+        }
+        let frame = unsafe { w.contentView()?.superview()? };
+        find(&frame, &w.title().to_string())
+    }
+
+    fn buttons(w: &NSWindow) -> Vec<String> {
+        all(w).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).map(|b| b.title().to_string()).collect()
+    }
+
+    fn press_button(w: &NSWindow, title: &str) {
+        if let Some(b) = all(w).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).find(|b| b.title().to_string() == title) {
+            // SAFETY: a button of ours, on the main thread.
+            unsafe { b.performClick(None) };
+        }
+    }
+
     fn labels(w: &NSWindow) -> Vec<String> {
         all(w).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSTextField>().ok()).map(|f| f.stringValue().to_string()).collect()
     }
@@ -1334,6 +1407,11 @@ mod self_checks {
     fn panes(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
         let before = pane_widths(&w);
         check("three-panes", before.len() == 3 && before.iter().all(|&x| x > 50.0) && (before[2] - 260.0).abs() <= 2.0, format!("sidebar, content, inspector widths {before:?}"));
+        // The title starts beside the sidebar, as in Apple's apps: the
+        // toolbar's first item follows the sidebar's divider.
+        let title_x = title_x(&w);
+        let beside = title_x.is_some_and(|x| (x - before[0] - 18.0).abs() <= 2.0);
+        check("title-beside-sidebar", beside, format!("sidebar {:.0} wide; title starts at {title_x:?}", before[0]));
         // Select the second row of notes through AppKit, as a click would.
         let t = results(&w);
         t.selectRowIndexes_byExtendingSelection(&objc2_foundation::NSIndexSet::indexSetWithIndex(1), false);
@@ -1511,6 +1589,29 @@ mod self_checks {
     /// on hover, and VoiceOver's summary.
     fn chart_checks(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
         perform_in(Some(&w), super::TOGGLE_CHART);
+        // A result without numbers: the chart says what it needs and offers
+        // to count the rows by a column, which it can draw.
+        run_query(&w, b, "SELECT * FROM customers WHERE name LIKE 'D%';");
+        let w1 = w.clone();
+        when(move || idle(b)() && buttons(&w1).iter().any(|t| t.starts_with("Count Rows by")), 5000, move |_| {
+            let offered = buttons(&w).into_iter().find(|t| t.starts_with("Count Rows by"));
+            let explained = labels(&w).iter().any(|l| l == "No Chart");
+            press_button(&w, offered.as_deref().unwrap_or_default());
+            let w2 = w.clone();
+            when(move || idle(b)() && results(&w2).numberOfRows() > 1 && untrack(|| b.query.get()).starts_with("SELECT \"city\""), 5000, move |ms| {
+                let rows = results(&w).numberOfRows();
+                let bars = drawing(&w).iter().filter(|d| d.starts_with("fill rect") && d.ends_with("Blue")).count();
+                check(
+                    "chart-count-by",
+                    explained && offered.as_deref() == Some("Count Rows by city") && bars as isize == rows,
+                    format!("explained {explained}; offered {offered:?}; after a click {rows} cities and {bars} bars in {ms:.0} ms; query {:?}", untrack(|| b.query.get())),
+                );
+                chart_bars(w, b, dir);
+            });
+        });
+    }
+
+    fn chart_bars(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
         run_query(&w, b, "SELECT substr(ordered_at, 1, 7) AS month, round(sum(total)) AS sales FROM orders GROUP BY month ORDER BY month");
         let w2 = w.clone();
         when(move || idle(b)() && drawing(&w2).iter().filter(|d| d.starts_with("fill rect") && d.ends_with("Blue")).count() == 72, 10_000, move |ms| {

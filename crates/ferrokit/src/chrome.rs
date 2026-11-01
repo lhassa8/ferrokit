@@ -79,6 +79,9 @@ define_class!(
         #[unsafe(method(splitViewDidResizeSubviews:))]
         fn did_resize(&self, notification: &NSNotification) {
             let Some(split) = notification.object().and_then(|o| o.downcast::<NSSplitView>().ok()) else { return };
+            if let Some(f) = &*self.ivars().on_resize.borrow() {
+                f(&split);
+            }
             // A pane the user dragged shut (or open) updates its signal.
             let panes = split.arrangedSubviews();
             for (i, collapsed) in self.ivars().collapsible.iter().filter(|_| !self.ivars().applying.get()) {
@@ -109,7 +112,11 @@ pub(crate) struct SplitInfo {
     /// Set while a signal's change is applied (the resizes it causes aren't
     /// the user's).
     applying: std::cell::Cell<bool>,
+    /// Called as the panes resize (the toolbar's title follows a sidebar).
+    on_resize: RefCell<Option<OnResize>>,
 }
+
+type OnResize = Box<dyn Fn(&NSSplitView)>;
 
 /// Side-by-side panes with draggable dividers (`NSSplitView`). The first
 /// pane keeps its width when the window resizes (a sidebar); the others
@@ -191,7 +198,7 @@ impl View for Split {
         let key = self.remember.as_deref().map(split_key);
         let defaults = NSUserDefaults::standardUserDefaults();
         let saved = key.as_ref().filter(|k| defaults.objectForKey(k).is_some()).map(|k| defaults.doubleForKey(k));
-        let delegate = SplitDelegate::alloc(mtm).set_ivars(SplitInfo { key, collapsible: self.collapsible.clone(), applying: std::cell::Cell::new(false) });
+        let delegate = SplitDelegate::alloc(mtm).set_ivars(SplitInfo { key, collapsible: self.collapsible.clone(), applying: std::cell::Cell::new(false), on_resize: RefCell::default() });
         // SAFETY: NSObject's designated initialiser.
         let delegate: Retained<SplitDelegate> = unsafe { msg_send![super(delegate), init] };
         // Weak in AppKit; the node keeps the delegate.
@@ -665,7 +672,15 @@ pub(crate) struct ToolbarState {
     effects: RefCell<Vec<Effect>>,
     /// The toolbar's window: its buttons act there.
     window: objc2::rc::Weak<NSWindow>,
+    /// The width of the space before the title, over a sidebar (see
+    /// [`track_sidebar`]).
+    spacer: RefCell<Option<Retained<objc2_app_kit::NSLayoutConstraint>>>,
+    /// Whether the toolbar has that space.
+    tracks_sidebar: std::cell::Cell<bool>,
 }
+
+/// The toolbar item that keeps the title beside a sidebar.
+const SIDEBAR_SPACER: &str = "ferrokit.sidebar-spacer";
 
 define_class!(
     #[unsafe(super(NSObject))]
@@ -679,7 +694,11 @@ define_class!(
     unsafe impl NSToolbarDelegate for ToolbarDelegate {
         #[unsafe(method_id(toolbar:itemForItemIdentifier:willBeInsertedIntoToolbar:))]
         fn item_for(&self, _toolbar: &NSToolbar, id: &NSString, _insert: bool) -> Option<Retained<NSToolbarItem>> {
-            self.make_item(&id.to_string())
+            if id.to_string() == SIDEBAR_SPACER {
+                Some(self.spacer_item(id))
+            } else {
+                self.make_item(&id.to_string())
+            }
         }
 
         #[unsafe(method_id(toolbarDefaultItemIdentifiers:))]
@@ -696,8 +715,31 @@ define_class!(
 
 impl ToolbarDelegate {
     fn ids(&self) -> Retained<NSArray<NSString>> {
-        let ids: Vec<Retained<NSString>> = self.ivars().order.iter().map(|s| NSString::from_str(s)).collect();
+        let mut ids: Vec<Retained<NSString>> = self.ivars().order.iter().map(|s| NSString::from_str(s)).collect();
+        if self.ivars().tracks_sidebar.get() {
+            ids.insert(0, NSString::from_str(SIDEBAR_SPACER));
+        }
         NSArray::from_retained_slice(&ids)
+    }
+
+    /// An empty navigational item (those come before the title), as wide
+    /// as its constraint says.
+    fn spacer_item(&self, id: &NSString) -> Retained<NSToolbarItem> {
+        let mtm = MainThreadMarker::from(self);
+        let view = NSView::new(mtm);
+        view.setTranslatesAutoresizingMaskIntoConstraints(false);
+        let before = self.ivars().spacer.borrow().as_ref().map_or(0.0, |w| w.constant());
+        let width = view.widthAnchor().constraintEqualToConstant(before);
+        width.setActive(true);
+        view.heightAnchor().constraintEqualToConstant(1.0).setActive(true);
+        self.ivars().spacer.replace(Some(width));
+        let item = NSToolbarItem::initWithItemIdentifier(NSToolbarItem::alloc(mtm), id);
+        item.setView(Some(&view));
+        item.setNavigational(true);
+        // No glass capsule around the space (macOS 26 gives items one).
+        item.setBordered(false);
+        objc2_app_kit::NSAccessibility::setAccessibilityElement(&*view, false);
+        item
     }
 
     fn make_item(&self, id: &str) -> Option<Retained<NSToolbarItem>> {
@@ -755,11 +797,20 @@ impl ToolbarDelegate {
 pub(crate) fn install_toolbar(window: &NSWindow, items: Vec<ToolbarItem>) -> Retained<NSObject> {
     let mtm = MainThreadMarker::from(window);
     let order = items.iter().map(ToolbarItem::id).collect();
-    let state = ToolbarState { items: RefCell::new(items), order, keep: RefCell::default(), effects: RefCell::default(), window: objc2::rc::Weak::from(window) };
+    let state = ToolbarState { items: RefCell::new(items), order, keep: RefCell::default(), effects: RefCell::default(), window: objc2::rc::Weak::from(window), spacer: RefCell::default(), tracks_sidebar: std::cell::Cell::new(false) };
     let delegate = ToolbarDelegate::alloc(mtm).set_ivars(state);
     // SAFETY: NSObject's designated initialiser.
     let delegate: Retained<ToolbarDelegate> = unsafe { msg_send![super(delegate), init] };
-    let toolbar = NSToolbar::initWithIdentifier(NSToolbar::alloc(mtm), &NSString::from_str("ferrokit.toolbar"));
+    // One identifier per toolbar: toolbars sharing one keep their items in
+    // sync across windows, and each window's title spacer is its own.
+    thread_local! {
+        static TOOLBARS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
+    let n = TOOLBARS.with(|t| {
+        t.set(t.get() + 1);
+        t.get()
+    });
+    let toolbar = NSToolbar::initWithIdentifier(NSToolbar::alloc(mtm), &NSString::from_str(&format!("ferrokit.toolbar.{n}")));
     toolbar.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
     toolbar.setAllowsUserCustomization(false);
     // Symbols alone, as Apple's apps show them (the labels stay for
@@ -768,4 +819,77 @@ pub(crate) fn install_toolbar(window: &NSWindow, items: Vec<ToolbarItem>) -> Ret
     window.setToolbar(Some(&toolbar));
     window.setToolbarStyle(NSWindowToolbarStyle::Unified);
     Retained::into_super(delegate)
+}
+
+/// Keeps `window`'s title and toolbar items beside the sidebar (`split`'s
+/// first pane), as Apple's apps with a sidebar have them, instead of over
+/// it: a navigational space before the title, as wide as the sidebar,
+/// following its divider. (AppKit's own tracking separator needs a split
+/// view controller, whose title-bar sections kept every closed window's
+/// frame alive when hosted in Ferrokit's views.)
+pub(crate) fn track_sidebar(window: &NSWindow, delegate: &NSObject, split: &NSSplitView) {
+    let info = split.delegate().filter(|d| {
+        // SAFETY: reading the class of an object AppKit holds.
+        let obj: &AnyObject = unsafe { &*Retained::as_ptr(d).cast::<AnyObject>() };
+        obj.class().name().to_str() == Ok("FerrokitSplitDelegate")
+    });
+    let (Some(toolbar), Some(delegate), Some(info)) = (window.toolbar(), delegate.downcast_ref::<ToolbarDelegate>(), info) else {
+        return;
+    };
+    // SAFETY: checked above that it's a `SplitDelegate`.
+    let info: Retained<SplitDelegate> = unsafe { Retained::cast_unchecked(info) };
+    delegate.ivars().tracks_sidebar.set(true);
+    toolbar.insertItemWithItemIdentifier_atIndex(&NSString::from_str(SIDEBAR_SPACER), 0);
+    let Some(width) = delegate.ivars().spacer.borrow().clone() else { return };
+    let window = objc2::rc::Weak::from(window);
+    let fit = move |split: &NSSplitView| {
+        if let Some(window) = window.load() {
+            fit_title(&window, split, &width);
+        }
+    };
+    fit(split);
+    info.ivars().on_resize.replace(Some(Box::new(fit)));
+}
+
+/// Sizes the space before the title so the title starts 18 points past the
+/// sidebar's edge (none while the sidebar is hidden). Measured, not
+/// computed: AppKit's spacing around toolbar items varies by version.
+fn fit_title(window: &NSWindow, split: &NSSplitView, width: &objc2_app_kit::NSLayoutConstraint) {
+    let sidebar = split.arrangedSubviews().firstObject().filter(|p| !p.isHidden()).map_or(0.0, |p| p.frame().size.width);
+    let Some(frame) = window.contentView().and_then(|c| unsafe { c.superview() }) else { return };
+    let title = window.title().to_string();
+    for _ in 0..3 {
+        if sidebar < 1.0 {
+            width.setConstant(0.0);
+            return;
+        }
+        frame.layoutSubtreeIfNeeded();
+        let Some(label) = title_label(&frame, &title) else {
+            // No title shown: start the items past the traffic lights' area.
+            width.setConstant((sidebar - 80.0).max(0.0));
+            return;
+        };
+        let x = label.convertRect_toView(label.bounds(), None).origin.x;
+        let want = (width.constant() + sidebar + 18.0 - x).max(0.0);
+        if (want - width.constant()).abs() < 0.5 {
+            return;
+        }
+        width.setConstant(want);
+    }
+}
+
+/// The text field in the title bar showing `title`.
+fn title_label(view: &NSView, title: &str) -> Option<Retained<objc2_app_kit::NSTextField>> {
+    for sub in view.subviews().iter() {
+        if let Some(f) = sub.clone().downcast::<objc2_app_kit::NSTextField>().ok().filter(|f| f.stringValue().to_string() == title && !f.isHidden()) {
+            return Some(f);
+        }
+        // Not into the window's content.
+        if sub.class().name().to_str() != Ok("FerrokitRootView")
+            && let Some(f) = title_label(&sub, title)
+        {
+            return Some(f);
+        }
+    }
+    None
 }

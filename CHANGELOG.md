@@ -165,6 +165,7 @@ The review is in `docs/Q3_API_REVIEW.md`. Changes:
 - **Typing in the middle of highlighted text moved the caret** to the end of the restyled span (in the SQL browser's query, typing after `SELECT ` jumped past the next word). An edit now styles only its own characters during the edit and the rest just after it.
 - **Toolbar buttons with a `.disabled(..)` condition (all `toolbar_command`s) stayed disabled:** their state was computed once, before the window's content could answer. AppKit now validates them as events arrive, as for menu items.
 - **Code editors kept the Mac's prose settings:** typing `"` in the SQL browser's query could give `“`, which SQL rejects. `.syntax(..)` editors, and the new `.code()`, now turn off smart quotes and dashes, text replacement, autocorrection and spell checking (`TextModel::set_code_input` in `ferrokit-core`).
+- **The title starts beside the sidebar,** as in Mail and Notes: when a window's view is a side-by-side `split` and it has a toolbar, the toolbar starts with an empty navigational item as wide as the sidebar, which follows its divider and collapse. Before, the title began over the sidebar and ran across its edge. (Each window's toolbar has its own identifier now, so windows don't share items.)
 - **A toolbar button acts in its own window,** not in whichever window is key (or in none, when the app is inactive, as when VoiceOver presses it).
 
 ### ferrokit-core (was appkit-host)

@@ -30,7 +30,9 @@
 "In memory, gone when closed" = "Im Arbeitsspeicher, beim Schließen weg";
 "Recent" = "Zuletzt verwendet";
 "No Recent Databases" = "Keine zuletzt verwendeten Datenbanken";
-"Charts need a first column and a number column after it" = "Ein Diagramm braucht eine erste Spalte und danach eine Zahlenspalte";
+"No Chart" = "Kein Diagramm";
+"A chart needs a column of labels, then a column of numbers." = "Ein Diagramm braucht eine Spalte mit Beschriftungen, dann eine mit Zahlen.";
+"Count Rows by {column}" = "Zeilen nach {column} zählen";
 "results.csv: drag out the results as a CSV file" = "results.csv: Die Ergebnisse als CSV-Datei herausziehen";
 "Run" = "Ausführen";
 "Chart" = "Diagramm";

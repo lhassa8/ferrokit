@@ -1259,7 +1259,7 @@ fn posted_split_drag(events: Rc<RefCell<Vec<AppEvent>>>) {
     w.makeKeyAndOrderFront(None);
     let sv = all_views(&w.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<NSSplitView>().ok()).unwrap();
     let sv2 = sv.clone();
-    let pane = move |i: usize| sv2.subviews().objectAtIndex(i).frame().size.width;
+    let pane = move |i: usize| sv2.arrangedSubviews().objectAtIndex(i).frame().size.width;
     let content = w.contentView().unwrap();
     let label_width = move |title: &str| {
         all_views(&content)
@@ -3614,7 +3614,15 @@ fn chrome_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let w = windows().into_iter().find(|w| w.title().to_string() == "Chrome").unwrap();
     w.makeKeyAndOrderFront(None);
     let sv = w.contentView().unwrap().subviews().iter().find_map(|v| v.downcast::<NSSplitView>().ok()).unwrap();
-    let panes: Vec<Retained<NSView>> = sv.subviews().to_vec();
+    // The panes, in order (a window's top-level split is managed by a split
+    // view controller, which wraps each pane in a view of its own).
+    fn pane_in(v: Retained<NSView>) -> Option<Retained<NSView>> {
+        if v.class().name().to_str() == Ok("FerrokitSplitPane") {
+            return Some(v);
+        }
+        v.subviews().iter().find_map(pane_in)
+    }
+    let panes: Vec<Retained<NSView>> = sv.arrangedSubviews().iter().filter_map(pane_in).collect();
     let label = |text: &str| {
         panes.iter().flat_map(|p| p.subviews().to_vec()).filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string() == text).unwrap()
     };
@@ -3652,7 +3660,8 @@ fn chrome_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let enabled_after = add.isEnabled();
     check(
         "toolbar-button",
-        ids.len() == 3 && ids[0] == "add" && ids[2] == "search" && fired && c.adds.get_untracked() == 1 && enabled_before && !enabled_after,
+        // (First the space that keeps the title beside the sidebar.)
+        ids.len() == 4 && ids[0] == "ferrokit.sidebar-spacer" && ids[1] == "add" && ids[3] == "search" && fired && c.adds.get_untracked() == 1 && enabled_before && !enabled_after,
         format!("items {ids:?}; Add → {} add(s); disabled when locked: {}", c.adds.get_untracked(), !enabled_after),
     );
 
