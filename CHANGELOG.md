@@ -168,6 +168,7 @@ The review is in `docs/Q3_API_REVIEW.md`. Changes:
 - **The title starts beside the sidebar,** as in Mail and Notes: when a window's view is a side-by-side `split` and it has a toolbar, the toolbar starts with an empty navigational item as wide as the sidebar, which follows its divider and collapse. Before, the title began over the sidebar and ran across its edge. (Each window's toolbar has its own identifier now, so windows don't share items.)
 - **A toolbar button acts in its own window,** not in whichever window is key (or in none, when the app is inactive, as when VoiceOver presses it).
 - **A menu bar extra's panel fits what it shows now,** not what it showed at launch: it's measured again each time it opens (Habits' panel cut off habits added since).
+- **New: `time_picker`,** a time of day (hour and minute) bound to a `Signal<(u32, u32)>`, an `NSDatePicker` showing only the time. Habits' reminder uses it, so a reminder can be at 7:45, not only on the hour (found in the hands-on checks: the time menu offered whole hours).
 - **`testing::ax_audit` also flags controls read as an SF Symbol's name** (a button VoiceOver reads as "sun.max.fill"), not only images.
 
 ### ferrokit-core (was appkit-host)

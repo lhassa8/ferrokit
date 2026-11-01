@@ -625,6 +625,50 @@ pub fn date_picker(value: &Signal<std::time::SystemTime>) -> DatePicker {
     DatePicker { value: *value, time: false, calendar: false, range: None }
 }
 
+/// A time-of-day picker (hour and minute, in the user's 12- or 24-hour
+/// format) bound two ways to `value`.
+pub struct TimePicker(Signal<(u32, u32)>);
+
+impl View for TimePicker {
+    fn build(self, cx: &mut Cx) -> Node {
+        use objc2_app_kit::{NSDatePickerElementFlags, NSDatePickerStyle};
+        use objc2_foundation::{NSCalendar, NSCalendarOptions, NSCalendarUnit};
+        let picker = objc2_app_kit::NSDatePicker::new(cx.mtm);
+        picker.setDatePickerElements(NSDatePickerElementFlags::HourMinute);
+        picker.setDatePickerStyle(NSDatePickerStyle::TextFieldAndStepper);
+        // Today at that time: only the hour and minute are read back.
+        let date_at = |(hour, minute): (u32, u32)| {
+            NSCalendar::currentCalendar().dateBySettingHour_minute_second_ofDate_options(hour as isize, minute as isize, 0, &objc2_foundation::NSDate::now(), NSCalendarOptions::empty())
+        };
+        let time_of = |d: &objc2_foundation::NSDate| {
+            let c = NSCalendar::currentCalendar();
+            (c.component_fromDate(NSCalendarUnit::Hour, d) as u32, c.component_fromDate(NSCalendarUnit::Minute, d) as u32)
+        };
+        let (value, p) = (self.0, picker.clone());
+        let target = on_action(cx, &picker, move || value.set(time_of(&p.dateValue())));
+        let (mut node, _) = Node::leaf(cx, Retained::into_super(Retained::into_super(picker.clone())), (false, false), Size::default());
+        let value = self.0;
+        node.own(Effect::new(move || {
+            let want = value.get();
+            if time_of(&picker.dateValue()) != want
+                && let Some(d) = date_at(want)
+            {
+                picker.setDateValue(&d);
+            }
+        }));
+        node.keep(target);
+        node
+    }
+}
+
+/// A time-of-day picker bound two ways to `value`, an hour (0–23) and a
+/// minute: for a daily reminder or an opening time, which keep their hour
+/// and minute whatever the date or time zone. For a moment in time, use
+/// [`date_picker`] with [`DatePicker::with_time`].
+pub fn time_picker(value: &Signal<(u32, u32)>) -> TimePicker {
+    TimePicker(*value)
+}
+
 /// Whether two colours look the same (within an 8-bit step).
 fn close_to(a: Color, b: Color) -> bool {
     match (a.components(), b.components()) {

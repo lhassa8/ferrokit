@@ -475,8 +475,7 @@ fn habit_view(t: Tracker, id: u32) -> AnyView {
     let Some(h) = untrack(|| t.habit(id)) else { return AnyView::new(text(tr("No habit")).padding(28.0)) };
     let tint = h.tint();
     let remind = Signal::new(h.reminder.is_some());
-    let hour = Signal::new(h.reminder.map_or(8, |(hh, _)| hh));
-    let hours: Vec<(String, u32)> = (5..=23).map(|hh| (format_date(local_day_start(0) + hh as f64 * 3600.0, "jm"), hh)).collect();
+    let time = Signal::new(h.reminder.unwrap_or((8, 0)));
     let share_text = move || {
         let h = t.habit(id).map(|h| h.name).unwrap_or_default();
         t_with("{days} of “{name}” in a row, in Habits.", &[("days", &days(t.streak(id))), ("name", &h)])
@@ -536,14 +535,14 @@ fn habit_view(t: Tracker, id: u32) -> AnyView {
             card(hstack((
                 image("bell.fill").color(Color::Orange),
                 checkbox(&tr("Remind me every day at"), &remind),
-                picker(&hour, hours.iter().map(|(s, hh)| (s.as_str(), *hh)).collect()).disabled(move || !remind.get()),
+                time_picker(&time).accessibility_label(&tr("Reminder time")).disabled(move || !remind.get()),
                 spacer(),
             ))
             .spacing(8.0))
             .fill_width(),
             // Changes to the reminder settings post or cancel it.
             watch(move || {
-                let at = remind.get().then(|| (hour.get(), 0));
+                let at = remind.get().then(|| time.get());
                 if untrack(|| t.habit(id).map(|h| h.reminder)) != Some(at) {
                     untrack(|| t.set_reminder(id, at));
                 }
@@ -1549,9 +1548,27 @@ mod self_checks {
                     n.is_some_and(|n| n.daily == Some((8, 0)) && n.title == "Walk 8,000 steps") && untrack(|| t.habit(1)).and_then(|h| h.reminder) == Some((8, 0)),
                     format!("{sent:?}"),
                 );
-                untrack(|| t.set_reminder(1, None));
-                check("reminder-off", !sent_notifications().iter().any(|n| n.id == "habit-1"), format!("{:?}", sent_notifications()));
-                new_phase(w, t, check, failed);
+                // A time with minutes, picked as the user does: the reminder moves to it.
+                use objc2_foundation::{NSCalendar, NSCalendarOptions};
+                let time_picker = views(&w).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSDatePicker>().ok());
+                if let Some(p) = &time_picker
+                    && let Some(d) = NSCalendar::currentCalendar().dateBySettingHour_minute_second_ofDate_options(7, 45, 0, &p.dateValue(), NSCalendarOptions::empty())
+                {
+                    p.setDateValue(&d);
+                    // SAFETY: the picker's own action, sent to its own target.
+                    unsafe { p.sendAction_to(p.action(), p.target().as_deref()) };
+                }
+                later_ms(100, move || {
+                    let moved = sent_notifications().iter().find(|n| n.id == "habit-1").and_then(|n| n.daily);
+                    check(
+                        "reminder-minutes",
+                        time_picker.is_some() && moved == Some((7, 45)) && untrack(|| t.habit(1)).and_then(|h| h.reminder) == Some((7, 45)),
+                        format!("picker {}; notification daily at {moved:?}", time_picker.is_some()),
+                    );
+                    untrack(|| t.set_reminder(1, None));
+                    check("reminder-off", !sent_notifications().iter().any(|n| n.id == "habit-1"), format!("{:?}", sent_notifications()));
+                    new_phase(w, t, check, failed);
+                });
             });
         });
     }

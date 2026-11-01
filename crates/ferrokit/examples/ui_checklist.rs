@@ -1841,7 +1841,7 @@ fn names(m: &TableModel<Item2>) -> Vec<String> {
 /// action or notification) sets the signal; setting the signal updates
 /// the control.
 fn controls_c_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
-    use ferrokit::{Color, color_well, combo_box, date_picker, search_field, segmented};
+    use ferrokit::{Color, color_well, combo_box, date_picker, search_field, segmented, time_picker};
     use objc2_app_kit::{NSColorWell, NSComboBox, NSDatePicker, NSSearchField, NSSegmentedControl};
     use std::time::{Duration, UNIX_EPOCH};
     let day = |d: u64| UNIX_EPOCH + Duration::from_secs(1_790_000_000 + d * 86_400);
@@ -1852,10 +1852,12 @@ fn controls_c_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let query = Signal::new(String::new());
     let submits = Signal::new(0u32);
     let s2 = submits;
-    let w = open(Window::new("Controls C").size(420.0, 320.0).view(
+    let time = Signal::new((9u32, 30u32));
+    let w = open(Window::new("Controls C").size(420.0, 350.0).view(
         vstack((
             date_picker(&date).accessibility_label("Due"),
             date_picker(&date).with_time().calendar().range(day(0), day(400)).accessibility_label("Due, calendar"),
+            time_picker(&time).accessibility_label("Reminder"),
             color_well(&colour).accessibility_label("Colour"),
             segmented(&view_mode, vec![("List", 1u8), ("Grid", 2), ("Columns", 3)]).accessibility_label("View"),
             combo_box(&city, vec!["Berlin", "Lagos", "Tokyo"]).accessibility_label("City"),
@@ -1864,7 +1866,8 @@ fn controls_c_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         .padding(12.0),
     ));
     let all = all_views(&w.contentView().unwrap());
-    let pickers: Vec<_> = all.iter().filter_map(|v| v.clone().downcast::<NSDatePicker>().ok()).collect();
+    let mut pickers: Vec<_> = all.iter().filter_map(|v| v.clone().downcast::<NSDatePicker>().ok()).collect();
+    let time_p = (pickers.len() == 3).then(|| pickers.remove(2));
     let well = all.iter().find_map(|v| v.clone().downcast::<NSColorWell>().ok()).unwrap();
     let seg = all.iter().find_map(|v| v.clone().downcast::<NSSegmentedControl>().ok()).unwrap();
     let combo = all.iter().find_map(|v| v.clone().downcast::<NSComboBox>().ok()).unwrap();
@@ -1879,6 +1882,25 @@ fn controls_c_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let picked = date.get_untracked() == day(20) && secs(&pickers[1]) == 1_790_000_000 + 20 * 86_400;
     let max_ok = pickers[1].maxDate().is_some_and(|d| d.timeIntervalSince1970() as u64 == 1_790_000_000 + 400 * 86_400);
     check("date-picker", pickers.len() == 2 && shown && picked && max_ok, format!("signal → pickers: {shown}; pick → signal and the other picker: {picked}; calendar range max set: {max_ok}"));
+
+    // Time of day: hour and minute only; signal → picker; the user's pick → signal.
+    if let Some(tp) = &time_p {
+        use objc2_foundation::{NSCalendar, NSCalendarOptions, NSCalendarUnit};
+        let cal = NSCalendar::currentCalendar();
+        let hm = |p: &NSDatePicker| (cal.component_fromDate(NSCalendarUnit::Hour, &p.dateValue()), cal.component_fromDate(NSCalendarUnit::Minute, &p.dateValue()));
+        let only_time = tp.datePickerElements() == objc2_app_kit::NSDatePickerElementFlags::HourMinute;
+        let first = hm(tp) == (9, 30);
+        batch(|| time.set((21, 5)));
+        let shown = hm(tp) == (21, 5);
+        if let Some(d) = cal.dateBySettingHour_minute_second_ofDate_options(7, 45, 0, &tp.dateValue(), NSCalendarOptions::empty()) {
+            tp.setDateValue(&d);
+        }
+        send_action(tp);
+        let picked = time.get_untracked();
+        check("time-picker", only_time && first && shown && picked == (7, 45), format!("hour and minute only: {only_time}; starts 9:30: {first}; signal 21:05 → picker: {shown}; pick 7:45 → {picked:?}"));
+    } else {
+        check("time-picker", false, "no time picker".into());
+    }
 
     // Colour: signal → well; the user's colour → signal.
     let srgb = objc2_app_kit::NSColorSpace::sRGBColorSpace();

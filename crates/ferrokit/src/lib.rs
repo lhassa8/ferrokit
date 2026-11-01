@@ -100,7 +100,7 @@ pub use commands::{Command, can_perform, can_perform_in, focused_value, focused_
 pub use resource::{Cancel, Load, Resource};
 pub use signal::{Effect, Memo, Signal, after_batch, batch, effect_runs, live_signals, untrack};
 pub use controls::{
-    ColorWell, ComboBox, DatePicker, SearchField, Segmented, color_well, combo_box, date_picker, search_field, segmented,
+    ColorWell, ComboBox, DatePicker, SearchField, Segmented, TimePicker, color_well, combo_box, date_picker, search_field, segmented, time_picker,
     Checkbox, Image, Picker, Progress, Slider, Stepper, TextField, checkbox, image, image_data, image_file, picker, progress, secure_field, slider,
     stepper, text_field, toggle,
 };
