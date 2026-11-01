@@ -1,9 +1,12 @@
 //! Charts on the [canvas](crate::canvas): bars (plain, stacked or grouped)
-//! for categories, lines, areas and points for numeric series, and pies. Axes with round-number ticks and gridlines, values on
-//! hover, a VoiceOver summary, and lines of millions of points drawn at one
-//! or two points per pixel column.
+//! for categories, lines, areas and points for numeric series, pies,
+//! histograms, heatmaps and sparklines, with [rules](Rule) for thresholds.
+//! Axes with round-number ticks and gridlines, values on hover, a
+//! VoiceOver summary, and lines of millions of points drawn at one or two
+//! points per pixel column.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use ferrokit_core::text::Color;
@@ -52,6 +55,106 @@ impl Series {
         self.color = Some(color);
         self
     }
+}
+
+/// A straight line across a chart at a value: a threshold, a target, an
+/// average. [`Rule::y`] runs across at a value (bar, line, area, scatter
+/// and histogram charts, and sparklines); [`Rule::x`] runs down at an x
+/// (line, area and scatter charts, and histograms). The chart's range
+/// takes it in, so a target above every value still shows.
+///
+/// ```no_run
+/// use ferrokit::*;
+///
+/// let chart = bar_chart(|| vec![("Mon".to_string(), 1200.0), ("Tue".to_string(), 800.0)])
+///     .rule(Rule::y(1000.0).label("Target").color(Color::Green));
+/// # let _ = chart;
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct Rule {
+    value: f64,
+    vertical: bool,
+    label: Option<String>,
+    color: Color,
+}
+
+impl Rule {
+    /// A line across the chart at `value` on the value axis.
+    pub fn y(value: f64) -> Rule {
+        Rule { value, vertical: false, label: None, color: Color::Red }
+    }
+
+    /// A line down the chart at `x`.
+    pub fn x(x: f64) -> Rule {
+        Rule { vertical: true, ..Rule::y(x) }
+    }
+
+    /// A label at its end, also read by VoiceOver.
+    pub fn label(mut self, label: &str) -> Rule {
+        self.label = Some(label.into());
+        self
+    }
+
+    /// Its colour (red unless set).
+    pub fn color(mut self, color: Color) -> Rule {
+        self.color = color;
+        self
+    }
+}
+
+/// `lo..hi` widened to take in the chart's rules across (or, with
+/// `vertical`, down).
+fn with_rules(o: &Options, vertical: bool, lo: f64, hi: f64) -> (f64, f64) {
+    o.rules.iter().filter(|r| r.vertical == vertical && r.value.is_finite()).fold((lo, hi), |(a, b), r| (a.min(r.value), b.max(r.value)))
+}
+
+/// Draws the rules over the plot, labels at their right or top end; rules
+/// down need an x scale, and are left out where it doesn't reach.
+fn draw_rules(p: &mut Painter, o: &Options, plot: &Plot, to_y: &dyn Fn(f64) -> f64, to_x: Option<&dyn Fn(f64) -> f64>) {
+    for r in &o.rules {
+        if r.vertical {
+            let Some(x) = to_x.map(|f| f(r.value)).filter(|x| *x >= plot.x - 0.5 && *x <= plot.x + plot.w + 0.5) else { continue };
+            p.line(x, plot.y, x, plot.y + plot.h, r.color, 1.5);
+            if let Some(l) = &r.label {
+                let end = x + 4.0 + p.measure(l, FONT).0 > plot.x + plot.w;
+                rule_label(p, if end { x - 5.0 } else { x + 5.0 }, plot.y + 1.0, l, r.color, if end { Align::End } else { Align::Start });
+            }
+        } else {
+            let y = to_y(r.value);
+            p.line(plot.x, y, plot.x + plot.w, y, r.color, 1.5);
+            if let Some(l) = &r.label {
+                rule_label(p, plot.x + plot.w - 4.0, y - FONT - 6.0, l, r.color, Align::End);
+            }
+        }
+    }
+}
+
+/// A rule's label on a patch of the background, so it reads over the data.
+fn rule_label(p: &mut Painter, x: f64, y: f64, text: &str, color: Color, align: Align) {
+    let w = p.measure(text, FONT).0;
+    let left = match align {
+        Align::End => x - w,
+        Align::Center => x - w / 2.0,
+        Align::Start => x,
+    };
+    p.set_opacity(0.85);
+    p.fill_rounded_rect(left - 3.0, y - 1.0, w + 6.0, FONT + 4.0, 3.0, Color::Background);
+    p.set_opacity(1.0);
+    p.text(x, y, text, FONT, color, align);
+}
+
+/// The rules for VoiceOver: "; Target at $1,000".
+fn rules_text(o: &Options, x: &Format, y: &Format) -> String {
+    o.rules
+        .iter()
+        .map(|r| {
+            let v = if r.vertical { x.value(r.value) } else { y.value(r.value) };
+            match &r.label {
+                Some(l) => format!("; {l} at {v}"),
+                None => format!("; a rule at {v}"),
+            }
+        })
+        .collect()
 }
 
 /// Round-number ticks covering `min..=max`, about `target` of them.
@@ -362,6 +465,9 @@ enum Data {
     Stacked(Box<dyn Fn() -> Vec<(String, Vec<f64>)>>),
     Lines(Box<dyn Fn() -> Vec<Series>>, Mark),
     Pie(Box<dyn Fn() -> Vec<(String, f64)>>),
+    Histogram(Box<dyn Fn() -> Vec<f64>>),
+    Heatmap(Box<dyn Fn() -> Vec<(String, String, f64)>>),
+    Spark(Box<dyn Fn() -> Vec<f64>>),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -372,7 +478,8 @@ enum Mark {
 }
 
 /// A chart, made by [`bar_chart`], [`stacked_bar_chart`], [`line_chart`],
-/// [`area_chart`], [`scatter_chart`] or [`pie_chart`]: drawn on a canvas,
+/// [`area_chart`], [`scatter_chart`], [`pie_chart`], [`histogram`],
+/// [`heatmap`] or [`sparkline`]: drawn on a canvas,
 /// redrawn when the signals its data function reads change, with values
 /// on hover, a legend for more than one series, and a summary for
 /// VoiceOver.
@@ -392,6 +499,8 @@ struct Options {
     grouped: bool,
     donut: bool,
     legend: bool,
+    rules: Vec<Rule>,
+    bins: usize,
 }
 
 impl Options {
@@ -404,7 +513,7 @@ impl Chart {
     fn new(data: Data) -> Chart {
         Chart {
             data,
-            options: Options { values: Format::Number, x: Format::Number, colors: Vec::new(), names: Vec::new(), grouped: false, donut: false, legend: true },
+            options: Options { values: Format::Number, x: Format::Number, colors: Vec::new(), names: Vec::new(), grouped: false, donut: false, legend: true, rules: Vec::new(), bins: 10 },
             min: None,
             export: None,
         }
@@ -450,7 +559,22 @@ impl Chart {
         self
     }
 
-    /// Hides the legend (shown when there's more than one series).
+    /// A [`Rule`] across or down the chart: a threshold, a target, an
+    /// average. Add as many as needed.
+    pub fn rule(mut self, rule: Rule) -> Self {
+        self.options.rules.push(rule);
+        self
+    }
+
+    /// About how many bins a [`histogram`] sorts its values into (10
+    /// unless set); their edges fall on round numbers.
+    pub fn bins(mut self, bins: usize) -> Self {
+        self.options.bins = bins.max(1);
+        self
+    }
+
+    /// Hides the legend (shown when there's more than one series, and a
+    /// heatmap's scale).
     pub fn no_legend(mut self) -> Self {
         self.options.legend = false;
         self
@@ -479,6 +603,9 @@ impl crate::view::View for Chart {
             Data::Stacked(f) => stacked(f, o),
             Data::Lines(f, mark) => lines(f, mark, o),
             Data::Pie(f) => pie(f, o),
+            Data::Histogram(f) => histogram_canvas(f, o),
+            Data::Heatmap(f) => heatmap_canvas(f, o),
+            Data::Spark(f) => spark(f, o),
         };
         if let Some((w, h)) = self.min {
             c = c.min_size(w, h);
@@ -578,6 +705,63 @@ pub fn pie_chart(data: impl Fn() -> Vec<(String, f64)> + 'static) -> Chart {
     Chart::new(Data::Pie(Box::new(data)))
 }
 
+/// How many values fall in each range: bars side by side over round-number
+/// bins (about 10, or [`bins`](Chart::bins)). The values print with
+/// [`value_format`](Chart::value_format); hovering a bar shows its range
+/// and count.
+///
+/// ```no_run
+/// use ferrokit::*;
+///
+/// let minutes = vec![12.0, 18.0, 25.0, 31.0, 33.0, 47.0, 52.0];
+/// let chart = histogram(move || minutes.clone()).bins(5).rule(Rule::x(30.0).label("Average"));
+/// # let _ = chart;
+/// ```
+pub fn histogram(values: impl Fn() -> Vec<f64> + 'static) -> Chart {
+    Chart::new(Data::Histogram(Box::new(values)))
+}
+
+/// A grid of cells shaded by their values: `(column, row, value)`, with
+/// rows and columns in the order they first appear. A missing cell stays
+/// empty; hovering shows a cell's value, and a scale from the lowest to
+/// the highest is drawn above (unless [`no_legend`](Chart::no_legend)).
+/// The shade is the first of [`colors`](Chart::colors), else blue.
+///
+/// ```no_run
+/// use ferrokit::*;
+///
+/// let days = ["Mon", "Tue", "Wed"];
+/// let chart = heatmap(move || {
+///     let mut cells = Vec::new();
+///     for hour in 9..17 {
+///         for (d, day) in days.iter().enumerate() {
+///             cells.push((format!("{hour}"), day.to_string(), ((hour * 7 + d * 3) % 10) as f64));
+///         }
+///     }
+///     cells
+/// });
+/// # let _ = chart;
+/// ```
+pub fn heatmap(cells: impl Fn() -> Vec<(String, String, f64)> + 'static) -> Chart {
+    Chart::new(Data::Heatmap(Box::new(cells)))
+}
+
+/// A small line with no axes, its last value marked: a trend beside a
+/// number or in a row. It takes the width it's given at a fixed height (80
+/// × 24 unless [`min_size`](Chart::min_size) says). A [`Rule::y`] draws a
+/// faint target line.
+///
+/// ```no_run
+/// use ferrokit::*;
+///
+/// let week = vec![3.0, 5.0, 4.0, 7.0, 6.0, 8.0, 9.0];
+/// let trend = sparkline(move || week.clone()).colors(&[Color::Green]);
+/// # let _ = trend;
+/// ```
+pub fn sparkline(values: impl Fn() -> Vec<f64> + 'static) -> Chart {
+    Chart { min: Some((80.0, 24.0)), ..Chart::new(Data::Spark(Box::new(values))) }
+}
+
 fn bars(data: Box<dyn Fn() -> Vec<(String, f64)>>, o: Rc<Options>) -> Canvas {
     let data = hold(data);
     let hover = Signal::new(None::<(f64, f64)>);
@@ -586,6 +770,7 @@ fn bars(data: Box<dyn Fn() -> Vec<(String, f64)>>, o: Rc<Options>) -> Canvas {
         let Some(bars) = data.get().filter(|b| !b.is_empty()) else { return no_data(p) };
         let lo = bars.iter().map(|b| b.1).fold(0.0, f64::min);
         let hi = bars.iter().map(|b| b.1).fold(0.0, f64::max);
+        let (lo, hi) = with_rules(&o, false, lo, hi);
         let (plot, to_y) = y_axis(p, lo, hi, 10.0, 22.0, &o.values);
         let n = bars.len() as f64;
         let slot = plot.w / n;
@@ -610,6 +795,7 @@ fn bars(data: Box<dyn Fn() -> Vec<(String, f64)>>, o: Rc<Options>) -> Canvas {
         }
         category_labels(p, &plot, bars.iter().map(|b| b.0.as_str()));
         p.line(plot.x, zero, plot.x + plot.w, zero, Color::Secondary, 1.0);
+        draw_rules(p, &o, &plot, &to_y, None);
         if let Some((i, (x, y))) = hovered.zip(hover.get()).filter(|(i, _)| *i < bars.len()) {
             tooltip(p, x, y, &[format!("{}: {}", bars[i].0, o.values.value(bars[i].1))]);
         }
@@ -621,7 +807,8 @@ fn bars(data: Box<dyn Fn() -> Vec<(String, f64)>>, o: Rc<Options>) -> Canvas {
         let min = bars.iter().min_by(|a, b| a.1.total_cmp(&b.1));
         match (min, max) {
             (Some(min), Some(max)) => {
-                format!("Bar chart, {} bars, from {} ({}) to {} ({})", bars.len(), o2.values.value(min.1), min.0, o2.values.value(max.1), max.0)
+                let rules = rules_text(&o2, &o2.x, &o2.values);
+                format!("Bar chart, {} bars, from {} ({}) to {} ({}){rules}", bars.len(), o2.values.value(min.1), min.0, o2.values.value(max.1), max.0)
             }
             _ => "Bar chart, no data".into(),
         }
@@ -659,6 +846,7 @@ fn stacked(data: Box<dyn Fn() -> Vec<(String, Vec<f64>)>>, o: Rc<Options>) -> Ca
                 lo = lo.min(vs.iter().filter(|v| **v < 0.0).sum());
             }
         }
+        let (lo, hi) = with_rules(&o, false, lo, hi);
         let (plot, to_y) = y_axis(p, lo, hi, top, 22.0, &o.values);
         let slot = plot.w / rows.len() as f64;
         let bar_w = (slot * 0.75).max(1.0);
@@ -689,6 +877,7 @@ fn stacked(data: Box<dyn Fn() -> Vec<(String, Vec<f64>)>>, o: Rc<Options>) -> Ca
         }
         category_labels(p, &plot, rows.iter().map(|r| r.0.as_str()));
         p.line(plot.x, zero, plot.x + plot.w, zero, Color::Secondary, 1.0);
+        draw_rules(p, &o, &plot, &to_y, None);
         if let Some((i, (x, y))) = hovered.zip(hover.get()).filter(|(i, _)| *i < rows.len()) {
             let (label, vs) = &rows[i];
             let mut lines = vec![label.clone()];
@@ -710,12 +899,13 @@ fn stacked(data: Box<dyn Fn() -> Vec<(String, Vec<f64>)>>, o: Rc<Options>) -> Ca
         let totals: Vec<(String, f64)> = rows.iter().map(|(l, vs)| (l.clone(), vs.iter().sum())).collect();
         let max = totals.iter().max_by(|a, b| a.1.total_cmp(&b.1)).unwrap();
         format!(
-            "{} bar chart of {}, {} categories; the largest total is {} ({})",
+            "{} bar chart of {}, {} categories; the largest total is {} ({}){}",
             if o2.grouped { "Grouped" } else { "Stacked" },
             names.join(", "),
             rows.len(),
             o2.values.value(max.1),
-            max.0
+            max.0,
+            rules_text(&o2, &o2.x, &o2.values)
         )
     })
 }
@@ -746,10 +936,12 @@ fn lines(series: Box<dyn Fn() -> Vec<Series>>, mark: Mark, o: Rc<Options>) -> Ca
         }
         let color = |i: usize| all[i].color.unwrap_or_else(|| o.color(i));
         let (x0, x1) = points().fold((f64::MAX, f64::MIN), |(a, b), &(x, _)| (a.min(x), b.max(x)));
+        let (x0, x1) = with_rules(&o, true, x0, x1);
         let (mut y0, y1) = points().fold((f64::MAX, f64::MIN), |(a, b), &(_, y)| (a.min(y), b.max(y)));
         if mark == Mark::Area {
             y0 = y0.min(0.0); // areas fill down to zero
         }
+        let (y0, y1) = with_rules(&o, false, y0, y1);
         let items: Vec<(String, Color)> = all.iter().enumerate().map(|(i, s)| (s.name.clone(), color(i))).collect();
         let top = 10.0 + if o.legend && all.len() > 1 { legend(p, &items, 8.0, 2.0, p.width() - 16.0) } else { 0.0 };
         let (plot, to_y) = y_axis(p, y0, y1, top, 22.0, &o.values);
@@ -802,6 +994,7 @@ fn lines(series: Box<dyn Fn() -> Vec<Series>>, mark: Mark, o: Rc<Options>) -> Ca
                 }
             }
         }
+        draw_rules(p, &o, &plot, &to_y, Some(&to_x));
         let Some((hx, hy)) = hover.get().filter(|&(x, _)| x >= plot.x && x <= plot.x + plot.w) else { return };
         if mark == Mark::Points {
             // The point nearest the pointer, if it's close.
@@ -859,12 +1052,13 @@ fn lines(series: Box<dyn Fn() -> Vec<Series>>, mark: Mark, o: Rc<Options>) -> Ca
         let (y0, y1) = pts().fold((f64::MAX, f64::MIN), |(a, b), &(_, y)| (a.min(y), b.max(y)));
         let names: Vec<&str> = all.iter().map(|s| s.name.as_str()).collect();
         format!(
-            "{kind} of {}, {n} points, x from {} to {}, values from {} to {}",
+            "{kind} of {}, {n} points, x from {} to {}, values from {} to {}{}",
             names.join(", "),
             o.x.value(x0),
             o.x.value(x1),
             o.values.value(y0),
-            o.values.value(y1)
+            o.values.value(y1),
+            rules_text(o, &o.x, &o.values)
         )
     })
 }
@@ -952,6 +1146,238 @@ fn pie(data: Box<dyn Fn() -> Vec<(String, f64)>>, o: Rc<Options>) -> Canvas {
     })
 }
 
+/// `values` sorted into bins on round-number edges, about `target` of
+/// them: the edges (one more than the bins) and the count in each. A value
+/// on the last edge counts in the last bin.
+pub(crate) fn bin(values: &[f64], target: usize) -> (Vec<f64>, Vec<usize>) {
+    let finite: Vec<f64> = values.iter().copied().filter(|v| v.is_finite()).collect();
+    if finite.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+    let (lo, hi) = finite.iter().fold((f64::MAX, f64::MIN), |(a, b), &v| (a.min(v), b.max(v)));
+    let (mut edges, step) = ticks(lo, hi, target);
+    if edges.len() < 2 {
+        edges.push(edges[0] + step);
+    }
+    let n = edges.len() - 1;
+    let mut counts = vec![0; n];
+    for v in finite {
+        counts[(((v - edges[0]) / step).floor().max(0.0) as usize).min(n - 1)] += 1;
+    }
+    (edges, counts)
+}
+
+fn histogram_canvas(values: Box<dyn Fn() -> Vec<f64>>, o: Rc<Options>) -> Canvas {
+    let bins = o.bins;
+    let data = hold(move || bin(&values(), bins));
+    let hover = Signal::new(None::<(f64, f64)>);
+    let o2 = o.clone();
+    canvas(move |p| {
+        let Some(h) = data.get().filter(|h| !h.1.is_empty()) else { return no_data(p) };
+        let (edges, counts) = (&h.0, &h.1);
+        let most = counts.iter().copied().max().unwrap_or(0) as f64;
+        let (lo, hi) = with_rules(&o, false, 0.0, most);
+        let (plot, to_y) = y_axis(p, lo, hi, 10.0, 22.0, &Format::Number);
+        let (x0, x1) = (edges[0], edges[counts.len()]);
+        let to_x = move |x: f64| plot.x + (x - x0) / (x1 - x0) * plot.w;
+        let n = counts.len();
+        let hovered = hover.get().filter(|&(x, y)| x >= plot.x && x < plot.x + plot.w && y >= plot.y).map(|(x, _)| (((x - plot.x) / plot.w * n as f64) as usize).min(n - 1));
+        let color = o.colors.first().copied().unwrap_or(Color::Blue);
+        let zero = to_y(0.0);
+        for (i, &c) in counts.iter().enumerate().filter(|(_, c)| **c > 0) {
+            let (a, b) = (to_x(edges[i]), to_x(edges[i + 1]));
+            let top = to_y(c as f64);
+            if hovered == Some(i) {
+                p.set_opacity(0.75);
+            }
+            p.fill_rect(a + 0.5, top, (b - a - 1.0).max(0.5), (zero - top).max(0.5), color);
+            p.set_opacity(1.0);
+        }
+        // The edges, every k-th so they don't overlap.
+        let step = edges[1] - edges[0];
+        let labels: Vec<String> = edges.iter().map(|e| o.values.tick(*e, step)).collect();
+        let widest = labels.iter().map(|l| p.measure(l, FONT).0).fold(0.0, f64::max) + 6.0;
+        let every = ((widest / (plot.w / n as f64)).ceil() as usize).max(1);
+        for (i, label) in labels.iter().enumerate().step_by(every) {
+            p.text(to_x(edges[i]), plot.y + plot.h + 4.0, label, FONT, Color::Secondary, Align::Center);
+        }
+        p.line(plot.x, zero, plot.x + plot.w, zero, Color::Secondary, 1.0);
+        draw_rules(p, &o, &plot, &to_y, Some(&to_x));
+        if let Some((i, (x, y))) = hovered.zip(hover.get()) {
+            tooltip(p, x, y, &[format!("{} – {}: {}", o.values.value(edges[i]), o.values.value(edges[i + 1]), counts[i])]);
+        }
+    })
+    .on_hover(move |at| hover.set(at))
+    .description(move || {
+        let h = data.get().unwrap_or_default();
+        let (edges, counts) = (&h.0, &h.1);
+        let Some((i, most)) = counts.iter().enumerate().max_by_key(|(i, c)| (**c, std::cmp::Reverse(*i))) else { return "Histogram, no data".into() };
+        let v = |x: f64| o2.values.value(x);
+        format!(
+            "Histogram of {} values in {} bins from {} to {}; the most, {most}, from {} to {}{}",
+            counts.iter().sum::<usize>(),
+            counts.len(),
+            v(edges[0]),
+            v(edges[counts.len()]),
+            v(edges[i]),
+            v(edges[i + 1]),
+            rules_text(&o2, &o2.values, &Format::Number)
+        )
+    })
+}
+
+/// A heatmap's cells by row and column, in the order they first appeared.
+#[derive(Default)]
+struct Cells {
+    columns: Vec<String>,
+    rows: Vec<String>,
+    /// Row by row.
+    values: Vec<Option<f64>>,
+}
+
+impl Cells {
+    fn new(cells: Vec<(String, String, f64)>) -> Cells {
+        let (mut columns, mut rows) = (Vec::new(), Vec::new());
+        let (mut col_at, mut row_at) = (HashMap::new(), HashMap::new());
+        let mut found = Vec::new();
+        for (c, r, v) in cells.into_iter().filter(|c| c.2.is_finite()) {
+            let ci = *col_at.entry(c.clone()).or_insert_with(|| {
+                columns.push(c);
+                columns.len() - 1
+            });
+            let ri = *row_at.entry(r.clone()).or_insert_with(|| {
+                rows.push(r);
+                rows.len() - 1
+            });
+            found.push((ri, ci, v));
+        }
+        let mut values = vec![None; rows.len() * columns.len()];
+        for (r, c, v) in found {
+            values[r * columns.len() + c] = Some(v);
+        }
+        Cells { columns, rows, values }
+    }
+
+    fn range(&self) -> Option<(f64, f64)> {
+        self.values.iter().flatten().fold(None, |acc, &v| Some(acc.map_or((v, v), |(a, b): (f64, f64)| (a.min(v), b.max(v)))))
+    }
+
+    /// The cell with the lowest (or, with `highest`, the highest) value:
+    /// its row, column and value.
+    fn extreme(&self, highest: bool) -> Option<(&str, &str, f64)> {
+        let n = self.columns.len();
+        let pick = self.values.iter().enumerate().filter_map(|(i, v)| v.map(|v| (i, v)));
+        let (i, v) = if highest { pick.max_by(|a, b| a.1.total_cmp(&b.1)) } else { pick.min_by(|a, b| a.1.total_cmp(&b.1)) }?;
+        Some((&self.rows[i / n], &self.columns[i % n], v))
+    }
+}
+
+fn heatmap_canvas(cells: Box<dyn Fn() -> Vec<(String, String, f64)>>, o: Rc<Options>) -> Canvas {
+    let data = hold(move || Cells::new(cells()));
+    let hover = Signal::new(None::<(f64, f64)>);
+    let o2 = o.clone();
+    canvas(move |p| {
+        let Some(g) = data.get().filter(|g| !g.values.is_empty()) else { return no_data(p) };
+        let Some((lo, hi)) = g.range() else { return no_data(p) };
+        let color = o.colors.first().copied().unwrap_or(Color::Blue);
+        let shade = |v: f64| if hi > lo { 0.12 + 0.88 * (v - lo) / (hi - lo) } else { 1.0 };
+        // The scale above: lowest, five steps, highest.
+        let mut top = 6.0;
+        if o.legend {
+            let (low, high) = (o.values.value(lo), o.values.value(hi));
+            let mut x = p.width() - 8.0 - p.measure(&high, FONT).0;
+            p.text(x, 2.0, &high, FONT, Color::Secondary, Align::Start);
+            for k in (0..5).rev() {
+                x -= 13.0;
+                p.set_opacity(0.12 + 0.88 * k as f64 / 4.0);
+                p.fill_rounded_rect(x, 4.0, 10.0, 10.0, 2.0, color);
+                p.set_opacity(1.0);
+            }
+            p.text(x - 4.0, 2.0, &low, FONT, Color::Secondary, Align::End);
+            top += FONT + 9.0;
+        }
+        let label_w = g.rows.iter().map(|r| p.measure(r, FONT).0).fold(0.0, f64::max);
+        let plot = Plot { x: label_w + 10.0, y: top, w: (p.width() - label_w - 18.0).max(1.0), h: (p.height() - top - 22.0).max(1.0) };
+        let (nc, nr) = (g.columns.len(), g.rows.len());
+        let (cw, ch) = (plot.w / nc as f64, plot.h / nr as f64);
+        let gap = if cw.min(ch) > 6.0 { 1.5 } else { 0.0 };
+        let hovered = hover
+            .get()
+            .filter(|&(x, y)| x >= plot.x && x < plot.x + plot.w && y >= plot.y && y < plot.y + plot.h)
+            .map(|(x, y)| ((((y - plot.y) / ch) as usize).min(nr - 1), (((x - plot.x) / cw) as usize).min(nc - 1)));
+        for (i, v) in g.values.iter().enumerate() {
+            let Some(v) = v else { continue };
+            let (r, c) = (i / nc, i % nc);
+            p.set_opacity(shade(*v));
+            p.fill_rect(plot.x + c as f64 * cw + gap / 2.0, plot.y + r as f64 * ch + gap / 2.0, (cw - gap).max(0.5), (ch - gap).max(0.5), color);
+            p.set_opacity(1.0);
+        }
+        // Row labels (every k-th when rows are short), then columns'.
+        let every = (((FONT + 2.0) / ch).ceil() as usize).max(1);
+        for (r, label) in g.rows.iter().enumerate().step_by(every) {
+            p.text(plot.x - 6.0, plot.y + (r as f64 + 0.5) * ch - FONT * 0.65, label, FONT, Color::Secondary, Align::End);
+        }
+        category_labels(p, &plot, g.columns.iter().map(String::as_str));
+        if let Some(((r, c), (x, y))) = hovered.zip(hover.get()) {
+            p.stroke_rect(plot.x + c as f64 * cw, plot.y + r as f64 * ch, cw, ch, Color::Primary, 1.5);
+            let value = g.values[r * nc + c].map_or_else(|| crate::t("No value"), |v| o.values.value(v));
+            tooltip(p, x, y, &[format!("{}, {}: {value}", g.rows[r], g.columns[c])]);
+        }
+    })
+    .on_hover(move |at| hover.set(at))
+    .description(move || {
+        let g = data.get().unwrap_or_default();
+        match (g.extreme(false), g.extreme(true)) {
+            (Some(lo), Some(hi)) => format!(
+                "Heatmap, {} rows by {} columns, values from {} ({}, {}) to {} ({}, {})",
+                g.rows.len(),
+                g.columns.len(),
+                o2.values.value(lo.2),
+                lo.0,
+                lo.1,
+                o2.values.value(hi.2),
+                hi.0,
+                hi.1
+            ),
+            _ => "Heatmap, no data".into(),
+        }
+    })
+}
+
+fn spark(values: Box<dyn Fn() -> Vec<f64>>, o: Rc<Options>) -> Canvas {
+    let data = hold(move || values().into_iter().filter(|v| v.is_finite()).collect::<Vec<f64>>());
+    let o2 = o.clone();
+    canvas(move |p| {
+        // Too small for "No data": an empty sparkline draws nothing.
+        let Some(vs) = data.get().filter(|v| !v.is_empty()) else { return };
+        let (lo, hi) = vs.iter().fold((f64::MAX, f64::MIN), |(a, b), &v| (a.min(v), b.max(v)));
+        let (lo, hi) = with_rules(&o, false, lo, hi);
+        let pad = 3.0;
+        let (w, h) = ((p.width() - pad * 2.0).max(1.0), (p.height() - pad * 2.0).max(1.0));
+        let to_y = move |v: f64| if hi > lo { pad + h - (v - lo) / (hi - lo) * h } else { pad + h / 2.0 };
+        let last = (vs.len() - 1) as f64;
+        let to_x = move |i: f64| pad + if last > 0.0 { i / last * w } else { w / 2.0 };
+        for r in o.rules.iter().filter(|r| !r.vertical) {
+            p.set_opacity(0.6);
+            p.line(pad, to_y(r.value), pad + w, to_y(r.value), r.color, 1.0);
+            p.set_opacity(1.0);
+        }
+        let color = o.colors.first().copied().unwrap_or(Color::Blue);
+        let points: Vec<(f64, f64)> = vs.iter().enumerate().map(|(i, v)| (i as f64, *v)).collect();
+        let line: Vec<(f64, f64)> = decimate(&points, 0.0, last + 1.0, w.ceil() as usize).into_iter().map(|(i, v)| (to_x(i), to_y(v))).collect();
+        p.polyline(&line, color, 1.5);
+        p.fill_circle(to_x(last), to_y(vs[vs.len() - 1]), 2.5, color);
+    })
+    .description(move || {
+        let vs = data.get().unwrap_or_default();
+        let Some(last) = vs.last() else { return "Sparkline, no data".into() };
+        let (lo, hi) = vs.iter().fold((f64::MAX, f64::MIN), |(a, b), &v| (a.min(v), b.max(v)));
+        let v = |x: f64| o2.values.value(x);
+        format!("Sparkline, {} values from {} to {}, last {}{}", vs.len(), v(lo), v(hi), v(*last), rules_text(&o2, &o2.x, &o2.values))
+    })
+    .fixed_height()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1014,6 +1440,28 @@ mod tests {
         // Hours.
         let (t, template) = date_ticks(start, start + 6.0 * 3_600.0, 6, &|_| 0.0);
         assert!(t.iter().all(|t| t % 3_600.0 == 0.0) && template == "jm", "{t:?}");
+    }
+
+    #[test]
+    fn bins_on_round_edges() {
+        let (edges, counts) = bin(&[12.0, 18.0, 25.0, 31.0, 33.0, 47.0, 52.0, f64::NAN], 5);
+        assert_eq!(edges, vec![10.0, 20.0, 30.0, 40.0, 50.0, 60.0]);
+        assert_eq!(counts, vec![2, 1, 2, 1, 1]);
+        // A value on the last edge counts in the last bin.
+        let (edges, counts) = bin(&[0.0, 5.0, 10.0], 2);
+        assert_eq!((edges.len() - 1, counts.iter().sum::<usize>(), *counts.last().unwrap() >= 1), (counts.len(), 3, true));
+        // One value still makes a bin.
+        assert_eq!(bin(&[4.0], 10).1.iter().sum::<usize>(), 1);
+        assert_eq!(bin(&[], 10), (vec![], vec![]));
+    }
+
+    #[test]
+    fn heatmap_cells_by_row_and_column() {
+        let g = Cells::new(vec![("9".into(), "Mon".into(), 1.0), ("10".into(), "Mon".into(), 4.0), ("9".into(), "Tue".into(), 2.0)]);
+        assert_eq!((g.columns.clone(), g.rows.clone()), (vec!["9".to_string(), "10".to_string()], vec!["Mon".to_string(), "Tue".to_string()]));
+        assert_eq!(g.values, vec![Some(1.0), Some(4.0), Some(2.0), None]);
+        assert_eq!(g.extreme(true), Some(("Mon", "10", 4.0)));
+        assert_eq!(g.range(), Some((1.0, 4.0)));
     }
 
     #[test]

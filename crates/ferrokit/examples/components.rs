@@ -1,7 +1,8 @@
 //! V4: the rest of the standard controls and the full set of charts, in a
 //! trip budget: tabs, a donut and stacked bars, an area chart over dates
-//! in dollars, a scatter plot, radio buttons, a token field, a rating, a
-//! gauge, a path control, a link and tooltips.
+//! in dollars, a scatter plot, a histogram, a heatmap, sparklines and
+//! threshold rules (C6), radio buttons, a token field, a rating, a gauge,
+//! a path control, a link and tooltips.
 //! `cargo run -p ferrokit --example components`; `CHECK=all` runs its
 //! self-checks.
 
@@ -29,7 +30,12 @@ fn overview() -> impl View {
     };
     hstack((
         pie_chart(spending).donut().value_format(usd()).colors(&[Color::Indigo, Color::Orange, Color::Teal, Color::Pink]).min_size(320.0, 220.0),
-        stacked_bar_chart(months).series_names(&["Lodging", "Food", "Transport"]).value_format(usd()).colors(&[Color::Indigo, Color::Orange, Color::Teal]).min_size(300.0, 220.0),
+        stacked_bar_chart(months)
+            .series_names(&["Lodging", "Food", "Transport"])
+            .value_format(usd())
+            .colors(&[Color::Indigo, Color::Orange, Color::Teal])
+            .rule(Rule::y(1300.0).label("Budget"))
+            .min_size(300.0, 220.0),
     ))
     .spacing(16.0)
     .padding(4.0)
@@ -41,7 +47,12 @@ fn trends() -> impl View {
     let lodging: Vec<(f64, f64)> = (0..90).map(|d| (START + d as f64 * DAY, 40.0 + (d as f64 / 9.0).sin() * 12.0)).collect();
     let food: Vec<(f64, f64)> = (0..90).map(|d| (START + d as f64 * DAY, 22.0 + (d as f64 / 5.0).cos() * 6.0)).collect();
     vstack((
-        area_chart(move || vec![Series::new("Balance", balance.clone()).color(Color::Green)]).value_format(usd()).x_format(Format::Date).min_size(560.0, 170.0),
+        area_chart(move || vec![Series::new("Balance", balance.clone()).color(Color::Green)])
+            .value_format(usd())
+            .x_format(Format::Date)
+            .rule(Rule::y(1500.0).label("Keep in reserve").color(Color::Orange))
+            .rule(Rule::x(START + 59.0 * DAY).label("Flights").color(Color::Secondary))
+            .min_size(560.0, 170.0),
         line_chart(move || vec![Series::new("Lodging", lodging.clone()).color(Color::Indigo), Series::new("Food", food.clone()).color(Color::Orange)])
             .value_format(usd())
             .x_format(Format::Date)
@@ -53,6 +64,44 @@ fn trends() -> impl View {
 fn details() -> impl View {
     let rides = vec![(12.0, 18.0), (30.0, 34.0), (5.0, 9.5), (48.0, 61.0), (22.0, 27.0), (65.0, 70.0), (9.0, 14.0), (40.0, 52.0)];
     scatter_chart(move || vec![Series::new("Rides", rides.clone()).color(Color::Purple)]).x_format(Format::Decimals(0)).value_format(usd()).min_size(560.0, 320.0)
+}
+
+/// C6: what rides cost, when the money went, and the week's trends.
+fn analysis() -> impl View {
+    let costs: Vec<f64> = (0..60).map(|i| 8.0 + ((i * 37) % 23) as f64 + ((i * 11) % 7) as f64 * 4.0).collect();
+    let average = costs.iter().sum::<f64>() / costs.len() as f64;
+    let days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    let spent = move || {
+        let mut cells = Vec::new();
+        for week in 1..=8 {
+            for (d, day) in days.iter().enumerate() {
+                // Week 3 has no Sunday yet: a missing cell.
+                if week == 3 && d == 6 {
+                    continue;
+                }
+                cells.push((format!("W{week}"), day.to_string(), (20 + (week * 13 + d * 29) % 90 + if d >= 5 { 60 } else { 0 }) as f64));
+            }
+        }
+        cells
+    };
+    let food = vec![22.0, 31.0, 18.0, 27.0, 40.0, 35.0, 44.0];
+    let rides = vec![12.0, 9.0, 15.0, 7.0, 6.0, 5.0, 4.0];
+    let trend = |name: &'static str, values: Vec<f64>, color: Color| {
+        let last = *values.last().unwrap();
+        hstack((text(name).fill_width(), sparkline(move || values.clone()).colors(&[color]).value_format(usd()).min_size(120.0, 24.0), text(format!("${last:.0}")).font(Font::body().monospaced_digits())))
+            .spacing(10.0)
+    };
+    vstack((
+        hstack((
+            histogram(move || costs.clone()).bins(6).value_format(usd()).colors(&[Color::Purple]).rule(Rule::x(average).label("Average")).min_size(280.0, 190.0),
+            heatmap(spent).value_format(usd()).colors(&[Color::Teal]).min_size(280.0, 190.0),
+        ))
+        .spacing(16.0),
+        trend("Food per day", food, Color::Orange),
+        trend("Rides per day", rides, Color::Purple),
+    ))
+    .spacing(10.0)
+    .padding(4.0)
 }
 
 /// The trip's settings: the controls.
@@ -112,6 +161,7 @@ fn main() {
                     ("Trends", 1, AnyView::new(trends())),
                     ("Rides", 2, AnyView::new(details())),
                     ("Settings", 3, AnyView::new(settings(s))),
+                    ("Analysis", 4, AnyView::new(analysis())),
                 ])
                 .style(TabStyle::Segmented),
             ))
@@ -191,7 +241,7 @@ mod self_checks {
         let back = page.get();
         check(
             "tabs-segmented",
-            tv.tabViewType() == NSTabViewType::NoTabsNoBorder && seg.as_ref().is_some_and(|s| s.segmentCount() == 4) && shown == Some(3) && back == 1 && radio_w > 20.0,
+            tv.tabViewType() == NSTabViewType::NoTabsNoBorder && seg.as_ref().is_some_and(|s| s.segmentCount() == 5) && shown == Some(3) && back == 1 && radio_w > 20.0,
             format!("tabless {:?}; segments {:?}; page 3 shows {shown:?}; choosing tab 1 sets the page to {back}; settings laid out ({radio_w} wide)", tv.tabViewType(), seg.map(|s| s.segmentCount())),
         );
         let ptv = all(&prefs).into_iter().find_map(|v| v.downcast::<NSTabView>().ok()).unwrap();
@@ -290,9 +340,13 @@ mod self_checks {
         let stacked = find("Stacked bar chart");
         let segments = stacked.as_ref().map(|(_, d, _)| d.iter().filter(|o| o.starts_with("fill rect") && (o.ends_with("Indigo") || o.ends_with("Orange") || o.ends_with("Teal")) && !o.contains("10x10")).count());
         let legend = stacked.as_ref().is_some_and(|(_, d, _)| ["\"Lodging\"", "\"Food\"", "\"Transport\""].iter().all(|n| d.iter().any(|o| o.contains(n))));
-        check("chart-stacked", segments == Some(12) && legend, format!("{segments:?} segments (12); legend {legend}; {:?}", stacked.map(|s| s.2)));
+        check("chart-stacked", segments == Some(12) && legend, format!("{segments:?} segments (12); legend {legend}; {:?}", stacked.as_ref().map(|s| &s.2)));
+        // The budget rule: a red line across, labelled, read by VoiceOver,
+        // and taken into the range (the tallest month is 1,370).
+        let rule = stacked.as_ref().is_some_and(|(_, d, l)| d.iter().any(|o| o.starts_with("stroke path 2 points Red")) && d.iter().any(|o| o == "text \"Budget\" 11pt") && l.contains("Budget at $1,300"));
+        check("chart-rule", rule, format!("{:?}", stacked.as_ref().map(|s| s.2.clone())));
         let images = drawings.iter().filter(|(v, _, l)| v.accessibilityRole().is_some_and(|r| r.to_string() == "AXImage") && !l.is_empty()).count();
-        check("charts-voiceover", images == 5, format!("{images} of 5 charts are images with a description"));
+        check("charts-voiceover", images == 9, format!("{images} of 9 charts are images with a description"));
         page.set(1);
         later_ms(80, move || {
             let w2 = w.clone();
@@ -304,6 +358,9 @@ mod self_checks {
             let money = texts.iter().any(|o| o.contains('$'));
             let filled = area.as_ref().is_some_and(|(_, d)| d.iter().any(|o| o.starts_with("fill path") && o.ends_with("Green")));
             check("chart-area-dates", months && money && filled, format!("month ticks Jan, Feb, Mar {months}; dollar ticks {money}; filled {filled}; {texts:?}"));
+            let label = area.as_ref().and_then(|(v, _)| v.accessibilityLabel()).map(|l| l.to_string()).unwrap_or_default();
+            let rules = area.as_ref().is_some_and(|(_, d)| d.iter().any(|o| o.starts_with("stroke path 2 points Orange")) && d.iter().any(|o| o.starts_with("stroke path 2 points Secondary") && o != "stroke path 2 points Separator"));
+            check("chart-rules-dates", rules && label.contains("Keep in reserve at $1,500") && label.contains("Flights at ") && label.ends_with("2026"), label);
             let line = get("Line chart");
             let colours = line.as_ref().is_some_and(|(_, d)| d.iter().any(|o| o.starts_with("stroke path") && o.ends_with("Indigo")) && d.iter().any(|o| o.starts_with("stroke path") && o.ends_with("Orange")));
             let legend = line.as_ref().is_some_and(|(_, d)| d.iter().any(|o| o.contains("\"Lodging\"")) && d.iter().any(|o| o.contains("\"Food\"")));
@@ -316,12 +373,47 @@ mod self_checks {
                 let w3 = w.clone();
                 let dots = scatter.as_ref().map(|(_, d)| d.iter().filter(|o| o.starts_with("fill ellipse") && o.ends_with("Purple")).count());
                 check("chart-scatter", dots == Some(8), format!("{dots:?} dots (8); {:?}", scatter.map(|s| s.0.accessibilityLabel())));
-                later_ms(300, move || {
-                    snap(&w3, "settings-later");
-                    eprintln!("[check] done, {} failed", failed.get());
-                    std::process::exit(if failed.get() == 0 { 0 } else { 1 });
-                });
+                page.set(4);
+                later_ms(120, move || analysis_checks(w3, check, failed));
             });
+        });
+    }
+
+    fn analysis_checks(w: Retained<NSWindow>, check: Check, failed: Rc<Cell<u32>>) {
+        snap(&w, "analysis");
+        let w2 = w.clone();
+        let get = move |prefix: &str| all(&w2).into_iter().filter_map(|v| canvas_drawing(&v).map(|d| (v, d))).filter(|(v, _)| v.accessibilityLabel().is_some_and(|l| l.to_string().starts_with(prefix))).collect::<Vec<_>>();
+        let label = |v: &NSView| v.accessibilityLabel().map(|l| l.to_string()).unwrap_or_default();
+        // Histogram: 60 rides in bins on round dollars, the average marked.
+        let hist = get("Histogram").pop();
+        let bars = hist.as_ref().map_or(0, |(_, d)| d.iter().filter(|o| o.starts_with("fill rect") && o.ends_with("Purple")).count());
+        let hist_label = hist.as_ref().map(|(v, _)| label(v)).unwrap_or_default();
+        let average = hist.as_ref().is_some_and(|(_, d)| d.iter().any(|o| o == "text \"Average\" 11pt") && d.iter().any(|o| o.starts_with("stroke path 2 points Red")));
+        check("chart-histogram", (4..=8).contains(&bars) && hist_label.starts_with("Histogram of 60 values") && hist_label.contains('$') && hist_label.contains("Average at $") && average, format!("{bars} bars; {hist_label}"));
+        // Heatmap: 8 weeks by 7 days, one cell missing, the scale above.
+        let heat = get("Heatmap").pop();
+        let teal = |o: &&String| o.starts_with("fill rect") && o.ends_with("Teal");
+        let cells = heat.as_ref().map_or(0, |(_, d)| d.iter().filter(teal).filter(|o| !o.contains(" 10x10 ")).count());
+        let scale = heat.as_ref().map_or(0, |(_, d)| d.iter().filter(teal).filter(|o| o.contains(" 10x10 ")).count());
+        let heat_label = heat.as_ref().map(|(v, _)| label(v)).unwrap_or_default();
+        let labels = heat.as_ref().is_some_and(|(_, d)| ["\"Mon\"", "\"Sun\"", "\"W1\""].iter().all(|n| d.iter().any(|o| o.contains(n))));
+        check("chart-heatmap", cells == 55 && scale == 5 && labels && heat_label.starts_with("Heatmap, 7 rows by 8 columns"), format!("{cells} cells (55), scale of {scale}; labels {labels}; {heat_label}"));
+        // Sparklines: a line and a dot each, no axes, a fixed height.
+        let sparks = get("Sparkline");
+        let shapes = sparks.iter().all(|(_, d)| d.iter().any(|o| o.starts_with("stroke path 7 points")) && d.iter().filter(|o| o.starts_with("fill ellipse")).count() == 1 && !d.iter().any(|o| o.starts_with("text")));
+        let heights: Vec<f64> = sparks.iter().map(|(v, _)| v.frame().size.height).collect();
+        let first = sparks.first().map(|(v, _)| label(v)).unwrap_or_default();
+        check(
+            "sparkline",
+            sparks.len() == 2 && shapes && heights.iter().all(|h| *h == 24.0) && first == "Sparkline, 7 values from $18 to $44, last $44",
+            format!("{} sparklines; line and dot, no text {shapes}; heights {heights:?}; {first}", sparks.len()),
+        );
+        let problems = ax_audit(&w);
+        check("analysis-accessibility", problems.is_empty(), format!("{problems:?}"));
+        later_ms(300, move || {
+            snap(&w, "analysis-later");
+            eprintln!("[check] done, {} failed", failed.get());
+            std::process::exit(if failed.get() == 0 { 0 } else { 1 });
         });
     }
 

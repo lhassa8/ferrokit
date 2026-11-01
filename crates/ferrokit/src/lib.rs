@@ -129,7 +129,7 @@ pub use canvas::{Canvas, Painter, canvas};
 pub use value::{IntoValue, Value};
 pub use transfer::{Clipboard, DragItem, WriteFile};
 pub use l10n::{format_date, format_number, format_number_for, local_day, local_day_start, today, weekday, language, parse_strings, plural_category, set_language, t, t_plural, t_with};
-pub use charts::{Chart, Format, Series, area_chart, bar_chart, line_chart, pie_chart, scatter_chart, stacked_bar_chart};
+pub use charts::{Chart, Format, Rule, Series, area_chart, bar_chart, heatmap, histogram, line_chart, pie_chart, scatter_chart, sparkline, stacked_bar_chart};
 pub use ferrokit_core::ViewId;
 /// The AppKit window type the window functions take and return.
 pub use objc2_app_kit::NSWindow;

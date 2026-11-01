@@ -169,6 +169,7 @@ The review is in `docs/Q3_API_REVIEW.md`. Changes:
 - **Window tabs, full screen, the Dock:** `Window::tabbing(Tabbing::…, group)` and `open_tab`; `.no_full_screen()`, `toggle_full_screen`, `is_full_screen`; `set_dock_badge` and `App::dock_menu`.
 - **Panels:** `Window::panel(PanelStyle::Floating | Utility | Hud)` opens an `NSPanel`: floating above the app's windows, hidden while the app is inactive, out of the Window menu, and key only when a field in it needs the keyboard.
 - **SF Symbol effects:** `image(..).effect(SymbolEffect::Pulse, active)` runs one while a condition holds; `.effect_on(SymbolEffect::Bounce, trigger)` plays one each time a value changes (bounce, pulse, variable colour, scale, wiggle, rotate, breathe).
+- **Chart rules, histograms, heatmaps and sparklines:** `.rule(Rule::y(v))` and `Rule::x(x)` draw a labelled threshold, target or average across or down a chart (its range takes them in; VoiceOver reads them); `histogram(values)` counts values in round-number bins (`.bins(n)`); `heatmap(cells)` shades a grid of `(column, row, value)` with a scale above; `sparkline(values)` is a small line with its last value marked, at a fixed height.
 - **`progress(..).spinner()`:** a spinner (spinning while the amount is unknown, a filling circle when known), with `.control_size(..)`.
 
 ### Fixed in the hands-on checks (Phase 3, Q4)

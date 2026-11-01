@@ -443,6 +443,8 @@ pub struct Canvas {
     min: Size,
     drag: Option<Drag>,
     export: Option<String>,
+    /// Whether it takes extra width and height (both, unless a chart says).
+    grows: (bool, bool),
 }
 
 impl Canvas {
@@ -487,6 +489,12 @@ impl Canvas {
         self.min = Size { w: width, h: height };
         self
     }
+
+    /// Takes extra width but keeps its height (a sparkline in a row).
+    pub(crate) fn fixed_height(mut self) -> Self {
+        self.grows = (true, false);
+        self
+    }
 }
 
 /// A canvas drawn by `draw`, again whenever the signals it reads change or
@@ -506,7 +514,7 @@ impl Canvas {
 /// # let _ = meter;
 /// ```
 pub fn canvas(draw: impl Fn(&mut Painter) + 'static) -> Canvas {
-    Canvas { draw: Rc::new(draw), hover: None, click: None, description: None, min: Size { w: 200.0, h: 120.0 }, drag: None, export: None }
+    Canvas { draw: Rc::new(draw), hover: None, click: None, description: None, min: Size { w: 200.0, h: 120.0 }, drag: None, export: None, grows: (true, true) }
 }
 
 impl View for Canvas {
@@ -544,7 +552,7 @@ impl View for Canvas {
             view.addTrackingArea(&area);
         }
         let ns: Retained<NSView> = Retained::into_super(view.clone());
-        let (mut node, _) = Node::leaf(cx, ns, (true, true), self.min);
+        let (mut node, _) = Node::leaf(cx, ns, self.grows, self.min);
         // Record the drawing again when what it reads changes, or the size.
         let (v, draw) = (view.clone(), self.draw);
         node.own(Effect::new(move || {

@@ -117,6 +117,9 @@ a summary.
 | `area_chart` | `Series` | totals over time, filled down to zero |
 | `scatter_chart` | `Series` | how two values relate |
 | `pie_chart` | `(label, value)` pairs | shares of a whole (`.donut()` for a ring with the total inside) |
+| `histogram` | values | how many fall in each range (about 10 round-number bins, or `.bins(n)`) |
+| `heatmap` | `(column, row, value)` triples | a grid shaded by value: activity by weekday and week, by hour |
+| `sparkline` | values | a small trend beside a number or in a row: no axes, the last value marked |
 
 ```rust,no_run
 use ferrokit::*;
@@ -148,4 +151,26 @@ area and scatter charts (`.x_format(..)`):
 
 **Colours:** `.colors(&[..])` sets the series' (or bars' or slices')
 colours in order, and `Series::color(..)` gives one series its own.
-`.no_legend()` hides the legend.
+`.no_legend()` hides the legend. A heatmap shades its first colour, with
+a scale from the lowest value to the highest above it.
+
+**Rules** mark a threshold, a target or an average: `Rule::y(value)`
+runs across the chart, `Rule::x(x)` down it (on line, area and scatter
+charts and histograms). The chart's range takes them in, their labels sit
+on a patch of the background so they read over the data, and VoiceOver's
+summary includes them ("Budget at $1,300").
+
+```rust,no_run
+use ferrokit::*;
+
+let minutes = vec![12.0, 18.0, 25.0, 31.0, 33.0, 47.0, 52.0];
+let average = minutes.iter().sum::<f64>() / minutes.len() as f64;
+let rides = histogram(move || minutes.clone()).bins(5).rule(Rule::x(average).label("Average"));
+
+let sales = bar_chart(|| vec![("Mon".to_string(), 1200.0), ("Tue".to_string(), 800.0)])
+    .rule(Rule::y(1000.0).label("Target").color(Color::Green));
+
+let week = vec![3.0, 5.0, 4.0, 7.0, 6.0, 8.0, 9.0];
+let trend = hstack((text("Orders"), sparkline(move || week.clone()).colors(&[Color::Green])));
+# let _ = (rides, sales, trend);
+```
