@@ -237,6 +237,7 @@ pub struct TextEditor {
     on_composition: Callback<Option<String>>,
     shared_undo: bool,
     highlight: Option<Rc<Highlight>>,
+    code: bool,
 }
 
 type Highlight = dyn Fn(&str) -> Vec<(std::ops::Range<usize>, TextStyle)>;
@@ -286,9 +287,18 @@ impl TextEditor {
         self
     }
 
-    /// Syntax highlighting with `syntax` (e.g. [`Syntax::sql`](crate::Syntax::sql)).
+    /// Syntax highlighting with `syntax` (e.g. [`Syntax::sql`](crate::Syntax::sql)),
+    /// for code: see [`code`](Self::code).
     pub fn syntax(self, syntax: crate::Syntax) -> Self {
-        self.highlight(move |text| syntax.highlight(text))
+        self.code().highlight(move |text| syntax.highlight(text))
+    }
+
+    /// An editor for code: quotes and dashes stay as typed (no smart
+    /// quotes), and no text replacement, autocorrection or spell checking
+    /// ([`TextModel::set_code_input`]). [`syntax`](Self::syntax) implies it.
+    pub fn code(mut self) -> Self {
+        self.code = true;
+        self
     }
 }
 
@@ -301,6 +311,9 @@ impl View for TextEditor {
         }
         if self.shared_undo {
             self.model.share_undo(crate::undo::manager_for(&cx.container).as_deref());
+        }
+        if self.code {
+            self.model.set_code_input(true);
         }
         if let Some(f) = self.highlight.clone() {
             let g = f.clone();
@@ -349,5 +362,5 @@ impl View for TextEditor {
 
 /// A native text editor showing `model` (see [`TextEditor`]).
 pub fn text_editor(model: &TextModel) -> TextEditor {
-    TextEditor { model: model.clone(), bound: None, on_change: None, on_selection: None, on_composition: None, shared_undo: false, highlight: None }
+    TextEditor { model: model.clone(), bound: None, on_change: None, on_selection: None, on_composition: None, shared_undo: false, highlight: None, code: false }
 }

@@ -208,6 +208,10 @@ let editor = text_editor(&query).syntax(Syntax::sql()).accessibility_label("Quer
 # let _ = editor;
 ```
 
+`.syntax(...)` also makes it a code editor (`.code()` does that alone):
+quotes and dashes stay as typed instead of becoming smart quotes, and
+there's no text replacement, autocorrection or spell checking.
+
 For anything else, `.highlight(|text| runs)` returns UTF-8 byte ranges and
 their `TextStyle`s (a `Color`, a background, bold, italic, underline).
 The colours are the system's, so they follow Dark Mode. Styles are applied

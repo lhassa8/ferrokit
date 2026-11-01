@@ -990,6 +990,20 @@ impl TextModel {
         self.inner.view.setGrammarCheckingEnabled(on);
     }
 
+    /// Input for code (`true`) or prose (`false`, the default): code turns
+    /// off what helps prose and breaks code: smart quotes and dashes (`"`
+    /// becoming `“`), text replacement, spelling correction, spell checking
+    /// and the spaces smart paste adds.
+    pub fn set_code_input(&self, code: bool) {
+        let view = &self.inner.view;
+        view.setAutomaticQuoteSubstitutionEnabled(!code);
+        view.setAutomaticDashSubstitutionEnabled(!code);
+        view.setAutomaticTextReplacementEnabled(!code);
+        view.setAutomaticSpellingCorrectionEnabled(!code);
+        view.setContinuousSpellCheckingEnabled(!code);
+        view.setSmartInsertDeleteEnabled(!code);
+    }
+
     /// Whether plain Tab inserts a tab (default) or moves focus on.
     pub fn set_accepts_tab(&self, accepts: bool) {
         crate::keys::set_accepts_tab(self.inner.id, accepts);

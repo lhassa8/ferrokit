@@ -1847,7 +1847,24 @@ mod self_checks {
                         typed.starts_with("SELECT Dzname, city") && caret1 == 8 && caret == 9 && styled,
                         format!("query {typed:?}; caret after D at {caret1}, after z at {caret}; styles kept {styled}"),
                     );
-                    scratch(w3, dir);
+                    // Code input: quotes and dashes stay as typed, whatever the Mac's text settings.
+                    let off = !editor.isAutomaticQuoteSubstitutionEnabled()
+                        && !editor.isAutomaticDashSubstitutionEnabled()
+                        && !editor.isAutomaticTextReplacementEnabled()
+                        && !editor.isAutomaticSpellingCorrectionEnabled()
+                        && !editor.isContinuousSpellCheckingEnabled();
+                    let end = editor.string().length();
+                    editor.setSelectedRange(objc2_foundation::NSRange::new(end, 0));
+                    input::type_text(&w3, " -- 'D%' \"x\" --");
+                    when(|| false, 300, move |_| {
+                        let typed = untrack(|| b.query.get());
+                        check(
+                            "code-input",
+                            off && typed.ends_with(" -- 'D%' \"x\" --"),
+                            format!("substitutions off {off}; typed {:?}", typed.get(typed.len().saturating_sub(18)..).unwrap_or(&typed)),
+                        );
+                        scratch(w3, dir);
+                    });
                 });
             });
         });
