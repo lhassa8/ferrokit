@@ -1,6 +1,8 @@
 //! V3: motion. A packing list whose rows slide in and out, fade when
 //! they're packed, highlight under the pointer and click like buttons; a
-//! details panel that fades in and pushes the list down smoothly.
+//! details panel that springs open, the trail's name moving into it
+//! (matched geometry); a bar that fills with a spring as things are
+//! packed, and shakes (keyframes) when there's nothing to remove (C14).
 //! `cargo run -p ferrokit --example motion`; `CHECK=all` runs its
 //! self-checks.
 
@@ -27,6 +29,10 @@ struct State {
     packed: Signal<Vec<u32>>,
     details: Signal<bool>,
     next: Signal<u32>,
+    /// How much is packed, as the bar shows it (animated toward the share).
+    progress: Signal<f64>,
+    /// The bar's sideways nudge, in points.
+    shake: Signal<f64>,
 }
 
 const MORE: [(&str, &str); 4] = [("Headlamp", "flashlight.on.fill"), ("Map", "map.fill"), ("Rain jacket", "cloud.rain.fill"), ("Snacks", "takeoutbag.and.cup.and.straw.fill")];
@@ -63,8 +69,17 @@ fn screen(state: State) -> impl View {
     vstack((
         hstack((
             text("Packing list").font(Font::title2().weight(Weight::Bold)),
+            // The trail's name, here until the details open and it moves
+            // into them.
+            dynamic(move || {
+                if state.details.get() {
+                    AnyView::new(spacer().width(0.0))
+                } else {
+                    AnyView::new(text("Coast trail").font(Font::callout()).color(Color::Secondary).matched_geometry("trail"))
+                }
+            }),
             spacer(),
-            button("Details", move || animated(|| state.details.set(!state.details.get()))),
+            button("Details", move || animated_with(Animation::bouncy(), || state.details.set(!state.details.get()))),
             button("Add", move || {
                 animated(|| {
                     let n = state.next.get();
@@ -74,6 +89,11 @@ fn screen(state: State) -> impl View {
                 })
             }),
             button("Remove packed", move || {
+                if state.packed.get().is_empty() {
+                    // Nothing to remove: the bar shakes.
+                    keyframes(&state.shake, Keyframes::new(0.0).to(8.0, 0.06).to(-6.0, 0.08).to(4.0, 0.06).with(0.0, Animation::snappy()));
+                    return;
+                }
                 animated(|| {
                     let packed = state.packed.get();
                     state.items.update(|v| v.retain(|i| !packed.contains(&i.id)));
@@ -84,9 +104,12 @@ fn screen(state: State) -> impl View {
         dynamic(move || {
             if state.details.get() {
                 AnyView::new(
-                    text("Three days on the coast trail; huts each night, so no tent.")
-                        .font(Font::callout())
-                        .color(Color::Secondary)
+                    vstack((
+                        text("Coast trail").font(Font::headline()).matched_geometry("trail"),
+                        text("Three days on the coast trail; huts each night, so no tent.").font(Font::callout()).color(Color::Secondary),
+                    ))
+                    .spacing(4.0)
+                    .alignment(Align::Start)
                         .padding(12.0)
                         .fill_width()
                         .background(move || if state.packed.get().is_empty() { Color::ControlBackground } else { Color::Green.opacity(0.18) })
@@ -97,12 +120,37 @@ fn screen(state: State) -> impl View {
                 AnyView::new(spacer().height(0.0))
             }
         }),
+        packed_bar(state),
         vstack((for_each(move || state.items.get(), move |item| row(state, item)),)).spacing(2.0),
         spacer(),
     ))
     .spacing(14.0)
     .alignment(Align::Start)
     .padding(24.0)
+}
+
+/// How much is packed: a bar that fills with a spring.
+fn packed_bar(state: State) -> impl View {
+    let share = move || {
+        let (n, packed) = (state.items.get().len(), state.packed.get().len());
+        if n == 0 { 0.0 } else { packed as f64 / n as f64 }
+    };
+    vstack((
+        // Each change of the share springs the bar toward it.
+        watch(move || animate(&state.progress, share(), Animation::snappy())),
+        canvas(move |p| {
+            let x = state.shake.get();
+            p.fill_rounded_rect(x, 0.0, p.width(), p.height(), p.height() / 2.0, Color::Fill);
+            let w = (p.width() * state.progress.get()).clamp(0.0, p.width());
+            if w > 0.0 {
+                p.fill_rounded_rect(x, 0.0, w.max(p.height()), p.height(), p.height() / 2.0, Color::Green);
+            }
+        })
+        .description(move || format!("Packed {} of {}", state.packed.get().len(), state.items.get().len()))
+        .min_size(200.0, 8.0)
+        .height(8.0)
+        .fill_width(),
+    ))
 }
 
 fn main() {
@@ -115,6 +163,8 @@ fn main() {
                 packed: Signal::new(Vec::new()),
                 details: Signal::new(false),
                 next: Signal::new(0),
+                progress: Signal::new(0.0),
+                shake: Signal::new(0.0),
             };
             if checks {
                 self_checks::STATE.with(|s| s.set(Some(state)));
@@ -295,7 +345,85 @@ mod self_checks {
             later_ms(900, move || {
                 let gone = !shown(&boots) && leaving_views() == 0 && field_opt(&w, "Boots").is_none();
                 c("removed-after-transition", gone, format!("removed {}; leaving {}", !shown(&boots), leaving_views()));
-                reduce(w, state, c, failed);
+                springs(w, state, c, failed);
+            });
+        });
+    }
+
+    /// Where `v` is in its window.
+    fn in_window(v: &NSView) -> objc2_core_foundation::CGRect {
+        unsafe { v.superview() }.map(|s| s.convertRect_toView(v.frame(), None)).unwrap_or_default()
+    }
+
+    /// C14: the details spring open (the list overshoots and settles), the
+    /// trail's name starts where the header's was; the bar springs to the
+    /// packed share; the shake goes through its keyframes.
+    fn springs(w: Retained<NSWindow>, state: State, check: Check, failed: Rc<Cell<u32>>) {
+        use ferrokit::testing::{motion_running, step_motion};
+        batch(|| state.details.set(false));
+        later_ms(80, move || {
+            let badge = in_window(&field(&w, "Coast trail"));
+            let water = field(&w, "Water bottle");
+            let y0 = model(&water).origin.y;
+            animated_with(Animation::bouncy(), || state.details.set(true));
+            later_ms(20, move || {
+                let start = in_window(&field(&w, "Coast trail"));
+                // The spring's course, in steps of 20 ms.
+                let ys: Vec<f64> = (0..60).map(|_| {
+                    step_motion(0.02);
+                    model(&water).origin.y
+                }).collect();
+                step_motion(4.0);
+                let end = model(&water).origin.y;
+                let title = in_window(&field(&w, "Coast trail"));
+                let travel = end - y0;
+                let peak = ys.iter().map(|y| (y - y0) / travel).fold(f64::MIN, f64::max);
+                check(
+                    "spring-layout",
+                    travel.abs() > 20.0 && peak > 1.03 && (model(&water).origin.y - end).abs() < 0.01,
+                    format!("Water bottle moved {travel:.0} pt, overshooting to {:.0}% of it, then settled", peak * 100.0),
+                );
+                let d = |a: objc2_core_foundation::CGRect, b: objc2_core_foundation::CGRect| (a.origin.x - b.origin.x).hypot(a.origin.y - b.origin.y);
+                check(
+                    "matched-geometry",
+                    d(start, badge) < d(start, title) && d(badge, title) > 20.0,
+                    format!("the panel's title started {:.0} pt from the header's (and {:.0} pt from its place), then settled at {:?}", d(start, badge), d(start, title), title.origin),
+                );
+                if let Ok(dir) = std::env::var("SNAP") {
+                    ferrokit::testing::snapshot_windows(&dir);
+                }
+                // The bar: packing one springs it to its share.
+                let n = state.items.get().len() as f64;
+                let first = state.items.get()[0].id;
+                batch(|| state.packed.set(vec![first]));
+                later_ms(20, move || {
+                    step_motion(0.03);
+                    let partway = state.progress.get();
+                    step_motion(3.0);
+                    let landed = state.progress.get();
+                    check(
+                        "animate-value",
+                        partway > 0.0 && partway < landed && (landed - 1.0 / n).abs() < 1e-9 && motion_running() == 0,
+                        format!("on its way {partway:.3}, landed {landed:.3} (1/{n}); still running {}", motion_running()),
+                    );
+                    // Nothing packed: Remove packed shakes the bar.
+                    batch(|| state.packed.set(Vec::new()));
+                    let remove = all(&w).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).find(|b| b.title().to_string() == "Remove packed").unwrap();
+                    // Its action now (performClick shows the press first, a moment the shake would run on).
+                    ferrokit::testing::send_action(&remove);
+                    let path: Vec<f64> = (0..40).map(|_| {
+                        step_motion(0.01);
+                        state.shake.get()
+                    }).collect();
+                    step_motion(2.0);
+                    let (hi, lo) = (path.iter().copied().fold(f64::MIN, f64::max), path.iter().copied().fold(f64::MAX, f64::min));
+                    check(
+                        "keyframes",
+                        (7.0..=8.0).contains(&hi) && (-6.0..=-5.0).contains(&lo) && state.shake.get() == 0.0 && state.items.get().len() as f64 == n,
+                        format!("the shake reached {hi:.1} and {lo:.1}, then rest at {}; nothing removed", state.shake.get()),
+                    );
+                    reduce(w, state, check, failed);
+                });
             });
         });
     }

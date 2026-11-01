@@ -131,7 +131,7 @@ pub use form::{Form, FormRow, FormStyle, Section, disclosure, form, form_content
 pub use quicklook::{Thumbnail, close_quick_look, is_quick_look_open, quick_look, thumbnail};
 pub use services::{Notification, SentNotification, ShareButton, ShareItem, cancel_notification, notifications_supported, notify, pdf_data, print, save_pdf, share_button};
 pub use status::MenuBarExtra;
-pub use motion::{Animation, Transition, animated, animated_with, reduce_motion};
+pub use motion::{Animation, Keyframes, Transition, animate, animated, animated_with, keyframes, reduce_motion, stop_animation};
 pub use popover::Edge;
 pub use canvas::{Canvas, Painter, canvas};
 pub use value::{IntoValue, Value};

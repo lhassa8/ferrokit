@@ -110,6 +110,18 @@ pub fn symbol_effects() -> (isize, usize) {
     crate::controls::SYMBOL_EFFECTS.with(std::cell::Cell::get)
 }
 
+/// Moves the clock springs, [`animate`](crate::animate) and
+/// [`keyframes`](crate::keyframes) run on forward by `seconds` and runs a
+/// frame: what's animating lands where it would be that much later.
+pub fn step_motion(seconds: f64) {
+    crate::motion::step(seconds);
+}
+
+/// Value and spring animations running now.
+pub fn motion_running() -> usize {
+    crate::motion::running()
+}
+
 /// Quick Look thumbnails made so far ([`thumbnail`](crate::thumbnail)).
 pub fn thumbnails_made() -> usize {
     crate::quicklook::THUMBNAILS.with(std::cell::Cell::get)

@@ -222,6 +222,8 @@ pub struct Node {
     pub(crate) decor: Vec<NativeView>,
     /// How it leaves when removed inside an animated change.
     pub(crate) transition: Option<crate::Transition>,
+    /// Its matched-geometry id (see [`ViewExt::matched_geometry`]).
+    pub(crate) matched: Option<Rc<str>>,
     effects: Vec<Effect>,
     keep: Vec<NativeObject>,
     held: Vec<Rc<dyn std::any::Any>>,
@@ -245,6 +247,7 @@ impl Node {
             meta,
             decor: Vec::new(),
             transition: None,
+            matched: None,
             effects: Vec::new(),
             keep: Vec::new(),
             held: Vec::new(),
@@ -359,6 +362,11 @@ fn remove_view(view: &NativeView) {
 impl Drop for Node {
     fn drop(&mut self) {
         LIVE_NODES.with(|n| n.set(n.get() - 1));
+        // Leaving inside an animated change: where it was, for the view with
+        // its id that comes in.
+        if let Some(id) = &self.matched {
+            crate::motion::matched_leaving(id, &self.all_views());
+        }
         // Removed inside an animated change: its views (and its subtree's)
         // stay for its transition, then go.
         let leaving = self.transition.filter(|_| crate::motion::animating() && LEAVING.try_with(|l| l.borrow().is_none()).unwrap_or(false));
@@ -561,6 +569,15 @@ pub trait ViewExt: View + Sized {
         Modified::new(self).transition(transition)
     }
 
+    /// Matched geometry (SwiftUI's `matchedGeometryEffect`): when, in one
+    /// [`animated`](crate::animated) change, a view with this `id` goes
+    /// and another with it comes (a thumbnail replaced by its detail, a
+    /// selection marker moving), the new one starts where and as large as
+    /// the old one was, and moves to its place.
+    fn matched_geometry(self, id: &str) -> Modified<Self> {
+        Modified::new(self).matched_geometry(id)
+    }
+
     /// Calls `action` with `true` when the pointer moves over the view and
     /// `false` when it leaves (while the app is active).
     fn on_hover(self, action: impl Fn(bool) + 'static) -> Modified<Self> {
@@ -612,6 +629,7 @@ pub struct Modified<V> {
     opacity: Option<f64>,
     opacity_when: Option<Box<dyn Fn() -> f64>>,
     transition: Option<crate::Transition>,
+    matched: Option<Rc<str>>,
     hover: Option<Rc<dyn Fn(bool)>>,
     click: Option<Rc<dyn Fn()>>,
     tooltip: Option<String>,
@@ -641,7 +659,7 @@ enum Op {
 
 impl<V: View> Modified<V> {
     fn new(view: V) -> Self {
-        Modified { view, ops: Vec::new(), menu: None, label: None, responds: Default::default(), popover: None, opacity: None, opacity_when: None, transition: None, hover: None, click: None, tooltip: None, disabled: None, font: None, color: None, ax_value: None }
+        Modified { view, ops: Vec::new(), menu: None, label: None, responds: Default::default(), popover: None, opacity: None, opacity_when: None, transition: None, matched: None, hover: None, click: None, tooltip: None, disabled: None, font: None, color: None, ax_value: None }
     }
 
     /// Shows `content` in a popover pointing at this view while `shown` is
@@ -816,6 +834,12 @@ impl<V: View> Modified<V> {
     #[deprecated(since = "0.4.0", note = "`opacity` takes a closure: `.opacity(move || ..)`")]
     pub fn opacity_when(self, opacity: impl Fn() -> f64 + 'static) -> Self {
         self.opacity(opacity)
+    }
+
+    /// Matched geometry (see [`ViewExt::matched_geometry`]).
+    pub fn matched_geometry(mut self, id: &str) -> Self {
+        self.matched = Some(id.into());
+        self
     }
 
     /// How the view comes and goes (see [`ViewExt::transition`]).
@@ -1036,6 +1060,10 @@ impl<V: View> View for Modified<V> {
             for v in leaves.iter().chain(node.decor.iter().filter(|d| d.class().name().to_string_lossy() == "FerrokitInteraction")) {
                 v.setToolTip(Some(&tip));
             }
+        }
+        if let Some(id) = self.matched {
+            crate::motion::matched_entering(&id, node.all_views());
+            node.matched = Some(id);
         }
         if let Some(t) = self.transition {
             node.transition = Some(t);

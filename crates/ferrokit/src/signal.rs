@@ -326,6 +326,11 @@ impl<T: 'static> Signal<T> {
         )
     }
 
+    /// Identifies this signal (for keying work by it).
+    pub(crate) fn key(&self) -> u64 {
+        (u64::from(self.index) << 32) | u64::from(self.generation)
+    }
+
     /// Whether the signal still exists (its owner hasn't been dropped).
     pub fn is_alive(&self) -> bool {
         self.try_inner().is_some()

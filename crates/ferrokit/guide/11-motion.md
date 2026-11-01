@@ -81,6 +81,57 @@ let add = button("Add", move || animated(|| items.update(|v| v.push(Item { id: 2
 A removed view stays on screen until its transition ends, then goes, and
 the views around it close the gap as it leaves.
 
+## Springs
+
+`Animation::spring(response, damping)` moves like a spring, as SwiftUI's
+do: `response` is how quickly (its period undamped, in seconds) and
+`damping` how it settles, 1 without overshooting and less with a bounce.
+`Animation::bouncy()`, `snappy()` and `smooth()` are ready-made ones. A
+spring lasts until it's still, and a view moved again mid-flight goes on
+from where it is.
+
+```rust,no_run
+use ferrokit::*;
+
+let open = Signal::new(false);
+let toggle = button("Details", move || animated_with(Animation::bouncy(), || open.set(!open.get())));
+# let _ = toggle;
+```
+
+Core Animation's curves can't overshoot, so frames under a spring are set
+a frame at a time instead; fades and colours in the same change ease out
+alongside.
+
+## Animating values and keyframes
+
+`animate(&signal, to, animation)` takes an `f64` signal to `to` over time,
+setting it each frame: anything that reads it follows (a canvas drawing,
+an opacity, a size). `keyframes(&signal, frames)` takes it through several
+values, each reached with its own timing, as SwiftUI's keyframe animator
+does: a shake, a pulse, a count-up. `.repeating()` loops it until
+`stop_animation(&signal)`.
+
+```rust,no_run
+use ferrokit::*;
+
+let level = Signal::new(0.0);
+let fill = button("Fill", move || animate(&level, 1.0, Animation::snappy()));
+
+let nudge = Signal::new(0.0);
+let shake = button("Shake", move || {
+    keyframes(&nudge, Keyframes::new(0.0).to(8.0, 0.06).to(-6.0, 0.08).with(0.0, Animation::snappy()))
+});
+# let _ = (fill, shake);
+```
+
+## Matched geometry
+
+`.matched_geometry("id")` pairs views across an animated change: when one
+with that id goes and another with it comes (a thumbnail and its detail, a
+marker under the selected tab), the new one starts where and as large as
+the old one was, then moves to its place. The `motion` example's trail
+name moves from the header into the details panel this way.
+
 ## Hover and click
 
 Any view can respond to the pointer:
@@ -107,6 +158,9 @@ let row = hstack((image("map.fill"), text("Lofoten"), spacer()))
 ```
 
 ## Reduce Motion
+
+Springs and matched geometry don't move either, and `animate` and
+`keyframes` set the end value at once.
 
 With Reduce Motion on (System Settings › Accessibility › Display),
 animated changes don't move anything: views land in their new places at
