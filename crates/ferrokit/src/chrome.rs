@@ -353,6 +353,9 @@ enum Entry {
         key: Option<(String, NSEventModifierFlags)>,
     },
     Separator,
+    /// One of AppKit's own actions, sent along the responder chain (or to
+    /// the font manager): Bold, Show Fonts, Align Left…
+    Standard { title: String, action: objc2::runtime::Sel, key: &'static str, modifiers: NSEventModifierFlags, tag: isize, font_manager: bool },
     Submenu { title: String, items: Vec<MenuItem> },
     Dynamic { title: String, items: Rc<dyn Fn() -> Vec<MenuItem>> },
 }
@@ -429,6 +432,51 @@ pub fn menu_item(title: impl crate::IntoValue<String>, action: impl Fn() + 'stat
         crate::Value::Computed(f) => (crate::signal::untrack(|| f()), Some(Box::new(move || f()))),
     };
     MenuItem(Entry::Action { title, action: Box::new(action), enabled: None, checked: None, titled, key: None })
+}
+
+/// TextEdit's Format menu, for rich text editors
+/// ([`TextEditor::rich`](crate::TextEditor::rich)): Font (Show Fonts, Bold,
+/// Italic, Underline, Bigger, Smaller, Show Colors, Copy and Paste Style)
+/// and Text (alignment, Show Ruler, Copy and Paste Ruler), with their usual
+/// shortcuts. AppKit enables what applies to the focused editor.
+///
+/// ```no_run
+/// use ferrokit::*;
+///
+/// let app = App::new("Journal").menu("Format", format_menu());
+/// # let _ = app;
+/// ```
+pub fn format_menu() -> Vec<MenuItem> {
+    use objc2_app_kit::NSEventModifierFlags as M;
+    let item = |title: &str, action, key, modifiers, tag, font_manager| MenuItem(Entry::Standard { title: crate::t(title), action, key, modifiers, tag, font_manager });
+    let (cmd, shift, opt, ctrl) = (M::Command, M::Shift, M::Option, M::Control);
+    vec![
+        submenu(&crate::t("Font"), vec![
+            item("Show Fonts", sel!(orderFrontFontPanel:), "t", cmd, 0, true),
+            // NSFontManager's traits: italic 1, bold 2; sizes: bigger 3, smaller 4.
+            item("Bold", sel!(addFontTrait:), "b", cmd, 2, true),
+            item("Italic", sel!(addFontTrait:), "i", cmd, 1, true),
+            item("Underline", sel!(underline:), "u", cmd, 0, false),
+            menu_separator(),
+            item("Bigger", sel!(modifyFont:), "+", cmd, 3, true),
+            item("Smaller", sel!(modifyFont:), "-", cmd, 4, true),
+            menu_separator(),
+            item("Show Colors", sel!(orderFrontColorPanel:), "C", cmd | shift, 0, false),
+            menu_separator(),
+            item("Copy Style", sel!(copyFont:), "c", cmd | opt, 0, false),
+            item("Paste Style", sel!(pasteFont:), "v", cmd | opt, 0, false),
+        ]),
+        submenu(&crate::t("Text"), vec![
+            item("Align Left", sel!(alignLeft:), "{", cmd, 0, false),
+            item("Center", sel!(alignCenter:), "|", cmd, 0, false),
+            item("Justify", sel!(alignJustified:), "", cmd, 0, false),
+            item("Align Right", sel!(alignRight:), "}", cmd, 0, false),
+            menu_separator(),
+            item("Show Ruler", sel!(toggleRuler:), "r", cmd | ctrl, 0, false),
+            item("Copy Ruler", sel!(copyRuler:), "c", cmd | ctrl, 0, false),
+            item("Paste Ruler", sel!(pasteRuler:), "v", cmd | ctrl, 0, false),
+        ]),
+    ]
 }
 
 /// Customize Toolbar…, for a View menu: opens the main window's toolbar
@@ -514,6 +562,16 @@ pub(crate) fn build_titled_menu(mtm: MainThreadMarker, title: &str, items: Vec<M
     for item in items {
         match item.0 {
             Entry::Separator => menu.addItem(&NSMenuItem::separatorItem(mtm)),
+            Entry::Standard { title, action, key, modifiers, tag, font_manager } => {
+                let ns = plain_item(mtm, &title, Some(action), key);
+                ns.setKeyEquivalentModifierMask(modifiers);
+                ns.setTag(tag);
+                if font_manager {
+                    // SAFETY: the shared font manager lives as long as the app.
+                    unsafe { ns.setTarget(Some(&objc2_app_kit::NSFontManager::sharedFontManager(mtm))) };
+                }
+                menu.addItem(&ns);
+            }
             Entry::Submenu { title, items } => {
                 let (sub, targets) = build_titled_menu(mtm, &title, items);
                 let holder = plain_item(mtm, &title, None, "");

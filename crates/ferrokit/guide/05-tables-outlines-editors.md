@@ -221,6 +221,34 @@ Positions are UTF-8 byte offsets. Each editor has its own undo history;
 `.shared_undo()` puts its typing in the window's history instead, between
 your app's own undoable changes (see [The app shell](06-app-shell.md)).
 
+### Rich text
+
+`.rich()` lets the user style the text, as in TextEdit: fonts and sizes
+(the font panel, ⌘T), bold, italic and underline (⌘B, ⌘I, ⌘U), colours,
+alignment, spacing and lists; pasted text keeps its styles, and pictures
+can be pasted or dropped in. `.format_bar()` adds TextEdit's format bar
+above the text and `.ruler()` the ruler; `format_menu()` is the Format menu
+(Font and Text) to give the app.
+
+`.bind_rtf(&signal)` binds the styled text two ways as RTF, what a rich
+document saves. On the model, `rtf()` and `html()` read the text out with
+its styles, and `set_rtf(..)` and `set_html(..)` load it.
+
+```rust,no_run
+use ferrokit::*;
+
+let journal = DocumentType::new(&["rtf"], Vec::new, |doc: &Document<Vec<u8>>| {
+    let model = TextModel::new(ViewId(1), "");
+    text_editor(&model).format_bar().bind_rtf(doc.content()).accessibility_label("Entry")
+})
+.read(|path| std::fs::read(path))
+.write(|rtf, path| std::fs::write(path, rtf));
+let app = App::new("Journal").documents(journal).menu("Format", format_menu());
+# let _ = app;
+```
+
+The `journal` example is a rich text document app with Export as HTML.
+
 ### Styled text and syntax highlighting
 
 The text stays plain, but runs of it can be coloured and emphasised.

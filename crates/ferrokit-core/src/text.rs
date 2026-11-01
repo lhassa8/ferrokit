@@ -1,4 +1,4 @@
-//! A real `NSTextView` (in its `NSScrollView`) as a plain-text editor.
+//! A real `NSTextView` (in its `NSScrollView`) as a text editor, plain or rich.
 //!
 //! What AppKit brings: IME with the candidate window at the caret, spell and
 //! grammar checking with the suggestion menu, the find bar, undo, text
@@ -13,6 +13,12 @@
 //! of the text (syntax highlighting, search matches), re-run on every edit
 //! before it's drawn. The text stays plain: styles aren't typed, pasted,
 //! copied or undone.
+//!
+//! Rich text: [`TextModel::set_rich`] lets the user style the text
+//! themselves (fonts, bold, colours, alignment, lists, pictures), with the
+//! font panel, the ruler and the format bar; [`TextModel::rtf`] and
+//! [`TextModel::html`] read it out, [`TextModel::set_rtf`] and
+//! [`TextModel::set_html`] load it.
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
@@ -21,7 +27,7 @@ use std::rc::{Rc, Weak};
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
-use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send};
+use objc2::{AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send};
 use objc2_app_kit::{
     NSColor, NSFont, NSResponder, NSScrollView, NSText, NSTextDelegate, NSTextInputClient, NSTextStorage, NSTextStorageDelegate,
     NSTextStorageEditActions, NSTextView, NSTextViewDelegate, NSAutoresizingMaskOptions, NSView,
@@ -968,6 +974,121 @@ impl TextModel {
                 .is_some_and(|n| n.integerValue() != 0);
         }
         style
+    }
+
+    /// Rich text (`true`) or plain (`false`, the default). Rich, the user
+    /// styles the text: fonts and sizes (the font panel, ⌘T), bold, italic
+    /// and underline (⌘B, ⌘I, ⌘U), colours, alignment, spacing and lists
+    /// (the ruler and the format bar); pasted text keeps its styles, and
+    /// pictures can be pasted or dropped in. Don't combine it with a
+    /// highlighter, which restyles the text itself.
+    pub fn set_rich(&self, rich: bool) {
+        let v = &self.inner.view;
+        v.setRichText(rich);
+        v.setImportsGraphics(rich);
+        v.setUsesFontPanel(rich);
+        v.setUsesRuler(rich);
+        if !rich {
+            v.setUsesInspectorBar(false);
+            v.setRulerVisible(false);
+        }
+    }
+
+    /// Whether the text is rich (see [`set_rich`](Self::set_rich)).
+    pub fn is_rich(&self) -> bool {
+        self.inner.view.isRichText()
+    }
+
+    /// TextEdit's format bar above the text (rich text): font, size,
+    /// colours, bold, italic, underline, alignment, line spacing and lists.
+    pub fn set_format_bar(&self, shown: bool) {
+        self.inner.view.setUsesInspectorBar(shown);
+    }
+
+    /// Whether the format bar is shown.
+    pub fn has_format_bar(&self) -> bool {
+        self.inner.view.usesInspectorBar()
+    }
+
+    /// The ruler above the text (rich text): margins, tab stops,
+    /// alignment, spacing and lists. Format ▸ Text ▸ Show Ruler (⌃⌘R)
+    /// toggles it too.
+    pub fn set_ruler_visible(&self, shown: bool) {
+        self.inner.view.setRulerVisible(shown);
+    }
+
+    /// Whether the ruler is shown.
+    pub fn is_ruler_visible(&self) -> bool {
+        self.inner.view.isRulerVisible()
+    }
+
+    fn whole(&self) -> Option<(Retained<NSTextStorage>, NSRange)> {
+        // SAFETY: the text view's own storage, on the main thread.
+        let storage = unsafe { self.inner.view.textStorage() }?;
+        let len = storage.length();
+        Some((storage, NSRange::new(0, len)))
+    }
+
+    /// The text with its styles, as RTF (what TextEdit saves). Pictures
+    /// aren't included.
+    pub fn rtf(&self) -> Vec<u8> {
+        let Some((storage, range)) = self.whole() else { return Vec::new() };
+        let attributes = objc2_foundation::NSDictionary::<NSString, AnyObject>::new();
+        // SAFETY: NSAttributedString's AppKit addition, with no document attributes.
+        let data: Option<Retained<objc2_foundation::NSData>> = unsafe { msg_send![&*storage, RTFFromRange: range, documentAttributes: &*attributes] };
+        data.map(|d| d.to_vec()).unwrap_or_default()
+    }
+
+    /// Replaces the text with RTF's (from [`rtf`](Self::rtf), TextEdit or
+    /// Word), styles and all. Clears the undo history and emits no event.
+    /// False (and nothing changes) if `rtf` isn't RTF.
+    pub fn set_rtf(&self, rtf: &[u8]) -> bool {
+        let data = objc2_foundation::NSData::with_bytes(rtf);
+        // SAFETY: NSAttributedString's AppKit initialiser; nil if it isn't RTF.
+        let text: Option<Retained<objc2_foundation::NSAttributedString>> =
+            unsafe { msg_send![objc2_foundation::NSAttributedString::alloc(), initWithRTF: &*data, documentAttributes: std::ptr::null_mut::<*mut AnyObject>()] };
+        self.load(text)
+    }
+
+    fn load(&self, text: Option<Retained<objc2_foundation::NSAttributedString>>) -> bool {
+        let (Some(text), Some((storage, _))) = (text, self.whole()) else { return false };
+        self.inner.quiet.set(true);
+        storage.setAttributedString(&text);
+        self.inner.quiet.set(false);
+        self.clear_undo();
+        true
+    }
+
+    /// The text with its styles as an HTML document (for the web, mail or
+    /// the clipboard).
+    pub fn html(&self) -> String {
+        let Some((storage, range)) = self.whole() else { return String::new() };
+        // SAFETY: AppKit's document type constants and NSAttributedString's
+        // AppKit addition; nil on failure.
+        let data: Option<Retained<objc2_foundation::NSData>> = unsafe {
+            let html: &AnyObject = objc2_app_kit::NSHTMLTextDocumentType.as_ref();
+            let attributes = objc2_foundation::NSDictionary::<NSString, AnyObject>::from_slices(&[objc2_app_kit::NSDocumentTypeDocumentAttribute], &[html]);
+            msg_send![&*storage, dataFromRange: range, documentAttributes: &*attributes, error: std::ptr::null_mut::<*mut AnyObject>()]
+        };
+        data.map(|d| String::from_utf8_lossy(&d.to_vec()).into_owned()).unwrap_or_default()
+    }
+
+    /// Replaces the text with HTML's, styles and all (headings, bold,
+    /// links, lists). Clears the undo history and emits no event. False
+    /// if AppKit can't read it.
+    pub fn set_html(&self, html: &str) -> bool {
+        let data = objc2_foundation::NSData::with_bytes(html.as_bytes());
+        // SAFETY: as in `html`; the reader runs on the main thread, as it must.
+        let text: Option<Retained<objc2_foundation::NSAttributedString>> = unsafe {
+            let kind: &AnyObject = objc2_app_kit::NSHTMLTextDocumentType.as_ref();
+            let utf8 = objc2_foundation::NSNumber::new_usize(4); // NSUTF8StringEncoding
+            let options = objc2_foundation::NSDictionary::<NSString, AnyObject>::from_slices(
+                &[objc2_app_kit::NSDocumentTypeDocumentOption, objc2_app_kit::NSCharacterEncodingDocumentOption],
+                &[kind, utf8.as_ref()],
+            );
+            msg_send![objc2_foundation::NSAttributedString::alloc(), initWithData: &*data, options: &*options, documentAttributes: std::ptr::null_mut::<*mut AnyObject>(), error: std::ptr::null_mut::<*mut AnyObject>()]
+        };
+        self.load(text)
     }
 
     /// The current font size in points.

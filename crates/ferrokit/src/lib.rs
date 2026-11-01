@@ -107,7 +107,7 @@ pub use controls::{
     Checkbox, Image, Picker, Progress, Slider, Stepper, SymbolEffect, TextField, checkbox, image, image_data, image_file, picker, progress, secure_field, slider,
     stepper, text_field, toggle,
 };
-pub use chrome::{MenuItem, Modifier, Split, customize_toolbar_item, dynamic_submenu, submenu, ToolbarItem, menu_item, menu_separator, split, toolbar_button, toolbar_fixed_space, toolbar_group, toolbar_picker, toolbar_search, toolbar_space};
+pub use chrome::{MenuItem, Modifier, Split, customize_toolbar_item, dynamic_submenu, format_menu, submenu, ToolbarItem, menu_item, menu_separator, split, toolbar_button, toolbar_fixed_space, toolbar_group, toolbar_picker, toolbar_search, toolbar_space};
 pub use dialogs::{Alert, OpenOptions, SheetHandle, alert, open_panel, save_panel, sheet};
 pub use documents::{
     Document, DocumentType, choose_documents, document_edited, new_document, open_document, recent_documents, revert_document, save_document, save_document_as, show_welcome, welcome_window,
@@ -637,6 +637,11 @@ thread_local! {
 }
 
 fn relayout(root: &RootView) {
+    // At exit the thread's storage is torn down, and dropping the windows'
+    // views resizes them: there's nothing to lay out then.
+    if ROOTS.try_with(|_| ()).is_err() || IN_LAYOUT.try_with(|_| ()).is_err() || LAYOUT_US.try_with(|_| ()).is_err() || LAYOUT_PASSES.try_with(|_| ()).is_err() {
+        return;
+    }
     if IN_LAYOUT.with(|l| l.replace(true)) {
         return;
     }

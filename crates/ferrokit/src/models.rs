@@ -238,6 +238,15 @@ pub struct TextEditor {
     shared_undo: bool,
     highlight: Option<Rc<Highlight>>,
     code: bool,
+    rich: Option<Rich>,
+}
+
+/// A rich text editor's settings (see [`TextEditor::rich`]).
+#[derive(Default)]
+struct Rich {
+    ruler: bool,
+    format_bar: bool,
+    rtf: Option<Signal<Vec<u8>>>,
 }
 
 type Highlight = dyn Fn(&str) -> Vec<(std::ops::Range<usize>, TextStyle)>;
@@ -293,6 +302,37 @@ impl TextEditor {
         self.code().highlight(move |text| syntax.highlight(text))
     }
 
+    /// Rich text: the user styles it (fonts, bold, colours, alignment,
+    /// lists, pictures) with ⌘B and friends, the font panel and
+    /// [`format_menu`](crate::format_menu); see [`TextModel::set_rich`].
+    /// Read and load it as RTF or HTML on the model, or bind it with
+    /// [`bind_rtf`](Self::bind_rtf).
+    pub fn rich(mut self) -> Self {
+        self.rich.get_or_insert_with(Rich::default);
+        self
+    }
+
+    /// Rich text with the ruler shown (margins, tabs, alignment, lists).
+    pub fn ruler(mut self) -> Self {
+        self.rich.get_or_insert_with(Rich::default).ruler = true;
+        self
+    }
+
+    /// Rich text with TextEdit's format bar above it (font, size, colours,
+    /// bold, italic, alignment, spacing, lists).
+    pub fn format_bar(mut self) -> Self {
+        self.rich.get_or_insert_with(Rich::default).format_bar = true;
+        self
+    }
+
+    /// Rich text bound two ways to `rtf`, its RTF (what a rich document
+    /// saves): edits, styling ones too, set it; setting it loads it
+    /// (clearing undo) unless it's what the editor shows.
+    pub fn bind_rtf(mut self, rtf: &Signal<Vec<u8>>) -> Self {
+        self.rich.get_or_insert_with(Rich::default).rtf = Some(*rtf);
+        self
+    }
+
     /// An editor for code: quotes and dashes stay as typed (no smart
     /// quotes), and no text replacement, autocorrection or spell checking
     /// ([`TextModel::set_code_input`]). [`syntax`](Self::syntax) implies it.
@@ -314,6 +354,24 @@ impl View for TextEditor {
         }
         if self.code {
             self.model.set_code_input(true);
+        }
+        let rtf = self.rich.as_ref().and_then(|r| r.rtf);
+        if let Some(rich) = &self.rich {
+            self.model.set_rich(true);
+            self.model.set_ruler_visible(rich.ruler);
+            self.model.set_format_bar(rich.format_bar);
+        }
+        if let Some(rtf) = rtf {
+            // Signal → editor (skipped when it's what the editor shows).
+            let model = self.model.clone();
+            node.own(Effect::new(move || {
+                let want = rtf.get();
+                untrack(|| {
+                    if model.rtf() != want && !model.set_rtf(&want) && want.is_empty() {
+                        model.set_text("");
+                    }
+                });
+            }));
         }
         if let Some(f) = self.highlight.clone() {
             let g = f.clone();
@@ -343,6 +401,9 @@ impl View for TextEditor {
             for event in model.drain_events() {
                 match event {
                     TextEvent::Changed => {
+                        if let Some(r) = &rtf {
+                            r.set_if_changed(model.rtf());
+                        }
                         let text = model.text();
                         if let Some(b) = &bound {
                             b.set_if_changed(text.clone());
@@ -362,5 +423,5 @@ impl View for TextEditor {
 
 /// A native text editor showing `model` (see [`TextEditor`]).
 pub fn text_editor(model: &TextModel) -> TextEditor {
-    TextEditor { model: model.clone(), bound: None, on_change: None, on_selection: None, on_composition: None, shared_undo: false, highlight: None, code: false }
+    TextEditor { model: model.clone(), bound: None, on_change: None, on_selection: None, on_composition: None, shared_undo: false, highlight: None, code: false, rich: None }
 }
