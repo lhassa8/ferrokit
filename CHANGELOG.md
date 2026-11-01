@@ -166,6 +166,7 @@ The review is in `docs/Q3_API_REVIEW.md`. Changes:
 - **`menu_button`:** a pull-down button with a menu of actions, using the menu bar's `MenuItem`s; a title, a symbol or both.
 - **`help_button`:** AppKit's round "?" button, named "Help" for VoiceOver.
 - **Sliders:** `.ticks(n)`, `.snap_to_ticks()`, `.vertical()`, `.circular()` (a dial) and `.control_size(..)`.
+- **Panels:** `Window::panel(PanelStyle::Floating | Utility | Hud)` opens an `NSPanel`: floating above the app's windows, hidden while the app is inactive, out of the Window menu, and key only when a field in it needs the keyboard.
 - **SF Symbol effects:** `image(..).effect(SymbolEffect::Pulse, active)` runs one while a condition holds; `.effect_on(SymbolEffect::Bounce, trigger)` plays one each time a value changes (bounce, pulse, variable colour, scale, wiggle, rotate, breathe).
 - **`progress(..).spinner()`:** a spinner (spinning while the amount is unknown, a filling circle when known), with `.control_size(..)`.
 

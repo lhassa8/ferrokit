@@ -158,6 +158,22 @@ pub struct Window {
     responds: commands::Responds,
     drops: Option<FileDrop>,
     chrome: WindowChrome,
+    panel: Option<PanelStyle>,
+}
+
+/// A panel's kind ([`Window::panel`]): a secondary window serving the main
+/// ones, which hides while the app is in the background.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PanelStyle {
+    /// Stays above the app's other windows: an inspector, a palette, a
+    /// find panel. It becomes key only when a field in it is clicked, so
+    /// the main window keeps the keyboard.
+    Floating,
+    /// As `Floating`, with a slimmer title bar: tool palettes.
+    Utility,
+    /// A dark, translucent heads-up panel over media or a canvas.
+    Hud,
 }
 
 /// How a window's title bar and toolbar look.
@@ -272,7 +288,16 @@ impl Window {
             responds: commands::Responds::default(),
             drops: None,
             chrome: WindowChrome::default(),
+            panel: None,
         }
+    }
+
+    /// Makes it a panel (`NSPanel`): floating above the app's windows,
+    /// hidden while the app is inactive, and not in the Window menu's list
+    /// of documents.
+    pub fn panel(mut self, style: PanelStyle) -> Self {
+        self.panel = Some(style);
+        self
     }
 
     /// How the toolbar sits with the title ([`ToolbarStyle::Unified`] by
@@ -371,15 +396,26 @@ impl Window {
         if self.chrome.full_size_content {
             style |= NSWindowStyleMask::FullSizeContentView;
         }
-        // SAFETY: standard window creation on the main thread.
-        let window = unsafe {
-            NSWindow::initWithContentRect_styleMask_backing_defer(
-                NSWindow::alloc(mtm),
-                rect,
-                style,
-                NSBackingStoreType::Buffered,
-                false,
-            )
+        let window: Retained<NSWindow> = match self.panel {
+            None => {
+                // SAFETY: standard window creation on the main thread.
+                unsafe { NSWindow::initWithContentRect_styleMask_backing_defer(NSWindow::alloc(mtm), rect, style, NSBackingStoreType::Buffered, false) }
+            }
+            Some(kind) => {
+                style.remove(NSWindowStyleMask::Miniaturizable);
+                match kind {
+                    PanelStyle::Floating => {}
+                    PanelStyle::Utility => style |= NSWindowStyleMask::UtilityWindow,
+                    PanelStyle::Hud => style |= NSWindowStyleMask::UtilityWindow | NSWindowStyleMask::HUDWindow,
+                }
+                let panel =
+                    objc2_app_kit::NSPanel::initWithContentRect_styleMask_backing_defer(objc2_app_kit::NSPanel::alloc(mtm), rect, style, NSBackingStoreType::Buffered, false);
+                panel.setFloatingPanel(true);
+                panel.setBecomesKeyOnlyIfNeeded(true);
+                panel.setHidesOnDeactivate(true);
+                panel.setExcludedFromWindowsMenu(true);
+                Retained::into_super(panel)
+            }
         };
         // SAFETY: the app keeps its windows (see `App::windows`), so AppKit
         // must not release them on close.

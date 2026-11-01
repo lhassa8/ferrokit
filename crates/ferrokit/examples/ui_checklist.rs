@@ -2155,6 +2155,42 @@ fn symbol_effect_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         format!("before {before:?}; built {built:?}; searching {on:?} (layers animating {layers}); stopped {off:?}; after a change {bounced:?}"),
     );
     ferrokit::close_window(&w);
+    after_events(move || window_panel_checks(events.clone()));
+}
+
+/// C4: floating, utility and HUD panels: NSPanels that float, hide with the
+/// app, leave the Window menu alone and take the keyboard only when needed.
+fn window_panel_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use ferrokit::PanelStyle;
+    use objc2::ClassType;
+    use objc2_app_kit::{NSPanel, NSWindow, NSWindowStyleMask};
+    use objc2_foundation::NSObjectProtocol;
+    let kinds = [(PanelStyle::Floating, "Inspector"), (PanelStyle::Utility, "Tools"), (PanelStyle::Hud, "Adjust")];
+    let panels: Vec<Retained<NSWindow>> =
+        kinds.iter().map(|(k, t)| open(Window::new(t).size(220.0, 140.0).panel(*k).view(vstack((text(*t), button("OK", || {}))).padding(12.0)))).collect();
+    let mut notes = Vec::new();
+    let mut ok = true;
+    for (w, (kind, _)) in panels.iter().zip(kinds) {
+        let is_panel = w.isKindOfClass(NSPanel::class());
+        let panel = w.clone().downcast::<NSPanel>().ok();
+        let floats = panel.as_ref().is_some_and(|p| p.isFloatingPanel() && p.becomesKeyOnlyIfNeeded()) && w.level() == objc2_app_kit::NSFloatingWindowLevel;
+        let behaves = w.hidesOnDeactivate() && w.isExcludedFromWindowsMenu() && !w.styleMask().contains(NSWindowStyleMask::Miniaturizable);
+        let mask = w.styleMask();
+        let look = match kind {
+            PanelStyle::Floating => !mask.contains(NSWindowStyleMask::UtilityWindow),
+            PanelStyle::Utility => mask.contains(NSWindowStyleMask::UtilityWindow) && !mask.contains(NSWindowStyleMask::HUDWindow),
+            _ => mask.contains(NSWindowStyleMask::HUDWindow),
+        };
+        ok &= is_panel && floats && behaves && look;
+        notes.push(format!("{kind:?}: panel {is_panel}, floats {floats}, hides and stays out of the Window menu {behaves}, look {look}"));
+    }
+    check("panels", ok, notes.join("; "));
+    if let Ok(dir) = std::env::var("SNAP") {
+        snapshot_windows(&dir);
+    }
+    for w in &panels {
+        ferrokit::close_window(w);
+    }
     after_events(move || rich_table_checks(events.clone()));
 }
 

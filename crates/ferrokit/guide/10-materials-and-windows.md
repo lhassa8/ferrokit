@@ -128,3 +128,22 @@ let window = Window::new("Journal")
 - **`.background(color)`:** the window's own colour. Named colours follow
   Dark Mode; fixed ones (`Color::hex("#e9dcc4")`) stay as they are, so give
   a fixed background text colours that suit it.
+
+## Panels
+
+A panel is a secondary window serving the main ones: an inspector, a
+palette, a heads-up display over media. `Window::panel` makes one:
+
+```rust,no_run
+use ferrokit::*;
+
+let inspector = Window::new("Inspector").size(260.0, 320.0).panel(PanelStyle::Floating).view(text("Selection"));
+let tools = Window::new("Tools").size(180.0, 240.0).panel(PanelStyle::Utility).view(text("Brushes"));
+let hud = Window::new("Adjust").size(240.0, 120.0).panel(PanelStyle::Hud).view(text("Exposure"));
+# let _ = (inspector, tools, hud);
+```
+
+Panels float above the app's other windows, hide while the app is in the
+background, stay out of the Window menu's list, and take the keyboard only
+when a field in them is clicked, so typing still goes to the main window.
+`Utility` has a slimmer title bar; `Hud` is dark and translucent.
