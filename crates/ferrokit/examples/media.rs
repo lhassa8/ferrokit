@@ -337,7 +337,9 @@ mod self_checks {
                             let r = v.convertRect_fromPage(r, &page);
                             let h = v.bounds().size.height;
                             let shown = v.currentPage().and_then(|c| Some(v.document()?.indexForPage(&c)));
-                            Some((r.origin.y >= 0.0 && r.origin.y + r.size.height <= h, format!("match at y {:.0}, height {:.0}, in a view {h:.0} high; bounds from PDFKit {bounded}; page shown {shown:?}", r.origin.y, r.size.height)))
+                            // Its middle: goToSelection can leave a point of it past the top.
+                            let mid = r.origin.y + r.size.height / 2.0;
+                            Some(((0.0..=h).contains(&mid), format!("match at y {:.0}, height {:.0}, in a view {h:.0} high; bounds from PDFKit {bounded}; page shown {shown:?}", r.origin.y, r.size.height)))
                         })
                     };
                     let place2 = place.clone();

@@ -534,7 +534,7 @@ impl View for PdfView {
 
 /// Scrolls `view` to a found match. A match PDFKit returns can lack its
 /// position (bounds of infinity, seen on macOS 27 once an on-device model
-/// was cached, and on GitHub's macOS runners), and `goToSelection` then
+/// was cached), and `goToSelection` then
 /// stays where it is: the match is rebuilt from its text range, or placed
 /// by its first character, or failing those its page is shown.
 fn go_to_match(view: &PDFView, found: &PDFSelection) {

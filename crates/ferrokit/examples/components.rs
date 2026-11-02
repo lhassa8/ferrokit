@@ -447,6 +447,8 @@ mod self_checks {
             later_ms(160, move || {
                 snap(&w, "rides");
                 page.set(3);
+                // Drawn now: a slow machine may not have drawn the page yet.
+                w.displayIfNeeded();
                 let scatter = get("Scatter chart");
                 let w3 = w.clone();
                 let dots = scatter.as_ref().map(|(_, d)| d.iter().filter(|o| o.starts_with("fill ellipse") && o.ends_with("Purple")).count());
