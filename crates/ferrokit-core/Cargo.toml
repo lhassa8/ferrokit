@@ -2,7 +2,7 @@
 name = "ferrokit-core"
 version.workspace = true
 readme = "README.md"
-description = "The shared native layer under ferrokit and ferrokit-iced (use one of those): places real AppKit views in a window and keeps layout, focus and shortcuts in step"
+description = "The AppKit layer under ferrokit (use that): places real AppKit views in a window and keeps layout, focus and shortcuts in step"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

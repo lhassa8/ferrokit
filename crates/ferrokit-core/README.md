@@ -1,8 +1,8 @@
 # ferrokit-core
 
-**You probably want [`ferrokit`](https://crates.io/crates/ferrokit)** (native Mac apps) **or [`ferrokit-iced`](https://crates.io/crates/ferrokit-iced)** (native views in Iced apps). This crate is the layer both are built on.
+**You probably want [`ferrokit`](https://crates.io/crates/ferrokit)** (native Mac apps). This crate is the layer it's built on.
 
-The native layer under [`ferrokit`](https://crates.io/crates/ferrokit) and [`ferrokit-iced`](https://crates.io/crates/ferrokit-iced): it places real AppKit views inside a window whose content a GPU framework draws, and keeps them in step with that framework's layout. It needs only the window's `raw-window-handle` and layout rectangles in logical points.
+The native layer under [`ferrokit`](https://crates.io/crates/ferrokit): it places real AppKit views inside a window whose content a GPU framework draws, and keeps them in step with that framework's layout. It needs only the window's `raw-window-handle` and layout rectangles in logical points.
 
 - **Placement:** `attach`, `mount`/`place`/`unmount`, clip containers for scroll areas, pixel snapping, per-frame lifecycle (`begin_frame`/`end_frame`).
 - **Events:** one sink for Tab focus steps, focus changes, control actions, appearance changes and redraw requests.

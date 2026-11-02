@@ -3,8 +3,7 @@
 # each app's unattended suite (CHECK=all), then prints a summary. Exits
 # non-zero if anything failed.
 #
-# Usage: scripts/check-all.sh [--no-iced] [--no-lint]
-#   --no-iced   skip the ferrokit-iced checklist (it bundles an .app first)
+# Usage: scripts/check-all.sh [--no-lint]
 #   --no-lint   skip clippy, tests and docs (suites only)
 #
 # Logs go to a temporary folder, or to $CHECK_ALL_LOGS if set (CI uploads it).
@@ -13,10 +12,10 @@
 set -u
 cd "$(dirname "$0")/.."
 
-iced=1 lint=1
+lint=1
 for a in "$@"; do
   case "$a" in
-    --no-iced) iced= ;;
+    --no-iced) ;; # (the Iced checklist is retired; accepted for old scripts)
     --no-lint) lint= ;;
     -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
     *) echo "check-all: unknown option $a" >&2; exit 2 ;;
@@ -141,10 +140,6 @@ suite values CHECK=all "$ex/values"
 suite sql_browser CHECK=all "$ex/sql_browser"
 suite sql_browser_de CHECK=l10n "$ex/sql_browser" -AppleLanguages "(de)"
 suite cargo_ferrokit FERROKIT_E2E=1 scripts/check-ferrokit.sh
-if [ -n "$iced" ]; then
-  step iced_bundle scripts/bundle-example.sh checklist
-  suite iced_checklist CHECK=all target/checklist.app/Contents/MacOS/checklist
-fi
 
 printf '\nSummary (logs in %s):%b\n' "$log" "$summary"
 if [ "$failed" -gt 0 ]; then

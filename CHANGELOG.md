@@ -160,6 +160,10 @@ The review is in `docs/Q3_API_REVIEW.md`. Changes:
 - **`.accessibility_value(..)`:** what VoiceOver reads after a view's name; Habits' cards say whether they're done.
 - **A new `values` suite** with 11 checks; the examples, guide and templates use the new names.
 
+### One product: the Iced embedding is retired
+
+- **`ferrokit-iced` isn't released.** Ferrokit is one framework, `ferrokit`; native views inside Iced windows (`iced-appkit`, last published 0.2.1) aren't continued. `iced-appkit` 0.2.1 stays on crates.io; its code is kept, unbuilt, in the repository's `retired/`.
+
 ### New controls (the C queue, after the coverage review)
 
 - **Button styles and sizes:** `.style(ButtonStyle::…)` (borderless, inline, recessed, circular, toolbar, Liquid Glass), `.control_size(ControlSize::…)` and `.destructive()`.
