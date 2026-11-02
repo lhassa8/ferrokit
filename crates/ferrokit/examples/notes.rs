@@ -291,17 +291,18 @@ mod self_checks {
         ferrokit::testing::remember_open_documents();
         let launch = |keep: &str| {
             let out = std::process::Command::new(std::env::current_exe().unwrap()).env("CHECK", "opened").args(["-NSQuitAlwaysKeepsWindows", keep]).output();
-            out.map(|o| String::from_utf8_lossy(&o.stderr).to_string()).unwrap_or_default()
+            // (A crash at exit counts: it once aborted there, unseen.)
+            out.map(|o| (String::from_utf8_lossy(&o.stderr).to_string(), o.status.success())).unwrap_or_default()
         };
-        let kept = launch("YES");
-        let closed = launch("NO");
+        let (kept, kept_ok) = launch("YES");
+        let (closed, closed_ok) = launch("NO");
         let titles = |out: &str| out.lines().find_map(|l| l.strip_prefix("[opened] ")).unwrap_or("").to_string();
         let frame_of_c = kept.lines().find_map(|l| l.strip_prefix("[frame] c.txt ")).unwrap_or("").to_string();
         let reopened = titles(&kept).contains("\"c.txt\"") && titles(&kept).contains("\"d.txt\"") && !titles(&kept).contains("Untitled");
         check(
             "restore-documents",
-            reopened && frame_of_c == "137,211 520x333" && titles(&closed) == "[\"Untitled\"]",
-            format!("keeping windows, the next launch opens {} with c.txt at {frame_of_c:?}; not keeping them, {}", titles(&kept), titles(&closed)),
+            reopened && frame_of_c == "137,211 520x333" && titles(&closed) == "[\"Untitled\"]" && kept_ok && closed_ok,
+            format!("keeping windows, the next launch opens {} with c.txt at {frame_of_c:?}; not keeping them, {}; both exited cleanly {}", titles(&kept), titles(&closed), kept_ok && closed_ok),
         );
     }
 

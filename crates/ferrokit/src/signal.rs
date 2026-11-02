@@ -63,8 +63,11 @@ impl Drop for OwnerInner {
         self.effects.borrow_mut().clear();
         let signals = std::mem::take(&mut *self.signals.borrow_mut());
         // The values are dropped outside the arena's borrow (a value may
-        // own another owner).
-        let freed: Vec<Rc<dyn Any>> = ARENA.with_borrow_mut(|a| signals.iter().filter_map(|&(i, g)| a.free(i, g)).collect());
+        // own another owner). As the thread exits (`std::process::exit`),
+        // the arena may already be gone, and its values with it.
+        let freed: Vec<Rc<dyn Any>> = ARENA
+            .try_with(|a| signals.iter().filter_map(|&(i, g)| a.borrow_mut().free(i, g)).collect())
+            .unwrap_or_default();
         drop(freed);
     }
 }
@@ -515,6 +518,25 @@ mod tests {
         let n = Rc::new(Cell::new(0));
         let m = n.clone();
         (n, move || m.set(m.get() + 1))
+    }
+
+    /// An owner kept in a thread-local can outlive the arena as the thread
+    /// exits (`std::process::exit` in an app); dropping it must not panic,
+    /// which aborts the process there.
+    #[test]
+    fn owner_dropped_after_the_arena() {
+        thread_local! {
+            static KEEP: RefCell<Option<Owner>> = const { RefCell::new(None) };
+        }
+        let exited = std::thread::spawn(|| {
+            // KEEP's destructor is registered first, so it runs last.
+            KEEP.with_borrow(|_| ());
+            let owner = Owner::new();
+            owner.with(|| Signal::new(1).set(2));
+            KEEP.with_borrow_mut(|k| *k = Some(owner));
+        })
+        .join();
+        assert!(exited.is_ok());
     }
 
     #[test]

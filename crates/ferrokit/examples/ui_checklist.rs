@@ -3261,6 +3261,9 @@ fn appearance_check(events: Rc<RefCell<Vec<AppEvent>>>) {
         let want = if after { views.len() } else { 0 };
         check("dark-mode-views", dark_views == want, format!("{dark_views} of {} native views resolve to {}", views.len(), if after { "Dark Aqua" } else { "Aqua" }));
         ferrokit_core::testing::set_app_appearance(None);
+        // See `main`: password AutoFill stays out of these runs.
+        let autofill = objc2::runtime::AnyClass::get(c"SPSafariPlatformSupport").is_some();
+        check("autofill-off", !autofill, format!("Safari's password AutoFill loaded: {autofill}"));
         let failed = FAILED.with(Cell::get);
         eprintln!("[check] done, {failed} failed");
         std::process::exit(if failed == 0 { 0 } else { 1 });
@@ -4959,6 +4962,17 @@ fn main() {
     }
     let events: Rc<RefCell<Vec<AppEvent>>> = Rc::default();
     let checks = std::env::var("CHECK").is_ok_and(|v| v == "all");
+    if checks {
+        // Password AutoFill answers a focused password field later, from
+        // another process; when the field's window has gone by then (these
+        // checks swap a form with one 300 times), AppKit's remote view
+        // raises and crashes the app on purpose (`NSRemoteView`, exit 133).
+        // No person closes windows that fast, so the checks turn it off
+        // (for this run only: the registration domain isn't saved).
+        let off = objc2_foundation::NSNumber::new_bool(false);
+        let defaults = objc2_foundation::NSDictionary::from_slices(&[&*NSString::from_str("NSAutoFillHeuristicsEnabled")], &[&*off as &objc2::runtime::AnyObject]);
+        unsafe { objc2_foundation::NSUserDefaults::standardUserDefaults().registerDefaults(&defaults) };
+    }
     let e2 = events.clone();
     App::new("Checklist")
         // Tables for the l10n checks (the checklist itself stays in the

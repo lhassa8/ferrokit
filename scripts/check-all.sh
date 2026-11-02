@@ -52,6 +52,10 @@ suite() {
   name=$1 env=$2; shift 2
   printf '%-22s ' "$name"
   start=$(date +%s)
+  # Crash reports newer than this mark are this suite's (a child process
+  # it launched can crash while the suite itself passes).
+  mark="$log/$name.mark"
+  : >"$mark"
   # A hung suite fails after 10 minutes instead of blocking the run; its
   # call stacks are sampled first, to show where it hung.
   env "$env" "$@" >"$log/$name.log" 2>&1 &
@@ -76,6 +80,12 @@ suite() {
     for _ in 1 2 3 4 5; do [ -n "$report" ] && break; sleep 2; report=$(ls -t "$HOME/Library/Logs/DiagnosticReports/$bin"*.ips 2>/dev/null | head -1); done
     [ -n "$report" ] && cp "$report" "$log/$name.crash.ips"
   fi
+  bin=$(basename "$1")
+  sleep 2 # (ReportCrash writes a report a moment after the crash)
+  for report in $(find "$HOME/Library/Logs/DiagnosticReports" -name "$bin-*.ips" -newer "$mark" 2>/dev/null); do
+    echo "[check] no-crash-reports FAIL a $bin process crashed: $report" >>"$log/$name.log"
+    [ -f "$log/$name.crash.ips" ] || cp "$report" "$log/$name.crash.ips"
+  done
   pass=$(grep -c '^\[check\] .* PASS' "$log/$name.log")
   fail=$(grep -c '^\[check\] .* FAIL' "$log/$name.log")
   # Checks that can't run in this session (window-server input without
