@@ -217,6 +217,89 @@ define_class!(
         fn dragging_source(&self) -> Option<Retained<AnyObject>> {
             self.ivars().source.clone()
         }
+
+        // The rest of the protocol's required methods (objc2 checks for
+        // them in debug builds): a drag nowhere in particular.
+        #[unsafe(method_id(draggingDestinationWindow))]
+        fn destination_window(&self) -> Option<Retained<objc2_app_kit::NSWindow>> {
+            None
+        }
+
+        #[unsafe(method(draggingSourceOperationMask))]
+        fn source_operations(&self) -> NSDragOperation {
+            NSDragOperation::Copy | NSDragOperation::Move
+        }
+
+        #[unsafe(method(draggingLocation))]
+        fn location(&self) -> objc2_foundation::NSPoint {
+            objc2_foundation::NSPoint::ZERO
+        }
+
+        #[unsafe(method(draggedImageLocation))]
+        fn image_location(&self) -> objc2_foundation::NSPoint {
+            objc2_foundation::NSPoint::ZERO
+        }
+
+        #[unsafe(method_id(draggedImage))]
+        fn image(&self) -> Option<Retained<objc2_app_kit::NSImage>> {
+            None
+        }
+
+        #[unsafe(method(draggingSequenceNumber))]
+        fn sequence(&self) -> NSInteger {
+            1
+        }
+
+        #[unsafe(method(slideDraggedImageTo:))]
+        fn slide(&self, _to: objc2_foundation::NSPoint) {}
+
+        #[unsafe(method_id(namesOfPromisedFilesDroppedAtDestination:))]
+        fn promised(&self, _at: &objc2_foundation::NSURL) -> Option<Retained<objc2_foundation::NSArray<objc2_foundation::NSString>>> {
+            None
+        }
+
+        #[unsafe(method(draggingFormation))]
+        fn formation(&self) -> objc2_app_kit::NSDraggingFormation {
+            objc2_app_kit::NSDraggingFormation::Default
+        }
+
+        #[unsafe(method(setDraggingFormation:))]
+        fn set_formation(&self, _f: objc2_app_kit::NSDraggingFormation) {}
+
+        #[unsafe(method(animatesToDestination))]
+        fn animates(&self) -> bool {
+            false
+        }
+
+        #[unsafe(method(setAnimatesToDestination:))]
+        fn set_animates(&self, _a: bool) {}
+
+        #[unsafe(method(numberOfValidItemsForDrop))]
+        fn valid_items(&self) -> NSInteger {
+            1
+        }
+
+        #[unsafe(method(setNumberOfValidItemsForDrop:))]
+        fn set_valid_items(&self, _n: NSInteger) {}
+
+        #[unsafe(method(enumerateDraggingItemsWithOptions:forView:classes:searchOptions:usingBlock:))]
+        fn enumerate(
+            &self,
+            _options: objc2_app_kit::NSDraggingItemEnumerationOptions,
+            _view: Option<&NSView>,
+            _classes: &objc2_foundation::NSArray<objc2::runtime::AnyClass>,
+            _search: &objc2_foundation::NSDictionary<objc2_app_kit::NSPasteboardReadingOptionKey, AnyObject>,
+            _block: &block2::DynBlock<dyn Fn(std::ptr::NonNull<objc2_app_kit::NSDraggingItem>, NSInteger, std::ptr::NonNull<objc2::runtime::Bool>)>,
+        ) {
+        }
+
+        #[unsafe(method(springLoadingHighlight))]
+        fn spring_highlight(&self) -> objc2_app_kit::NSSpringLoadingHighlight {
+            objc2_app_kit::NSSpringLoadingHighlight::None
+        }
+
+        #[unsafe(method(resetSpringLoading))]
+        fn reset_spring(&self) {}
     }
 );
 

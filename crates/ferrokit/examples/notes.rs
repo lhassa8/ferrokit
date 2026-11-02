@@ -34,6 +34,10 @@ fn main() {
                 spawn(|| std::thread::sleep(std::time::Duration::from_millis(1500)), |()| {
                     let titles: Vec<String> = windows().iter().filter(|w| w.isVisible()).map(|w| w.title().to_string()).collect();
                     eprintln!("[opened] {titles:?}");
+                    for w in windows().iter().filter(|w| w.isVisible()) {
+                        let f = w.frame();
+                        eprintln!("[frame] {} {:.0},{:.0} {:.0}x{:.0}", w.title(), f.origin.x, f.origin.y, f.size.width, f.size.height);
+                    }
                     std::process::exit(0);
                 });
             }
@@ -272,6 +276,35 @@ mod self_checks {
         std::env::temp_dir().join(format!("ferrokit-notes-{}", std::process::id())).join("b.md")
     }
 
+    /// R6: the documents open at quit come back at the next launch, each
+    /// where its window was, when the user keeps windows (System Settings,
+    /// "Close windows when quitting an application" off: here a launch
+    /// argument, for that run only); otherwise an untitled one starts.
+    fn restore_check() {
+        let dir = wb_path().parent().unwrap().to_path_buf();
+        let (c, d) = (dir.join("c.txt"), dir.join("d.txt"));
+        std::fs::write(&c, "see").unwrap();
+        std::fs::write(&d, "dee").unwrap();
+        let (wc, _) = (open_document(&c).unwrap(), open_document(&d).unwrap());
+        // Somewhere it wouldn't open by itself.
+        wc.setFrame_display(objc2_foundation::NSRect::new(objc2_foundation::NSPoint::new(137.0, 211.0), objc2_foundation::NSSize::new(520.0, 333.0)), true);
+        ferrokit::testing::remember_open_documents();
+        let launch = |keep: &str| {
+            let out = std::process::Command::new(std::env::current_exe().unwrap()).env("CHECK", "opened").args(["-NSQuitAlwaysKeepsWindows", keep]).output();
+            out.map(|o| String::from_utf8_lossy(&o.stderr).to_string()).unwrap_or_default()
+        };
+        let kept = launch("YES");
+        let closed = launch("NO");
+        let titles = |out: &str| out.lines().find_map(|l| l.strip_prefix("[opened] ")).unwrap_or("").to_string();
+        let frame_of_c = kept.lines().find_map(|l| l.strip_prefix("[frame] c.txt ")).unwrap_or("").to_string();
+        let reopened = titles(&kept).contains("\"c.txt\"") && titles(&kept).contains("\"d.txt\"") && !titles(&kept).contains("Untitled");
+        check(
+            "restore-documents",
+            reopened && frame_of_c == "137,211 520x333" && titles(&closed) == "[\"Untitled\"]",
+            format!("keeping windows, the next launch opens {} with c.txt at {frame_of_c:?}; not keeping them, {}", titles(&kept), titles(&closed)),
+        );
+    }
+
     /// Quitting with an edited document asks; Cancel keeps the app running.
     fn quit_check() {
         let w2 = find("Untitled 2").unwrap();
@@ -290,6 +323,7 @@ mod self_checks {
                         buttons == ["Cancel", "Don't Save", "Save"] && cancelled && alive,
                         format!("quitting with changes → {buttons:?}; Cancel: still running with the document edited: {alive}"),
                     );
+                    restore_check();
                     let _ = std::fs::remove_dir_all(wb_path().parent().unwrap());
                     let failed = FAILED.with(Cell::get);
                     eprintln!("[check] done, {failed} failed");

@@ -331,7 +331,7 @@ define_class!(
             self.ivars().pointer.set(Some(p));
             let hover = self.ivars().hover.borrow().clone();
             if let Some(f) = hover {
-                crate::signal::batch(|| f(Some((p.x, p.y))));
+                crate::failure::entry("a canvas's hover", (), || f(Some((p.x, p.y))));
             }
         }
 
@@ -340,7 +340,7 @@ define_class!(
             self.ivars().pointer.set(None);
             let hover = self.ivars().hover.borrow().clone();
             if let Some(f) = hover {
-                crate::signal::batch(|| f(None));
+                crate::failure::entry("a canvas's hover", (), || f(None));
             }
         }
 
@@ -350,7 +350,7 @@ define_class!(
             self.ivars().down.set(Some(p));
             let click = self.ivars().click.borrow().clone();
             if let Some(f) = click {
-                crate::signal::batch(|| f(p.x, p.y));
+                crate::failure::entry("a canvas's click", (), || f(p.x, p.y));
             }
         }
 
@@ -378,10 +378,10 @@ define_class!(
             let (dx, dy) = (event.scrollingDeltaX() * scale, event.scrollingDeltaY() * scale);
             let used = if event.modifierFlags().contains(objc2_app_kit::NSEventModifierFlags::Command) {
                 let magnify = self.ivars().magnify.borrow().clone();
-                magnify.is_some_and(|f| crate::signal::batch(|| f(dy / 200.0, p.x, p.y)))
+                magnify.is_some_and(|f| crate::failure::entry("a canvas's pinch", false, || f(dy / 200.0, p.x, p.y)))
             } else {
                 let scroll = self.ivars().scroll.borrow().clone();
-                scroll.is_some_and(|f| crate::signal::batch(|| f(dx, dy, p.x, p.y)))
+                scroll.is_some_and(|f| crate::failure::entry("a canvas's scroll", false, || f(dx, dy, p.x, p.y)))
             };
             if !used {
                 // SAFETY: NSResponder's own handling (passes it up the chain).
@@ -393,7 +393,7 @@ define_class!(
         fn magnify_with(&self, event: &NSEvent) {
             let p = self.convertPoint_fromView(event.locationInWindow(), None);
             let magnify = self.ivars().magnify.borrow().clone();
-            if !magnify.is_some_and(|f| crate::signal::batch(|| f(event.magnification(), p.x, p.y))) {
+            if !magnify.is_some_and(|f| crate::failure::entry("a canvas's pinch", false, || f(event.magnification(), p.x, p.y))) {
                 // SAFETY: as for scrolling.
                 let _: () = unsafe { msg_send![super(self), magnifyWithEvent: event] };
             }
@@ -441,7 +441,7 @@ pub(crate) fn png(view: &NSView) -> Option<Vec<u8>> {
     let canvas = view.downcast_ref::<CanvasView>()?;
     let hover = canvas.ivars().hover.borrow().clone().zip(canvas.ivars().pointer.get());
     if let Some((f, _)) = &hover {
-        crate::signal::batch(|| f(None));
+        crate::failure::entry("a canvas's hover", (), || f(None));
         record(canvas);
     }
     canvas.ivars().opaque.set(true);
@@ -451,7 +451,7 @@ pub(crate) fn png(view: &NSView) -> Option<Vec<u8>> {
     }
     canvas.ivars().opaque.set(false);
     if let Some((f, p)) = &hover {
-        crate::signal::batch(|| f(Some((p.x, p.y))));
+        crate::failure::entry("a canvas's hover", (), || f(Some((p.x, p.y))));
         record(canvas);
     }
     // SAFETY: encoding a bitmap as PNG with no options.

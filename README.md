@@ -46,6 +46,17 @@ cargo install cargo-ferrokit
 cargo ferrokit new my-app && cd my-app && cargo ferrokit run
 ```
 
+## Stability
+
+Ferrokit is young (an alpha) and has no users yet; this is what it promises meanwhile.
+
+- **Versions:** while it's 0.x, a minor release (0.4 → 0.5) may change the API; a patch release (0.4.0 → 0.4.1) never does. Every change that breaks code is listed in the CHANGELOG with what to write instead, and a renamed item keeps working, deprecated, for one minor release where it can.
+- **One version:** the crates are released together under one version; `ferrokit` pins `ferrokit-core` exactly.
+- **macOS:** 15 or later. Checked on macOS 15 and the current release (CI), and on the newest beta locally. Each macOS release is checked when it ships; AppKit changes (macOS 27 turned column browser cells into text cells) are fixed in a patch.
+- **Rust:** the latest stable; the minimum (`rust-version`, 1.88) only rises in a minor release.
+- **Failures:** an Objective-C exception or a panic in code AppKit calls is caught where it came in, reported (`App::on_error`) and survived, never silently dropped.
+- **Checks:** every change runs about 460 self-checks across 17 example apps and the project templates (`scripts/check-all.sh`), as release and as debug builds, and in the App Sandbox.
+
 ## Earlier names
 
 Until 0.4 the crates were called `appkit-ui` (now `ferrokit`) and `appkit-host` (now `ferrokit-core`); the old names' last releases re-export the new crates. `iced-appkit`, real AppKit views inside Iced windows, stays at 0.2.1 and isn't continued: Ferrokit is one framework now.

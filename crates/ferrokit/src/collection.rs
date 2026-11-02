@@ -22,7 +22,7 @@ use objc2_app_kit::{
 use objc2_foundation::{NSEdgeInsets, NSIndexPath, NSInteger, NSPoint, NSRect, NSSet, NSSize, NSString};
 
 use ferrokit_core::text::Color;
-use crate::signal::{Effect, Signal, batch, untrack};
+use crate::signal::{Effect, Signal, untrack};
 use crate::view::{Cx, Identifiable, Kind, Node, Size, View};
 
 /// What an item's image is.
@@ -142,7 +142,7 @@ fn activate(state: &Weak<RefCell<State>>, index: usize) {
     // Take the callback out while it runs: it may change the items.
     let f = state.borrow_mut().on_activate.take();
     if let Some(f) = &f {
-        batch(|| f(index));
+        crate::failure::entry("a collection's activation", (), || f(index));
     }
     if state.borrow().on_activate.is_none() {
         state.borrow_mut().on_activate = f;
@@ -332,7 +332,7 @@ impl GridSource {
         rows.sort_unstable();
         let s = state.borrow();
         if let Some(f) = &s.on_select {
-            batch(|| f(rows));
+            crate::failure::entry("a collection's selection", (), || f(rows));
         }
     }
 }

@@ -97,13 +97,13 @@ define_class!(
     impl Target {
         #[unsafe(method(click:))]
         fn click(&self, _sender: Option<&AnyObject>) {
-            crate::signal::batch(|| (self.ivars().click)());
+            crate::failure::entry("a browser's click", (), || (self.ivars().click)());
         }
 
         #[unsafe(method(open:))]
         fn open(&self, _sender: Option<&AnyObject>) {
             if let Some(f) = &self.ivars().open {
-                crate::signal::batch(f);
+                crate::failure::entry("a browser's double-click", (), f);
             }
         }
     }

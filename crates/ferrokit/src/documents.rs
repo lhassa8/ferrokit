@@ -299,6 +299,10 @@ fn show<T: Clone + PartialEq + 'static>(kind: Rc<DocumentType<T>>, content: T, p
         spec = style(spec);
     }
     let window = crate::open(spec);
+    // A document with a file comes back where its window last was.
+    if let Some(p) = doc.path() {
+        window.setFrameUsingName(&frame_name(&p));
+    }
     // A document is open: the welcome window has done its job.
     close_welcome();
     *doc.0.window.borrow_mut() = Weak::from_retained(&window);
@@ -311,6 +315,10 @@ fn show<T: Clone + PartialEq + 'static>(kind: Rc<DocumentType<T>>, content: T, p
         if let Some(w) = w.load() {
             w.setTitle(&NSString::from_str(&name));
             w.setDocumentEdited(edited);
+            // Its frame is remembered under its file (once it has one).
+            if let Some(name) = path.as_deref().map(frame_name).filter(|n| w.frameAutosaveName().to_string() != n.to_string()) {
+                w.setFrameAutosaveName(&name);
+            }
             let url = path.map(|p| NSURL::fileURLWithPath(&NSString::from_str(&p.to_string_lossy())));
             w.setRepresentedURL(url.as_deref());
         }
@@ -338,6 +346,43 @@ fn current() -> Option<Rc<dyn AnyDoc>> {
 /// Drops a closed window's document (called from window teardown).
 pub(crate) fn forget(window: &NSWindow) {
     DOCS.with_borrow_mut(|docs| docs.retain(|d| d.window().is_some_and(|w| !std::ptr::eq(&*w, window))));
+}
+
+/// The name a document's window frame is remembered under.
+fn frame_name(path: &Path) -> Retained<NSString> {
+    NSString::from_str(&format!("Ferrokit document {}", path.display()))
+}
+
+/// Where the documents open at quit are remembered.
+const OPEN_KEY: &str = "FerrokitOpenDocuments";
+
+/// Whether the user keeps windows when quitting: System Settings ›
+/// Desktop & Dock › "Close windows when quitting an application" off (the
+/// `NSQuitAlwaysKeepsWindows` default). Apps reopen what was open then.
+fn keeps_windows() -> bool {
+    NSUserDefaults::standardUserDefaults().boolForKey(&NSString::from_str("NSQuitAlwaysKeepsWindows"))
+}
+
+/// Remembers the documents open now (those with files), for the next
+/// launch: the app is quitting.
+pub(crate) fn remember_open() {
+    let paths: Vec<Retained<NSString>> = DOCS.with_borrow(|docs| docs.iter().filter_map(|d| d.path()).map(|p| NSString::from_str(&p.to_string_lossy())).collect());
+    let list = objc2_foundation::NSArray::from_retained_slice(&paths);
+    // SAFETY: an array of strings is a property list.
+    unsafe { NSUserDefaults::standardUserDefaults().setObject_forKey(Some(&list), &NSString::from_str(OPEN_KEY)) };
+}
+
+/// At launch: reopens the documents open when the app last quit, if the
+/// user keeps windows (see [`keeps_windows`]). How many opened.
+pub(crate) fn restore_open() -> usize {
+    if !keeps_windows() {
+        return 0;
+    }
+    let Some(list) = NSUserDefaults::standardUserDefaults().stringArrayForKey(&NSString::from_str(OPEN_KEY)) else { return 0 };
+    list.iter().map(|p| PathBuf::from(p.to_string())).filter(|p| {
+        reach(p);
+        p.exists()
+    }).filter(|p| open_document(p).is_ok()).count()
 }
 
 /// Opens the untitled document a document app starts with (when no files
@@ -411,6 +456,8 @@ pub fn open_document(path: &Path) -> std::io::Result<Retained<NSWindow>> {
         return Ok(w);
     }
     let opener = OPENER.with_borrow(Clone::clone).ok_or_else(|| std::io::Error::other("the app has no document type"))?;
+    // Sandboxed, a file from an earlier run is reached through its bookmark.
+    reach(path);
     let window = opener.open(path)?;
     // However the file was opened (the Finder, Open…, the app's own code),
     // the untouched untitled window the app started with goes.
@@ -452,7 +499,11 @@ pub fn recent_documents() -> Vec<PathBuf> {
     // Read and written straight through (not a stored signal, whose writes
     // wait for the end of a batch: two opens in one batch would race).
     let list = NSUserDefaults::standardUserDefaults().stringForKey(&NSString::from_str(RECENTS_KEY));
-    list.map(|l| l.to_string()).unwrap_or_default().lines().map(PathBuf::from).filter(|p| p.exists()).collect()
+    // (Sandboxed, a file is reached through its bookmark before it can be seen.)
+    list.map(|l| l.to_string()).unwrap_or_default().lines().map(PathBuf::from).filter(|p| {
+        reach(p);
+        p.exists()
+    }).collect()
 }
 
 fn set_recents(list: &[PathBuf]) {
@@ -463,10 +514,63 @@ fn set_recents(list: &[PathBuf]) {
 
 fn note_recent(path: &Path) {
     let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    remember_bookmark(&path);
     let mut list: Vec<PathBuf> = recent_documents().into_iter().filter(|p| *p != path).collect();
     list.insert(0, path);
     list.truncate(RECENTS_MAX);
     set_recents(&list);
+}
+
+// ---- the App Sandbox: reaching files again ----
+
+/// Whether the app runs in the App Sandbox (its container is set).
+fn sandboxed() -> bool {
+    std::env::var_os("APP_SANDBOX_CONTAINER_ID").is_some()
+}
+
+fn bookmark_key(path: &Path) -> Retained<NSString> {
+    NSString::from_str(&format!("Ferrokit bookmark {}", path.display()))
+}
+
+thread_local! {
+    /// Files reached through their bookmarks (kept reachable while the app runs).
+    static REACHED: RefCell<Vec<(PathBuf, Retained<NSURL>)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// In the sandbox, the app reaches a file the user chose only while it
+/// runs; a security-scoped bookmark, kept here, reaches it again after a
+/// relaunch (Open Recent, reopening at launch).
+fn remember_bookmark(path: &Path) {
+    if !sandboxed() {
+        return;
+    }
+    let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
+    if let Ok(data) = url.bookmarkDataWithOptions_includingResourceValuesForKeys_relativeToURL_error(objc2_foundation::NSURLBookmarkCreationOptions::WithSecurityScope, None, None) {
+        // SAFETY: NSData is a property list value.
+        unsafe { NSUserDefaults::standardUserDefaults().setObject_forKey(Some(&data), &bookmark_key(path)) };
+    }
+}
+
+/// Before opening `path` in the sandbox: reaches it through its bookmark,
+/// if one was kept. Whether it was (outside the sandbox, nothing to do).
+pub(crate) fn reach(path: &Path) -> bool {
+    if !sandboxed() || REACHED.with_borrow(|r| r.iter().any(|(p, _)| p == path)) {
+        return true;
+    }
+    let Some(data) = NSUserDefaults::standardUserDefaults().dataForKey(&bookmark_key(path)) else { return false };
+    let mut stale = objc2::runtime::Bool::NO;
+    // SAFETY: a bookmark this app made; `stale` outlives the call.
+    let url = unsafe { NSURL::URLByResolvingBookmarkData_options_relativeToURL_bookmarkDataIsStale_error(&data, objc2_foundation::NSURLBookmarkResolutionOptions::WithSecurityScope, None, &mut stale) };
+    let Ok(url) = url else { return false };
+    // SAFETY: balanced when the app quits (the system ends access then).
+    if !unsafe { url.startAccessingSecurityScopedResource() } {
+        return false;
+    }
+    if stale.as_bool() {
+        remember_bookmark(path);
+    }
+    REACHED.with_borrow_mut(|r| r.push((path.to_path_buf(), url)));
+    true
 }
 
 fn clear_recents() {
@@ -717,6 +821,8 @@ define_class!(
 
         #[unsafe(method(applicationShouldTerminate:))]
         fn should_terminate(&self, _app: &NSApplication) -> NSApplicationTerminateReply {
+            // What's open now comes back next time (if the user keeps windows).
+            remember_open();
             if !DOCS.with_borrow(|docs| docs.iter().any(|d| d.edited())) {
                 return NSApplicationTerminateReply::TerminateNow;
             }

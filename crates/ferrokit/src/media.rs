@@ -35,7 +35,7 @@ pub(crate) struct Observer(Retained<ProtocolObject<dyn NSObjectProtocol>>);
 
 impl Observer {
     pub(crate) fn new(name: &objc2_foundation::NSNotificationName, object: Option<&AnyObject>, f: impl Fn() + 'static) -> Observer {
-        let block = RcBlock::new(move |_: NonNull<NSNotification>| batch(&f));
+        let block = RcBlock::new(move |_: NonNull<NSNotification>| crate::failure::entry("a notification", (), &f));
         // SAFETY: delivered on the main queue, where the block's state lives.
         let token = unsafe { NSNotificationCenter::defaultCenter().addObserverForName_object_queue_usingBlock(Some(name), object, Some(&NSOperationQueue::mainQueue()), &block) };
         Observer(token)
@@ -202,7 +202,7 @@ impl WebPage {
                     (None, None) => Ok(String::new()),
                 }
             };
-            batch(|| then(out));
+            crate::failure::entry("a web page's script result", (), || then(out));
         });
         // SAFETY: WebKit calls the block on the main thread.
         unsafe { v.evaluateJavaScript_completionHandler(&NSString::from_str(script), Some(&block)) };

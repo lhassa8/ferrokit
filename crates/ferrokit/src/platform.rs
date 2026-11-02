@@ -252,7 +252,7 @@ impl Platform for AppKit {
         // Blocks run outside NSApplication's per-event autorelease pool, so
         // give each its own: without it, everything AppKit autoreleases
         // inside (e.g. new controls) is never released.
-        let block = block2::RcBlock::new(move || Self::scope(&f));
+        let block = block2::RcBlock::new(move || Self::scope(|| crate::failure::guard("a later call", (), &f)));
         // SAFETY: runs on the main run loop; touches main-thread state only.
         unsafe { main.perform_block(kCFRunLoopCommonModes.map(|m| m.as_ref()), Some(&block)) };
         main.wake_up();
@@ -262,8 +262,9 @@ impl Platform for AppKit {
         let main = CFRunLoop::main().expect("main run loop");
         let f = std::sync::Mutex::new(Some(f));
         let block = block2::RcBlock::new(move || {
-            if let Some(f) = f.lock().expect("main-thread task").take() {
-                Self::scope(f);
+            if let Some(f) = f.lock().ok().and_then(|mut f| f.take()) {
+                // (Work spawned with `spawn` comes back through here.)
+                Self::scope(|| crate::failure::guard("a task's continuation", (), f));
             }
         });
         // SAFETY: CFRunLoopPerformBlock and CFRunLoopWakeUp may be called

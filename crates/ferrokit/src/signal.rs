@@ -144,9 +144,17 @@ impl EffectInner {
         // whatever was current where the batch flushed.
         let owner = self.owner.as_ref().and_then(Weak::upgrade);
         let prev_owner = OWNER.with_borrow_mut(|c| std::mem::replace(c, owner));
+        // Put back even if the effect unwinds (a failure caught further out).
+        struct Restore(Option<Rc<EffectInner>>, Option<Rc<OwnerInner>>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                let (observer, owner) = (self.0.take(), self.1.take());
+                let _ = OWNER.try_with(|c| *c.borrow_mut() = owner);
+                let _ = OBSERVER.try_with(|o| *o.borrow_mut() = observer);
+            }
+        }
+        let _restore = Restore(prev, prev_owner);
         (self.f.borrow_mut())();
-        OWNER.with_borrow_mut(|c| *c = prev_owner);
-        OBSERVER.with_borrow_mut(|o| *o = prev);
     }
 }
 
@@ -202,12 +210,21 @@ pub fn batch<R>(f: impl FnOnce() -> R) -> R {
 }
 
 fn nested<R>(f: impl FnOnce() -> R) -> R {
+    /// Leaves the batch even when `f` unwinds (a failure caught further
+    /// out): otherwise no later batch would flush.
+    struct Leave;
+    impl Drop for Leave {
+        fn drop(&mut self) {
+            let _ = DEPTH.try_with(|d| d.set(d.get().saturating_sub(1)));
+        }
+    }
     DEPTH.with(|d| d.set(d.get() + 1));
+    let leave = Leave;
     let r = f();
     if DEPTH.with(Cell::get) == 1 {
         flush();
     }
-    DEPTH.with(|d| d.set(d.get() - 1));
+    drop(leave);
     r
 }
 
@@ -219,10 +236,15 @@ pub fn after_batch(f: impl Fn() + 'static) {
 
 /// Reads signals inside `f` without subscribing the running effect to them.
 pub fn untrack<R>(f: impl FnOnce() -> R) -> R {
-    let prev = OBSERVER.with_borrow_mut(Option::take);
-    let r = f();
-    OBSERVER.with_borrow_mut(|o| *o = prev);
-    r
+    struct Restore(Option<Rc<EffectInner>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let prev = self.0.take();
+            let _ = OBSERVER.try_with(|o| *o.borrow_mut() = prev);
+        }
+    }
+    let _restore = Restore(OBSERVER.with_borrow_mut(Option::take));
+    f()
 }
 
 /// Runs the effects waiting for the current batch to end now (printing

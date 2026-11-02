@@ -336,7 +336,7 @@ define_class!(
         fn received(&self, _c: &UNUserNotificationCenter, response: &UNNotificationResponse, done: &block2::DynBlock<dyn Fn()>) {
             let id = response.notification().request().identifier().to_string();
             let block = RcBlock::new(move || {
-                click(&id);
+                crate::failure::guard("a notification's click", false, || click(&id));
             });
             // SAFETY: the block runs on the main queue, where the actions live.
             unsafe { NSOperationQueue::mainQueue().addOperationWithBlock(&block) };

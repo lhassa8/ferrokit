@@ -121,6 +121,26 @@ summarises the log, crash reports and logged exceptions included. The
 In this repository, `scripts/check-all.sh` builds everything, runs clippy,
 the unit and doc tests, and every app's suite, and prints a summary.
 
+## When something fails
+
+An Objective-C exception (AppKit refusing a call: an index out of range,
+a row that isn't loaded yet) or a Rust panic in code AppKit calls into
+your app, such as a control's action, a menu item, a timer, a notification
+or a sheet's completion, is caught where it came in. It's printed to stderr
+with where it happened, and the app goes on. Without that, AppKit swallows
+the exception, and the rest of that work silently never runs.
+
+`App::on_error(|failure| ..)` hears about each one (log it, report it, tell
+the user), and `testing::failures()` lists them for self-checks: a check
+can assert that a run caused none.
+
+```rust,no_run
+use ferrokit::*;
+
+let app = App::new("Notes").on_error(|failure| eprintln!("to the crash log: {failure}"));
+# let _ = app;
+```
+
 ## Packaging: `cargo ferrokit`
 
 `cargo ferrokit` (install it with `cargo install cargo-ferrokit`) does the
@@ -159,6 +179,27 @@ cargo ferrokit bundle --zip
   and Intel (after `rustup target add x86_64-apple-darwin`).
 
 In this repository, `scripts/package-app.sh` does the same for examples.
+
+## The App Sandbox
+
+The Mac App Store needs the App Sandbox, and any app can opt in for
+safety. `sandbox = true` in `[package.metadata.ferrokit]` makes
+`cargo ferrokit bundle` sign with its entitlements: files the user
+chooses (open and save panels, dropped files) and bookmarks to reach them
+again; `network = true` adds outgoing connections. Document apps keep
+working sandboxed: Ferrokit keeps a security-scoped bookmark for each
+document, so Open Recent and reopening at launch reach the files after a
+relaunch.
+
+```toml
+[package.metadata.ferrokit]
+sandbox = true
+network = true
+```
+
+`check-all` runs the `notes` example sandboxed. A file outside the app's
+container can only be granted by the user choosing it, so try Open Recent
+on one by hand once.
 
 ## Notarisation
 

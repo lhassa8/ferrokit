@@ -500,7 +500,7 @@ fn tick() {
     let t = now();
     let running = JOBS.with_borrow_mut(std::mem::take);
     let mut kept = Vec::new();
-    batch(|| {
+    crate::failure::entry("an animation frame", (), || {
         for (key, start, mut step) in running {
             if step(t - start) {
                 kept.push((key, start, step));
@@ -755,6 +755,12 @@ pub(crate) fn run_layout(layout: impl FnOnce()) {
 /// `frame` moved toward `edge` (the views' containers are flipped: down is
 /// +y).
 fn offset(mut frame: NSRect, edge: Edge) -> NSRect {
+    // Leading is the right edge right to left.
+    let edge = match (edge, crate::right_to_left()) {
+        (Edge::Leading, true) => Edge::Trailing,
+        (Edge::Trailing, true) => Edge::Leading,
+        (e, _) => e,
+    };
     match edge {
         Edge::Above => frame.origin.y -= SLIDE,
         Edge::Below => frame.origin.y += SLIDE,

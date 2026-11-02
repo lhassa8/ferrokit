@@ -18,7 +18,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSIndexSet, NSInteger, NSNotification, NSString};
 
-use crate::signal::{Effect, Signal, batch, untrack};
+use crate::signal::{Effect, Signal, untrack};
 use crate::view::{Cx, Identifiable, Kind, Node, Size, View};
 
 /// One item of a tree, with its children.
@@ -153,7 +153,7 @@ define_class!(
             // Take the callback out while it runs: it may update the tree.
             let cb = state.borrow_mut().on_select.take();
             if let Some(cb) = &cb {
-                batch(|| cb(index));
+                crate::failure::entry("an outline's selection", (), || cb(index));
             }
             let mut s = state.borrow_mut();
             if s.on_select.is_none() {

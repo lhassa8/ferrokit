@@ -55,6 +55,7 @@ mod l10n;
 mod layout;
 mod material;
 mod browser;
+mod failure;
 mod filter;
 mod form;
 mod media;
@@ -126,6 +127,7 @@ pub use material::{Glass, Material, has_liquid_glass};
 pub use widgets::{Gauge, Link, PathControl, RadioGroup, TabStyle, Tabs, TokenField, gauge, link, path_control, radio_group, rating, tabs, token_field};
 pub use media::{PdfView, VideoControls, VideoPlayer, WebPage, WebView, pdf_view, pdf_view_data, video_player, video_stream, web_view};
 pub use browser::{ColumnBrowser, column_browser};
+pub use failure::Failure;
 pub use filter::{FieldKind, FieldValue, Filter, FilterEditor, FilterField, FilterRule, FilterTest, Match, filter_editor};
 pub use form::{Form, FormRow, FormStyle, Section, disclosure, form, form_content, form_row, group_box, section};
 pub use quicklook::{Thumbnail, close_quick_look, is_quick_look_open, quick_look, thumbnail};
@@ -793,7 +795,8 @@ fn relayout(root: &RootView) {
                 let b = view.bounds().size;
                 let window = view.window();
                 let scale = window.as_ref().map_or(2.0, |w| w.backingScaleFactor());
-                layout::place_under_bar(node, b.width, b.height, window.as_deref().map_or(0.0, |w| title_bar_inset(w, view)), &layout::Snap(scale));
+                let top = window.as_deref().map_or(0.0, |w| title_bar_inset(w, view));
+                layout::mirrored(right_to_left(), b.width, || layout::place_under_bar(node, b.width, b.height, top, &layout::Snap(scale)));
             }
         }
     });
@@ -824,6 +827,25 @@ fn title_bar_inset(window: &NSWindow, root: &RootView) -> f64 {
         return 0.0;
     }
     (content.bounds().size.height - window.contentLayoutRect().size.height).max(0.0)
+}
+
+thread_local! {
+    static FORCE_RTL: Cell<Option<bool>> = const { Cell::new(None) };
+}
+
+/// Whether the app lays out right to left: its language is Arabic, Hebrew,
+/// Persian or Urdu (the app's localisation and the user's languages), or
+/// the `NSForceRightToLeftWritingDirection` default is set. Ferrokit
+/// mirrors its layout then, as AppKit mirrors its own.
+pub fn right_to_left() -> bool {
+    FORCE_RTL.with(Cell::get).unwrap_or_else(|| {
+        MainThreadMarker::new().is_some_and(|mtm| NSApplication::sharedApplication(mtm).userInterfaceLayoutDirection() == objc2_app_kit::NSUserInterfaceLayoutDirection::RightToLeft)
+    })
+}
+
+/// Overrides [`right_to_left`] (`None`: the app's own), for checks.
+pub(crate) fn force_right_to_left(on: Option<bool>) {
+    FORCE_RTL.with(|f| f.set(on));
 }
 
 /// The root view of `window`'s main tree: its content view, or a shell's
@@ -1057,6 +1079,22 @@ impl App {
         self
     }
 
+    /// Calls `f` when something fails where AppKit called into the app (an
+    /// action, a menu item, a timer, a notification, a sheet's completion):
+    /// an Objective-C exception or a Rust panic, caught there so the app
+    /// goes on (it's also printed to stderr). Log it, or tell the user.
+    ///
+    /// ```no_run
+    /// use ferrokit::*;
+    ///
+    /// let app = App::new("Notes").on_error(|failure| eprintln!("send to the crash log: {failure}"));
+    /// # let _ = app;
+    /// ```
+    pub fn on_error(self, f: impl Fn(&Failure) + 'static) -> Self {
+        failure::set_hook(f);
+        self
+    }
+
     /// Calls `f` for every [`AppEvent`].
     pub fn on_event(self, f: impl Fn(AppEvent) + 'static) -> Self {
         HANDLERS.with_borrow_mut(|h| h.push(Rc::new(f)));
@@ -1135,10 +1173,13 @@ impl App {
                 WINDOWS.with_borrow_mut(|ws| ws.push(w));
             }
         });
-        if start_untitled {
+        // What was open at the last quit, if the user keeps windows; else
+        // an untitled document, or the welcome window.
+        let restored = if start_untitled || start_welcome { objc2::rc::autoreleasepool(|_| documents::restore_open()) } else { 0 };
+        if start_untitled && restored == 0 {
             objc2::rc::autoreleasepool(|_| documents::new_launch_document());
         }
-        if start_welcome {
+        if start_welcome && restored == 0 {
             objc2::rc::autoreleasepool(|_| show_welcome());
         }
         #[allow(deprecated)]

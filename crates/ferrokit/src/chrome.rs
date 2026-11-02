@@ -305,7 +305,7 @@ define_class!(
         #[unsafe(method(fire:))]
         fn fire(&self, _sender: Option<&AnyObject>) {
             crate::models::flush();
-            batch(|| (self.ivars().action)());
+            crate::failure::entry("a menu item's action", (), || (self.ivars().action)());
         }
 
         #[unsafe(method(validateMenuItem:))]
@@ -867,7 +867,7 @@ define_class!(
             crate::models::flush();
             let index = sender.and_then(|s| s.downcast_ref::<objc2_app_kit::NSToolbarItemGroup>()).map_or(0, |g| g.selectedIndex());
             let a = self.ivars();
-            crate::commands::acting_in(a.window.load(), || batch(|| (a.action)(index)));
+            crate::failure::guard("a toolbar item's action", (), || crate::commands::acting_in(a.window.load(), || batch(|| (a.action)(index))));
         }
 
         #[unsafe(method(validateToolbarItem:))]

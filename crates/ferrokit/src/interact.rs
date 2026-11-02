@@ -12,7 +12,6 @@ use objc2::{AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_cl
 use objc2_app_kit::{NSEvent, NSTrackingArea, NSTrackingAreaOptions, NSView};
 use objc2_foundation::{NSCopying, NSPoint, NSRect, NSString};
 
-use crate::signal::batch;
 
 /// How dim a pressed view gets (its own opacity times this).
 const PRESSED: f64 = 0.55;
@@ -152,13 +151,13 @@ impl Interaction {
 
     fn hover(&self, on: bool) {
         if let Some(f) = self.ivars().hover.clone() {
-            batch(|| f(on));
+            crate::failure::entry("a hover", (), || f(on));
         }
     }
 
     fn click(&self) {
         if let Some(f) = self.ivars().click.clone() {
-            batch(|| f());
+            crate::failure::entry("a click", (), || f());
         }
     }
 

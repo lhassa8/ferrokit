@@ -86,7 +86,11 @@ App::new("Notes")
 ## Document apps
 
 `App::documents` makes an app document-based, like TextEdit or Numbers.
-Each window is one file.
+Each window is one file. A document's window comes back where it was
+when the file is opened again, and if the user keeps windows when
+quitting (System Settings › Desktop & Dock, "Close windows when quitting
+an application" off), the documents open at quit reopen at the next
+launch, as in Apple's apps.
 
 - **The File menu:** New (⌘N), Open… (⌘O), Open Recent, Save (⌘S), Save As… (⇧⌘S) and Revert to Saved.
 - **The title bar:** shows the file's name and proxy icon, and the dot in the close button while there are unsaved changes.
@@ -449,3 +453,17 @@ In a real app the table is a file, `include_str!("../locales/de.strings")`:
 - In the bundle, list the languages under `languages` in
   `[package.metadata.ferrokit]`. macOS then shows AppKit's own panels and
   menu items (Close All, the Open panel) in that language too.
+
+### Right-to-left languages
+
+In Arabic, Hebrew, Persian or Urdu (an app localised in one, for a user
+who prefers it), the layout mirrors, as AppKit's own does: a row's first
+view is on the right, padding and spacing flip, a form's labels sit to the
+right of their controls, and a slide from the leading edge comes from the
+right. AppKit mirrors the controls themselves (sliders, switches, the
+window's buttons). Text keeps its natural direction. `right_to_left()`
+says which way the app lays out, for drawing of your own on a canvas.
+
+To try a layout right to left without translating it, launch the app with
+`-AppleTextDirection YES -NSForceRightToLeftWritingDirection YES`; checks
+can call `testing::set_right_to_left(Some(true))` before opening a window.

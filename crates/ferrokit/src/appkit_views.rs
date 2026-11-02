@@ -10,7 +10,7 @@ use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_se
 use objc2_app_kit::{NSBox, NSBoxType, NSButton, NSResponder, NSScrollView, NSTextField, NSView};
 use objc2_foundation::NSString;
 
-use crate::signal::{Effect, batch};
+use crate::signal::Effect;
 use crate::view::{AnyView, Cx, Kind, LeafHandle, Meta, Node, Size, View, invalidate_layout};
 
 /// A thin separator line across its stack: horizontal in a vertical stack,
@@ -293,7 +293,7 @@ define_class!(
         #[unsafe(method(fire:))]
         fn fire(&self, _sender: Option<&AnyObject>) {
             crate::models::flush();
-            batch(|| (self.ivars())());
+            crate::failure::entry("a control's action", (), || (self.ivars())());
         }
     }
 );

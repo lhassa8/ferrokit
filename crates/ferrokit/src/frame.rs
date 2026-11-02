@@ -9,7 +9,6 @@ use objc2::runtime::{AnyObject, NSObject};
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::NSWindow;
 
-use crate::signal::batch;
 
 /// The stand-in timer's interval, and how long without a display frame
 /// before it takes over.
@@ -66,7 +65,7 @@ impl FrameTarget {
         objc2::rc::autoreleasepool(|_| {
             // A re-entrant call (a nested run loop inside the callback) is skipped.
             if let Ok(mut f) = self.ivars().f.try_borrow_mut() {
-                batch(|| f(at));
+                crate::failure::entry("a frame callback", (), || f(at));
             }
         });
     }
@@ -100,7 +99,7 @@ impl Drop for FrameLoop {
 
 /// Calls `f` once per frame of the display `window` is on, in step with its
 /// refresh (60 or 120 Hz), with the frame's target time in seconds. Runs in
-/// a [`batch`], so signal updates and layout happen once per frame: the
+/// a [`batch`](crate::batch), so signal updates and layout happen once per frame: the
 /// place to apply data that arrived since the last frame.
 ///
 /// While the display isn't drawing the window (asleep, screen locked,

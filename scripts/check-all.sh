@@ -3,8 +3,11 @@
 # each app's unattended suite (CHECK=all), then prints a summary. Exits
 # non-zero if anything failed.
 #
-# Usage: scripts/check-all.sh [--no-lint]
+# Usage: scripts/check-all.sh [--no-lint] [--debug]
 #   --no-lint   skip clippy, tests and docs (suites only)
+#   --debug     build and run the suites as debug builds, where objc2
+#               checks every message's types and every protocol's required
+#               methods (slower; timing budgets are relaxed in debug)
 #
 # Logs go to a temporary folder, or to $CHECK_ALL_LOGS if set (CI uploads it).
 # The suites open real windows: run it in a logged-in session with the
@@ -12,12 +15,13 @@
 set -u
 cd "$(dirname "$0")/.."
 
-lint=1
+lint=1 debug=
 for a in "$@"; do
   case "$a" in
+    --debug) debug=1 ;;
     --no-iced) ;; # (the Iced checklist is retired; accepted for old scripts)
     --no-lint) lint= ;;
-    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
     *) echo "check-all: unknown option $a" >&2; exit 2 ;;
   esac
 done
@@ -113,7 +117,11 @@ PY
   fi
 }
 
-step build cargo build --release --workspace --examples
+if [ -n "$debug" ]; then
+  step build cargo build --workspace --examples
+else
+  step build cargo build --release --workspace --examples
+fi
 if [ -n "$lint" ]; then
   step clippy cargo clippy --release --workspace --examples -- -D warnings
   step tests cargo test --workspace --release
@@ -121,6 +129,7 @@ if [ -n "$lint" ]; then
 fi
 
 ex=target/release/examples
+[ -n "$debug" ] && ex=target/debug/examples
 suite ui_checklist CHECK=all "$ex/ui_checklist"
 suite settings CHECK=all "$ex/settings"
 suite native_csv CHECK=all "$ex/native_csv"
@@ -139,7 +148,15 @@ suite input CHECK=all "$ex/input"
 suite values CHECK=all "$ex/values"
 suite sql_browser CHECK=all "$ex/sql_browser"
 suite sql_browser_de CHECK=l10n "$ex/sql_browser" -AppleLanguages "(de)"
-suite cargo_ferrokit FERROKIT_E2E=1 scripts/check-ferrokit.sh
+# The notes example in the App Sandbox (signed with the entitlements
+# `cargo ferrokit bundle` gives `sandbox = true`): documents, recents and
+# restoring them work there too.
+if [ -z "$debug" ]; then
+  step notes_sandbox_bundle scripts/package-app.sh -p ferrokit --example notes --name "Notes Sandboxed" --id dev.ferrokit.notes-sandboxed --entitlements scripts/sandbox.entitlements
+  suite notes_sandboxed CHECK=all "target/apps/Notes Sandboxed.app/Contents/MacOS/notes"
+fi
+# (cargo ferrokit's templates build their own debug apps already.)
+[ -z "$debug" ] && suite cargo_ferrokit FERROKIT_E2E=1 scripts/check-ferrokit.sh
 
 printf '\nSummary (logs in %s):%b\n' "$log" "$summary"
 if [ "$failed" -gt 0 ]; then

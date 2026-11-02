@@ -13,7 +13,6 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSArray, NSString, NSURL};
 
-use crate::signal::batch;
 use crate::Window;
 
 fn mtm() -> MainThreadMarker {
@@ -24,8 +23,9 @@ fn mtm() -> MainThreadMarker {
 fn once<A: 'static>(f: impl FnOnce(A) + 'static) -> impl Fn(A) + 'static {
     let cell = RefCell::new(Some(f));
     move |a| {
-        if let Some(f) = cell.borrow_mut().take() {
-            batch(|| f(a));
+        let f = cell.borrow_mut().take();
+        if let Some(f) = f {
+            crate::failure::entry("a sheet's or panel's completion", (), || f(a));
         }
     }
 }

@@ -1129,13 +1129,15 @@ fn keys_unreachable() -> Option<&'static str> {
 
 /// On a CI runner (GitHub sets `CI`): shared, slow virtual machines, so
 /// timing budgets are reported but don't fail (correctness checks still do).
+/// Timing budgets are informational on CI (shared, virtual machines) and
+/// in debug builds (run for objc2's checks, not for speed).
 fn on_ci() -> bool {
-    std::env::var_os("CI").is_some()
+    std::env::var_os("CI").is_some() || cfg!(debug_assertions)
 }
 
-/// Appended to a timing check's note on CI.
+/// Appended to a timing check's note where it's informational.
 fn ci_note() -> &'static str {
-    if on_ci() { "; informational on CI" } else { "" }
+    if on_ci() { "; informational on CI and in debug builds" } else { "" }
 }
 
 /// Posts a key press (down and up) to the app's event queue for `w`, as the
@@ -2676,7 +2678,9 @@ fn shell_memory(events: Rc<RefCell<Vec<AppEvent>>>) {
                 per < floor.max(0.0) + 16.0,
                 format!("30 shell windows closed: heap kept {per:+.1} KB each; a plain AppKit split view controller window {floor:+.1} KB (budget: plain + 16)"),
             );
-            rich_table_checks(events.clone());
+            // On the next pass, outside this batch: as a click would be.
+            let events = events.clone();
+            after_events(move || failure_checks(events.clone()));
         }));
     }));
 }
@@ -2766,6 +2770,107 @@ mod shell_toolbar {
     );
 }
 use shell_toolbar::ShellToolbar;
+
+thread_local! {
+    /// Failures `App::on_error` was told about.
+    static HOOKED: Cell<u32> = const { Cell::new(0) };
+}
+
+/// R2: an exception or a panic in an action, or a panic in an effect, is
+/// caught where AppKit called in, reported, and the app goes on: later
+/// changes still take effect.
+fn failure_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use ferrokit::testing::failures;
+    let (count, poison) = (Signal::new(0), Signal::new(false));
+    let w = open(
+        Window::new("Failures").size(360.0, 160.0).view(
+            vstack((
+                button("Throw", || {
+                    // An Objective-C exception from AppKit's side: past the end of an array.
+                    let empty = objc2_foundation::NSArray::<NSString>::new();
+                    let _: *mut objc2::runtime::AnyObject = unsafe { objc2::msg_send![&*empty, objectAtIndex: 3usize] };
+                }),
+                button("Panic", || panic!("a deliberate panic, for the check")),
+                button("Poison", move || poison.set(true)),
+                button("Count", move || count.update(|n| *n += 1)),
+                // An effect that panics while the signal is set.
+                ferrokit::watch(move || {
+                    if poison.get() {
+                        panic!("a deliberate panic in an effect");
+                    }
+                }),
+                text(move || format!("count {}", count.get())),
+            ))
+            .padding(12.0),
+        ),
+    );
+    let button_named = |t: &str| all_views(&w.contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).find(|b| b.title().to_string() == t).unwrap();
+    let label_now = || all_views(&w.contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string().starts_with("count")).map(|f| f.stringValue().to_string()).unwrap_or_default();
+    let before = failures().len();
+    send_action(&button_named("Throw"));
+    send_action(&button_named("Panic"));
+    send_action(&button_named("Poison"));
+    let caught: Vec<ferrokit::Failure> = failures().into_iter().skip(before).collect();
+    // The app goes on: a later change still updates the screen.
+    send_action(&button_named("Count"));
+    send_action(&button_named("Count"));
+    let shown = label_now();
+    let exception = caught.iter().any(|f| f.exception && f.place == "a control's action" && f.message.contains("NSRangeException"));
+    let panics = caught.iter().filter(|f| !f.exception && f.message.contains("deliberate panic")).count();
+    check(
+        "failures-caught",
+        exception && panics == 2 && shown == "count 2" && HOOKED.with(Cell::get) as usize >= caught.len() && caught.len() == 3,
+        format!("caught {:?}; after them the label reads {shown:?}; on_error told {} time(s)", caught.iter().map(|f| f.to_string()).collect::<Vec<_>>(), HOOKED.with(Cell::get)),
+    );
+    ferrokit::close_window(&w);
+    after_events(move || rtl_checks(events.clone()));
+}
+
+/// R5: right to left, a row's first item is on the right and its last on
+/// the left, padding and spacing mirror, and a form's labels move to the
+/// right of their controls; left to right again, they go back.
+fn rtl_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use ferrokit::testing::set_right_to_left;
+    let name = Signal::new(String::new());
+    let make = move || {
+        Window::new("Mirror").size(420.0, 200.0).view(
+            vstack((
+                hstack((text("First"), spacer(), text("Last"))),
+                ferrokit::form(vec![ferrokit::section("", vec![ferrokit::form_row("Name", text_field(&name))])]).style(ferrokit::FormStyle::Columns),
+            ))
+            .padding_xy(30.0, 12.0),
+        )
+    };
+    let frames = |w: &objc2_app_kit::NSWindow| {
+        let views = all_views(&w.contentView().unwrap());
+        let x = |t: &str| views.iter().filter_map(|v| v.clone().downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string() == t).map(|f| (f.frame().origin.x, f.frame().origin.x + f.frame().size.width));
+        let field = views.iter().filter_map(|v| v.clone().downcast::<NSTextField>().ok()).find(|f| f.isEditable()).map(|f| (f.frame().origin.x, f.frame().origin.x + f.frame().size.width));
+        (x("First"), x("Last"), x("Name:"), field)
+    };
+    let ltr_w = open(make());
+    let ltr = frames(&ltr_w);
+    ferrokit::close_window(&ltr_w);
+    set_right_to_left(Some(true));
+    let rtl_w = open(make());
+    let rtl = frames(&rtl_w);
+    if let Ok(dir) = std::env::var("SNAP") {
+        snapshot_windows(&dir);
+    }
+    ferrokit::close_window(&rtl_w);
+    set_right_to_left(None);
+    // Mirrored in the 420-point window: x becomes 420 − (x + width).
+    let mirror = |a: Option<(f64, f64)>| a.map(|(x0, x1)| (420.0 - x1, 420.0 - x0));
+    let near = |a: Option<(f64, f64)>, b: Option<(f64, f64)>| a.zip(b).is_some_and(|(a, b)| (a.0 - b.0).abs() < 1.0 && (a.1 - b.1).abs() < 1.0);
+    let ok = near(rtl.0, mirror(ltr.0)) && near(rtl.1, mirror(ltr.1)) && near(rtl.2, mirror(ltr.2)) && near(rtl.3, mirror(ltr.3))
+        && rtl.0.zip(rtl.1).is_some_and(|(first, last)| first.0 > last.1)
+        && rtl.2.zip(rtl.3).is_some_and(|(label, field)| label.0 > field.1);
+    check(
+        "right-to-left",
+        ok,
+        format!("left to right: First {:?}, Last {:?}, label {:?}, field {:?}; right to left: First {:?}, Last {:?}, label {:?}, field {:?}", ltr.0, ltr.1, ltr.2, ltr.3, rtl.0, rtl.1, rtl.2, rtl.3),
+    );
+    after_events(move || rich_table_checks(events.clone()));
+}
 
 #[derive(Clone)]
 struct Task {
@@ -4846,6 +4951,7 @@ fn main() {
         .settings(settings_window())
         .on_command(SHOW_HELP, || HELP_SHOWN.set(HELP_SHOWN.get() + 1))
         .on_event(move |e| e2.borrow_mut().push(e))
+        .on_error(|_| HOOKED.with(|h| h.set(h.get() + 1)))
         .on_launch(move || {
             if checks {
                 run_checks(events);

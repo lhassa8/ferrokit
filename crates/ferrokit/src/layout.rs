@@ -211,6 +211,36 @@ impl Snap {
     }
 }
 
+thread_local! {
+    /// Right to left: the width of the container being laid out, whose
+    /// frames are mirrored within it (`None` left to right).
+    static MIRROR: Cell<Option<f64>> = const { Cell::new(None) };
+}
+
+/// Runs `f` laying out a container `width` wide, mirrored right to left
+/// when `rtl`.
+pub(crate) fn mirrored<R>(rtl: bool, width: f64, f: impl FnOnce() -> R) -> R {
+    let prev = MIRROR.with(|m| m.replace(rtl.then_some(width)));
+    let r = f();
+    MIRROR.with(|m| m.set(prev));
+    r
+}
+
+/// Whether the container being laid out is mirrored.
+fn rtl() -> bool {
+    MIRROR.with(Cell::get).is_some()
+}
+
+/// `r` as it lands: mirrored across the container right to left (the
+/// layout computes left to right; this flips every frame together, as
+/// AppKit's own right-to-left layout does).
+fn out(r: Rect) -> Rect {
+    match MIRROR.with(Cell::get) {
+        Some(width) => Rect { x: width - r.x - r.w, ..r },
+        None => r,
+    }
+}
+
 /// The rectangle `x, y, w, h` with its edges on device pixels.
 fn snapped(x: f64, y: f64, w: f64, h: f64, snap: &Snap) -> Rect {
     let (x0, y0) = (snap.r(x), snap.r(y));
@@ -227,7 +257,7 @@ pub(crate) fn place(node: &Node, x: f64, y: f64, w: f64, h: f64, snap: &Snap) {
     }
     bump(&PLACED);
     for d in &node.decor {
-        Native::place(d, snapped(x, y, w, h, snap));
+        Native::place(d, out(snapped(x, y, w, h, snap)));
     }
     place_body(node, x, y, w, h, 0.0, snap);
     finish(&node.meta, rect);
@@ -255,7 +285,7 @@ fn place_under_bar_at(node: &Node, x: f64, w: f64, h: f64, top: f64, snap: &Snap
     }
     bump(&PLACED);
     for d in &node.decor {
-        Native::place(d, snapped(x, 0.0, w, h, snap));
+        Native::place(d, out(snapped(x, 0.0, w, h, snap)));
     }
     match &node.kind {
         Kind::Split { .. } => place_body(node, x, 0.0, w, h, top, snap),
@@ -280,10 +310,10 @@ fn place_body(node: &Node, x: f64, y: f64, w: f64, h: f64, top: f64, snap: &Snap
     let (px, py) = node.padding;
     let (ix, iy, iw, ih) = (x + px, y + py, (w - 2.0 * px).max(0.0), (h - 2.0 * py).max(0.0));
     match &node.kind {
-        Kind::Leaf(l) => Native::place(&l.view, snapped(ix, iy, iw, ih, snap)),
+        Kind::Leaf(l) => Native::place(&l.view, out(snapped(ix, iy, iw, ih, snap))),
         Kind::Spacer => {}
         Kind::Scroll { scroll, doc, content } => {
-            let visible = Native::place_scroll(scroll, snapped(ix, iy, iw, ih, snap));
+            let visible = Native::place_scroll(scroll, out(snapped(ix, iy, iw, ih, snap)));
             let mut size = Size { w: visible.w, h: ideal(content).h.max(visible.h) };
             Native::set_size(doc, size);
             // Classic (always-shown) scroll bars appear once the document is
@@ -293,10 +323,11 @@ fn place_body(node: &Node, x: f64, y: f64, w: f64, h: f64, top: f64, snap: &Snap
                 size = Size { w: after.w, h: ideal(content).h.max(after.h) };
                 Native::set_size(doc, size);
             }
-            place(content, 0.0, 0.0, size.w, size.h, snap);
+            // The document is a container of its own.
+            mirrored(rtl(), size.w, || place(content, 0.0, 0.0, size.w, size.h, snap));
         }
         Kind::Split { split, panes, position, trailing, stacked } => {
-            Native::place_split(split, snapped(ix, iy, iw, ih, snap));
+            Native::place_split(split, out(snapped(ix, iy, iw, ih, snap)));
             // A stacked split under the title bar: the app's position counts
             // from below the bar, where its top pane's content starts (a
             // saved one is the pane's whole height). The bar is known once
@@ -316,7 +347,9 @@ fn place_body(node: &Node, x: f64, y: f64, w: f64, h: f64, top: f64, snap: &Snap
                 let b = Native::size(pane);
                 // Stacked, only the top pane is under the bar.
                 let bar = if *stacked && i > 0 { 0.0 } else { top };
-                place_under_bar(child, b.w, b.h, bar, snap);
+                // Each pane is a container of its own (AppKit orders the
+                // panes right to left itself).
+                mirrored(rtl(), b.w, || place_under_bar(child, b.w, b.h, bar, snap));
             }
         }
         Kind::Group(g) => place_stack(&g.borrow(), Axis::Vertical, 0.0, None, [ix, iy, iw, ih], snap),

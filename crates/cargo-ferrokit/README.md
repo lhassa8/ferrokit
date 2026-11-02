@@ -35,6 +35,8 @@ category = "public.app-category.productivity"
 languages = ["de", "fr"]   # its translations, besides English
 sign = "Developer ID Application: Your Name (TEAMID)"
 notary-profile = "my-profile"   # xcrun notarytool store-credentials my-profile …
+sandbox = true                  # sign for the App Sandbox (files the user chooses, bookmarks)
+network = true                  # with the sandbox: outgoing connections
 
 [[package.metadata.ferrokit.documents]]
 name = "Text"

@@ -160,6 +160,14 @@ The review is in `docs/Q3_API_REVIEW.md`. Changes:
 - **`.accessibility_value(..)`:** what VoiceOver reads after a view's name; Habits' cards say whether they're done.
 - **A new `values` suite** with 11 checks; the examples, guide and templates use the new names.
 
+### Hardening (the R queue)
+
+- **Right-to-left layout:** in Arabic, Hebrew, Persian or Urdu the layout mirrors as AppKit's does (rows, padding, forms, slide transitions); `right_to_left()`, and `testing::set_right_to_left` for checks.
+- **Restoration:** a document's window comes back where it was when its file reopens, and when the user keeps windows on quitting (System Settings), the documents open at quit reopen at the next launch.
+- **The App Sandbox:** `sandbox = true` (and `network = true`) in `[package.metadata.ferrokit]` signs with the sandbox's entitlements; sandboxed document apps keep security-scoped bookmarks so Open Recent and restoration reach files after a relaunch. check-all runs `notes` sandboxed.
+- **Debug-build runs:** `check-all.sh --debug` runs every suite as a debug build, where objc2 checks every message's types and every protocol's required methods; timing budgets are informational there. It found a test helper missing `NSDraggingInfo`'s required methods.
+- **No silent failures:** an Objective-C exception or a Rust panic in code AppKit calls in for (actions, menu and toolbar items, canvas events, timers and animations, notifications, sheet and panel completions, `spawn` and `later` continuations) is caught there, printed with where it happened, passed to `App::on_error`, and listed by `testing::failures()`; the app goes on. Before, AppKit swallowed exceptions without a word and the rest of that work never ran. A failure part-way through a batch or an effect no longer leaves the signal system stuck.
+
 ### One product: the Iced embedding is retired
 
 - **`ferrokit-iced` isn't released.** Ferrokit is one framework, `ferrokit`; native views inside Iced windows (`iced-appkit`, last published 0.2.1) aren't continued. `iced-appkit` 0.2.1 stays on crates.io; its code is kept, unbuilt, in the repository's `retired/`.

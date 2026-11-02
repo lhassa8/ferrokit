@@ -343,9 +343,10 @@ mod self_checks {
     }
 
     /// On a CI runner (GitHub sets `CI`): shared virtual machines, so frame
-    /// budgets are reported but don't fail; correctness still does.
+    /// budgets are reported but don't fail; correctness still does. The
+    /// same in debug builds (run for objc2's checks, not for speed).
     fn on_ci() -> bool {
-        std::env::var_os("CI").is_some()
+        std::env::var_os("CI").is_some() || cfg!(debug_assertions)
     }
 
     fn check(name: &str, pass: bool, note: String) {

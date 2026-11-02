@@ -117,9 +117,29 @@ pub fn step_motion(seconds: f64) {
     crate::motion::step(seconds);
 }
 
+/// Lays out right to left (`Some(true)`), left to right, or as the app's
+/// language says (`None`): for checking a layout mirrors. Windows lay out
+/// again as they change; call it before opening the window to check.
+pub fn set_right_to_left(on: Option<bool>) {
+    crate::force_right_to_left(on);
+}
+
+/// Remembers the documents open now, as quitting does (they reopen at the
+/// next launch when the user keeps windows: `NSQuitAlwaysKeepsWindows`,
+/// which a launch argument can set for one run).
+pub fn remember_open_documents() {
+    crate::documents::remember_open();
+}
+
 /// Value and spring animations running now.
 pub fn motion_running() -> usize {
     crate::motion::running()
+}
+
+/// The failures caught where AppKit called in (exceptions and panics; the
+/// last 100): see [`App::on_error`](crate::App::on_error).
+pub fn failures() -> Vec<crate::Failure> {
+    crate::failure::caught()
 }
 
 /// Quick Look thumbnails made so far ([`thumbnail`](crate::thumbnail)).
