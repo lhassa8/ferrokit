@@ -1,6 +1,6 @@
 //! Signals kept in the app's user defaults: settings that survive a relaunch.
 
-use std::cell::RefCell;
+use ferrokit_core::kept::{UiCell, UiLocal};
 
 use objc2::rc::Retained;
 use objc2_foundation::{NSString, NSUserDefaults};
@@ -58,7 +58,7 @@ impl Stored for String {
 
 thread_local! {
     /// The write-back effects of stored signals (they live as long as the app).
-    static WRITERS: RefCell<Vec<Effect>> = const { RefCell::new(Vec::new()) };
+    static WRITERS: UiCell<Vec<Effect>> = const { UiCell::new(Vec::new()) };
 }
 
 /// A signal holding the user-defaults value under `key` (or `default` when

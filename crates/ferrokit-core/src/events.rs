@@ -1,6 +1,6 @@
 //! Callbacks from AppKit, handed to the host framework through one sink.
 
-use std::cell::RefCell;
+use crate::kept::{UiCell, UiLocal};
 
 use crate::ViewId;
 
@@ -27,7 +27,7 @@ pub enum Event {
 type Sink = Box<dyn Fn(Event)>;
 
 thread_local! {
-    static SINK: RefCell<Option<Sink>> = const { RefCell::new(None) };
+    static SINK: UiCell<Option<Sink>> = const { UiCell::new(None) };
 }
 
 /// Where events go. Called on the main thread, from AppKit callbacks.

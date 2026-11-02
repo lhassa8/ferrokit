@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use crate::kept::{UiCell, UiLocal};
 use std::collections::{HashMap, HashSet};
 
 use objc2::rc::Retained;
@@ -69,7 +69,7 @@ pub(crate) struct Host {
 }
 
 thread_local! {
-    static HOST: RefCell<Option<Host>> = const { RefCell::new(None) };
+    static HOST: UiCell<Option<Host>> = const { UiCell::new(None) };
 }
 
 pub(crate) fn mtm() -> MainThreadMarker {

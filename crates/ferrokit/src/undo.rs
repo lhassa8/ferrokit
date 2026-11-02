@@ -4,7 +4,7 @@
 //! ⇧⌘Z reach it through the responder chain; the Edit menu shows the
 //! action's name ("Undo Rename").
 
-use std::cell::RefCell;
+use ferrokit_core::kept::{UiCell, UiLocal};
 use std::rc::Rc;
 
 use objc2::rc::{Retained, Weak};
@@ -49,7 +49,7 @@ define_class!(
 thread_local! {
     /// The undo manager of the window whose views are being built (its
     /// content isn't in the window yet).
-    static BUILDING: RefCell<Option<Retained<NSUndoManager>>> = const { RefCell::new(None) };
+    static BUILDING: UiCell<Option<Retained<NSUndoManager>>> = const { UiCell::new(None) };
 }
 
 /// Gives `window` its own undo manager (kept by the returned delegate) and

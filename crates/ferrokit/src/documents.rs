@@ -9,6 +9,7 @@
 //! saved text clears the dot, as in other Mac apps. Undo is per document:
 //! each window has its own history.
 
+use ferrokit_core::kept::{UiCell, UiLocal};
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -250,12 +251,12 @@ impl<T: Clone + PartialEq + 'static> Opener for Rc<DocumentType<T>> {
 }
 
 thread_local! {
-    static DOCS: RefCell<Vec<Rc<dyn AnyDoc>>> = const { RefCell::new(Vec::new()) };
-    static OPENER: RefCell<Option<Rc<dyn Opener>>> = const { RefCell::new(None) };
+    static DOCS: UiCell<Vec<Rc<dyn AnyDoc>>> = const { UiCell::new(Vec::new()) };
+    static OPENER: UiCell<Option<Rc<dyn Opener>>> = const { UiCell::new(None) };
     static UNTITLED: Cell<u32> = const { Cell::new(0) };
-    static DELEGATE: RefCell<Option<Retained<AppDelegate>>> = const { RefCell::new(None) };
+    static DELEGATE: UiCell<Option<Retained<AppDelegate>>> = const { UiCell::new(None) };
     /// The untitled document opened at launch, until files are opened.
-    static AUTO_UNTITLED: RefCell<Weak<NSWindow>> = RefCell::new(Weak::default());
+    static AUTO_UNTITLED: UiCell<Weak<NSWindow>> = UiCell::new(Weak::default());
 }
 
 /// Opens a window for a document with `content`.
@@ -405,7 +406,7 @@ fn close_auto_untitled() {
 type Welcome = (Option<Rc<dyn Fn() -> Window>>, Weak<NSWindow>);
 
 thread_local! {
-    static WELCOME: RefCell<Welcome> = RefCell::new((None, Weak::default()));
+    static WELCOME: UiCell<Welcome> = UiCell::new((None, Weak::default()));
 }
 
 pub(crate) fn set_welcome(make: Rc<dyn Fn() -> Window>) {
@@ -534,7 +535,7 @@ fn bookmark_key(path: &Path) -> Retained<NSString> {
 
 thread_local! {
     /// Files reached through their bookmarks (kept reachable while the app runs).
-    static REACHED: RefCell<Vec<(PathBuf, Retained<NSURL>)>> = const { RefCell::new(Vec::new()) };
+    static REACHED: UiCell<Vec<(PathBuf, Retained<NSURL>)>> = const { UiCell::new(Vec::new()) };
 }
 
 /// In the sandbox, the app reaches a file the user chose only while it
@@ -838,9 +839,9 @@ pub(crate) type DockItems = Rc<dyn Fn() -> Vec<crate::MenuItem>>;
 
 thread_local! {
     /// The Dock menu's items ([`App::dock_menu`](crate::App::dock_menu)).
-    pub(crate) static DOCK_MENU: RefCell<Option<DockItems>> = const { RefCell::new(None) };
+    pub(crate) static DOCK_MENU: UiCell<Option<DockItems>> = const { UiCell::new(None) };
     /// The last Dock menu's action targets, alive while it can be used.
-    static DOCK_TARGETS: RefCell<Vec<Retained<NSObject>>> = const { RefCell::new(Vec::new()) };
+    static DOCK_TARGETS: UiCell<Vec<Retained<NSObject>>> = const { UiCell::new(Vec::new()) };
 }
 
 /// Makes the app a document app for `kind` (see

@@ -3,6 +3,7 @@
 //! simulated edits, memory footprint and window snapshots. Used by the
 //! checklist and the example apps' self-checks.
 
+use ferrokit_core::kept::UiLocal;
 use objc2::rc::Retained;
 use objc2_app_kit::{NSApplication, NSTextField};
 use objc2_foundation::NSString;

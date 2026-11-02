@@ -11,8 +11,8 @@
 //! work the same way ([`ViewExt::focused_value`](crate::ViewExt::focused_value),
 //! [`focused_value`]).
 
+use ferrokit_core::kept::{UiCell, UiLocal};
 use std::any::Any;
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
@@ -71,8 +71,8 @@ pub(crate) struct Responds {
 
 thread_local! {
     /// Leaf native views to their nodes, for finding the focused node.
-    static LEAVES: RefCell<HashMap<usize, Weak<Meta>>> = RefCell::new(HashMap::new());
-    static APP: RefCell<Responds> = RefCell::new(Responds::default());
+    static LEAVES: UiCell<HashMap<usize, Weak<Meta>>> = UiCell::new(HashMap::new());
+    static APP: UiCell<Responds> = UiCell::new(Responds::default());
 }
 
 pub(crate) fn register_leaf(key: usize, meta: &Rc<Meta>) {
@@ -89,7 +89,7 @@ pub(crate) fn app_command(command: Command, handler: Rc<Handler>) {
 
 thread_local! {
     /// The window a toolbar item is acting in, while it acts.
-    static ACTING: RefCell<Option<Retained<NSWindow>>> = const { RefCell::new(None) };
+    static ACTING: UiCell<Option<Retained<NSWindow>>> = const { UiCell::new(None) };
 }
 
 /// Runs `f` with `window` as the focused window: a toolbar button acts in

@@ -9,7 +9,8 @@
 //!   view, so the menu's key equivalents don't swallow them.
 //! - A click outside every native view hands focus back to the host view.
 
-use std::cell::{Cell, RefCell};
+use crate::kept::{UiCell, UiLocal};
+use std::cell::Cell;
 use std::collections::HashSet;
 
 use block2::RcBlock;
@@ -29,12 +30,12 @@ use crate::ViewId;
 const TAB: u16 = 48;
 
 thread_local! {
-    static MONITOR: RefCell<Option<Retained<AnyObject>>> = const { RefCell::new(None) };
-    static ACCEPTS_TAB: RefCell<HashSet<ViewId>> = RefCell::new(HashSet::new());
+    static MONITOR: UiCell<Option<Retained<AnyObject>>> = const { UiCell::new(None) };
+    static ACCEPTS_TAB: UiCell<HashSet<ViewId>> = UiCell::new(HashSet::new());
     static LAST_FOCUS: Cell<Option<ViewId>> = const { Cell::new(None) };
     static CHECK_QUEUED: Cell<bool> = const { Cell::new(false) };
     static EDIT_MENU: Cell<bool> = const { Cell::new(false) };
-    static TARGET: RefCell<Option<Retained<Target>>> = const { RefCell::new(None) };
+    static TARGET: UiCell<Option<Retained<Target>>> = const { UiCell::new(None) };
 }
 
 /// Lets a view keep plain Tab (e.g. a text editor). Ctrl-Tab leaves it.

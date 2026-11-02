@@ -1,7 +1,7 @@
 //! Menu-bar extras: an icon (and title) in the menu bar's right side, with a
 //! menu or a panel of the app's own views.
 
-use std::cell::RefCell;
+use ferrokit_core::kept::{UiCell, UiLocal};
 use std::rc::Rc;
 
 use objc2::rc::Retained;
@@ -89,7 +89,7 @@ pub(crate) struct Installed {
 }
 
 thread_local! {
-    pub(crate) static EXTRAS: RefCell<Vec<Rc<Installed>>> = const { RefCell::new(Vec::new()) };
+    pub(crate) static EXTRAS: UiCell<Vec<Rc<Installed>>> = const { UiCell::new(Vec::new()) };
 }
 
 /// Puts `extra` in the menu bar.

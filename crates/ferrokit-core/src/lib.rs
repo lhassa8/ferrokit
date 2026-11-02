@@ -13,6 +13,8 @@ mod appearance;
 mod events;
 mod geometry;
 mod host;
+#[doc(hidden)]
+pub mod kept;
 mod keys;
 mod snapshot;
 pub mod sync;

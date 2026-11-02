@@ -1,7 +1,7 @@
 //! Localisation: `.strings` tables, the user's language, plurals and
 //! numbers. See [`t`].
 
-use std::cell::RefCell;
+use ferrokit_core::kept::{UiCell, UiLocal};
 use std::collections::HashMap;
 
 use objc2_foundation::{NSArray, NSBundle, NSLocale, NSNumber, NSNumberFormatter, NSNumberFormatterStyle, NSString};
@@ -24,7 +24,7 @@ struct State {
 }
 
 thread_local! {
-    static STATE: RefCell<State> = RefCell::new(State::default());
+    static STATE: UiCell<State> = UiCell::new(State::default());
 }
 
 /// Parses a `.strings` table: `"key" = "value";` lines, with `/* */` and

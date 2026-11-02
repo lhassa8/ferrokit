@@ -16,6 +16,7 @@
 //! geometry ([`ViewExt::matched_geometry`](crate::ViewExt::matched_geometry))
 //! starts a view where the one it replaces was.
 
+use ferrokit_core::kept::{UiCell, UiLocal};
 use std::cell::{Cell, RefCell};
 
 use objc2::rc::Retained;
@@ -184,24 +185,24 @@ thread_local! {
     static PENDING: Cell<Option<Animation>> = const { Cell::new(None) };
     /// Inside the animation group: frames set now animate.
     static RUNNING: Cell<bool> = const { Cell::new(false) };
-    static QUEUED: RefCell<Vec<Box<dyn FnOnce()>>> = RefCell::new(Vec::new());
-    static ENTERING: RefCell<Vec<Entrance>> = const { RefCell::new(Vec::new()) };
-    static EXITING: RefCell<Vec<(Vec<Retained<NSView>>, Transition)>> = const { RefCell::new(Vec::new()) };
+    static QUEUED: UiCell<Vec<Box<dyn FnOnce()>>> = UiCell::new(Vec::new());
+    static ENTERING: UiCell<Vec<Entrance>> = const { UiCell::new(Vec::new()) };
+    static EXITING: UiCell<Vec<(Vec<Retained<NSView>>, Transition)>> = const { UiCell::new(Vec::new()) };
     /// Views on their way out (removed when their animation ends).
     static LEAVING: Cell<usize> = const { Cell::new(0) };
     static REDUCE_MOTION: Cell<Option<bool>> = const { Cell::new(None) };
     /// The spring the running layout's frames follow, if it's one.
     static SPRING: Cell<Option<Animation>> = const { Cell::new(None) };
     /// Frames on their way under a spring, by view.
-    static FRAMES: RefCell<std::collections::HashMap<usize, FrameJob>> = RefCell::new(std::collections::HashMap::new());
+    static FRAMES: UiCell<std::collections::HashMap<usize, FrameJob>> = UiCell::new(std::collections::HashMap::new());
     /// Matched geometry: where views with an id that left were (window
     /// coordinates), and the views with one that came in.
-    static MATCH_FROM: RefCell<std::collections::HashMap<String, NSRect>> = RefCell::new(std::collections::HashMap::new());
-    static MATCH_TO: RefCell<Vec<(String, Vec<Retained<NSView>>)>> = const { RefCell::new(Vec::new()) };
+    static MATCH_FROM: UiCell<std::collections::HashMap<String, NSRect>> = UiCell::new(std::collections::HashMap::new());
+    static MATCH_TO: UiCell<Vec<(String, Vec<Retained<NSView>>)>> = const { UiCell::new(Vec::new()) };
     /// Views layout has placed (weakly, by address): a view not in it has
     /// never been placed, whatever its frame says (a label is created
     /// already sized to its text).
-    static PLACED: RefCell<std::collections::HashMap<usize, objc2::rc::Weak<NSView>>> = RefCell::new(std::collections::HashMap::new());
+    static PLACED: UiCell<std::collections::HashMap<usize, objc2::rc::Weak<NSView>>> = UiCell::new(std::collections::HashMap::new());
 }
 
 fn key(view: &NSView) -> usize {
@@ -443,8 +444,8 @@ const FRAMES_KEY: u64 = u64::MAX;
 type Step = Box<dyn FnMut(f64) -> bool>;
 
 thread_local! {
-    static JOBS: RefCell<Vec<(u64, f64, Step)>> = const { RefCell::new(Vec::new()) };
-    static TIMER: RefCell<Option<Retained<AnyObject>>> = const { RefCell::new(None) };
+    static JOBS: UiCell<Vec<(u64, f64, Step)>> = const { UiCell::new(Vec::new()) };
+    static TIMER: UiCell<Option<Retained<AnyObject>>> = const { UiCell::new(None) };
     /// Time added to the clock by [`step`], for checks.
     static SKEW: Cell<f64> = const { Cell::new(0.0) };
 }

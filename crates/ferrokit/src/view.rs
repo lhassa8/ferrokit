@@ -9,6 +9,7 @@
 //! Dropping a node is the teardown: its native views leave the window and its
 //! effects stop.
 
+use ferrokit_core::kept::{UiCell, UiLocal};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -347,7 +348,7 @@ impl Node {
 thread_local! {
     /// The views of a node leaving with a transition: collected instead of
     /// removed, to go when the transition ends.
-    static LEAVING: RefCell<Option<Vec<NativeView>>> = const { RefCell::new(None) };
+    static LEAVING: UiCell<Option<Vec<NativeView>>> = const { UiCell::new(None) };
 }
 
 /// Removes `view` from its window, or keeps it for the leaving node's

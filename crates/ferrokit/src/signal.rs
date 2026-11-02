@@ -13,6 +13,7 @@
 //! owner. Signals created outside any owner (app state made in `main`) live
 //! as long as the app.
 
+use ferrokit_core::kept::{UiCell, UiLocal};
 use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::fmt;
@@ -63,11 +64,9 @@ impl Drop for OwnerInner {
         self.effects.borrow_mut().clear();
         let signals = std::mem::take(&mut *self.signals.borrow_mut());
         // The values are dropped outside the arena's borrow (a value may
-        // own another owner). As the thread exits (`std::process::exit`),
-        // the arena may already be gone, and its values with it.
-        let freed: Vec<Rc<dyn Any>> = ARENA
-            .try_with(|a| signals.iter().filter_map(|&(i, g)| a.borrow_mut().free(i, g)).collect())
-            .unwrap_or_default();
+        // own another owner). (The arena is a `UiCell`: still there as the
+        // process exits.)
+        let freed: Vec<Rc<dyn Any>> = ARENA.with_borrow_mut(|a| signals.iter().filter_map(|&(i, g)| a.free(i, g)).collect());
         drop(freed);
     }
 }
@@ -126,13 +125,13 @@ pub fn live_signals() -> usize {
 }
 
 thread_local! {
-    static OBSERVER: RefCell<Option<Rc<EffectInner>>> = const { RefCell::new(None) };
+    static OBSERVER: UiCell<Option<Rc<EffectInner>>> = const { UiCell::new(None) };
     static DEPTH: Cell<u32> = const { Cell::new(0) };
-    static PENDING: RefCell<Vec<Rc<EffectInner>>> = const { RefCell::new(Vec::new()) };
-    static AFTER: RefCell<Vec<Rc<dyn Fn()>>> = const { RefCell::new(Vec::new()) };
+    static PENDING: UiCell<Vec<Rc<EffectInner>>> = const { UiCell::new(Vec::new()) };
+    static AFTER: UiCell<Vec<Rc<dyn Fn()>>> = const { UiCell::new(Vec::new()) };
     static RUNS: Cell<u64> = const { Cell::new(0) };
-    static OWNER: RefCell<Option<Rc<OwnerInner>>> = const { RefCell::new(None) };
-    static ARENA: RefCell<Arena> = RefCell::new(Arena::default());
+    static OWNER: UiCell<Option<Rc<OwnerInner>>> = const { UiCell::new(None) };
+    static ARENA: UiCell<Arena> = UiCell::new(Arena::default());
 }
 
 impl EffectInner {
@@ -470,7 +469,7 @@ impl<T> Copy for Memo<T> {}
 
 thread_local! {
     /// Effects of memos made outside any owner: they live as long as the app.
-    static ROOT_EFFECTS: RefCell<Vec<Effect>> = const { RefCell::new(Vec::new()) };
+    static ROOT_EFFECTS: UiCell<Vec<Effect>> = const { UiCell::new(Vec::new()) };
 }
 
 /// Keeps `effect` running for as long as the current owner (or the app,

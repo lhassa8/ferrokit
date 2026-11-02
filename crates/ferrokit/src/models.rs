@@ -1,7 +1,7 @@
 //! Views over `ferrokit-core`'s models: the native table and the text editor. The model owns the AppKit view and the data; the view places
 //! it and turns the model's events into callbacks.
 
-use std::cell::RefCell;
+use ferrokit_core::kept::{UiCell, UiLocal};
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 
@@ -16,7 +16,7 @@ type Drain = Rc<dyn Fn()>;
 
 thread_local! {
     /// Event drains of the models currently in a window (owned by their nodes).
-    static DRAINS: RefCell<Vec<Weak<dyn Fn()>>> = const { RefCell::new(Vec::new()) };
+    static DRAINS: UiCell<Vec<Weak<dyn Fn()>>> = const { UiCell::new(Vec::new()) };
 }
 
 /// Delivers queued model events (called on the run-loop pass after

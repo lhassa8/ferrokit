@@ -1,5 +1,6 @@
 //! System appearance and colours (risk 8).
 
+use crate::kept::{UiCell, UiLocal};
 use std::cell::{Cell, RefCell};
 
 use block2::RcBlock;
@@ -85,8 +86,8 @@ fn changed() {
 }
 
 thread_local! {
-    static KVO: RefCell<Option<Retained<AppearanceObserver>>> = const { RefCell::new(None) };
-    static OBSERVER: RefCell<Option<Retained<ProtocolObject<dyn NSObjectProtocol>>>> = const { RefCell::new(None) };
+    static KVO: UiCell<Option<Retained<AppearanceObserver>>> = const { UiCell::new(None) };
+    static OBSERVER: UiCell<Option<Retained<ProtocolObject<dyn NSObjectProtocol>>>> = const { UiCell::new(None) };
     static GENERATION: Cell<u64> = const { Cell::new(0) };
 }
 

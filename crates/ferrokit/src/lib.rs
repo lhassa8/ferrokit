@@ -82,6 +82,7 @@ mod value;
 pub mod testing;
 mod view;
 
+use ferrokit_core::kept::{UiCell, UiLocal};
 use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -263,7 +264,7 @@ impl FileDrop {
 
 thread_local! {
     /// Window roots that take dropped files, and what they do with them.
-    static DROPS: RefCell<Vec<(usize, Rc<FileDrop>)>> = const { RefCell::new(Vec::new()) };
+    static DROPS: UiCell<Vec<(usize, Rc<FileDrop>)>> = const { UiCell::new(Vec::new()) };
 }
 
 fn drop_operation(root: &RootView, info: &ProtocolObject<dyn objc2_app_kit::NSDraggingInfo>) -> objc2_app_kit::NSDragOperation {
@@ -768,14 +769,14 @@ define_class!(
 );
 
 thread_local! {
-    static ROOTS: RefCell<Vec<(Retained<RootView>, Node)>> = const { RefCell::new(Vec::new()) };
+    static ROOTS: UiCell<Vec<(Retained<RootView>, Node)>> = const { UiCell::new(Vec::new()) };
     static IN_LAYOUT: Cell<bool> = const { Cell::new(false) };
     /// Objects windows need for the app's lifetime (toolbar delegates).
-    static EXTRAS: RefCell<Vec<Retained<NSObject>>> = const { RefCell::new(Vec::new()) };
+    static EXTRAS: UiCell<Vec<Retained<NSObject>>> = const { UiCell::new(Vec::new()) };
     /// Objects a window needs while it's open (its delegate, its toolbar's
     /// delegate); released when it closes.
-    static WINDOW_EXTRAS: RefCell<Vec<(Retained<NSWindow>, Retained<NSObject>)>> = const { RefCell::new(Vec::new()) };
-    static LAYOUT_US: RefCell<Vec<f64>> = const { RefCell::new(Vec::new()) };
+    static WINDOW_EXTRAS: UiCell<Vec<(Retained<NSWindow>, Retained<NSObject>)>> = const { UiCell::new(Vec::new()) };
+    static LAYOUT_US: UiCell<Vec<f64>> = const { UiCell::new(Vec::new()) };
     static LAYOUT_PASSES: Cell<u64> = const { Cell::new(0) };
 }
 
@@ -964,11 +965,11 @@ pub fn layout_passes() -> u64 {
 thread_local! {
     /// Windows with a sidebar or inspector shell, and their content pane's
     /// root (their main tree's).
-    static SHELL_ROOTS: RefCell<Vec<(usize, Retained<NSView>)>> = const { RefCell::new(Vec::new()) };
+    static SHELL_ROOTS: UiCell<Vec<(usize, Retained<NSView>)>> = const { UiCell::new(Vec::new()) };
     /// The root views of shells' panes (each AppKit wraps in a view of its own).
-    static SHELL_PANES: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
-    static HANDLERS: RefCell<Vec<Handler>> = const { RefCell::new(Vec::new()) };
-    static WINDOWS: RefCell<Vec<Retained<NSWindow>>> = const { RefCell::new(Vec::new()) };
+    static SHELL_PANES: UiCell<Vec<usize>> = const { UiCell::new(Vec::new()) };
+    static HANDLERS: UiCell<Vec<Handler>> = const { UiCell::new(Vec::new()) };
+    static WINDOWS: UiCell<Vec<Retained<NSWindow>>> = const { UiCell::new(Vec::new()) };
 }
 
 /// The application: a name, its windows and the AppKit run loop.
@@ -1260,7 +1261,7 @@ pub fn open_with(make: impl FnOnce() -> Window) -> Retained<NSWindow> {
 
 thread_local! {
     /// What windows keep until they close (their builders' signals).
-    static KEPT: RefCell<Vec<(usize, Box<dyn std::any::Any>)>> = const { RefCell::new(Vec::new()) };
+    static KEPT: UiCell<Vec<(usize, Box<dyn std::any::Any>)>> = const { UiCell::new(Vec::new()) };
 }
 
 /// Keeps `value` until `window` closes (then drops it with the window's
@@ -1282,7 +1283,7 @@ pub fn open(window: Window) -> Retained<NSWindow> {
 
 thread_local! {
     /// The Settings window: not yet built, or open.
-    static SETTINGS: RefCell<Option<Result<Retained<NSWindow>, Window>>> = const { RefCell::new(None) };
+    static SETTINGS: UiCell<Option<Result<Retained<NSWindow>, Window>>> = const { UiCell::new(None) };
 }
 
 /// Opens the app's Settings window (see [`App::settings`]), or brings it to
@@ -1417,7 +1418,7 @@ pub fn quit() {
 type Continuation = Box<dyn FnOnce(Box<dyn Any + Send>)>;
 
 thread_local! {
-    static CONTINUATIONS: RefCell<HashMap<u64, Continuation>> = RefCell::new(HashMap::new());
+    static CONTINUATIONS: UiCell<HashMap<u64, Continuation>> = UiCell::new(HashMap::new());
     static NEXT_TASK: Cell<u64> = const { Cell::new(0) };
 }
 

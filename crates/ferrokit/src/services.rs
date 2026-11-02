@@ -1,6 +1,7 @@
 //! The system's services: the Share menu, printing (and saving as PDF), and
 //! notifications.
 
+use ferrokit_core::kept::{UiCell, UiLocal};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -64,7 +65,7 @@ type Items = Rc<dyn Fn() -> Vec<ShareItem>>;
 
 thread_local! {
     /// What each share button shares, for checks.
-    static SHARES: RefCell<Vec<(objc2::rc::Weak<NSButton>, Items)>> = const { RefCell::new(Vec::new()) };
+    static SHARES: UiCell<Vec<(objc2::rc::Weak<NSButton>, Items)>> = const { UiCell::new(Vec::new()) };
 }
 
 /// What the share button `button` would share now.
@@ -179,7 +180,7 @@ define_class!(
 );
 
 thread_local! {
-    static PRINTING: RefCell<Vec<Retained<PrintDone>>> = const { RefCell::new(Vec::new()) };
+    static PRINTING: UiCell<Vec<Retained<PrintDone>>> = const { UiCell::new(Vec::new()) };
 }
 
 /// Prints `view` laid out at the page's width, across as many pages as it
@@ -311,10 +312,10 @@ pub struct SentNotification {
 }
 
 thread_local! {
-    static CLICKS: RefCell<HashMap<String, Rc<dyn Fn()>>> = RefCell::new(HashMap::new());
-    static DELEGATE: RefCell<Option<Retained<NotificationDelegate>>> = const { RefCell::new(None) };
+    static CLICKS: UiCell<HashMap<String, Rc<dyn Fn()>>> = UiCell::new(HashMap::new());
+    static DELEGATE: UiCell<Option<Retained<NotificationDelegate>>> = const { UiCell::new(None) };
     pub(crate) static HOLD: Cell<bool> = const { Cell::new(false) };
-    pub(crate) static SENT: RefCell<Vec<SentNotification>> = const { RefCell::new(Vec::new()) };
+    pub(crate) static SENT: UiCell<Vec<SentNotification>> = const { UiCell::new(Vec::new()) };
 }
 
 define_class!(

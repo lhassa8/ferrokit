@@ -16,6 +16,7 @@
 //!   inside that transaction. Only honoured by wgpu 28 and later, which read
 //!   the flag from the layer each frame; wgpu 27 (Iced 0.14) resets it.
 
+use crate::kept::{UiCell, UiLocal};
 use std::cell::Cell;
 use std::time::{Duration, Instant};
 
@@ -61,7 +62,7 @@ thread_local! {
     static LAST_PLACE: Cell<Option<Instant>> = const { Cell::new(None) };
     static DIRTY: Cell<bool> = const { Cell::new(false) };
     /// Time from the last `place` to each flush block, in microseconds.
-    static GAPS: std::cell::RefCell<Vec<u32>> = const { std::cell::RefCell::new(Vec::new()) };
+    static GAPS: UiCell<Vec<u32>> = const { UiCell::new(Vec::new()) };
     static STATS: Cell<SyncStats> = const { Cell::new(SyncStats { passes_after_draw: 0, passes_right_after_draw: 0, flushes: 0, gated: 0 }) };
 }
 

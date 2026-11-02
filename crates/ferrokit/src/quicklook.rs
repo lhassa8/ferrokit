@@ -1,6 +1,7 @@
 //! Quick Look: the preview panel Finder opens with Space ([`quick_look`]),
 //! and file thumbnails ([`thumbnail`]), as Finder draws them.
 
+use ferrokit_core::kept::{UiCell, UiLocal};
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -61,7 +62,7 @@ define_class!(
 );
 
 thread_local! {
-    static SOURCE: RefCell<Option<Retained<Source>>> = const { RefCell::new(None) };
+    static SOURCE: UiCell<Option<Retained<Source>>> = const { UiCell::new(None) };
 }
 
 fn panel() -> Retained<AnyObject> {

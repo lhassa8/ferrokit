@@ -5,7 +5,7 @@
 //! alone, AppKit would swallow an exception without a word, leaving the
 //! rest of that work undone.
 
-use std::cell::RefCell;
+use ferrokit_core::kept::{UiCell, UiLocal};
 use std::panic::AssertUnwindSafe;
 use std::rc::Rc;
 
@@ -32,8 +32,8 @@ type Hook = Rc<dyn Fn(&Failure)>;
 
 thread_local! {
     /// The failures so far (the last 100), for checks.
-    static FAILURES: RefCell<Vec<Failure>> = const { RefCell::new(Vec::new()) };
-    static HOOK: RefCell<Option<Hook>> = const { RefCell::new(None) };
+    static FAILURES: UiCell<Vec<Failure>> = const { UiCell::new(Vec::new()) };
+    static HOOK: UiCell<Option<Hook>> = const { UiCell::new(None) };
 }
 
 /// Runs `f`, catching an exception or a panic in it: reported, and
