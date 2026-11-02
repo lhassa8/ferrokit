@@ -483,6 +483,22 @@ pub fn heap_in_use_mb() -> f64 {
     stats.size_in_use as f64 / (1024.0 * 1024.0)
 }
 
+unsafe extern "C" {
+    fn sysctlbyname(name: *const std::ffi::c_char, old: *mut std::ffi::c_void, len: *mut usize, new: *mut std::ffi::c_void, new_len: usize) -> i32;
+}
+
+/// Whether this Mac is a virtual machine (GitHub's macOS runners are).
+/// There the window server has no GPU, so materials don't blur, drawing is
+/// slower and window-server input doesn't arrive: checks of those say SKIP
+/// rather than fail.
+pub fn virtual_machine() -> bool {
+    let mut on: i32 = 0;
+    let mut len = std::mem::size_of::<i32>();
+    // SAFETY: a NUL-terminated name and an out-pointer of the length given.
+    let ok = unsafe { sysctlbyname(c"kern.hv_vmm_present".as_ptr(), (&raw mut on).cast(), &mut len, std::ptr::null_mut(), 0) };
+    ok == 0 && on == 1
+}
+
 /// What a [`canvas`](crate::canvas) (or chart) drew last, one line per
 /// operation (`fill rect 10,20 30x40 Blue`, `text "Jan" 11pt`); `None` if
 /// `view` isn't one.

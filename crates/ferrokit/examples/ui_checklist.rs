@@ -3263,7 +3263,13 @@ fn appearance_check(events: Rc<RefCell<Vec<AppEvent>>>) {
         ferrokit_core::testing::set_app_appearance(None);
         // See `main`: password AutoFill stays out of these runs.
         let autofill = objc2::runtime::AnyClass::get(c"SPSafariPlatformSupport").is_some();
-        check("autofill-off", !autofill, format!("Safari's password AutoFill loaded: {autofill}"));
+        let major = objc2_foundation::NSProcessInfo::processInfo().operatingSystemVersion().majorVersion;
+        if major < 26 {
+            // macOS 15 loads it whatever the setting (seen on GitHub's runner).
+            eprintln!("[check] autofill-off SKIP macOS {major} loads AutoFill regardless (loaded: {autofill})");
+        } else {
+            check("autofill-off", !autofill, format!("Safari's password AutoFill loaded: {autofill}"));
+        }
         let failed = FAILED.with(Cell::get);
         eprintln!("[check] done, {failed} failed");
         std::process::exit(if failed == 0 { 0 } else { 1 });

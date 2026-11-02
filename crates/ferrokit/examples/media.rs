@@ -322,16 +322,32 @@ mod self_checks {
                     find.set(String::new());
                     page.set(1);
                     later_ms(300, move || find.set("Eggum".into()));
-                    later_ms(600, move || {
-                        let seen = view.as_ref().and_then(|v| unsafe {
+                    // Where the first match is, in the view: by its bounds, or
+                    // by its first character when PDFKit gives it none.
+                    let v2 = view.clone();
+                    let place = move || {
+                        v2.as_ref().and_then(|v| unsafe {
                             let first = v.highlightedSelections()?.firstObject()?;
                             let page = first.pages().firstObject()?;
-                            let r = v.convertRect_fromPage(first.boundsForPage(&page), &page);
-                            Some(r.origin.y >= 0.0 && r.origin.y + r.size.height <= v.bounds().size.height)
+                            let mut r = first.boundsForPage(&page);
+                            let bounded = r.origin.y.is_finite();
+                            if !bounded && first.numberOfTextRangesOnPage(&page) > 0 {
+                                r = page.characterBoundsAtIndex(first.rangeAtIndex_onPage(0, &page).location as _);
+                            }
+                            let r = v.convertRect_fromPage(r, &page);
+                            let h = v.bounds().size.height;
+                            let shown = v.currentPage().and_then(|c| Some(v.document()?.indexForPage(&c)));
+                            Some((r.origin.y >= 0.0 && r.origin.y + r.size.height <= h, format!("match at y {:.0}, height {:.0}, in a view {h:.0} high; bounds from PDFKit {bounded}; page shown {shown:?}", r.origin.y, r.size.height)))
+                        })
+                    };
+                    let place2 = place.clone();
+                    later_ms(300, move || {
+                        wait_for(3000, move || place().is_some_and(|(seen, _)| seen), move |seen| {
+                            let detail = place2().map_or("no match highlighted".into(), |(_, d)| d);
+                            check("pdf-find-shows-match", seen, format!("first match in view: {seen}; {detail}"));
+                            find.set(String::new());
+                            quick_look_phase(w2, s, days_left, check, failed);
                         });
-                        check("pdf-find-shows-match", seen == Some(true), format!("first match in view: {seen:?}"));
-                        find.set(String::new());
-                        quick_look_phase(w2, s, days_left, check, failed);
                     });
                 });
             });

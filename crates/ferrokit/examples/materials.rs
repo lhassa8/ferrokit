@@ -329,7 +329,13 @@ mod self_checks {
                 for (name, sidebar, content, in_glass, beside) in looks.iter() {
                     // The glass shows over the picture: lighter (or tinted)
                     // than the picture beside it.
-                    check(&format!("glass-visible-{name}"), (lum(*in_glass) - lum(*beside)).abs() > 0.04, format!("in the glass {in_glass:.3?}, the picture beside it {beside:.3?}"));
+                    let detail = format!("in the glass {in_glass:.3?}, the picture beside it {beside:.3?}");
+                    if ferrokit::testing::virtual_machine() {
+                        // No GPU in a virtual machine: materials don't blur.
+                        eprintln!("[check] glass-visible-{name} SKIP a virtual machine ({detail})");
+                    } else {
+                        check(&format!("glass-visible-{name}"), (lum(*in_glass) - lum(*beside)).abs() > 0.04, detail);
+                    }
                     let _ = (sidebar, content);
                 }
                 if looks.len() == 2 {

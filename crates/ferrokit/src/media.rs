@@ -534,27 +534,35 @@ impl View for PdfView {
 
 /// Scrolls `view` to a found match. A match PDFKit returns can lack its
 /// position (bounds of infinity, seen on macOS 27 once an on-device model
-/// was cached), and `goToSelection` then stays where it is: the match is
-/// rebuilt from its text range, or failing that its page is shown.
+/// was cached, and on GitHub's macOS runners), and `goToSelection` then
+/// stays where it is: the match is rebuilt from its text range, or placed
+/// by its first character, or failing those its page is shown.
 fn go_to_match(view: &PDFView, found: &PDFSelection) {
     // SAFETY: PDFKit's selection and page API on the main thread.
     unsafe {
         let Some(page) = found.pages().firstObject() else { return };
-        let placed = |s: &PDFSelection| {
-            let r = s.boundsForPage(&page);
-            r.origin.x.is_finite() && r.origin.y.is_finite()
-        };
+        let placed = |s: &PDFSelection| finite(s.boundsForPage(&page));
         if placed(found) {
-            view.goToSelection(found);
-        } else if found.numberOfTextRangesOnPage(&page) > 0
-            && let Some(again) = page.selectionForRange(found.rangeAtIndex_onPage(0, &page))
-            && placed(&again)
-        {
-            view.goToSelection(&again);
-        } else {
-            view.goToPage(&page);
+            return view.goToSelection(found);
         }
+        if found.numberOfTextRangesOnPage(&page) > 0 {
+            let range = found.rangeAtIndex_onPage(0, &page);
+            if let Some(again) = page.selectionForRange(range)
+                && placed(&again)
+            {
+                return view.goToSelection(&again);
+            }
+            let first = page.characterBoundsAtIndex(range.location as _);
+            if finite(first) {
+                return view.goToRect_onPage(first, &page);
+            }
+        }
+        view.goToPage(&page);
     }
+}
+
+fn finite(r: objc2_foundation::NSRect) -> bool {
+    [r.origin.x, r.origin.y, r.size.width, r.size.height].iter().all(|v| v.is_finite())
 }
 
 /// A PDF view showing the file at `path()`, reloaded when the signals it
