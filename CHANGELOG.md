@@ -162,6 +162,7 @@ The review is in `docs/Q3_API_REVIEW.md`. Changes:
 
 ### Hardening (the R queue)
 
+- **`sheet_with` and `open_with`:** a sheet's or window's builder makes its signals inside, and they're freed when it closes; signals made in an action outside any view live as long as the window or app (the habits soak found New Habit keeping three per sheet; it uses `sheet_with` now). `SOAK_ONLY=<action>` soaks one action alone.
 - **Right-to-left layout:** in Arabic, Hebrew, Persian or Urdu the layout mirrors as AppKit's does (rows, padding, forms, slide transitions); `right_to_left()`, and `testing::set_right_to_left` for checks.
 - **Restoration:** a document's window comes back where it was when its file reopens, and when the user keeps windows on quitting (System Settings), the documents open at quit reopen at the next launch.
 - **The App Sandbox:** `sandbox = true` (and `network = true`) in `[package.metadata.ferrokit]` signs with the sandbox's entitlements; sandboxed document apps keep security-scoped bookmarks so Open Recent and restoration reach files after a relaunch. check-all runs `notes` sandboxed.

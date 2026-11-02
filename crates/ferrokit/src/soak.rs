@@ -81,7 +81,8 @@ pub struct Settings {
 
 impl Settings {
     /// From the environment: `SOAK` minutes (default 10), `SOAK_SEED`
-    /// (default the time), `SOAK_MS` between actions (default 120).
+    /// (default the time), `SOAK_MS` between actions (default 120);
+    /// `SOAK_ONLY=<action>` runs just that one (see [`run`]).
     pub fn from_env() -> Settings {
         let env = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<f64>().ok());
         let seed = env("SOAK_SEED").map(|s| s as u64).unwrap_or_else(|| {
@@ -116,6 +117,11 @@ struct State {
 /// Runs the soak, then exits the process: 0 if no hang was seen, 1 if one
 /// was. Call it from `on_launch`, once the windows are up.
 pub fn run(settings: Settings, actions: Vec<Action>) {
+    // `SOAK_ONLY=<name>`: just that action, to find which one grows memory.
+    let actions = match std::env::var("SOAK_ONLY") {
+        Ok(only) => actions.into_iter().filter(|a| a.name == only).collect(),
+        Err(_) => actions,
+    };
     let total = actions.iter().map(|a| a.weight).sum::<u32>().max(1);
     eprintln!(
         "[soak] start seed {} for {:.0} min, an action every {} ms, {} kinds",

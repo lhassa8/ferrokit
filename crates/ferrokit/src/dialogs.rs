@@ -120,6 +120,29 @@ pub fn sheet(parent: &NSWindow, content: Window, on_close: impl FnOnce() + 'stat
     handle
 }
 
+/// [`sheet`] for the window `make` builds: the signals `make` creates (the
+/// sheet's fields) belong to the sheet and are freed when it closes, not
+/// kept for the app's life as signals made in an action would be.
+///
+/// ```no_run
+/// use ferrokit::*;
+///
+/// fn rename(parent: &objc2_app_kit::NSWindow) {
+///     sheet_with(parent, || {
+///         let name = Signal::new(String::new());
+///         Window::new("Rename").size(300.0, 100.0).view(text_field(&name).padding(16.0))
+///     }, || {});
+/// }
+/// # let _ = rename;
+/// ```
+pub fn sheet_with(parent: &NSWindow, make: impl FnOnce() -> crate::Window, on_close: impl FnOnce() + 'static) -> SheetHandle {
+    let owner = crate::signal::Owner::new();
+    let content = owner.with(make);
+    let handle = sheet(parent, content, on_close);
+    crate::keep_until_closed(&handle.sheet, owner);
+    handle
+}
+
 use objc2::Message as _;
 
 /// What the Open panel allows.

@@ -321,9 +321,11 @@ fn delete(window: &NSWindow) {
 }
 
 fn rename(window: &NSWindow) {
-    let name = Signal::new(String::from("Untitled"));
-    let form = Window::new("Rename").size(320.0, 100.0).view(text_field(&name).accessibility_label("Name").padding(16.0));
-    let handle = sheet(window, form, || println!("sheet closed"));
+    // Built in `sheet_with`: the sheet's signals are freed when it closes.
+    let handle = sheet_with(window, || {
+        let name = Signal::new(String::from("Untitled"));
+        Window::new("Rename").size(320.0, 100.0).view(text_field(&name).accessibility_label("Name").padding(16.0))
+    }, || println!("sheet closed"));
     // handle.close() ends it, e.g. from a Done button.
     # let _ = handle;
 }
@@ -339,6 +341,15 @@ fn choose(window: &NSWindow) {
 
 `NSWindow` is AppKit's window type, re-exported by `ferrokit`;
 `windows()` returns the app's open windows.
+
+**Where signals live.** A signal belongs to what was being built when it
+was made, and goes with it: a window's view, a row of a list. One made in
+an action (a button, a menu item), outside any view, belongs to the window
+or app the action is in, and lives as long as that. So build a sheet or a
+new window with `sheet_with(parent, || …)` or `open_with(|| …)`: the
+signals its builder makes (the form's fields) are freed when it closes.
+The habits soak found New Habit keeping three signals per sheet before it
+did this.
 
 ## Settings
 

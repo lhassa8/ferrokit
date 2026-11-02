@@ -738,79 +738,86 @@ thread_local! {
 /// The New Habit sheet: a name, a symbol and a colour.
 fn new_habit(t: Tracker) {
     let Some(w) = focused_window().or_else(|| windows().into_iter().find(|w| w.title().to_string() == "Habits")) else { return };
-    let name = Signal::new(String::new());
-    let symbol = Signal::new(0usize);
-    let color = Signal::new(0usize);
-    let close = || {
-        if let Some(h) = SHEET.with_borrow_mut(Option::take) {
-            h.close();
-        }
-    };
-    let symbols: Vec<AnyView> = SYMBOLS
-        .iter()
-        .enumerate()
-        .map(|(i, s)| {
-            AnyView::new(
-                zstack((
-                    canvas(move |p| {
-                        let c = if symbol.get() == i { PALETTE[color.get()].opacity(0.25) } else { Color::Quaternary.opacity(0.5) };
-                        p.fill_circle(p.width() / 2.0, p.height() / 2.0, 17.0, c);
-                    })
-                    .min_size(36.0, 36.0),
-                    image(s).symbol_size(15.0).color(Color::Secondary),
-                ))
-                .frame(36.0, 36.0)
-                .on_click(move || symbol.set(i))
-                .accessibility_label(&tr(SYMBOL_NAMES[i]))
-                .accessibility_value(move || if symbol.get() == i { tr("Selected") } else { String::new() }),
-            )
-        })
-        .collect();
-    let colors: Vec<AnyView> = PALETTE
-        .iter()
-        .enumerate()
-        .map(|(i, &c)| {
-            AnyView::new(
-                canvas(move |p| {
-                    let (cx, cy) = (p.width() / 2.0, p.height() / 2.0);
-                    p.fill_circle(cx, cy, 10.0, c);
-                    if color.get() == i {
-                        p.stroke_circle(cx, cy, 13.5, c, 2.0);
-                    }
+    // The sheet's signals are made in its builder: freed when it closes.
+    let handle = sheet_with(
+        &w,
+        move || {
+            let name = Signal::new(String::new());
+            let symbol = Signal::new(0usize);
+            let color = Signal::new(0usize);
+            let close = || {
+                if let Some(h) = SHEET.with_borrow_mut(Option::take) {
+                    h.close();
+                }
+            };
+            let symbols: Vec<AnyView> = SYMBOLS
+                .iter()
+                .enumerate()
+                .map(|(i, s)| {
+                    AnyView::new(
+                        zstack((
+                            canvas(move |p| {
+                                let c = if symbol.get() == i { PALETTE[color.get()].opacity(0.25) } else { Color::Quaternary.opacity(0.5) };
+                                p.fill_circle(p.width() / 2.0, p.height() / 2.0, 17.0, c);
+                            })
+                            .min_size(36.0, 36.0),
+                            image(s).symbol_size(15.0).color(Color::Secondary),
+                        ))
+                        .frame(36.0, 36.0)
+                        .on_click(move || symbol.set(i))
+                        .accessibility_label(&tr(SYMBOL_NAMES[i]))
+                        .accessibility_value(move || if symbol.get() == i { tr("Selected") } else { String::new() }),
+                    )
                 })
-                .min_size(30.0, 30.0)
-                .frame(30.0, 30.0)
-                // A button to VoiceOver, like the symbols (a canvas's own click is an image's).
-                .on_click(move || color.set(i))
-                .accessibility_label(&tr(&format!("{c:?}")))
-                .accessibility_value(move || if color.get() == i { tr("Selected") } else { String::new() }),
-            )
-        })
-        .collect();
-    let content = vstack((
-        text(tr("New Habit")).font(Font::title2().weight(Weight::Bold)),
-        text_field(&name).placeholder(&tr("Name, like “Stretch for 10 minutes”")).accessibility_label(&tr("Name")),
-        text(tr("Symbol")).font(Font::caption()).color(Color::Secondary),
-        hstack(symbols).spacing(4.0),
-        text(tr("Colour")).font(Font::caption()).color(Color::Secondary),
-        hstack(colors).spacing(4.0),
-        hstack((
-            spacer(),
-            button(tr("Cancel"), close),
-            button(tr("Add"), move || {
-                let id = t.add(&name.get_untracked(), SYMBOLS[symbol.get_untracked()], color.get_untracked());
-                animated(|| t.page.set(Page::Habit(id)));
-                close();
-            })
-            .default_action()
-            .disabled(move || name.get().trim().is_empty()),
-        ))
-        .spacing(8.0),
-    ))
-    .spacing(10.0)
-    .alignment(Align::Start)
-    .padding(20.0);
-    let handle = sheet(&w, Window::new(&tr("New Habit")).size(440.0, 262.0).view(content), || {});
+                .collect();
+            let colors: Vec<AnyView> = PALETTE
+                .iter()
+                .enumerate()
+                .map(|(i, &c)| {
+                    AnyView::new(
+                        canvas(move |p| {
+                            let (cx, cy) = (p.width() / 2.0, p.height() / 2.0);
+                            p.fill_circle(cx, cy, 10.0, c);
+                            if color.get() == i {
+                                p.stroke_circle(cx, cy, 13.5, c, 2.0);
+                            }
+                        })
+                        .min_size(30.0, 30.0)
+                        .frame(30.0, 30.0)
+                        // A button to VoiceOver, like the symbols (a canvas's own click is an image's).
+                        .on_click(move || color.set(i))
+                        .accessibility_label(&tr(&format!("{c:?}")))
+                        .accessibility_value(move || if color.get() == i { tr("Selected") } else { String::new() }),
+                    )
+                })
+                .collect();
+            let content = vstack((
+                text(tr("New Habit")).font(Font::title2().weight(Weight::Bold)),
+                text_field(&name).placeholder(&tr("Name, like “Stretch for 10 minutes”")).accessibility_label(&tr("Name")),
+                text(tr("Symbol")).font(Font::caption()).color(Color::Secondary),
+                hstack(symbols).spacing(4.0),
+                text(tr("Colour")).font(Font::caption()).color(Color::Secondary),
+                hstack(colors).spacing(4.0),
+                hstack((
+                    spacer(),
+                    button(tr("Cancel"), close),
+                    button(tr("Add"), move || {
+                        let id = t.add(&name.get_untracked(), SYMBOLS[symbol.get_untracked()], color.get_untracked());
+                        animated(|| t.page.set(Page::Habit(id)));
+                        close();
+                    })
+                    .default_action()
+                    .disabled(move || name.get().trim().is_empty()),
+                ))
+                .spacing(8.0),
+            ))
+            .spacing(10.0)
+            .alignment(Align::Start)
+            .padding(20.0);
+            Window::new(&tr("New Habit")).size(440.0, 262.0).view(content)
+        },
+        || {},
+    );
     SHEET.with_borrow_mut(|s| *s = Some(handle));
 }
 

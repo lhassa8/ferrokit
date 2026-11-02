@@ -2869,7 +2869,42 @@ fn rtl_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         ok,
         format!("left to right: First {:?}, Last {:?}, label {:?}, field {:?}; right to left: First {:?}, Last {:?}, label {:?}, field {:?}", ltr.0, ltr.1, ltr.2, ltr.3, rtl.0, rtl.1, rtl.2, rtl.3),
     );
-    after_events(move || rich_table_checks(events.clone()));
+    after_events(move || builder_owner_checks(events.clone()));
+}
+
+/// R4 (found by the habits soak): signals a sheet's or window's builder
+/// makes are freed when it closes (`sheet_with`, `open_with`), where ones
+/// made in an action would live as long as the app.
+fn builder_owner_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use ferrokit::{live_signals, open_with, sheet_with};
+    let parent = open(Window::new("Owner parent").size(360.0, 200.0).view(text("Parent")));
+    let before = live_signals();
+    let build = || {
+        let (a, b, c) = (Signal::new(String::new()), Signal::new(0usize), Signal::new(false));
+        Window::new("Built").size(300.0, 120.0).view(vstack((text_field(&a), text(move || format!("{} {}", b.get(), c.get())))).padding(12.0))
+    };
+    let handle = sheet_with(&parent, build, || {});
+    let during = live_signals();
+    handle.close();
+    let p2 = parent.clone();
+    after_events(move || {
+        let after_sheet = live_signals();
+        let w = open_with(build);
+        let window_during = live_signals();
+        ferrokit::close_window(&w);
+        let p3 = p2.clone();
+        let events = events.clone();
+        after_events(move || {
+            let after_window = live_signals();
+            check(
+                "builder-owns-signals",
+                during >= before + 3 && after_sheet == before && window_during >= before + 3 && after_window == before,
+                format!("live signals {before}; with the sheet open {during}, closed {after_sheet}; with the window open {window_during}, closed {after_window}"),
+            );
+            ferrokit::close_window(&p3);
+            rich_table_checks(events.clone());
+        });
+    });
 }
 
 #[derive(Clone)]

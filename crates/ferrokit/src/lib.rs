@@ -110,7 +110,7 @@ pub use controls::{
     stepper, text_field, toggle,
 };
 pub use chrome::{MenuItem, Modifier, Split, customize_toolbar_item, dynamic_submenu, format_menu, submenu, ToolbarItem, menu_item, menu_separator, split, toolbar_button, toolbar_fixed_space, toolbar_group, toolbar_picker, toolbar_search, toolbar_space};
-pub use dialogs::{Alert, OpenOptions, SheetHandle, alert, open_panel, save_panel, sheet};
+pub use dialogs::{Alert, OpenOptions, SheetHandle, alert, open_panel, save_panel, sheet, sheet_with};
 pub use documents::{
     Document, DocumentType, choose_documents, document_edited, new_document, open_document, recent_documents, revert_document, save_document, save_document_as, show_welcome, welcome_window,
 };
@@ -1234,6 +1234,41 @@ pub fn dock_badge() -> Option<String> {
     NSApplication::sharedApplication(mtm()).dockTile().badgeLabel().map(|b| b.to_string())
 }
 
+/// Opens the window `make` builds, now, and returns it: the signals `make`
+/// creates (a form's fields, a selection) belong to the window and are
+/// freed when it closes. Prefer it to [`open`] in an action: a signal made
+/// in an action outside any view lives as long as the app.
+///
+/// ```no_run
+/// use ferrokit::*;
+///
+/// let add = button("New Note", || {
+///     open_with(|| {
+///         let title = Signal::new(String::new());
+///         Window::new("New Note").size(320.0, 120.0).view(text_field(&title).padding(16.0))
+///     });
+/// });
+/// # let _ = add;
+/// ```
+pub fn open_with(make: impl FnOnce() -> Window) -> Retained<NSWindow> {
+    let owner = signal::Owner::new();
+    let window = owner.with(make);
+    let w = open(window);
+    keep_until_closed(&w, owner);
+    w
+}
+
+thread_local! {
+    /// What windows keep until they close (their builders' signals).
+    static KEPT: RefCell<Vec<(usize, Box<dyn std::any::Any>)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Keeps `value` until `window` closes (then drops it with the window's
+/// views).
+pub(crate) fn keep_until_closed(window: &NSWindow, value: impl std::any::Any) {
+    KEPT.with_borrow_mut(|k| k.push((window as *const NSWindow as usize, Box::new(value))));
+}
+
 /// Opens `window` now (while the app runs) and returns it.
 pub fn open(window: Window) -> Retained<NSWindow> {
     let mtm = mtm();
@@ -1312,6 +1347,14 @@ pub(crate) fn teardown(window: &NSWindow) {
         undo.removeAllActions();
     }
     drop_root(window);
+    // What the window's builder made goes with it.
+    let key = window as *const NSWindow as usize;
+    let kept: Vec<_> = KEPT.with_borrow_mut(|k| {
+        let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(k).into_iter().partition(|(w, _)| *w == key);
+        *k = rest;
+        mine
+    });
+    drop(kept);
     documents::forget(window);
     WINDOWS.with_borrow_mut(|ws| ws.retain(|w| !std::ptr::eq(&**w, window)));
     let extras: Vec<Retained<NSObject>> = WINDOW_EXTRAS.with_borrow_mut(|e| {
