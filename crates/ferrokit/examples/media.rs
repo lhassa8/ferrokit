@@ -318,8 +318,21 @@ mod self_checks {
                     // "Ferry, 3 h 15 min" and "Morning ferry".
                     check("pdf-find", found == 2, format!("{found} matches highlighted (2)"));
                     snap(&w2, "report-find");
+                    // A match far down page 1, from page 2: it's scrolled into view.
                     find.set(String::new());
-                    quick_look_phase(w2, s, days_left, check, failed);
+                    page.set(1);
+                    later_ms(300, move || find.set("Eggum".into()));
+                    later_ms(600, move || {
+                        let seen = view.as_ref().and_then(|v| unsafe {
+                            let first = v.highlightedSelections()?.firstObject()?;
+                            let page = first.pages().firstObject()?;
+                            let r = v.convertRect_fromPage(first.boundsForPage(&page), &page);
+                            Some(r.origin.y >= 0.0 && r.origin.y + r.size.height <= v.bounds().size.height)
+                        });
+                        check("pdf-find-shows-match", seen == Some(true), format!("first match in view: {seen:?}"));
+                        find.set(String::new());
+                        quick_look_phase(w2, s, days_left, check, failed);
+                    });
                 });
             });
         });

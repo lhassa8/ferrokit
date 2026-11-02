@@ -15,7 +15,7 @@ use objc2_av_foundation::{AVPlayer, AVPlayerItem, AVPlayerItemDidPlayToEndTimeNo
 use objc2_av_kit::{AVPlayerView, AVPlayerViewControlsStyle};
 use objc2_core_media::CMTime;
 use objc2_foundation::{NSData, NSError, NSObjectNSKeyValueObserverRegistration, NSNotification, NSNotificationCenter, NSOperationQueue, NSRect, NSString, NSStringCompareOptions, NSURL, NSURLRequest};
-use objc2_pdf_kit::{PDFDisplayMode, PDFDocument, PDFView, PDFViewPageChangedNotification};
+use objc2_pdf_kit::{PDFDisplayMode, PDFDocument, PDFSelection, PDFView, PDFViewPageChangedNotification};
 use objc2_web_kit::{WKNavigation, WKNavigationAction, WKNavigationActionPolicy, WKNavigationDelegate, WKNavigationType, WKWebView, WKWebViewConfiguration};
 
 use crate::signal::{Effect, Signal, batch, untrack};
@@ -523,12 +523,37 @@ impl View for PdfView {
                     let found = d.findString_withOptions(&NSString::from_str(&q), NSStringCompareOptions::CaseInsensitiveSearch);
                     v.setHighlightedSelections(Some(&found));
                     if let Some(first) = found.firstObject() {
-                        v.goToSelection(&first);
+                        go_to_match(&v, &first);
                     }
                 }
             }));
         }
         node
+    }
+}
+
+/// Scrolls `view` to a found match. A match PDFKit returns can lack its
+/// position (bounds of infinity, seen on macOS 27 once an on-device model
+/// was cached), and `goToSelection` then stays where it is: the match is
+/// rebuilt from its text range, or failing that its page is shown.
+fn go_to_match(view: &PDFView, found: &PDFSelection) {
+    // SAFETY: PDFKit's selection and page API on the main thread.
+    unsafe {
+        let Some(page) = found.pages().firstObject() else { return };
+        let placed = |s: &PDFSelection| {
+            let r = s.boundsForPage(&page);
+            r.origin.x.is_finite() && r.origin.y.is_finite()
+        };
+        if placed(found) {
+            view.goToSelection(found);
+        } else if found.numberOfTextRangesOnPage(&page) > 0
+            && let Some(again) = page.selectionForRange(found.rangeAtIndex_onPage(0, &page))
+            && placed(&again)
+        {
+            view.goToSelection(&again);
+        } else {
+            view.goToPage(&page);
+        }
     }
 }
 
