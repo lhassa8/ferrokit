@@ -300,6 +300,11 @@ mod self_checks {
             eprintln!("[check] server-input SKIP this process isn't trusted for Accessibility (System Settings › Privacy & Security › Accessibility)");
             return finish(failed);
         }
+        if ferrokit::testing::virtual_machine() {
+            // Trusted on GitHub's runners, but the input doesn't arrive.
+            eprintln!("[check] server-input SKIP a virtual machine: window-server input doesn't reach the app");
+            return finish(failed);
+        }
         f.name.set(String::new());
         if let Some(name) = named(&w, "Name") {
             input::server_click(&name);
