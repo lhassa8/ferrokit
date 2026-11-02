@@ -2,3 +2,5 @@
 /spike/target
 /prototypes/waterui-src/
 /prototypes/*/target/
+/renamed/*/target/
+/renamed/*/Cargo.lock

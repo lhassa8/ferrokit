@@ -1,0 +1,57 @@
+/* The SQL browser in German. Keys are the English text; the framework's
+   own strings (File menu, alerts) come from ferrokit. Plurals: "{n} row"
+   is the one form, "{n} rows" the other (or "{n} rows#one", "#few"…). */
+
+"Running…" = "Läuft …";
+"Error: {message}" = "Fehler: {message}";
+"Done" = "Fertig";
+"{n} row" = "{n} Zeile";
+"{n} rows" = "{n} Zeilen";
+"{n} row changed" = "{n} Zeile geändert";
+"{n} rows changed" = "{n} Zeilen geändert";
+"query {query} ms · table {table} ms" = "Abfrage {query} ms · Tabelle {table} ms";
+"Tables" = "Tabellen";
+"Views" = "Ansichten";
+"Indexes" = "Indizes";
+"History" = "Verlauf";
+"No queries yet" = "Noch keine Abfragen";
+"No Row Selected" = "Keine Zeile ausgewählt";
+"Select a row to see its fields." = "Wähle eine Zeile, um ihre Felder zu sehen.";
+"Row {n} of {count}" = "Zeile {n} von {count}";
+"Query Result" = "Abfrageergebnis";
+"Error" = "Fehler";
+"Browse and query SQLite databases" = "SQLite-Datenbanken durchsuchen und abfragen";
+"Open the Sample" = "Beispiel öffnen";
+"A million orders to explore" = "Eine Million Bestellungen zum Erkunden";
+"Making a million orders…" = "Eine Million Bestellungen werden erstellt …";
+"Open a Database…" = "Datenbank öffnen …";
+"A .sqlite or .db file" = "Eine .sqlite- oder .db-Datei";
+"New Scratch Database" = "Neue temporäre Datenbank";
+"In memory, gone when closed" = "Im Arbeitsspeicher, beim Schließen weg";
+"Recent" = "Zuletzt verwendet";
+"No Recent Databases" = "Keine zuletzt verwendeten Datenbanken";
+"No Chart" = "Kein Diagramm";
+"A chart needs a column of labels, then a column of numbers." = "Ein Diagramm braucht eine Spalte mit Beschriftungen, dann eine mit Zahlen.";
+"Count Rows by {column}" = "Zeilen nach {column} zählen";
+"results.csv: drag out the results as a CSV file" = "results.csv: Die Ergebnisse als CSV-Datei herausziehen";
+"Run" = "Ausführen";
+"Chart" = "Diagramm";
+"Inspector" = "Inspektor";
+"Query" = "Abfrage";
+"Run Query" = "Abfrage ausführen";
+"Copy Results as CSV" = "Ergebnisse als CSV kopieren";
+"Export Results as CSV…" = "Ergebnisse als CSV exportieren …";
+"View" = "Darstellung";
+"Show Sidebar" = "Seitenleiste einblenden";
+"Hide Sidebar" = "Seitenleiste ausblenden";
+"Show Inspector" = "Inspektor einblenden";
+"Hide Inspector" = "Inspektor ausblenden";
+"Show Chart" = "Diagramm einblenden";
+"Hide Chart" = "Diagramm ausblenden";
+"Export" = "Exportieren";
+"Copy" = "Kopieren";
+"Filter…" = "Filtern …";
+"Rows of {table} where" = "Zeilen von {table}, bei denen";
+"Clear" = "Löschen";
+"Show Rows" = "Zeilen zeigen";
+"Select a table to filter" = "Wähle eine Tabelle zum Filtern";

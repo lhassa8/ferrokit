@@ -1,5 +1,224 @@
 # Changelog
 
+## 0.4.0 (unreleased): one name, Ferrokit
+
+The crates take the project's name and share one version number, released together:
+
+| Was | Now |
+| --- | --- |
+| `appkit-ui` 0.3 | **`ferrokit`** 0.4: the framework, what most apps depend on |
+| `iced-appkit` 0.2 | **`ferrokit-iced`** 0.4: real AppKit views in Iced windows |
+| `appkit-host` 0.2 | **`ferrokit-core`** 0.4: the native layer the other two share |
+| `cargo-ferrokit` 0.1 | `cargo-ferrokit` 0.4: same name, new version line |
+
+Moving over: change the dependency (`ferrokit = "0.4"`, `ferrokit-iced = "0.4"`) and the paths (`use ferrokit::*`, `ferrokit_iced::…`, `ferrokit_core::…`). Nothing else in the API changed with the rename. `cargo ferrokit new` makes apps on `ferrokit` 0.4; its `--appkit-ui-path` option is now `--ferrokit-path`.
+
+The old names get one last release (`appkit-ui` 0.4.0, `iced-appkit` 0.3.0, `appkit-host` 0.3.0) that only re-exports the new crate, so an old dependency still builds and its crates.io page says where the project went. Their earlier versions stay as they were.
+
+Also renamed, for anyone who relied on them: the Objective-C class prefixes (`AppKitUi…` → `Ferrokit…`, `AppKitHost…` → `FerrokitCore…`) and a few identifiers the framework stores, such as its recent-documents defaults key and the Settings window's autosave name, so recent documents and the Settings window's position start fresh.
+
+### Styling (Phase 3, V1)
+
+- **Text styles:** `text(..)` and `label(..)` take `.font(..)` and `.color(..)` (`label` also `.color_when(..)`). `Font` has the system's text styles (`large_title`, `title`, `headline`, `body`, `caption`…), `system`, `monospaced` and `named` fonts, with `.weight(Weight::..)`, `.bold()`, `.size(..)`, `.italic()` and `.monospaced_digits()`.
+- **Surfaces on any view:** `.background(..)`, `.corner_radius(..)`, `.border(..)`, `.shadow(Shadow::soft())` and `.opacity(..)`. Colours resolve again on appearance changes, so cards follow Dark Mode.
+- **Pictures:** `image_file(..)` and `image_data(..)`, fitted or `.fill()`ed, with `.corner_radius(..)`. SF Symbols take `.symbol_size(..)`, `.symbol_weight(..)`, `.color(..)`, `.hierarchical(..)`, `.palette(..)` and `.multicolor()`.
+- **`Color`** (was `TextColor`, and merges the colour well's `Color` struct): it adds `Quaternary`, the system fills (`Fill`, `SecondaryFill`, `TertiaryFill`, `QuaternaryFill`), `Accent`, `WindowBackground`, `ControlBackground`, `Clear`, `Rgba`, plus `Color::rgb`, `rgba`, `hex`, `.opacity(..)` and `.components()`.
+- **Changed: modifiers apply in the order written,** as in SwiftUI. A modifier that has to go around what's already there (padding outside a frame or background, a second frame) adds a box: `.frame(18.0, 18.0).padding(7.0)` is an 18-point view with 7 points around it. Before, all of a view's modifiers applied together.
+- **Changed: a stack's flexible children share its length equally.** A child whose own length is larger keeps it. So a row of cards that `fill_width()` come out the same width; before, each got its own width plus an equal share of the extra.
+- A new guide chapter, Styling, and a new example, `styles`, with 12 self-checks, from fonts read back to colours, corners and shadows sampled from real window captures in light and dark.
+
+### Materials and window chrome (Phase 3, V2)
+
+- **Materials:** `.material(Material::Sidebar)` (and header, title bar, popover, menu, HUD, sheet, window and content backgrounds, selection, tooltip) puts the system's translucent material behind any view. It follows Dark Mode, Reduce Transparency and the window's active state; `.corner_radius(..)` rounds it.
+- **Liquid Glass:** `.glass(Glass::Regular)` (or `Clear`, or `Tinted(color)`) on macOS 26 and later, with a translucent material in its place on macOS 15. `has_liquid_glass()` says which.
+- **Layers:** `zstack(..)` puts views on top of one another (text or glass over a picture, a badge over an icon), with `.alignment(horizontal, vertical)`.
+- **Window chrome:** `Window::full_size_content()`, `.transparent_title_bar()`, `.hide_title()`, `.toolbar_style(ToolbarStyle::UnifiedCompact)` (and `Unified`, `Expanded`, `Preference`) and `.background(color)`. With full-size content, backgrounds, materials and split panes reach the top of the window, so a sidebar runs up behind the window buttons, while the content starts below the title bar.
+- A new guide chapter, Materials and windows, and a new example, `materials`, with 13 self-checks including captures in light and dark.
+
+### Motion (Phase 3, V3)
+
+- **Animated changes:** `animated(|| signal.set(..))` animates what the change causes: views moving or resizing, opacity and colours fading. `animated_with(Animation::ease_out(0.4), ..)` sets the timing.
+- **State-driven looks:** `.opacity_when(..)` and `.background_when(..)` follow signals, and fade inside `animated`.
+- **Transitions:** `.transition(Transition::Fade)` or `Transition::Slide(Edge::Leading)` for views that `dynamic` and `for_each` add and remove. A removed view stays until it has faded out.
+- **Hover and click on any view:** `.on_hover(..)`, `.hover_highlight(Color::Quaternary)` and `.on_click(..)`. A clickable view dims while pressed, and VoiceOver reads it as a button named by its text.
+- **Reduce Motion is respected:** nothing moves, slides become fades. `reduce_motion()` reads the setting.
+- A new guide chapter, Motion, and a new example, `motion`, with 15 self-checks that read Core Animation's in-flight values.
+
+### More controls and charts (Phase 3, V4)
+
+- **Tabs:** `tabs(&page, pages)`, AppKit's tab view, or `.style(TabStyle::Segmented)` for a segmented control over borderless panes.
+- **Controls:** `radio_group`, `link`, `gauge` (with warning and critical levels), `rating` (stars), `token_field` (with suggestions) and `path_control`, each bound two ways to a signal.
+- **Tooltips:** `.tooltip(..)` on any view.
+- **Charts:** `stacked_bar_chart` (or `.grouped()`), `area_chart`, `scatter_chart` and `pie_chart` (or `.donut()`) join `bar_chart` and `line_chart`. All of them have legends, colours per series (`.colors(..)`, `Series::color(..)`) and formats for values and the x axis: `Format::Currency("USD")`, `Percent`, `Decimals(n)`, `Date` and `DateTime`. Date axes tick on whole local days, weeks, months or years.
+- **Changed:** `bar_chart` and `line_chart` return a `Chart` (with `min_size` and `exportable`, as before) instead of a `Canvas`.
+- A new guide chapter, More controls and charts, and a new example, `components`, with 16 self-checks.
+
+### Web, PDF, video and the system's services (Phase 3, V5)
+
+- **Web pages:** `web_view(&page)` shows a `WebPage` in WebKit's own view. The page loads web addresses, HTML or local files, and reports its title, address, loading state and history as signals; `evaluate(..)` runs JavaScript. `.links_open_in_browser()` sends clicked links to the browser.
+- **PDFs:** `pdf_view(|| path)` (or `pdf_view_data`) is Preview's view, with `.page(&signal)` both ways, `.page_count(..)`, `.highlight(|| query)` and single-page or two-up layouts.
+- **Video and sound:** `video_player(|| path)` and `video_stream(|| url)` are AVKit's player, with `.playing(..)` and `.time(..)` both ways, `.duration(..)`, `.muted(..)`, `.loops()` and the system's control styles.
+- **Sharing:** `share_button(|| items)` shows the system's Share menu for text, web addresses or files.
+- **Printing:** `print(window, title, view)` prints any view laid out at the page's width over as many pages as it needs, with the Print sheet; `save_pdf(view, path)` and `pdf_data(view)` make the same pages with no panel. Backgrounds, borders, pictures and charts print, in the light appearance.
+- **Notifications:** `notify(Notification::new(..).body(..).sound().on_click(..))` posts through Notification Center (from an app bundle), with banners while the app is in front and clicks routed to the app.
+- **Menu bar:** `App::menu_bar_extra(MenuBarExtra::new(symbol).title(..).menu(..))`, or `.panel(view)` for a panel of the app's own views; `App::menu_bar_only()` for an app without a Dock icon.
+- **Fixed: printed text.** AppKit's labels write their text into a printed PDF twice, a few points apart, so finding or copying text in the PDF went wrong. Ferrokit's `text` and `label` now print their text once.
+- **Testing:** `testing::hold_notifications`, `sent_notifications`, `click_notification`, `shared_items` and `menu_bar_extras`.
+- A new guide chapter, Web, PDF, video and services, and a new example, `media`, with 20 self-checks: the printed report's pages, text and card backgrounds, the web page's title and a script, PDF pages and search, playback of a sound made with `say`, sharing, notifications and their clicks, both kinds of menu-bar extra, and the Print sheet.
+
+### The SQL browser, polished (Phase 3, S1)
+
+The flagship example now uses the visual layer, and building it added to the framework:
+- **`App::welcome(make)`:** a welcome window at launch instead of an untitled document, closed when a document opens, back with Window ▸ Welcome to … (⇧⌘1) or `show_welcome()`. `welcome_window()` returns it.
+- **`DocumentType::window(|w| ..)`:** document windows take `Window`'s chrome (full-size content, toolbar styles).
+- **`choose_documents()`:** the Open panel for the app's document types, from a button.
+- **Under the title bar:** the columns of a top-level row with a material or background now reach up under the title bar, as split panes do. A stacked split's `.position(..)` counts from below the bar.
+- **Fixed:**
+  - a clickable view's `.accessibility_label` named every view inside it as well as its button, so VoiceOver read it twice; it now names the button only;
+  - editors and mounted views dropped during exit could panic on torn-down thread-locals.
+
+The app itself:
+- **Welcome window:** the sample, Open…, a scratch database, and recent databases in a sidebar.
+- **Main window:** the sidebar's material runs under the title bar.
+- **Status line:** the row count as a headline and the timings in secondary text; an error in red with a symbol.
+- **Inspector:** the table's name, "Row 2 of 3" and the fields in a grouped card (NULL in italic grey, numbers with even digits), with an empty state, fading between rows.
+- **Chart:** up to four number columns as series (lines, or grouped bars), with a legend and number formats.
+- **German:** translations for all of the new text.
+- **Checks:** 5 new: the welcome window, its menu item, its recent list, the chart's legend, and the welcome window in German.
+
+### Habits, a new showcase app (Phase 3, S2)
+
+A habit tracker built to sit next to Apple's apps (`examples/habits.rs`), and what the framework gained on the way:
+- **`Painter::stroke_arc`:** part of a circle with round ends, for progress rings and gauges.
+- **Dates:**
+  - `format_date(seconds, template)` writes dates as the user's locale does ("Saturday, 31 October");
+  - `today()`, `local_day`, `local_day_start` and `weekday` count calendar days in the user's time zone, through daylight saving.
+- **`.disabled(|| ..)` on any view:** before, only buttons could be disabled.
+- **Daily notifications:** `Notification::daily_at(hour, minute)`, and `cancel_notification(id)`.
+- **`testing::canvas_click`:** runs a canvas's click handler at a point.
+- **Fixed:**
+  - `.hover_highlight` hid a view's own background (a selected row lost its selection colour), and now draws only where that background is clear;
+  - a canvas without a description was an unnamed image to VoiceOver, and is now skipped as decoration.
+
+The app:
+- **Window:** a sidebar in the system material.
+- **Today:** a summary card with a progress ring, and a card per habit with its streak, the week's dots and a check; a click marks it done, animated.
+- **Each habit:** stat cards, a six-month calendar you can click, a weekday chart, a daily reminder, Share and Delete.
+- **Insights:** an area chart, weekly stacked bars by habit with a legend, and a donut.
+- **Also:**
+  - a New Habit sheet;
+  - a menu-bar panel to check habits off;
+  - a printed or PDF report;
+  - storage in user defaults.
+- **Checks:** 17 self-checks, and captures in light and dark.
+
+### Side by side with Apple's rendering (Phase 3, S3)
+
+Both showcase apps were compared with a SwiftUI reference of the same screens (`docs/S3_REVIEW.md`), and the framework now matches it:
+- **Toolbars show symbols alone,** as Apple's apps do (the bar is 52 points, not 66). The Expanded and Preference styles keep labels.
+- **Sidebars:**
+  - rows follow the user's sidebar icon size, with icons and titles centred and long titles truncated;
+  - section headings are small, bold and secondary;
+  - `.icon_color(..)` gives each row's symbol its own colour.
+- **`Color::Fill`, `SecondaryFill`, `TertiaryFill`, `QuaternaryFill`:** the system fills; `QuaternaryFill` is the grouped-card colour of `GroupBox` and grouped forms.
+- **`.padding_xy(horizontal, vertical)`:** padding per axis.
+- **The apps:**
+  - Habits uses the real sidebar (arrow keys, type-select, the system's selection) and flat grouped cards;
+  - the SQL browser's inspector is a grouped form: names on the left, values right-aligned in secondary text.
+
+### Real-input testing (Phase 3, Q1)
+
+- **`testing::input`:** clicks, double-clicks, typing and keys with modifiers, posted to the app's own event queue so AppKit dispatches them along the user's path (hit-testing, the first responder, the field editor, key equivalents). `ready(&window)` brings the app and window to the front first. Window-server input (`server_click`, `server_type`, through `CGEvent`s) runs when the process is trusted for Accessibility; `server_available()` says whether it is.
+- **Fixed, found by real input:** a shortcut typed straight after text in an editor (⌘R after a query) ran on the old text, since the editor's changes reached its bound signal only on the next pass. Menu items, buttons and commands now deliver pending edits before they act.
+- **Checks:**
+  - a new `input` example: 10 checks, plus window-server input, skipped without trust;
+  - real-input checks in `habits` (4) and `sql_browser` (2);
+  - check-all reports skipped checks.
+
+### Soak tests (Phase 3, Q2)
+
+- **`testing::soak`:** an app's list of weighted user actions, run at random from a printed seed for `SOAK` minutes. A watchdog thread reports main-thread hangs over 2 s, and the footprint and live views, signals and windows are sampled every 30 s. Growth is reported per 1,000 actions, so time paused doesn't count. The run pauses while another app is in front.
+- **`scripts/soak.sh <example> [minutes] [seed]`** runs a soak and summarises it: exit code, crash reports, exceptions and assertions in the log, hangs, and the footprint over time. `habits` and `sql_browser` have soaks.
+- **Fixed: views that entered with a slide inside an animated change could stay unplaced.** After an animated switch to a page whose content lays out in a later pass (a scroll view's), its labels kept the frame they were made with: invisible, at the corner. The motion layer now knows which views layout has placed:
+  - a view's first placement never animates;
+  - slides only move views already placed.
+- **Habits' demo:** `DEMO=1` runs a fast, scripted tour of everything, in a window sized to the screen.
+
+### API review (Phase 3, Q3)
+
+The review is in `docs/Q3_API_REVIEW.md`. Changes:
+- **One name per modifier, taking a value or a closure** (`impl IntoValue<T>`; types `IntoValue` and `Value`):
+  - `text(..)`, `.color(..)`, `.background(..)`, `.opacity(..)`, `.disabled(..)`;
+  - `button(title, ..)`, `menu_item(title, ..)`, `menu_command(title, ..)`;
+  - a menu item's `.disabled(..)` and `.checked(..)`, and a toolbar item's `.disabled(..)`.
+- **Deprecated, still working for one release:** `label`, `background_when`, `opacity_when`, `color_when`, and a menu item's `enabled_when`, `title_when` and `checked_when`.
+- **`.font(..)` and `.color(..)` on any view and after any modifier,** for the text and symbols inside.
+- **One view alone as a stack's children:** `vstack(for_each(..))`.
+- **`text(..).truncate()`:** a row short of room takes it from truncating text before overflowing.
+- **`.min_width(..)`, `.min_height(..)`.**
+- **`button(..).symbol(..)`:** a symbol on a button, from signals too.
+- **`.accessibility_value(..)`:** what VoiceOver reads after a view's name; Habits' cards say whether they're done.
+- **A new `values` suite** with 11 checks; the examples, guide and templates use the new names.
+
+### Hardening (the R queue)
+
+- **Fixed: an app could abort as it exited.** `std::process::exit` with document windows open (reopened at launch, say) could drop a window's signals after the signal store itself was gone, and the panic there aborted the process with a crash report. The second such fix, so now for all of them: Ferrokit's thread-local state has no destructors (`UiCell`), so it's never torn down at exit and always there for whatever is dropped then, an app's own thread-locals included; a test fails on any new thread-local that would be. check-all also fails a suite when any of its processes leaves a crash report (the `notes` restoration check's child had been crashing unseen).
+- **Fixed: a PDF's find could leave the match out of sight.** PDFKit sometimes returns matches without a position (seen on macOS 27), and `pdf_view`'s `.highlight(..)` then stayed where it was; it now finds the match by its text on the page, or at least shows its page.
+- **`sheet_with` and `open_with`:** a sheet's or window's builder makes its signals inside, and they're freed when it closes; signals made in an action outside any view live as long as the window or app (the habits soak found New Habit keeping three per sheet; it uses `sheet_with` now). `SOAK_ONLY=<action>` soaks one action alone.
+- **Right-to-left layout:** in Arabic, Hebrew, Persian or Urdu the layout mirrors as AppKit's does (rows, padding, forms, slide transitions); `right_to_left()`, and `testing::set_right_to_left` for checks.
+- **Restoration:** a document's window comes back where it was when its file reopens, and when the user keeps windows on quitting (System Settings), the documents open at quit reopen at the next launch.
+- **The App Sandbox:** `sandbox = true` (and `network = true`) in `[package.metadata.ferrokit]` signs with the sandbox's entitlements; sandboxed document apps keep security-scoped bookmarks so Open Recent and restoration reach files after a relaunch. check-all runs `notes` sandboxed.
+- **Debug-build runs:** `check-all.sh --debug` runs every suite as a debug build, where objc2 checks every message's types and every protocol's required methods; timing budgets are informational there. It found a test helper missing `NSDraggingInfo`'s required methods.
+- **No silent failures:** an Objective-C exception or a Rust panic in code AppKit calls in for (actions, menu and toolbar items, canvas events, timers and animations, notifications, sheet and panel completions, `spawn` and `later` continuations) is caught there, printed with where it happened, passed to `App::on_error`, and listed by `testing::failures()`; the app goes on. Before, AppKit swallowed exceptions without a word and the rest of that work never ran. A failure part-way through a batch or an effect no longer leaves the signal system stuck.
+
+### One product: the Iced embedding is retired
+
+- **`ferrokit-iced` isn't released.** Ferrokit is one framework, `ferrokit`; native views inside Iced windows (`iced-appkit`, last published 0.2.1) aren't continued. `iced-appkit` 0.2.1 stays on crates.io; its code is kept, unbuilt, in the repository's `retired/`.
+
+### New controls (the C queue, after the coverage review)
+
+- **Button styles and sizes:** `.style(ButtonStyle::…)` (borderless, inline, recessed, circular, toolbar, Liquid Glass), `.control_size(ControlSize::…)` and `.destructive()`.
+- **`menu_button`:** a pull-down button with a menu of actions, using the menu bar's `MenuItem`s; a title, a symbol or both.
+- **`help_button`:** AppKit's round "?" button, named "Help" for VoiceOver.
+- **Sliders:** `.ticks(n)`, `.snap_to_ticks()`, `.vertical()`, `.circular()` (a dial) and `.control_size(..)`.
+- **Window tabs, full screen, the Dock:** `Window::tabbing(Tabbing::…, group)` and `open_tab`; `.no_full_screen()`, `toggle_full_screen`, `is_full_screen`; `set_dock_badge` and `App::dock_menu`.
+- **Panels:** `Window::panel(PanelStyle::Floating | Utility | Hud)` opens an `NSPanel`: floating above the app's windows, hidden while the app is inactive, out of the Window menu, and key only when a field in it needs the keyboard.
+- **SF Symbol effects:** `image(..).effect(SymbolEffect::Pulse, active)` runs one while a condition holds; `.effect_on(SymbolEffect::Bounce, trigger)` plays one each time a value changes (bounce, pulse, variable colour, scale, wiggle, rotate, breathe).
+- **The window shell: a sidebar and an inspector:** `Window::sidebar(view)` and `Window::inspector(view)` build the window on AppKit's split view controller (a full-height sidebar item, the content, an inspector item, macOS 14's), with Toggle Sidebar and Toggle Inspector in the toolbar and the title beside the sidebar; `.sidebar_hidden(&signal)` and `.inspector_hidden(&signal)` bind them two ways. Each pane has its own tree. A closed shell window keeps about 1 KB, as a plain AppKit one does (the earlier attempt, hosting the controller inside Ferrokit's root view, kept 0.6 to 1.1 MB).
+- **Springs, value animations, keyframes and matched geometry:** `Animation::spring(response, damping)` (with `bouncy`, `snappy`, `smooth`) moves layout with overshoot and settling, a frame at a time, interruptible; `animate(&signal, to, animation)` and `keyframes(&signal, Keyframes::new(..).to(..)…)` drive `f64` signals over time (`stop_animation`); `.matched_geometry("id")` starts a view where the one with its id that left was. All respect Reduce Motion. `testing::step_motion` moves the animation clock for checks.
+- **Column browser:** `column_browser(roots, title)` shows a tree in columns, as Finder's column view (`NSBrowser`), with `.selection(&path)` bound two ways (the ids down to the selected item), `.on_activate`, `.icon` and type-select by title.
+- **Rich text editing:** `text_editor(..).rich()` lets the user style the text (font panel, bold, colours, alignment, lists, pictures); `.format_bar()` and `.ruler()` show TextEdit's format bar and the ruler; `format_menu()` is the Format menu; `.bind_rtf(&signal)` binds it as RTF. `TextModel` gains `set_rich`, `rtf`, `set_rtf`, `html`, `set_html`, the format bar and the ruler (`ferrokit-core`). The new `journal` example is a rich text document app.
+- **Fixed: quitting with a window open could abort** ("thread local panicked on drop"): the windows' views were dropped as the thread's storage was torn down at exit, and laying them out read storage already gone. Layout now does nothing then.
+- **Filter builder:** `filter_editor(&filter, fields)` is AppKit's `NSPredicateEditor` bound two ways to a `Filter` (all, any or none of field rules, nested groups), with text, number and choice fields shown by title and every row's controls named for VoiceOver. `Filter::matches` tests rows and `Filter::to_sql` makes a quoted `WHERE` condition. The SQL browser's Filter… button filters the table shown.
+- **Forms:** `form(sections)` lays out `form_row(label, control)` rows (and `form_content`) in `section`s with titles, `.help` lines and footers, grouped as System Settings does (`FormStyle::Grouped`) or in classic label columns (`FormStyle::Columns`); each row names its control for VoiceOver by its label. `group_box(title, content)` is a titled box; `disclosure(title, &open, content)` shows content under a disclosure triangle, built when opened. `toggle("", …)` is now the switch alone. The `settings` example is written with `form`.
+- **Chart selection, zooming and scrolling:** `.selection(&signal)` selects a bar, slice, bin or heatmap cell by clicking (the rest dim); `.x_selection(&signal)` picks an x on line, area and scatter charts, marked with each series' value; `.zoomable()` and `.x_range(&signal)` zoom around the pointer by pinching or ⌘-scrolling and move along by scrolling sideways, the value axis fitting what's shown. `Canvas::on_scroll` and `on_magnify` (and `testing::canvas_scroll`, `canvas_magnify`) underneath. The SQL browser's line chart zooms into a million points.
+- **Quick Look:** `quick_look(paths, index)` opens Finder's preview panel on files (arrow keys between them, Open With, Share); `close_quick_look`, `is_quick_look_open`. `thumbnail(path)` shows a file's Quick Look thumbnail (a PDF's page, a video's frame), its icon until the thumbnail is made off the main thread. The media example's report has both.
+- **Toolbar groups, pickers and customisation:** `toolbar_group` (buttons in one capsule), `toolbar_picker` (a choice of one as segments, bound to a signal), `toolbar_fixed_space`; `Window::customizable_toolbar(name)` opens AppKit's customisation sheet from the toolbar's menu or `customize_toolbar_item()`, offers `.optional()` items, and remembers the user's layout. The SQL browser's toolbar is customisable, with Export and Copy offered.
+- **Chart rules, histograms, heatmaps and sparklines:** `.rule(Rule::y(v))` and `Rule::x(x)` draw a labelled threshold, target or average across or down a chart (its range takes them in; VoiceOver reads them); `histogram(values)` counts values in round-number bins (`.bins(n)`); `heatmap(cells)` shades a grid of `(column, row, value)` with a scale above; `sparkline(values)` is a small line with its last value marked, at a fixed height.
+- **`progress(..).spinner()`:** a spinner (spinning while the amount is unknown, a filling circle when known), with `.control_size(..)`.
+
+### Fixed in the hands-on checks (Phase 3, Q4)
+
+- **Typing in the middle of highlighted text moved the caret** to the end of the restyled span (in the SQL browser's query, typing after `SELECT ` jumped past the next word). An edit now styles only its own characters during the edit and the rest just after it.
+- **Toolbar buttons with a `.disabled(..)` condition (all `toolbar_command`s) stayed disabled:** their state was computed once, before the window's content could answer. AppKit now validates them as events arrive, as for menu items.
+- **Code editors kept the Mac's prose settings:** typing `"` in the SQL browser's query could give `“`, which SQL rejects. `.syntax(..)` editors, and the new `.code()`, now turn off smart quotes and dashes, text replacement, autocorrection and spell checking (`TextModel::set_code_input` in `ferrokit-core`).
+- **The title starts beside the sidebar,** as in Mail and Notes: when a window's view is a side-by-side `split` and it has a toolbar, the toolbar starts with an empty navigational item as wide as the sidebar, which follows its divider and collapse. Before, the title began over the sidebar and ran across its edge. (Each window's toolbar has its own identifier now, so windows don't share items.)
+- **A toolbar button acts in its own window,** not in whichever window is key (or in none, when the app is inactive, as when VoiceOver presses it).
+- **A menu bar extra's panel fits what it shows now,** not what it showed at launch: it's measured again each time it opens (Habits' panel cut off habits added since).
+- **New: `time_picker`,** a time of day (hour and minute) bound to a `Signal<(u32, u32)>`, an `NSDatePicker` showing only the time. Habits' reminder uses it, so a reminder can be at 7:45, not only on the hour (found in the hands-on checks: the time menu offered whole hours).
+- **`testing::ax_audit` also flags controls read as an SF Symbol's name** (a button VoiceOver reads as "sun.max.fill"), not only images.
+
+### ferrokit-core (was appkit-host)
+
+- **Fixed: typing over a selection in a highlighted editor could crash the app.** Restyling set the editor's typing attributes in the middle of the edit, while the text view still held the old selection; AppKit read attributes past the end of the shorter text and threw, which left TextKit 2's layout behind the text, so the typed text didn't show and the next redraw aborted. Typing attributes are now left alone during an edit, and highlighting runs in `willProcessEditing` as part of the edit itself.
+
+### ferrokit (was appkit-ui)
+
+- **Fixed: an exported chart included the hover readout.** Copying, saving or dragging out a canvas while the pointer was over it captured the highlighted bar and its tooltip; images are now made as the canvas looks without the pointer over it, and the hover comes back on screen afterwards.
+- **Fixed: a document app's untouched Untitled window stayed open when a file was opened from code or File › Open….** Only files opened from the Finder closed it; now every way of opening a file does, as in TextEdit (the SQL browser opened its sample next to an empty Untitled window).
+- **Fixed: hiding a collapsible split pane could leave a line across the pane that took its room.** After the SQL browser's chart was shown and hidden, a 1-point line stayed across the results table where the chart's edge had been; the panes are now laid out again when one collapses or opens.
+- **Fixed: canvas colours lost their own transparency.** Drawing replaced a colour's alpha with the painter's opacity instead of multiplying them, so partly transparent system colours such as `TextColor::Separator` drew solid (the SQL browser's `results.csv` chip was a black box).
+
 ## appkit-ui 0.3.0, appkit-host 0.2.2, cargo-ferrokit 0.1.0 (2026-10-30)
 
 `appkit-ui` 0.3 makes signals `Copy`, adds async data, commands, styled text, popovers, inspectors, a canvas with charts, the clipboard and drag and drop, and localisation. Its flagship example is a SQLite browser. `cargo-ferrokit` is new: it makes, runs, checks, bundles and notarizes apps. `appkit-host` only gains API (a patch release). `iced-appkit` is unchanged and stays at 0.2.1, whose `appkit-host` requirement 0.2.2 satisfies.

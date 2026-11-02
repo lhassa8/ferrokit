@@ -1,0 +1,40 @@
+[package]
+name = "ferrokit"
+version.workspace = true
+description = "Native Mac apps in Rust: every view a real AppKit view (tables, outlines, text), updated in place by fine-grained signals"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+readme = "README.md"
+keywords = ["macos", "appkit", "gui", "native", "ui"]
+categories = ["gui", "os::macos-apis"]
+
+[package.metadata.docs.rs]
+default-target = "aarch64-apple-darwin"
+
+[dependencies]
+ferrokit-core = { path = "../ferrokit-core", version = "=0.4.0" }
+objc2 = { version = "0.6", features = ["exception"] }
+block2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSGeometry", "NSObject", "NSNotification", "NSArray", "NSDictionary", "NSData", "NSRange", "NSUndoManager", "NSIndexSet", "NSSortDescriptor", "NSURL", "NSUserDefaults", "NSRunLoop", "NSDate", "NSIndexPath", "NSSet", "NSError", "NSOperation", "NSBundle", "NSLocale", "NSFormatter", "NSNumberFormatter", "NSValue", "NSDateFormatter", "NSTimeZone", "NSCalendar", "NSURLRequest", "NSOperation", "NSKeyValueObserving", "NSProcessInfo", "NSPredicate", "NSComparisonPredicate", "NSCompoundPredicate", "NSExpression", "NSAttributedString"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSDockTile", "NSResponder", "NSWindow", "NSView", "NSMenu", "NSMenuItem", "NSEvent", "NSGraphics", "NSRunningApplication", "NSControl", "NSButton", "NSButtonCell", "NSTextField", "NSLayoutConstraint", "NSSecureTextField", "NSSwitch", "NSCell", "NSText", "NSPopUpButton", "NSMenu", "NSMenuItem", "NSSlider", "NSSliderCell", "NSStepper", "NSProgressIndicator", "NSImage", "NSImageView", "NSBox", "NSScrollView", "NSScroller", "NSClipView", "NSBitmapImageRep", "NSImageRep", "NSAppearance", "NSGraphicsContext", "NSTextView", "NSTextInputClient", "NSTableView", "NSTableColumn", "NSOutlineView", "NSTableCellView", "NSTableHeaderView", "NSUserInterfaceItemIdentification", "NSSpellChecker", "NSSplitView", "NSToolbar", "NSToolbarItem", "NSSearchToolbarItem", "NSToolbarItemGroup", "NSPredicateEditor", "NSPredicateEditorRowTemplate", "NSRuleEditor", "NSBrowser", "NSBrowserCell", "NSTextAttachment", "NSSplitViewController", "NSSplitViewItem", "NSUserInterfaceLayout", "NSSearchField", "NSLayoutConstraint", "NSAlert", "NSPanel", "NSSavePanel", "NSOpenPanel", "NSDatePicker", "NSDatePickerCell", "NSColorWell", "NSColor", "NSColorSpace", "NSSegmentedControl", "NSComboBox", "NSCollectionView", "NSCollectionViewFlowLayout", "NSCollectionViewLayout", "NSViewController", "NSPopover", "NSBezierPath", "NSStringDrawing", "NSTrackingArea", "NSAttributedString", "NSPasteboard", "NSPasteboardItem", "NSFilePromiseProvider", "NSDragging", "NSDraggingItem", "NSDraggingSession", "NSWorkspace", "NSFont", "NSFontDescriptor", "NSVisualEffectView", "NSGlassEffectView", "NSAnimationContext", "NSTabView", "NSTabViewItem", "NSLevelIndicator", "NSLevelIndicatorCell", "NSTokenField", "NSTokenFieldCell", "NSPathControl", "NSPathControlItem", "NSPathCell", "NSActionCell", "NSAccessibility", "block2", "NSAccessibilityConstants", "NSAccessibilityProtocols", "NSLayoutAnchor", "NSScreen", "NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSSharingService", "NSPrintOperation", "NSPrintInfo", "NSPrinter", "objc2-uniform-type-identifiers", "objc2-quartz-core", "objc2-core-graphics"] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "CFRunLoop"] }
+objc2-uniform-type-identifiers = { version = "0.3", default-features = false, features = ["std", "UTType"] }
+objc2-quartz-core = { version = "0.3", default-features = false, features = ["std", "CALayer", "CAMediaTimingFunction", "objc2-core-graphics", "objc2-core-foundation"] }
+objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "CGColor", "CGImage", "CGPath", "CGEvent", "CGEventTypes", "CGRemoteOperation", "libc"] }
+# V5: web, PDF and video views, and notifications.
+objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-app-kit", "objc2-core-foundation", "WKWebView", "WKWebViewConfiguration", "WKNavigation", "WKNavigationDelegate", "WKNavigationAction", "WKUIDelegate", "WKPreferences", "WKWebsiteDataStore", "WKFrameInfo", "WKError"] }
+objc2-pdf-kit = { version = "0.3", default-features = false, features = ["std", "objc2-app-kit", "PDFView", "PDFDocument", "PDFPage", "PDFKitPlatform", "PDFSelection"] }
+objc2-av-kit = { version = "0.3", default-features = false, features = ["std", "objc2-app-kit", "objc2-av-foundation", "AVPlayerView", "AVKitTypes"] }
+objc2-av-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-core-media", "AVPlayer", "AVPlayerItem", "AVAsset", "AVTime", "AVAnimation", "dispatch2"] }
+objc2-core-media = { version = "0.3", default-features = false, features = ["std", "CMTime"] }
+objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "UNUserNotificationCenter", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSound", "UNNotificationSettings", "UNNotificationTrigger", "UNError"] }
+
+[dev-dependencies]
+# The SQL browser example (H4). SQLite is compiled in ("bundled"): macOS
+# 15's own is too old for rusqlite's progress handler (it lacks
+# sqlite3_set_clientdata, from SQLite 3.44).
+rusqlite = { version = "0.41", features = ["hooks", "bundled"] }
+# ui_checklist catches an exception AppKit's password AutoFill can raise.
+objc2 = { version = "0.6", features = ["exception"] }

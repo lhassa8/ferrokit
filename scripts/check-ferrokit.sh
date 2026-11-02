@@ -1,6 +1,6 @@
 #!/bin/sh
 # cargo ferrokit end to end: makes an app and a document app from the
-# templates (against this checkout's appkit-ui), then runs `cargo ferrokit
+# templates (against this checkout's ferrokit), then runs `cargo ferrokit
 # check` on each (clippy, tests, bundle, signature, self-checks).
 # The apps share target/ferrokit-e2e, so later runs only rebuild them.
 set -eu
@@ -11,8 +11,8 @@ export PATH="$root/target/release:$PATH" CARGO_TARGET_DIR="$root/target/ferrokit
 dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT
 cd "$dir"
-cargo ferrokit new e2e-app --appkit-ui-path "$root/crates/appkit-ui"
-cargo ferrokit new e2e-docs --document --appkit-ui-path "$root/crates/appkit-ui"
+cargo ferrokit new e2e-app --ferrokit-path "$root/crates/ferrokit"
+cargo ferrokit new e2e-docs --document --ferrokit-path "$root/crates/ferrokit"
 failed=0
 for app in e2e-app e2e-docs; do
   # The apps' [check] lines, unindented, so check-all counts them.

@@ -1,5 +1,5 @@
 //! `cargo ferrokit`: make, run, bundle, check and notarize native Mac apps
-//! built with appkit-ui. Settings live in the app's Cargo.toml under
+//! built with ferrokit. Settings live in the app's Cargo.toml under
 //! `[package.metadata.ferrokit]` (see the template `cargo ferrokit new`
 //! writes).
 
@@ -9,13 +9,13 @@ use std::process::{Command, ExitCode, Stdio};
 use std::time::{Duration, Instant};
 
 const USAGE: &str = "\
-cargo ferrokit: native Mac apps with appkit-ui
+cargo ferrokit: native Mac apps with ferrokit
 
 USAGE:
     cargo ferrokit new <path> [--document] [--name <app name>] [--id <bundle id>]
-                              [--appkit-ui-path <dir>]
+                              [--ferrokit-path <dir>]
         Makes a new app: a to-do list, or with --document a text document app.
-        --appkit-ui-path uses a local checkout of appkit-ui instead of crates.io.
+        --ferrokit-path uses a local checkout of ferrokit instead of crates.io.
 
     cargo ferrokit run [--release] [--bin <name>] [-- <args>…]
         Builds, bundles (so the app has its name, icon and identity) and runs
@@ -45,9 +45,12 @@ Settings, in the app's Cargo.toml:
     icon = \"icon.png\"          # square PNG (1024 px) or .icns
     min-macos = \"15.0\"
     category = \"public.app-category.productivity\"
-    languages = [\"de\", \"fr\"]     # its translations (see appkit-ui's App::translations)
+    languages = [\"de\", \"fr\"]     # its translations (see ferrokit's App::translations)
     sign = \"Developer ID Application: …\"
     notary-profile = \"…\"       # xcrun notarytool store-credentials …
+    sandbox = true              # the App Sandbox (needed for the Mac App Store):
+                                # files the user chooses, bookmarks to reopen them
+    network = true              # with the sandbox: outgoing connections
     [[package.metadata.ferrokit.documents]]
     name = \"Text\"
     extensions = [\"txt\", \"md\"]";
@@ -188,6 +191,10 @@ struct Project {
     languages: Vec<String>,
     sign: Option<String>,
     notary_profile: Option<String>,
+    /// Signed for the App Sandbox (`sandbox = true`), and with outgoing
+    /// network access (`network = true`).
+    sandbox: bool,
+    network: bool,
 }
 
 impl Project {
@@ -241,6 +248,8 @@ impl Project {
             min_macos: text("min-macos").unwrap_or_else(|| "15.0".into()),
             category: text("category"),
             sign: text("sign"),
+            sandbox: m["sandbox"].as_bool().unwrap_or(false),
+            network: m["network"].as_bool().unwrap_or(false),
             notary_profile: text("notary-profile"),
             documents,
             package: name,
@@ -253,7 +262,7 @@ impl Project {
 // ---- new ----
 
 fn new(args: &[String]) -> Result<()> {
-    let a = Args::parse(args, &["--name", "--id", "--appkit-ui-path"], &["--document"])?;
+    let a = Args::parse(args, &["--name", "--id", "--ferrokit-path"], &["--document"])?;
     let [path] = a.positional.as_slice() else { return Err("usage: cargo ferrokit new <path> [--document]".into()) };
     let path = PathBuf::from(path);
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).ok_or("the path needs a folder name")?;
@@ -274,15 +283,15 @@ fn new(args: &[String]) -> Result<()> {
             .join(" ")
     });
     let id = a.value("--id").map(String::from).unwrap_or_else(|| format!("com.example.{}", name.to_lowercase().replace('_', "-")));
-    let dep = match a.value("--appkit-ui-path") {
+    let dep = match a.value("--ferrokit-path") {
         Some(p) => {
-            let p = PathBuf::from(p).canonicalize().map_err(|e| format!("--appkit-ui-path {p}: {e}"))?;
+            let p = PathBuf::from(p).canonicalize().map_err(|e| format!("--ferrokit-path {p}: {e}"))?;
             if !p.join("Cargo.toml").exists() {
-                return Err(format!("{} has no Cargo.toml (point it at crates/appkit-ui)", p.display()));
+                return Err(format!("{} has no Cargo.toml (point it at crates/ferrokit)", p.display()));
             }
             format!("{{ path = {:?} }}", p.to_string_lossy())
         }
-        None => format!("\"{}\"", APPKIT_UI_VERSION),
+        None => format!("\"{}\"", FERROKIT_VERSION),
     };
     let document = a.flag("--document");
     let documents = if document {
@@ -303,8 +312,8 @@ fn new(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// The appkit-ui that new apps depend on.
-const APPKIT_UI_VERSION: &str = "0.3";
+/// The ferrokit that new apps depend on.
+const FERROKIT_VERSION: &str = "0.4";
 
 // ---- bundle ----
 
@@ -397,7 +406,13 @@ fn bundle(p: &Project, o: &BundleOptions) -> Result<PathBuf> {
 
     step(if o.sign == "-" { "Signing (ad hoc)" } else { "Signing" });
     let app_s = app.to_string_lossy().into_owned();
+    let entitlements = out.join(format!("{}.entitlements", p.bin));
+    let entitlements_s = entitlements.to_string_lossy().into_owned();
     let mut args = vec!["--force", "--options", "runtime", "--sign", &o.sign];
+    if p.sandbox {
+        std::fs::write(&entitlements, entitlements_plist(p.network)).map_err(|e| e.to_string())?;
+        args.extend(["--entitlements", &entitlements_s]);
+    }
     if o.sign != "-" {
         args.push("--timestamp");
     }
@@ -405,6 +420,18 @@ fn bundle(p: &Project, o: &BundleOptions) -> Result<PathBuf> {
     sh("codesign", &args, None)?;
     sh("codesign", &["--verify", "--strict", "--deep", &app_s], None)?;
     Ok(app)
+}
+
+/// The App Sandbox's entitlements: files the user chooses (open and save
+/// panels, dropped files), app-scoped security bookmarks so Open Recent and
+/// reopening at launch reach them again, and outgoing network if asked.
+fn entitlements_plist(network: bool) -> String {
+    let mut keys = vec!["com.apple.security.app-sandbox", "com.apple.security.files.user-selected.read-write", "com.apple.security.files.bookmarks.app-scope"];
+    if network {
+        keys.push("com.apple.security.network.client");
+    }
+    let body: String = keys.iter().map(|k| format!("    <key>{k}</key>\n    <true/>\n")).collect();
+    format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n{body}</dict>\n</plist>\n")
 }
 
 fn xml(s: &str) -> String {
@@ -650,6 +677,8 @@ mod tests {
             languages: vec!["de".into()],
             sign: None,
             notary_profile: None,
+            sandbox: false,
+            network: false,
         };
         let plist = info_plist(&p, true);
         assert!(plist.contains("<key>CFBundleName</key><string>Notes &amp; More</string>"));
@@ -657,5 +686,13 @@ mod tests {
         assert!(plist.contains("<array><string>txt</string><string>md</string></array>"));
         assert!(plist.contains("<key>CFBundleIconFile</key><string>AppIcon</string>"));
         assert!(plist.contains("<key>CFBundleLocalizations</key><array><string>en</string><string>de</string></array>"));
+    }
+
+    #[test]
+    fn sandbox_entitlements() {
+        let plain = entitlements_plist(false);
+        assert!(plain.contains("<key>com.apple.security.app-sandbox</key>\n    <true/>"));
+        assert!(plain.contains("com.apple.security.files.bookmarks.app-scope") && !plain.contains("network.client"));
+        assert!(entitlements_plist(true).contains("<key>com.apple.security.network.client</key>"));
     }
 }

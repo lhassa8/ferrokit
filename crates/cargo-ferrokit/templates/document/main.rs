@@ -1,4 +1,4 @@
-//! {{display}}: a native Mac document app made with appkit-ui. Each window
+//! {{display}}: a native Mac document app made with ferrokit. Each window
 //! is a file: New, Open…, Open Recent, Save, Save As…, Revert, the edited
 //! dot, and a save prompt on close and quit come from the framework.
 //!
@@ -7,16 +7,16 @@
 //! `cargo ferrokit bundle` makes `{{display}}.app`, registered for the
 //! document types in Cargo.toml.
 
-use appkit_ui::*;
+use ferrokit::*;
 
 fn document() -> DocumentType<String> {
     DocumentType::new(&["txt", "md"], String::new, |doc: &Document<String>| {
         let model = TextModel::new(ViewId(1), &doc.content().get_untracked());
         model.set_font(Some("Menlo"), 13.0);
-        let text = *doc.content();
+        let body = *doc.content();
         vstack((
-            text_editor(&model).bind(doc.content()).syntax(Syntax::new().line_comment("#", TextStyle::new().color(TextColor::Gray))).accessibility_label("Text"),
-            label(move || format!("{} words", text.with(|t| t.split_whitespace().count()))).padding(6.0),
+            text_editor(&model).bind(doc.content()).syntax(Syntax::new().line_comment("#", TextStyle::new().color(Color::Gray))).accessibility_label("Text"),
+            text(move || format!("{} words", body.with(|t| t.split_whitespace().count()))).padding(6.0),
         ))
     })
     .read(|path| std::fs::read_to_string(path))
@@ -39,8 +39,8 @@ fn main() {
 // ---- self-checks: `cargo ferrokit check` runs these (CHECK=all) ----
 
 mod self_checks {
-    use appkit_ui::testing::ax_audit;
-    use appkit_ui::*;
+    use ferrokit::testing::ax_audit;
+    use ferrokit::*;
 
     pub fn run() {
         let mut failed = 0;

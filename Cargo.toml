@@ -1,13 +1,13 @@
 [workspace]
 resolver = "3"
-members = ["crates/appkit-host", "crates/iced-appkit", "crates/appkit-ui", "crates/cargo-ferrokit"]
-exclude = ["spike"]
+members = ["crates/ferrokit-core", "crates/ferrokit", "crates/cargo-ferrokit"]
+exclude = ["spike", "renamed", "retired"]
 
 [workspace.package]
-version = "0.2.1"
+version = "0.4.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.88"
 repository = "https://github.com/lhassa8/ferrokit"
-keywords = ["iced", "appkit", "macos", "gui", "native"]
+keywords = ["appkit", "macos", "gui", "native", "ui"]
 categories = ["gui", "os::macos-apis"]

@@ -6,7 +6,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-appkit-ui = {{dep}}
+ferrokit = {{dep}}
 
 # How `cargo ferrokit bundle` makes the app.
 [package.metadata.ferrokit]

@@ -1,7 +1,7 @@
 [package]
 name = "cargo-ferrokit"
-version = "0.1.0"
-description = "Make, run, bundle, check and notarize native Mac apps built with appkit-ui"
+version.workspace = true
+description = "Make, run, bundle, check and notarize native Mac apps built with ferrokit"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

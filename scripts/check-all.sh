@@ -3,22 +3,25 @@
 # each app's unattended suite (CHECK=all), then prints a summary. Exits
 # non-zero if anything failed.
 #
-# Usage: scripts/check-all.sh [--no-iced] [--no-lint]
-#   --no-iced   skip the iced-appkit checklist (it bundles an .app first)
+# Usage: scripts/check-all.sh [--no-lint] [--debug]
 #   --no-lint   skip clippy, tests and docs (suites only)
+#   --debug     build and run the suites as debug builds, where objc2
+#               checks every message's types and every protocol's required
+#               methods (slower; timing budgets are relaxed in debug)
 #
 # Logs go to a temporary folder, or to $CHECK_ALL_LOGS if set (CI uploads it).
 # The suites open real windows: run it in a logged-in session with the
-# display awake. Each suite prints "[check] <name> PASS|FAIL ..." lines.
+# display awake. Each suite prints "[check] <name> PASS|FAIL|SKIP ..." lines.
 set -u
 cd "$(dirname "$0")/.."
 
-iced=1 lint=1
+lint=1 debug=
 for a in "$@"; do
   case "$a" in
-    --no-iced) iced= ;;
+    --debug) debug=1 ;;
+    --no-iced) ;; # (the Iced checklist is retired; accepted for old scripts)
     --no-lint) lint= ;;
-    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
     *) echo "check-all: unknown option $a" >&2; exit 2 ;;
   esac
 done
@@ -49,6 +52,10 @@ suite() {
   name=$1 env=$2; shift 2
   printf '%-22s ' "$name"
   start=$(date +%s)
+  # Crash reports newer than this mark are this suite's (a child process
+  # it launched can crash while the suite itself passes).
+  mark="$log/$name.mark"
+  : >"$mark"
   # A hung suite fails after 10 minutes instead of blocking the run; its
   # call stacks are sampled first, to show where it hung.
   env "$env" "$@" >"$log/$name.log" 2>&1 &
@@ -73,11 +80,22 @@ suite() {
     for _ in 1 2 3 4 5; do [ -n "$report" ] && break; sleep 2; report=$(ls -t "$HOME/Library/Logs/DiagnosticReports/$bin"*.ips 2>/dev/null | head -1); done
     [ -n "$report" ] && cp "$report" "$log/$name.crash.ips"
   fi
+  bin=$(basename "$1")
+  sleep 2 # (ReportCrash writes a report a moment after the crash)
+  for report in $(find "$HOME/Library/Logs/DiagnosticReports" -name "$bin-*.ips" -newer "$mark" 2>/dev/null); do
+    echo "[check] no-crash-reports FAIL a $bin process crashed: $report" >>"$log/$name.log"
+    [ -f "$log/$name.crash.ips" ] || cp "$report" "$log/$name.crash.ips"
+  done
   pass=$(grep -c '^\[check\] .* PASS' "$log/$name.log")
   fail=$(grep -c '^\[check\] .* FAIL' "$log/$name.log")
+  # Checks that can't run in this session (window-server input without
+  # Accessibility trust) say SKIP, and are reported, not failed.
+  skip=$(grep -c '^\[check\] .* SKIP' "$log/$name.log")
+  skipped=""
+  [ "$skip" -gt 0 ] && skipped=", $skip skipped"
   if [ "$code" -eq 0 ] && [ "$fail" -eq 0 ] && [ "$pass" -gt 0 ]; then
-    printf 'ok     %3s checks (%ss)\n' "$pass" $(( $(date +%s) - start ))
-    summary="$summary\n  ok    $name: $pass checks"
+    printf 'ok     %3s checks%s (%ss)\n' "$pass" "$skipped" $(( $(date +%s) - start ))
+    summary="$summary\n  ok    $name: $pass checks$skipped"
   else
     printf 'FAILED %3s of %s checks, exit %s (%ss)\n' "$fail" $((pass + fail)) "$code" $(( $(date +%s) - start ))
     grep '^\[check\] .* FAIL' "$log/$name.log" | sed 's/^/    /'
@@ -102,14 +120,18 @@ PY
     fi
     if [ -f "$log/$name.hang.txt" ]; then
       echo "    main thread when it hung:"
-      grep -A40 'Thread_.*com.apple.main-thread' "$log/$name.hang.txt" | grep -E 'ui_checklist|appkit_ui|AppKit|\]' | head -25 | sed 's/^/      /'
+      grep -A40 'Thread_.*com.apple.main-thread' "$log/$name.hang.txt" | grep -E 'ui_checklist|ferrokit|AppKit|\]' | head -25 | sed 's/^/      /'
     fi
     summary="$summary\n  FAIL  $name: $fail failed, exit $code"
     failed=$((failed + 1))
   fi
 }
 
-step build cargo build --release --workspace --examples
+if [ -n "$debug" ]; then
+  step build cargo build --workspace --examples
+else
+  step build cargo build --release --workspace --examples
+fi
 if [ -n "$lint" ]; then
   step clippy cargo clippy --release --workspace --examples -- -D warnings
   step tests cargo test --workspace --release
@@ -117,20 +139,34 @@ if [ -n "$lint" ]; then
 fi
 
 ex=target/release/examples
+[ -n "$debug" ] && ex=target/debug/examples
 suite ui_checklist CHECK=all "$ex/ui_checklist"
 suite settings CHECK=all "$ex/settings"
 suite native_csv CHECK=all "$ex/native_csv"
 suite log_viewer CHECK=all "$ex/log_viewer"
 suite hands_on CHECK=drop "$ex/hands_on"
 suite notes CHECK=all "$ex/notes"
+suite journal CHECK=all "$ex/journal"
 suite gallery CHECK=all "$ex/gallery"
+suite styles CHECK=all "$ex/styles"
+suite materials CHECK=all "$ex/materials"
+suite motion CHECK=all "$ex/motion"
+suite components CHECK=all "$ex/components"
+suite media CHECK=all "$ex/media"
+suite habits CHECK=all "$ex/habits"
+suite input CHECK=all "$ex/input"
+suite values CHECK=all "$ex/values"
 suite sql_browser CHECK=all "$ex/sql_browser"
 suite sql_browser_de CHECK=l10n "$ex/sql_browser" -AppleLanguages "(de)"
-suite cargo_ferrokit FERROKIT_E2E=1 scripts/check-ferrokit.sh
-if [ -n "$iced" ]; then
-  step iced_bundle scripts/bundle-example.sh checklist
-  suite iced_checklist CHECK=all target/checklist.app/Contents/MacOS/checklist
+# The notes example in the App Sandbox (signed with the entitlements
+# `cargo ferrokit bundle` gives `sandbox = true`): documents, recents and
+# restoring them work there too.
+if [ -z "$debug" ]; then
+  step notes_sandbox_bundle scripts/package-app.sh -p ferrokit --example notes --name "Notes Sandboxed" --id dev.ferrokit.notes-sandboxed --entitlements scripts/sandbox.entitlements
+  suite notes_sandboxed CHECK=all "target/apps/Notes Sandboxed.app/Contents/MacOS/notes"
 fi
+# (cargo ferrokit's templates build their own debug apps already.)
+[ -z "$debug" ] && suite cargo_ferrokit FERROKIT_E2E=1 scripts/check-ferrokit.sh
 
 printf '\nSummary (logs in %s):%b\n' "$log" "$summary"
 if [ "$failed" -gt 0 ]; then

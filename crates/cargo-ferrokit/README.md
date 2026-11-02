@@ -1,7 +1,7 @@
 # cargo-ferrokit
 
 Make, run, check, bundle and notarize native Mac apps built with
-[`appkit-ui`](https://crates.io/crates/appkit-ui).
+[`ferrokit`](https://crates.io/crates/ferrokit).
 
 ```bash
 cargo install cargo-ferrokit
@@ -35,6 +35,8 @@ category = "public.app-category.productivity"
 languages = ["de", "fr"]   # its translations, besides English
 sign = "Developer ID Application: Your Name (TEAMID)"
 notary-profile = "my-profile"   # xcrun notarytool store-credentials my-profile …
+sandbox = true                  # sign for the App Sandbox (files the user chooses, bookmarks)
+network = true                  # with the sandbox: outgoing connections
 
 [[package.metadata.ferrokit.documents]]
 name = "Text"

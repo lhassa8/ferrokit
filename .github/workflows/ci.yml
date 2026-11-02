@@ -28,7 +28,7 @@ jobs:
       - name: Unit tests
         run: cargo test --workspace
       - name: Docs
-        run: cargo doc --no-deps -p appkit-host -p iced-appkit -p appkit-ui -p cargo-ferrokit
+        run: cargo doc --no-deps -p ferrokit-core -p ferrokit -p cargo-ferrokit
         env:
           RUSTDOCFLAGS: -D warnings
       - name: Suites (unattended, every app's CHECK=all)
@@ -37,10 +37,18 @@ jobs:
         timeout-minutes: 35
         env:
           CHECK_ALL_LOGS: ${{ runner.temp }}/check-all
+      - name: Suites as debug builds (objc2 checks every message's types)
+        continue-on-error: true
+        run: scripts/check-all.sh --no-lint --debug
+        timeout-minutes: 45
+        env:
+          CHECK_ALL_LOGS: ${{ runner.temp }}/check-all-debug
       - name: Upload suite logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: suite-logs-${{ matrix.os }}
-          path: ${{ runner.temp }}/check-all
+          path: |
+            ${{ runner.temp }}/check-all
+            ${{ runner.temp }}/check-all-debug
           if-no-files-found: ignore
