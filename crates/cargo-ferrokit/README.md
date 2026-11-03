@@ -17,7 +17,7 @@ cd my-app && cargo ferrokit run
 
 | Command | What it does |
 | --- | --- |
-| `new <path> [--document]` | A new app: a to-do list, or a text document app, with self-checks. |
+| `new <path> [--document]` | A new app: a to-do list, or a text document app, with self-checks and an `AGENTS.md` for AI coding assistants. |
 | `run [--release]` | Builds, bundles and runs the app (its name, icon and identity), output in the terminal. |
 | `check` | Clippy (warnings are errors), tests, a bundle, the app's self-checks (`CHECK=all`), the signature. |
 | `bundle [--universal] [--zip]` | A signed `.app` with the hardened runtime (ad hoc, or your Developer ID). |

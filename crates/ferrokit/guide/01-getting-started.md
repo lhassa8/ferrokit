@@ -19,14 +19,14 @@ cd my-app && cargo ferrokit run
 ```
 
 `--document` makes a document app instead (New, Open…, Save, Recent,
-one window per file). [Testing and shipping](08-testing-and-shipping.md)
+one window per file). [Testing and shipping](https://docs.rs/ferrokit/latest/ferrokit/guide/ch08_testing_and_shipping/)
 covers `check`, `bundle` and `notarize`.
 
 By hand, add `ferrokit` to a binary crate:
 
 ```toml
 [dependencies]
-ferrokit = "0.3"
+ferrokit = "0.4"
 ```
 
 ## A first app
@@ -61,14 +61,15 @@ What happens here:
 - `button` takes the action to run on click.
 - `run` starts AppKit's run loop and doesn't return.
 
-Signals are cheap handles (`Rc` inside). Clone one for each closure that
-needs it, as above.
+Signals are `Copy` handles: each closure takes its own with `move`, as
+above, and nothing needs cloning. A signal is freed with the window, row or
+document that made it.
 
 ## Main thread only
 
 AppKit is single-threaded, and so is `ferrokit`: views and signals live on
 the main thread. Long work goes to a background thread with `spawn`,
-which hands the result back to the main thread (see [State](02-state.md)).
+which hands the result back to the main thread (see [State](https://docs.rs/ferrokit/latest/ferrokit/guide/ch02_state/)).
 
 ## Opening windows later
 

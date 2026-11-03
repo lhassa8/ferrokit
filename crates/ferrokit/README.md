@@ -49,12 +49,15 @@ It's for data-heavy desktop apps where the Mac's own widgets matter:
   [`cargo ferrokit`](https://crates.io/crates/cargo-ferrokit) to make, check,
   bundle and notarise apps.
 
-Read the [guide](guide/README.md); every example in it is compiled as a doc
-test. The examples are complete apps; the flagship is a SQLite browser
+Read the [guide](https://docs.rs/ferrokit/latest/ferrokit/guide/); every
+example in it is compiled as a doc test. [`API.md`](API.md) lists every
+public item on one page, and apps made with `cargo ferrokit new` come with
+an `AGENTS.md` for AI coding assistants. The examples are complete apps; the flagship is a SQLite browser
 (schema sidebar, highlighted SQL, a million-row results table, charts, CSV
 export):
 
 ```bash
+git clone https://github.com/lhassa8/ferrokit && cd ferrokit
 cargo run --release -p ferrokit --example sql_browser
 ```
 

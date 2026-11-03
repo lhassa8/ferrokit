@@ -216,4 +216,4 @@ their titles. `image(symbol)` is decorative (VoiceOver skips it) unless you
 give it a `.description("…")`.
 
 `testing::ax_audit(&window)` lists the controls VoiceOver can't name; run
-it in your app's self-checks (see [Testing and shipping](08-testing-and-shipping.md)).
+it in your app's self-checks (see [Testing and shipping](https://docs.rs/ferrokit/latest/ferrokit/guide/ch08_testing_and_shipping/)).

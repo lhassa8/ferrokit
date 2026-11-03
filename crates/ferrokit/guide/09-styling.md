@@ -8,6 +8,7 @@ Increase Contrast and the user's accent colour by itself.
 The `styles` example builds a whole screen this way:
 
 ```bash
+git clone https://github.com/lhassa8/ferrokit && cd ferrokit
 cargo run -p ferrokit --example styles
 ```
 

@@ -1,9 +1,9 @@
-//! The native layer under [`ferrokit`](https://docs.rs/ferrokit) and
-//! [`ferrokit-iced`](https://docs.rs/ferrokit-iced): apps want one of those.
+//! The AppKit layer under [`ferrokit`](https://docs.rs/ferrokit): apps want
+//! that crate.
 //!
-//! Places real AppKit views inside a window whose content is drawn by a GPU
-//! host framework (Iced first). Host-agnostic: it only needs the window's
-//! `raw-window-handle` and layout rectangles in the host's logical points.
+//! Places real AppKit views in a window and keeps their frames, focus and
+//! keyboard in step with `ferrokit`'s layout. [`table::TableModel`] and
+//! [`text::TextModel`], which `ferrokit` re-exports, are documented here.
 //!
 //! Main thread only. Every function panics off the main thread.
 

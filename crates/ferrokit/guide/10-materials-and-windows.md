@@ -8,6 +8,7 @@ and layering one view over another.
 The `materials` example builds a travel journal this way:
 
 ```bash
+git clone https://github.com/lhassa8/ferrokit && cd ferrokit
 cargo run -p ferrokit --example materials
 ```
 

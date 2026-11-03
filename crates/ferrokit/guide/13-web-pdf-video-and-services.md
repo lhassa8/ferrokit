@@ -6,6 +6,7 @@ menu, printing, notifications and the menu bar. The `media` example is a
 trip briefing that uses all of them:
 
 ```bash
+git clone https://github.com/lhassa8/ferrokit && cd ferrokit
 cargo run -p ferrokit --example media
 ```
 

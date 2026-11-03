@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.1 (unreleased): docs for people and AI assistants
+
+A patch release: no API changes. Two AI agents, new to Ferrokit, each built an app from the published docs alone; this release fixes what they ran into.
+
+- **Fixed: window commands from a sidebar or inspector.** In a window with `Window::sidebar` or `Window::inspector`, the window's `on_command` handlers (and the content root's) were reached only while the focus was in the content: with the sidebar focused, as at launch, their menu items were disabled and `perform_in` did nothing. They now act wherever the focus is in the window.
+- **`cargo ferrokit check`:** counts `[check]` lines whose names have spaces (before, only one-word names were counted, and a failing check with a longer name went unlisted). After a caught panic or exception, it stops once no check has arrived for 15 s and says what failed, instead of waiting out the timeout.
+- **`cargo ferrokit new`** writes an `AGENTS.md` (and a `CLAUDE.md` that includes it) for AI coding assistants: where the docs are, how a Ferrokit app is written, a self-closing sheet, the self-check pattern and its pitfalls, and the current limits.
+- **The guide is on docs.rs** (`ferrokit::guide`, 13 chapters), and the crate's front page covers everything (styling, materials, motion, charts, web, PDF and video were missing).
+- **`API.md`** in the `ferrokit` crate: every public item, and the `ferrokit-core` types it re-exports, on one page with its signature and summary.
+- **Docs fixed:** the guide's `ferrokit = "0.3"`; signals described as `Rc` handles to clone (they're `Copy`); commands that only work inside Ferrokit's repository (examples now run from a clone; document types are declared in `Cargo.toml`); a list of self-check pitfalls in the Testing chapter; `ferrokit-core`'s README still describing the retired Iced embedding.
+
 ## 0.4.0 (2026-11-02): one name, Ferrokit
 
 The crates take the project's name and share one version number, released together:

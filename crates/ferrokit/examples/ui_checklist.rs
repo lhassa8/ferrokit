@@ -352,9 +352,11 @@ fn view_menu() -> Vec<MenuItem> {
 const RENAME_ITEM: ferrokit::Command = ferrokit::Command::new("rename-item");
 const REFRESH_LIST: ferrokit::Command = ferrokit::Command::new("refresh-list");
 const SHOW_HELP: ferrokit::Command = ferrokit::Command::new("show-help");
+const SHELL_ADD: ferrokit::Command = ferrokit::Command::new("shell-add");
 
 thread_local! {
     static HELP_SHOWN: Cell<u32> = const { Cell::new(0) };
+    static SHELL_ADDS: Cell<u32> = const { Cell::new(0) };
 }
 
 /// Commands resolve from the focus outwards: the focused subtree's handler,
@@ -2579,11 +2581,12 @@ fn shell_window(title: &str, sidebar_hidden: Signal<bool>, inspector_hidden: Sig
     Window::new(title)
         .size(900.0, 420.0)
         .toolbar(vec![toolbar_button("add", "Add", "plus", || {})])
-        .sidebar(vstack((text("Library"), text("Recent"))).padding(12.0))
+        .sidebar(vstack((text("Library"), text("Recent"), text_field(&Signal::new(String::new())).accessibility_label("Find in library"))).padding(12.0))
         .sidebar_hidden(&sidebar_hidden)
         .view(vstack((text("Shell content"), text("Rows go here"))).padding(12.0))
-        .inspector(vstack((text("Inspector"),)).padding(12.0))
+        .inspector(vstack((text("Inspector"), text_field(&Signal::new(String::new())).accessibility_label("Note"))).padding(12.0))
         .inspector_hidden(&inspector_hidden)
+        .on_command(SHELL_ADD, || SHELL_ADDS.set(SHELL_ADDS.get() + 1))
 }
 
 /// C15: the shell is AppKit's split view controller (a sidebar item, the
@@ -2612,6 +2615,20 @@ fn shell_kind_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                 && ids.last().map(String::as_str) == Some("NSToolbarToggleInspectorItem")
                 && below("Shell content") && below("Library") && below("Inspector"),
             format!("items {behaviours:?}; toolbar {ids:?}; below the title bar: content {}, sidebar {}, inspector {}", below("Shell content"), below("Library"), below("Inspector")),
+        );
+        // The window's commands reach it from the sidebar's and the
+        // inspector's focus too (each pane is its own tree).
+        // (The editable fields: the sidebar's, then the inspector's.)
+        let fields: Vec<_> = all_views(&w2.contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<NSTextField>().ok()).filter(|f| f.isEditable()).collect();
+        let mut reached = Vec::new();
+        for f in &fields {
+            let focused = w2.makeFirstResponder(Some(f));
+            reached.push((focused, ferrokit::can_perform_in(Some(&w2), SHELL_ADD), ferrokit::perform_in(Some(&w2), SHELL_ADD)));
+        }
+        check(
+            "shell-commands",
+            reached.len() == 2 && reached.iter().all(|&(f, can, ran)| f && can && ran) && SHELL_ADDS.get() == 2,
+            format!("(focused, can, ran) from sidebar and inspector {reached:?}; handler ran {}", SHELL_ADDS.get()),
         );
         if let Ok(dir) = std::env::var("SNAP") {
             snapshot_windows(&dir);

@@ -250,7 +250,7 @@ let editor = text_editor(&notes)
 
 Positions are UTF-8 byte offsets. Each editor has its own undo history;
 `.shared_undo()` puts its typing in the window's history instead, between
-your app's own undoable changes (see [The app shell](06-app-shell.md)).
+your app's own undoable changes (see [The app shell](https://docs.rs/ferrokit/latest/ferrokit/guide/ch06_app_shell/)).
 
 ### Rich text
 
@@ -366,7 +366,7 @@ chart, 72 bars, from … to …"). A line keeps at most a few points per
 pixel column (the first, lowest, highest and last), so a million rows draw
 in a few milliseconds and spikes still show. Stacked bars, areas,
 scatter plots, pies, legends and formats for money, percentages and dates
-are in [More controls and charts](12-more-controls-and-charts.md).
+are in [More controls and charts](https://docs.rs/ferrokit/latest/ferrokit/guide/ch12_more_controls_and_charts/).
 
 ```rust,no_run
 use ferrokit::*;

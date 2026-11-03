@@ -159,10 +159,12 @@ that highlight under the pointer, and recent databases in a sidebar.
 Files opened from the Finder (double-click, Open With, a drop on the Dock
 icon, `open file.txt`) open as documents; an untouched Untitled window
 from launch closes. For the Finder to offer your app, declare the types
-when packaging:
+in `Cargo.toml`, and `cargo ferrokit bundle` writes them into the app:
 
-```bash
-scripts/package-app.sh -p my-app --bin my-app --name "My Notes" --doc-type "Plain Text:txt,md"
+```toml
+[[package.metadata.ferrokit.documents]]
+name = "Plain Text"
+extensions = ["txt", "md"]
 ```
 
 The `notes` example is a complete text editor built this way.
