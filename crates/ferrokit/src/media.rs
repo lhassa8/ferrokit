@@ -536,7 +536,8 @@ impl View for PdfView {
 /// position (bounds of infinity, seen on macOS 27 once an on-device model
 /// was cached), and `goToSelection` then
 /// stays where it is: the match is rebuilt from its text range, or placed
-/// by its first character, or failing those its page is shown.
+/// by its first character, or failing those (PDFKit sometimes has no
+/// position for any of it) its page is shown.
 fn go_to_match(view: &PDFView, found: &PDFSelection) {
     // SAFETY: PDFKit's selection and page API on the main thread.
     unsafe {

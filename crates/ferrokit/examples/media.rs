@@ -339,7 +339,12 @@ mod self_checks {
                             let shown = v.currentPage().and_then(|c| Some(v.document()?.indexForPage(&c)));
                             // Its middle: goToSelection can leave a point of it past the top.
                             let mid = r.origin.y + r.size.height / 2.0;
-                            Some(((0.0..=h).contains(&mid), format!("match at y {:.0}, height {:.0}, in a view {h:.0} high; bounds from PDFKit {bounded}; page shown {shown:?}", r.origin.y, r.size.height)))
+                            // Sometimes PDFKit has no position for any of the match's text
+                            // (macOS 26 and 27): then all find can do is show its page.
+                            let unplaced = !bounded && (r.size.height <= 0.0 || !r.origin.y.is_finite());
+                            let seen = if unplaced { shown == Some(0) } else { (0.0..=h).contains(&mid) };
+                            let shown = if unplaced { format!("{shown:?} (PDFKit gave the match no position, so its page is what's checked)") } else { format!("{shown:?}") };
+                            Some((seen, format!("match at y {:.0}, height {:.0}, in a view {h:.0} high; bounds from PDFKit {bounded}; page shown {shown}", r.origin.y, r.size.height)))
                         })
                     };
                     let place2 = place.clone();
