@@ -34,8 +34,8 @@ the guide can't drift from the API.
     pages, PDFs, video and sound, the Share menu, printing, notifications
     and menu-bar extras.
 
-The example apps in `crates/ferrokit/examples` are the long form of these
-chapters:
+The example apps are the long form of these chapters. They're in
+Ferrokit's repository (and in the published crate's `examples` folder):
 
 | Example | Shows |
 | --- | --- |
@@ -51,4 +51,9 @@ chapters:
 | `hands_on` | drag and drop, the clipboard, panels, undo, input methods |
 | `ui_checklist` | the framework's regression suite |
 
-Run one with `cargo run --release -p ferrokit --example settings`.
+Run one from a clone of the repository:
+
+```bash
+git clone https://github.com/lhassa8/ferrokit && cd ferrokit
+cargo run --release -p ferrokit --example settings
+```

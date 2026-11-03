@@ -364,7 +364,8 @@ pub struct AxElement {
     /// `AXSwitch`, `AXSearchField`…
     pub subrole: String,
     /// What VoiceOver reads as the name: the label, else the title, else a
-    /// linked title element's value, else the placeholder.
+    /// linked title element's value, else the placeholder; for static text
+    /// (labels, table and sidebar rows) and a list's items, its text.
     pub name: String,
     /// The element's own label (set with `accessibility_label`).
     pub label: String,
@@ -373,45 +374,73 @@ pub struct AxElement {
 /// Every accessibility element under `window`'s content view, depth first.
 pub fn ax_elements(window: &objc2_app_kit::NSWindow) -> Vec<AxElement> {
     use objc2::runtime::AnyObject;
-    fn string(obj: &AnyObject, sel: objc2::runtime::Sel) -> String {
-        if !obj.class().responds_to(sel) {
-            return String::new();
-        }
-        // SAFETY: the selector exists and returns an object (or nil).
-        let v: Option<Retained<AnyObject>> = unsafe { objc2::msg_send![obj, performSelector: sel] };
-        v.and_then(|v| v.downcast::<NSString>().ok()).map(|s| s.to_string()).unwrap_or_default()
+    // Asked of the object, not its class: some elements (a table's or
+    // outline's rows) answer through AppKit's own forwarding.
+    fn responds(obj: &AnyObject, sel: objc2::runtime::Sel) -> bool {
+        // SAFETY: every NSObject answers respondsToSelector:.
+        unsafe { objc2::msg_send![obj, respondsToSelector: sel] }
     }
-    fn walk(obj: &AnyObject, depth: usize, out: &mut Vec<AxElement>) {
-        let label = string(obj, objc2::sel!(accessibilityLabel));
-        let title = string(obj, objc2::sel!(accessibilityTitle));
-        let linked = if obj.class().responds_to(objc2::sel!(accessibilityTitleUIElement)) {
+    // An attribute through the NSAccessibility protocol, else through the
+    // older attribute API, which some of AppKit's own elements (a table's or
+    // outline's rows) answer only to; VoiceOver asks both ways.
+    fn attribute(obj: &AnyObject, sel: objc2::runtime::Sel, name: &str) -> Option<Retained<AnyObject>> {
+        if responds(obj, sel) {
+            // SAFETY: the selector exists and returns an object (or nil).
+            unsafe { objc2::msg_send![obj, performSelector: sel] }
+        } else if responds(obj, objc2::sel!(accessibilityAttributeValue:)) {
+            // SAFETY: returns the attribute's value or nil.
+            unsafe { objc2::msg_send![obj, accessibilityAttributeValue: &*NSString::from_str(name)] }
+        } else {
+            None
+        }
+    }
+    fn string(obj: &AnyObject, sel: objc2::runtime::Sel, name: &str) -> String {
+        attribute(obj, sel, name).and_then(|v| v.downcast::<NSString>().ok()).map(|s| s.to_string()).unwrap_or_default()
+    }
+    fn walk(obj: &AnyObject, depth: usize, parent: &str, out: &mut Vec<AxElement>) {
+        let label = string(obj, objc2::sel!(accessibilityLabel), "AXDescription");
+        let title = string(obj, objc2::sel!(accessibilityTitle), "AXTitle");
+        let linked = if responds(obj, objc2::sel!(accessibilityTitleUIElement)) {
             // SAFETY: returns an element or nil.
             let e: Option<Retained<AnyObject>> = unsafe { objc2::msg_send![obj, accessibilityTitleUIElement] };
-            e.map(|e| string(&e, objc2::sel!(accessibilityValue))).unwrap_or_default()
+            e.map(|e| string(&e, objc2::sel!(accessibilityValue), "AXValue")).unwrap_or_default()
         } else {
             String::new()
         };
-        let placeholder = string(obj, objc2::sel!(accessibilityPlaceholderValue));
-        let name = [&label, &title, &linked, &placeholder].into_iter().find(|s| !s.trim().is_empty()).cloned().unwrap_or_default();
+        let placeholder = string(obj, objc2::sel!(accessibilityPlaceholderValue), "AXPlaceholderValue");
+        let role = string(obj, objc2::sel!(accessibilityRole), "AXRole");
+        // Static text (a label, a table or sidebar row's text) and the text
+        // of a list's items (a column browser's) are read by their value.
+        let read_by_value = role == "AXStaticText" || (role == "AXTextField" && ["AXList", "AXRow", "AXCell"].contains(&parent));
+        let text = if read_by_value { string(obj, objc2::sel!(accessibilityValue), "AXValue") } else { String::new() };
+        let name = [&label, &title, &linked, &placeholder, &text].into_iter().find(|s| !s.trim().is_empty()).cloned().unwrap_or_default();
         out.push(AxElement {
             depth,
-            role: string(obj, objc2::sel!(accessibilityRole)),
-            subrole: string(obj, objc2::sel!(accessibilitySubrole)),
+            role,
+            subrole: string(obj, objc2::sel!(accessibilitySubrole), "AXSubrole"),
             name,
             label,
         });
-        if depth > 14 || !obj.class().responds_to(objc2::sel!(accessibilityChildren)) {
+        if depth > 14 {
             return;
         }
-        // SAFETY: returns an array of elements or nil.
-        let kids: Option<Retained<objc2_foundation::NSArray<AnyObject>>> = unsafe { objc2::msg_send![obj, accessibilityChildren] };
+        // A table's or list's rows: only the visible ones, as VoiceOver
+        // walks them (asking a 200,000-row table for all its rows makes an
+        // element for each).
+        let kids = match out.last().map(|e| e.role.as_str()) {
+            Some("AXTable" | "AXOutline") => attribute(obj, objc2::sel!(accessibilityVisibleRows), "AXVisibleRows"),
+            Some("AXList") => attribute(obj, objc2::sel!(accessibilityVisibleChildren), "AXVisibleChildren"),
+            _ => attribute(obj, objc2::sel!(accessibilityChildren), "AXChildren"),
+        }
+        .and_then(|k| k.downcast::<objc2_foundation::NSArray>().ok());
+        let role = out.last().map(|e| e.role.clone()).unwrap_or_default();
         for k in kids.iter().flat_map(|k| k.iter()) {
-            walk(&k, depth + 1, out);
+            walk(&k, depth + 1, &role, out);
         }
     }
     let mut out = Vec::new();
     if let Some(content) = window.contentView() {
-        walk(&content, 0, &mut out);
+        walk(&content, 0, "", &mut out);
     }
     out
 }

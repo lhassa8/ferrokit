@@ -1280,17 +1280,19 @@ fn arc(cx: f64, cy: f64, r: f64, a0: f64, a1: f64) -> Vec<(f64, f64)> {
 
 fn pie(data: Box<dyn Fn() -> Vec<(String, f64)>>, o: Rc<Options>) -> Canvas {
     let o3 = o.clone();
-    let data = hold(move || data().into_iter().filter(|(_, v)| *v > 0.0 && v.is_finite()).collect::<Vec<_>>());
+    // Empty slices aren't drawn, but each slice keeps its index in the data:
+    // for its colour and for the selection.
+    let data = hold(move || data().into_iter().enumerate().filter(|(_, (_, v))| *v > 0.0 && v.is_finite()).map(|(k, (n, v))| (k, n, v)).collect::<Vec<_>>());
     let hover = Signal::new(None::<(f64, f64)>);
     let o2 = o.clone();
     let hit: Hit = Rc::default();
     let h2 = hit.clone();
     let c = canvas(move |p| {
         let Some(slices) = data.get().filter(|s| !s.is_empty()) else { return no_data(p) };
-        let total: f64 = slices.iter().map(|s| s.1).sum();
+        let total: f64 = slices.iter().map(|s| s.2).sum();
         let percent = |v: f64| Format::Percent.value((v / total * 1000.0).round() / 1000.0);
         // The legend on the right: swatch, name, value and share.
-        let entries: Vec<String> = slices.iter().map(|(n, v)| format!("{n}  {} ({})", o.values.value(*v), percent(*v))).collect();
+        let entries: Vec<String> = slices.iter().map(|(_, n, v)| format!("{n}  {} ({})", o.values.value(*v), percent(*v))).collect();
         let legend_w = if o.legend { entries.iter().map(|e| p.measure(e, FONT).0).fold(0.0, f64::max) + 30.0 } else { 0.0 };
         let r = ((p.width() - legend_w - 16.0).min(p.height() - 16.0) / 2.0).max(4.0);
         let (cx, cy) = (8.0 + r, p.height() / 2.0);
@@ -1300,7 +1302,7 @@ fn pie(data: Box<dyn Fn() -> Vec<(String, f64)>>, o: Rc<Options>) -> Canvas {
         let ends: Vec<f64> = slices
             .iter()
             .scan(0.0, |acc, s| {
-                *acc += s.1 / total * std::f64::consts::TAU;
+                *acc += s.2 / total * std::f64::consts::TAU;
                 Some(*acc)
             })
             .collect();
@@ -1313,20 +1315,21 @@ fn pie(data: Box<dyn Fn() -> Vec<(String, f64)>>, o: Rc<Options>) -> Canvas {
             ends.iter().position(|e| a < *e)
         };
         let hovered = hover.get().and_then(|(x, y)| under(x, y));
-        *h2.borrow_mut() = Some(Rc::new(under));
+        let keys: Vec<usize> = slices.iter().map(|s| s.0).collect();
+        *h2.borrow_mut() = Some(Rc::new(move |x, y| under(x, y).map(|i| keys[i])));
         let mut a = start;
-        for (i, (_, v)) in slices.iter().enumerate() {
+        for (i, &(k, _, v)) in slices.iter().enumerate() {
             let sweep = v / total * std::f64::consts::TAU;
             // The hovered (or selected) slice moves out a little.
-            let (dx, dy) = if hovered == Some(i) || o.selected() == Some(i) { let m = a + sweep / 2.0; (4.0 * m.cos(), 4.0 * m.sin()) } else { (0.0, 0.0) };
+            let (dx, dy) = if hovered == Some(i) || o.selected() == Some(k) { let m = a + sweep / 2.0; (4.0 * m.cos(), 4.0 * m.sin()) } else { (0.0, 0.0) };
             let mut shape = arc(cx + dx, cy + dy, r, a, a + sweep);
             if inner > 0.0 {
                 shape.extend(arc(cx + dx, cy + dy, inner, a + sweep, a));
             } else {
                 shape.push((cx + dx, cy + dy));
             }
-            p.set_opacity(o.emphasis(i));
-            p.fill_polygon(&shape, o.color(i));
+            p.set_opacity(o.emphasis(k));
+            p.fill_polygon(&shape, o.color(k));
             p.set_opacity(1.0);
             // A thin gap between slices.
             if slices.len() > 1 {
@@ -1343,13 +1346,13 @@ fn pie(data: Box<dyn Fn() -> Vec<(String, f64)>>, o: Rc<Options>) -> Canvas {
             let x = cx + r + 22.0;
             let mut y = (cy - slices.len() as f64 * (FONT + 7.0) / 2.0).max(4.0);
             for (i, e) in entries.iter().enumerate() {
-                p.fill_rounded_rect(x, y + 2.0, 10.0, 10.0, 2.0, o.color(i));
+                p.fill_rounded_rect(x, y + 2.0, 10.0, 10.0, 2.0, o.color(slices[i].0));
                 p.text(x + 16.0, y, e, FONT, if hovered == Some(i) { Color::Primary } else { Color::Secondary }, Align::Start);
                 y += FONT + 7.0;
             }
         }
         if let Some((i, (x, y))) = hovered.zip(hover.get()) {
-            tooltip(p, x, y, &[format!("{}: {} ({})", slices[i].0, o.values.value(slices[i].1), percent(slices[i].1))]);
+            tooltip(p, x, y, &[format!("{}: {} ({})", slices[i].1, o.values.value(slices[i].2), percent(slices[i].2))]);
         }
     })
     .on_hover(move |at| hover.set(at))
@@ -1358,9 +1361,9 @@ fn pie(data: Box<dyn Fn() -> Vec<(String, f64)>>, o: Rc<Options>) -> Canvas {
         if slices.is_empty() {
             return "Pie chart, no data".into();
         }
-        let total: f64 = slices.iter().map(|s| s.1).sum();
-        let parts: Vec<String> = slices.iter().map(|(n, v)| format!("{n} {}", Format::Percent.value((v / total * 1000.0).round() / 1000.0))).collect();
-        let selected = selected_text(&o2, |i| slices.get(i).map(|s| format!("{} ({})", s.0, o2.values.value(s.1))));
+        let total: f64 = slices.iter().map(|s| s.2).sum();
+        let parts: Vec<String> = slices.iter().map(|(_, n, v)| format!("{n} {}", Format::Percent.value((v / total * 1000.0).round() / 1000.0))).collect();
+        let selected = selected_text(&o2, |k| slices.iter().find(|s| s.0 == k).map(|s| format!("{} ({})", s.1, o2.values.value(s.2))));
         format!("{} chart, {} slices, total {}: {}{selected}", if o2.donut { "Donut" } else { "Pie" }, slices.len(), o2.values.value(total), parts.join(", "))
     });
     selectable(c, &o3, &hit)

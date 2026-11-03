@@ -114,7 +114,9 @@ pub fn focused_window() -> Option<Retained<NSWindow>> {
 }
 
 /// The node with focus in `window` (the window's root if no view of ours has
-/// it), then its ancestors.
+/// it), then its ancestors, then the window's root if they didn't reach it:
+/// a sidebar's or inspector's pane is its own tree, and the window's own
+/// handlers live on the content pane's root.
 fn chain(window: &NSWindow) -> Vec<Rc<Meta>> {
     let mut start = None;
     let mut view: Option<Retained<NSView>> = window.firstResponder().and_then(|r| r.downcast::<NSView>().ok());
@@ -127,11 +129,15 @@ fn chain(window: &NSWindow) -> Vec<Rc<Meta>> {
         // SAFETY: reading the view hierarchy on the main thread.
         view = unsafe { v.superview() };
     }
+    let root = crate::root_meta(window);
     let mut out = Vec::new();
-    let mut cur = start.or_else(|| crate::root_meta(window));
+    let mut cur = start.or_else(|| root.clone());
     while let Some(m) = cur {
         cur = m.parent();
         out.push(m);
+    }
+    if let Some(root) = root.filter(|r| !out.iter().any(|m| Rc::ptr_eq(m, r))) {
+        out.push(root);
     }
     out
 }

@@ -6,6 +6,7 @@ tooltips) and the full set of charts. The `components` example is a trip
 budget that uses all of them:
 
 ```bash
+git clone https://github.com/lhassa8/ferrokit && cd ferrokit
 cargo run -p ferrokit --example components
 ```
 

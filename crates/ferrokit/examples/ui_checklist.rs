@@ -352,9 +352,11 @@ fn view_menu() -> Vec<MenuItem> {
 const RENAME_ITEM: ferrokit::Command = ferrokit::Command::new("rename-item");
 const REFRESH_LIST: ferrokit::Command = ferrokit::Command::new("refresh-list");
 const SHOW_HELP: ferrokit::Command = ferrokit::Command::new("show-help");
+const SHELL_ADD: ferrokit::Command = ferrokit::Command::new("shell-add");
 
 thread_local! {
     static HELP_SHOWN: Cell<u32> = const { Cell::new(0) };
+    static SHELL_ADDS: Cell<u32> = const { Cell::new(0) };
 }
 
 /// Commands resolve from the focus outwards: the focused subtree's handler,
@@ -718,6 +720,30 @@ fn canvas_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         format!("click → {:?}; VoiceOver: {role:?} {label:?}", clicks.borrow()),
     );
     ferrokit::close_window(&w);
+    // A pie with an empty slice in the middle: the others keep their colours
+    // and their indices (an empty slice used to shift both).
+    let pick = Signal::new(Some(2usize));
+    let pw = open(Window::new("Pie").size(320.0, 200.0).view(
+        ferrokit::pie_chart(|| vec![("A".to_string(), 1.0), ("B".to_string(), 0.0), ("C".to_string(), 2.0)]).colors(&[Color::Red, Color::Green, Color::Blue]).selection(&pick),
+    ));
+    let mut found = Vec::new();
+    fn walk(v: &NSView, out: &mut Vec<Retained<NSView>>) {
+        for s in v.subviews().iter() {
+            out.push(s.clone());
+            walk(&s, out);
+        }
+    }
+    walk(&pw.contentView().unwrap(), &mut found);
+    let pie = found.into_iter().find(|v| canvas_drawing(v).is_some()).unwrap();
+    let ops = canvas_drawing(&pie).unwrap();
+    let fills: Vec<&String> = ops.iter().filter(|o| o.starts_with("fill path")).collect();
+    let said = pie.accessibilityLabel().map(|l| l.to_string()).unwrap_or_default();
+    check(
+        "chart-pie-empty-slice",
+        fills.len() == 2 && fills[0].ends_with("Red") && fills[1].ends_with("Blue") && said.contains("selected C"),
+        format!("slices {fills:?}; VoiceOver {said:?}"),
+    );
+    ferrokit::close_window(&pw);
     later(move || clipboard_drop_checks(events.clone()));
 }
 
@@ -2579,11 +2605,12 @@ fn shell_window(title: &str, sidebar_hidden: Signal<bool>, inspector_hidden: Sig
     Window::new(title)
         .size(900.0, 420.0)
         .toolbar(vec![toolbar_button("add", "Add", "plus", || {})])
-        .sidebar(vstack((text("Library"), text("Recent"))).padding(12.0))
+        .sidebar(vstack((text("Library"), text("Recent"), text_field(&Signal::new(String::new())).accessibility_label("Find in library"))).padding(12.0))
         .sidebar_hidden(&sidebar_hidden)
         .view(vstack((text("Shell content"), text("Rows go here"))).padding(12.0))
-        .inspector(vstack((text("Inspector"),)).padding(12.0))
+        .inspector(vstack((text("Inspector"), text_field(&Signal::new(String::new())).accessibility_label("Note"))).padding(12.0))
         .inspector_hidden(&inspector_hidden)
+        .on_command(SHELL_ADD, || SHELL_ADDS.set(SHELL_ADDS.get() + 1))
 }
 
 /// C15: the shell is AppKit's split view controller (a sidebar item, the
@@ -2612,6 +2639,20 @@ fn shell_kind_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                 && ids.last().map(String::as_str) == Some("NSToolbarToggleInspectorItem")
                 && below("Shell content") && below("Library") && below("Inspector"),
             format!("items {behaviours:?}; toolbar {ids:?}; below the title bar: content {}, sidebar {}, inspector {}", below("Shell content"), below("Library"), below("Inspector")),
+        );
+        // The window's commands reach it from the sidebar's and the
+        // inspector's focus too (each pane is its own tree).
+        // (The editable fields: the sidebar's, then the inspector's.)
+        let fields: Vec<_> = all_views(&w2.contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<NSTextField>().ok()).filter(|f| f.isEditable()).collect();
+        let mut reached = Vec::new();
+        for f in &fields {
+            let focused = w2.makeFirstResponder(Some(f));
+            reached.push((focused, ferrokit::can_perform_in(Some(&w2), SHELL_ADD), ferrokit::perform_in(Some(&w2), SHELL_ADD)));
+        }
+        check(
+            "shell-commands",
+            reached.len() == 2 && reached.iter().all(|&(f, can, ran)| f && can && ran) && SHELL_ADDS.get() == 2,
+            format!("(focused, can, ran) from sidebar and inspector {reached:?}; handler ran {}", SHELL_ADDS.get()),
         );
         if let Ok(dir) = std::env::var("SNAP") {
             snapshot_windows(&dir);
@@ -4130,7 +4171,43 @@ fn table_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                 editing && name == "Renamed" && shown.as_deref() == Some("Renamed") && t.edits.get_untracked() == 1,
                 format!("editor opened: {editing}; row {edit_row} name {name:?}; cell shows {shown:?}"),
             );
-            table_teardown(events3.clone());
+            // An edit the focus leaves (a click elsewhere) is kept; one
+            // cancelled with Escape isn't an edit.
+            let tv = t.model.table_view();
+            let name_col = tv.columnWithIdentifier(&NSString::from_str("name"));
+            let type_into = |view_row: isize, text: &str| {
+                tv.editColumn_row_withEvent_select(name_col, view_row, None, true);
+                let cell = tv.viewAtColumn_row_makeIfNecessary(name_col, view_row, true).and_then(|v| v.downcast::<NSTextField>().ok()).unwrap();
+                let ed = cell.currentEditor().and_then(|e| e.downcast::<objc2_app_kit::NSTextView>().ok());
+                if let Some(ed) = &ed {
+                    unsafe { ed.selectAll(None) };
+                    unsafe { ed.insertText_replacementRange(&NSString::from_str(text), objc2_foundation::NSRange::new(usize::MAX >> 1, 0)) };
+                }
+                ed
+            };
+            let (left_row, cancel_row) = (t.model.row_at(2).unwrap(), t.model.row_at(3).unwrap());
+            let cancel_name = t.model.rows()[cancel_row].name.clone();
+            let window = tv.window().unwrap();
+            let left = type_into(2, "Clicked away").is_some();
+            window.makeFirstResponder(Some(&tv));
+            let cancelled = type_into(3, "Not kept");
+            if let Some(ed) = &cancelled {
+                // What Escape does: the field editor's cancelOperation: command.
+                let _: () = unsafe { objc2::msg_send![&**ed, doCommandBySelector: objc2::sel!(cancelOperation:)] };
+            }
+            window.makeFirstResponder(Some(&tv));
+            let t4 = t.clone();
+            let events4 = events3.clone();
+            after_events(move || {
+                let t = t4.clone();
+                let (kept, unchanged) = (t.model.rows()[left_row].name.clone(), t.model.rows()[cancel_row].name.clone());
+                check(
+                    "table-edit-focus",
+                    left && cancelled.is_some() && kept == "Clicked away" && unchanged == cancel_name && t.edits.get_untracked() == 2,
+                    format!("focus left: row {left_row} {kept:?}; Escape: row {cancel_row} {unchanged:?} (was {cancel_name:?}); edits {}", t.edits.get_untracked()),
+                );
+                table_teardown(events4.clone());
+            });
         });
     });
 }
@@ -4300,6 +4377,9 @@ fn outline_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     batch(|| o.place.set(Some(22)));
     let row_of_network = side.selectedRow();
     check("sidebar-selection", picked == Some(12) && row_of_network == 5, format!("row 2 → {picked:?}; Network → row {row_of_network}"));
+    // VoiceOver reads a sidebar row by its text (the static text's value).
+    let names: Vec<String> = ferrokit::testing::ax_elements(&w).into_iter().filter(|e| e.role == "AXStaticText").map(|e| e.name).collect();
+    check("sidebar-ax-names", ["Favourites", "Documents", "Network"].iter().all(|n| names.iter().any(|m| m == n)), format!("static text read: {names:?}"));
 
     // Outline: collapsed at first; expanding a project shows its files.
     let rows0 = tree.numberOfRows();
@@ -4769,7 +4849,35 @@ fn view_sheet_check(events: Rc<RefCell<Vec<AppEvent>>>) {
                 live_nodes()
             ),
         );
-        panel_checks(events.clone());
+        // Escape presses a sheet's cancel button.
+        let cancelled = Signal::new(false);
+        let handle: Rc<RefCell<Option<SheetHandle>>> = Rc::default();
+        let h2 = handle.clone();
+        let content = Window::new("Ask").size(300.0, 90.0).view(
+            hstack((spacer(), button("Cancel", move || {
+                cancelled.set(true);
+                if let Some(h) = h2.borrow().as_ref() {
+                    h.close();
+                }
+            }).cancel_action(), button("OK", || {}).default_action()))
+            .padding(16.0),
+        );
+        *handle.borrow_mut() = Some(sheet(&w, content, || {}));
+        let sheet_win = w.attachedSheet().unwrap();
+        let escape = objc2_app_kit::NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+            objc2_app_kit::NSEventType::KeyDown, objc2_foundation::NSPoint::new(0.0, 0.0), NSEventModifierFlags::empty(), 0.0, sheet_win.windowNumber(), None, &NSString::from_str("\u{1b}"), &NSString::from_str("\u{1b}"), false, 53,
+        ).unwrap();
+        let handled = sheet_win.performKeyEquivalent(&escape);
+        let events = events.clone();
+        after_events(move || {
+            let w = dialogs_window();
+            check(
+                "sheet-escape",
+                handled && cancelled.get_untracked() && w.attachedSheet().is_none(),
+                format!("Escape handled {handled}; Cancel pressed {}; sheet closed {}", cancelled.get_untracked(), w.attachedSheet().is_none()),
+            );
+            panel_checks(events.clone());
+        });
     });
 }
 

@@ -375,6 +375,7 @@ pub struct Button {
     action: Box<dyn Fn()>,
     disabled: Option<crate::Value<bool>>,
     default_action: bool,
+    cancel_action: bool,
     symbol: Option<crate::Value<String>>,
     style: ButtonStyle,
     size: ControlSize,
@@ -401,6 +402,13 @@ impl Button {
     /// Makes this the window's default button: blue, and Return presses it.
     pub fn default_action(mut self) -> Self {
         self.default_action = true;
+        self
+    }
+
+    /// Makes this the window's cancel button: Escape presses it, as in a
+    /// sheet's Cancel.
+    pub fn cancel_action(mut self) -> Self {
+        self.cancel_action = true;
         self
     }
 
@@ -434,6 +442,8 @@ impl View for Button {
         };
         if self.default_action {
             button.setKeyEquivalent(&NSString::from_str("\r"));
+        } else if self.cancel_action {
+            button.setKeyEquivalent(&NSString::from_str("\u{1b}"));
         }
         self.style.apply(&button);
         button.setControlSize(self.size.ns());
@@ -475,6 +485,7 @@ pub fn button(title: impl crate::IntoValue<String>, action: impl Fn() + 'static)
         action: Box::new(action),
         disabled: None,
         default_action: false,
+        cancel_action: false,
         symbol: None,
         style: ButtonStyle::Standard,
         size: ControlSize::Regular,

@@ -153,8 +153,13 @@ fn packed_bar(state: State) -> impl View {
     ))
 }
 
+#[path = "shared/tour.rs"]
+mod tour;
+
 fn main() {
     let checks = std::env::var("CHECK").is_ok_and(|v| v == "all");
+    // `DEMO=1`: a fast tour, for recording.
+    let demo = std::env::var("DEMO").is_ok();
     App::new("Motion")
         .window(Window::new("Packing").size(520.0, 520.0).view(dynamic(move || {
             let items = [("Boots", "shoeprints.fill"), ("Water bottle", "waterbottle.fill"), ("Sunscreen", "sun.max.fill")];
@@ -166,7 +171,7 @@ fn main() {
                 progress: Signal::new(0.0),
                 shake: Signal::new(0.0),
             };
-            if checks {
+            if checks || demo {
                 self_checks::STATE.with(|s| s.set(Some(state)));
             }
             screen(state)
@@ -174,9 +179,57 @@ fn main() {
         .on_launch(move || {
             if checks {
                 spawn(|| std::thread::sleep(std::time::Duration::from_millis(500)), |()| self_checks::run());
+            } else if demo {
+                spawn(|| std::thread::sleep(std::time::Duration::from_millis(300)), |()| demo::run());
             }
         })
         .run();
+}
+
+mod demo {
+    use ferrokit::*;
+
+    use super::tour::{after, at, place, play, press};
+
+    pub fn run() {
+        let Some(state) = super::self_checks::STATE.with(|s| s.get()) else { return };
+        let Some(w) = windows().into_iter().find(|w| w.title().to_string() == "Packing") else { return };
+        set_appearance(Appearance::Light);
+        place(&w, 560.0, 500.0);
+        // Packs (or unpacks) an item, as a click on its row does.
+        let pack = move |id: u32| {
+            at(420, move || {
+                animated(|| {
+                    state.packed.update(|p| match p.iter().position(|x| *x == id) {
+                        Some(i) => {
+                            p.remove(i);
+                        }
+                        None => p.push(id),
+                    })
+                })
+            })
+        };
+        let mut steps = vec![at(1200, || {})];
+        for _ in 0..4 {
+            steps.push(after(450, press("Add")));
+        }
+        for id in [0, 101, 2, 103, 1] {
+            steps.push(pack(id));
+        }
+        steps.push(after(700, press("Details")));
+        steps.push(after(1300, press("Remove packed")));
+        steps.push(after(1200, press("Details")));
+        steps.push(after(900, press("Remove packed")));
+        steps.push(at(900, || set_appearance(Appearance::Dark)));
+        steps.push(after(500, press("Add")));
+        steps.push(after(450, press("Add")));
+        for id in [100, 102] {
+            steps.push(pack(id));
+        }
+        steps.push(after(600, press("Details")));
+        steps.push(at(1400, || {}));
+        play(steps);
+    }
 }
 
 mod self_checks {

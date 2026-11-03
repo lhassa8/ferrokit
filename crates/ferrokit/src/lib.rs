@@ -30,14 +30,28 @@
 //!   [`slider`], [`stepper`], [`progress`], [`image`], [`button`].
 //! - **Deep widgets:** [`table`] (millions of rows, sorting, editing, drag
 //!   and drop), [`outline`] and [`sidebar`], [`text_editor`].
-//! - **App shell:** menus ([`App::menu`]), toolbars, [`split`] views,
-//!   [`sheet`]s, [`alert`]s, open and save panels, a Settings window,
+//! - **App shell:** menus ([`App::menu`]), toolbars, [`split`] views and
+//!   [`Window::sidebar`]/[`Window::inspector`], [`sheet`]s, [`alert`]s,
+//!   popovers ([`ViewExt::popover`]), open and save panels, document apps, a Settings window,
 //!   window restoration, undo ([`undoable`]), [`on_frame`] for live data.
-//! - **Testing:** [`testing`] (self-checks, accessibility audits, window
-//!   captures).
+//! - **Forms and more controls:** [`form`], [`date_picker`], [`tabs`],
+//!   [`gauge`], token fields, path controls, ratings.
+//! - **Look:** text styles, cards and shadows ([`ViewExt::font`],
+//!   [`ViewExt::background`], [`ViewExt::corner_radius`],
+//!   [`ViewExt::shadow`]), materials and Liquid Glass ([`ViewExt::material`],
+//!   [`ViewExt::glass`]), motion ([`animated`], [`ViewExt::transition`],
+//!   [`ViewExt::on_hover`]).
+//! - **Charts and drawing:** [`bar_chart`], [`line_chart`], [`area_chart`],
+//!   [`scatter_chart`], [`pie_chart`], and a [`canvas`].
+//! - **Web, PDF, video and services:** [`web_view`], [`pdf_view`],
+//!   [`video_player`], [`share_button`], [`print`](fn@print), [`notify`].
+//! - **Testing:** [`testing`] (self-checks, real input, accessibility
+//!   audits, window captures, soaks).
 //!
-//! The guide (`crates/ferrokit/guide`) walks through all of it; its
-//! examples are compiled as doc tests. macOS 15 or later. Main thread only.
+//! **Start with the [guide], 13 chapters whose examples are compiled as doc
+//! tests.** `API.md`, in the crate's source and
+//! [on GitHub](https://github.com/lhassa8/ferrokit/blob/main/crates/ferrokit/API.md),
+//! lists every public item on one page. macOS 15 or later. Main thread only.
 
 #![warn(missing_docs)]
 
@@ -459,7 +473,8 @@ impl Window {
     }
 
     /// Handles `command` while this window is focused and nothing nearer the
-    /// focus handles it (see [`Command`]).
+    /// focus handles it (see [`Command`]), wherever the focus is: in the
+    /// content, the sidebar or the inspector.
     pub fn on_command(mut self, command: Command, action: impl Fn() + 'static) -> Self {
         self.responds.commands.push((command, commands::Handler::new(action, None)));
         self
@@ -1447,35 +1462,56 @@ pub fn spawn<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static, then:
     });
 }
 
-/// The guide's chapters, compiled as doc tests so their examples stay right.
-#[cfg(doctest)]
-mod guide {
+/// The guide: how to build an app with Ferrokit, chapter by chapter. Its
+/// examples are compiled as doc tests, so they match the API. Start with
+/// [chapter 1](guide::ch01_getting_started); [`API.md`](https://github.com/lhassa8/ferrokit/blob/main/crates/ferrokit/API.md)
+/// lists every public item on one page.
+///
+/// - [Getting started](guide::ch01_getting_started): an app, a window, a button.
+/// - [State](guide::ch02_state): signals, memos, effects, batching, background work.
+/// - [Views and layout](guide::ch03_views_and_layout): stacks, grids, modifiers, lists and identity.
+/// - [Controls and forms](guide::ch04_controls_and_forms): fields, toggles, pickers, sliders, and naming them for VoiceOver.
+/// - [Tables, outlines and editors](guide::ch05_tables_outlines_editors): the deep widgets.
+/// - [The app shell](guide::ch06_app_shell): menus, commands, toolbars, split views, sheets, panels, Settings, restoration and undo.
+/// - [Live data](guide::ch07_live_data): per-frame updates and growing tables.
+/// - [Testing and shipping](guide::ch08_testing_and_shipping): self-checks, accessibility audits, packaging and notarisation.
+/// - [Styling](guide::ch09_styling): text styles, colours, cards, shadows, symbols and pictures.
+/// - [Materials and windows](guide::ch10_materials_and_windows): sidebar and panel materials, Liquid Glass, title bar and toolbar styles.
+/// - [Motion](guide::ch11_motion): animated changes, transitions, hover and click, and Reduce Motion.
+/// - [More controls and charts](guide::ch12_more_controls_and_charts): tabs, radio groups, gauges, token fields, tooltips, and charts.
+/// - [Web, PDF, video and services](guide::ch13_web_pdf_video_and_services): web pages, PDFs, video, Share, printing, notifications, menu-bar extras.
+#[cfg(any(doc, doctest))]
+pub mod guide {
+    // The chapters' links name the crate's items.
+    #[allow(unused_imports)]
+    use crate::*;
+    #[cfg(doctest)]
     #[doc = include_str!("../README.md")]
     mod readme {}
     #[doc = include_str!("../guide/01-getting-started.md")]
-    mod getting_started {}
+    pub mod ch01_getting_started {}
     #[doc = include_str!("../guide/02-state.md")]
-    mod state {}
+    pub mod ch02_state {}
     #[doc = include_str!("../guide/03-views-and-layout.md")]
-    mod views_and_layout {}
+    pub mod ch03_views_and_layout {}
     #[doc = include_str!("../guide/04-controls-and-forms.md")]
-    mod controls_and_forms {}
+    pub mod ch04_controls_and_forms {}
     #[doc = include_str!("../guide/05-tables-outlines-editors.md")]
-    mod tables_outlines_editors {}
+    pub mod ch05_tables_outlines_editors {}
     #[doc = include_str!("../guide/06-app-shell.md")]
-    mod app_shell {}
+    pub mod ch06_app_shell {}
     #[doc = include_str!("../guide/07-live-data.md")]
-    mod live_data {}
+    pub mod ch07_live_data {}
     #[doc = include_str!("../guide/08-testing-and-shipping.md")]
-    mod testing_and_shipping {}
+    pub mod ch08_testing_and_shipping {}
     #[doc = include_str!("../guide/09-styling.md")]
-    mod styling {}
+    pub mod ch09_styling {}
     #[doc = include_str!("../guide/10-materials-and-windows.md")]
-    mod materials {}
+    pub mod ch10_materials_and_windows {}
     #[doc = include_str!("../guide/11-motion.md")]
-    mod motion {}
+    pub mod ch11_motion {}
     #[doc = include_str!("../guide/12-more-controls-and-charts.md")]
-    mod components {}
+    pub mod ch12_more_controls_and_charts {}
     #[doc = include_str!("../guide/13-web-pdf-video-and-services.md")]
-    mod media {}
+    pub mod ch13_web_pdf_video_and_services {}
 }

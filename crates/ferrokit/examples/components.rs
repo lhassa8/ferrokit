@@ -151,8 +151,13 @@ fn settings(s: Settings) -> impl View {
     .padding(8.0)
 }
 
+#[path = "shared/tour.rs"]
+mod tour;
+
 fn main() {
     let checks = std::env::var("CHECK").is_ok_and(|v| v == "all");
+    // `DEMO=1`: a fast tour of the charts, for recording.
+    let demo = std::env::var("DEMO").is_ok();
     let page = Signal::new(0);
     let pref = Signal::new("general");
     let s = Settings {
@@ -194,9 +199,54 @@ fn main() {
         .on_launch(move || {
             if checks {
                 spawn(|| std::thread::sleep(std::time::Duration::from_millis(500)), |()| self_checks::run());
+            } else if demo {
+                demo::run(page, s, k);
             }
         })
         .run();
+}
+
+mod demo {
+    use ferrokit::*;
+
+    use super::tour::{at, place, play};
+    use super::{Picks, Settings};
+
+    pub fn run(page: Signal<i32>, s: Settings, k: Picks) {
+        let Some(w) = windows().into_iter().find(|w| w.title().to_string() == "Trip budget") else { return };
+        set_appearance(Appearance::Light);
+        s.folder.set("/System/Library/Desktop Pictures".into());
+        place(&w, 980.0, 620.0);
+        let mut steps = vec![at(1200, || {})];
+        // The month bars and the spending ring, picked in turn.
+        for m in 0..4 {
+            steps.push(at(380, move || k.month.set(Some(m))));
+        }
+        for i in 0..4 {
+            steps.push(at(330, move || k.share.set(Some(i))));
+        }
+        steps.push(at(500, move || {
+            k.month.set(None);
+            k.share.set(None);
+            animated(|| page.set(1));
+        }));
+        steps.push(at(900, move || k.day.set(Some(super::START + 44.0 * super::DAY))));
+        steps.push(at(900, move || animated(|| page.set(2))));
+        steps.push(at(1300, move || animated(|| page.set(4))));
+        steps.push(at(1600, move || animated(|| page.set(3))));
+        steps.push(at(700, move || animate(&s.storage, 88.0, Animation::bouncy())));
+        steps.push(at(500, move || s.stars.set(5.0)));
+        steps.push(at(500, move || s.tags.update(|t| t.push("Fjords".into()))));
+        // The same in Dark Mode.
+        steps.push(at(900, || set_appearance(Appearance::Dark)));
+        steps.push(at(700, move || animated(|| page.set(0))));
+        for m in [2, 0, 3] {
+            steps.push(at(380, move || k.month.set(Some(m))));
+        }
+        steps.push(at(500, move || animated(|| page.set(4))));
+        steps.push(at(1400, || {}));
+        play(steps);
+    }
 }
 
 mod self_checks {

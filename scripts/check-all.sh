@@ -136,6 +136,7 @@ if [ -n "$lint" ]; then
   step clippy cargo clippy --release --workspace --examples -- -D warnings
   step tests cargo test --workspace --release
   step docs env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+  step api_md scripts/api-md.sh --check
 fi
 
 ex=target/release/examples

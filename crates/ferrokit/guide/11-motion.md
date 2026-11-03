@@ -8,6 +8,7 @@ Animation, as AppKit's own views do, and respects Reduce Motion by itself.
 The `motion` example is a packing list built this way:
 
 ```bash
+git clone https://github.com/lhassa8/ferrokit && cd ferrokit
 cargo run -p ferrokit --example motion
 ```
 

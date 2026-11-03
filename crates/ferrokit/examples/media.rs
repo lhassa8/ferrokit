@@ -155,8 +155,13 @@ fn clip_tab(s: &State) -> impl View {
     .spacing(8.0)
 }
 
+#[path = "shared/tour.rs"]
+mod tour;
+
 fn main() {
     let checks = std::env::var("CHECK").is_ok_and(|v| v == "all");
+    // `DEMO=1`: a fast tour, for recording (`DEMO_CLIP=<movie>` to play one).
+    let demo = std::env::var("DEMO").is_ok();
     let s = State {
         tab: Signal::new(0),
         page: WebPage::new(),
@@ -202,6 +207,7 @@ fn main() {
             menu_separator(),
             menu_item("Quit Briefing", quit),
         ]));
+    let tour = demo.then_some(demo::Tour { tab: s.tab, pdf_page: s.pdf_page, find: s.find, clip: s.clip, playing: s.playing, muted: s.muted });
     if checks {
         ferrokit::testing::hold_notifications();
         // A panel extra too, for its check.
@@ -211,6 +217,8 @@ fn main() {
     app.on_launch(move || {
         if checks {
             spawn(|| std::thread::sleep(std::time::Duration::from_millis(600)), |()| self_checks::run());
+        } else if let Some(t) = tour {
+            spawn(|| std::thread::sleep(std::time::Duration::from_millis(500)), move |()| demo::run(t));
         }
     })
     .run();
@@ -579,4 +587,44 @@ mod self_checks {
         out
     }
 
+}
+
+mod demo {
+    use ferrokit::*;
+
+    use super::tour::{at, place, play};
+
+    pub struct Tour {
+        pub tab: Signal<i32>,
+                pub pdf_page: Signal<usize>,
+        pub find: Signal<String>,
+        pub clip: Signal<Option<std::path::PathBuf>>,
+        pub playing: Signal<bool>,
+        pub muted: Signal<bool>,
+    }
+
+    pub fn run(t: Tour) {
+        let Some(w) = windows().into_iter().find(|w| w.title().to_string() == "Briefing") else { return };
+        set_appearance(Appearance::Light);
+        place(&w, 900.0, 700.0);
+        let Tour { tab, pdf_page, find, clip, playing, muted } = t;
+        // The guide, a web page; then the report, a PDF: its pages, then a word found.
+        let mut steps = vec![at(2200, move || animated(|| tab.set(1)))];
+        steps.push(at(1000, move || pdf_page.set(1)));
+        steps.push(at(900, move || pdf_page.set(0)));
+        steps.push(at(700, move || find.set("ferry".into())));
+        // The clip: a movie playing.
+        steps.push(at(1500, move || {
+            find.set(String::new());
+            if let Some(movie) = std::env::var_os("DEMO_CLIP") {
+                muted.set(true);
+                clip.set(Some(movie.into()));
+            }
+            animated(|| tab.set(2));
+        }));
+        steps.push(at(600, move || playing.set(true)));
+        steps.push(at(4000, move || playing.set(false)));
+        steps.push(at(800, || {}));
+        play(steps);
+    }
 }

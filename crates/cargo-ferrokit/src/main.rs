@@ -307,6 +307,9 @@ fn new(args: &[String]) -> Result<()> {
     write("Cargo.toml", fill(&manifest).trim_end().to_string() + "\n")?;
     write("src/main.rs", fill(main))?;
     write(".gitignore", "/target\n".into())?;
+    // For AI coding assistants: how a Ferrokit app is written, and its traps.
+    write("AGENTS.md", fill(include_str!("../templates/AGENTS.md")).replace("{{version}}", FERROKIT_VERSION))?;
+    write("CLAUDE.md", "@AGENTS.md\n".into())?;
     println!("Made {} ({}) in {}", display, if document { "a document app" } else { "an app" }, path.display());
     println!("Next:\n    cd {}\n    cargo ferrokit run      # run it\n    cargo ferrokit check    # lint, test and run its self-checks\n    cargo ferrokit bundle   # make {display}.app", path.display());
     Ok(())
@@ -565,46 +568,81 @@ fn check(args: &[String]) -> Result<()> {
 }
 
 /// Runs the app with CHECK=all and reads its `[check] name PASS|FAIL note`
-/// lines, until it exits or `timeout`.
+/// lines (a name may have spaces), until it exits or `timeout`. A caught
+/// panic or exception followed by 15 s without a check line ends it early:
+/// the app goes on after one, so it would otherwise wait out the timeout.
 fn self_checks(exe: &Path, timeout: Duration) -> std::result::Result<String, String> {
+    #[derive(Default)]
+    struct Seen {
+        pass: usize,
+        fail: Vec<String>,
+        done: bool,
+        failure: Option<String>,
+        last: Option<Instant>,
+    }
     let mut child = Command::new(exe).env("CHECK", "all").stderr(Stdio::piped()).stdout(Stdio::null()).spawn().map_err(|e| e.to_string())?;
     let stderr = child.stderr.take().expect("piped");
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Seen::default()));
+    let s2 = seen.clone();
     let reader = std::thread::spawn(move || {
-        let (mut pass, mut fail, mut done) = (0, Vec::new(), false);
         for line in BufReader::new(stderr).lines().map_while(std::result::Result::ok) {
+            let mut s = s2.lock().unwrap();
+            if line.starts_with("ferrokit: a panic in") || line.starts_with("ferrokit: an Objective-C exception in") || line.contains("panicked at") {
+                eprintln!("    {line}");
+                // Ferrokit's own line says where; the panic's own line only
+                // stands in until it comes.
+                if line.starts_with("ferrokit:") || s.failure.is_none() {
+                    s.failure = Some(line);
+                }
+                s.last = Some(Instant::now());
+                continue;
+            }
             let Some(rest) = line.strip_prefix("[check] ") else { continue };
             eprintln!("    {line}");
+            s.last = Some(Instant::now());
             if rest.starts_with("done") {
-                done = true;
-            } else if rest.split_whitespace().nth(1) == Some("PASS") {
-                pass += 1;
-            } else if rest.split_whitespace().nth(1) == Some("FAIL") {
-                fail.push(rest.split_whitespace().next().unwrap_or_default().to_string());
+                s.done = true;
+                continue;
+            }
+            let words: Vec<&str> = rest.split_whitespace().collect();
+            match words.iter().position(|w| *w == "PASS" || *w == "FAIL") {
+                Some(i) if words[i] == "PASS" => s.pass += 1,
+                Some(i) => s.fail.push(words[..i].join(" ")),
+                None => {}
             }
         }
-        (pass, fail, done)
     });
     let start = Instant::now();
+    let mut stalled = false;
     let status = loop {
         if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
             break Some(status);
         }
-        if start.elapsed() > timeout {
+        let quiet = {
+            let s = seen.lock().unwrap();
+            s.failure.is_some() && s.last.is_some_and(|t| t.elapsed() > Duration::from_secs(15))
+        };
+        if quiet || start.elapsed() > timeout {
+            stalled = quiet;
             let _ = child.kill();
             let _ = child.wait();
             break None;
         }
         std::thread::sleep(Duration::from_millis(100));
     };
-    let (pass, fail, done) = reader.join().unwrap_or_default();
+    let _ = reader.join();
+    let s = std::mem::take(&mut *seen.lock().unwrap());
+    let (pass, fail) = (s.pass, s.fail);
+    let failure = s.failure.map(|f| format!("; it hit {f}")).unwrap_or_default();
     match status {
+        None if stalled => Err(format!("stopped reporting checks after a failure ({pass} passed, {} failed so far){failure}", fail.len())),
         None if pass + fail.len() == 0 => Err(format!(
-            "the app ran {}s without reporting checks: run them when CHECK=all and exit (see the template's self_checks)",
+            "the app ran {}s without reporting checks: run them when CHECK=all and exit (see the template's self_checks){failure}",
             timeout.as_secs()
         )),
-        None => Err(format!("timed out after {}s ({pass} passed so far)", timeout.as_secs())),
-        Some(s) if !fail.is_empty() => Err(format!("{} of {} failed: {} ({s})", fail.len(), pass + fail.len(), fail.join(", "))),
-        Some(s) if !s.success() => Err(format!("{pass} passed, but the app exited with {s}{}", if done { "" } else { " before finishing" })),
+        None => Err(format!("timed out after {}s ({pass} passed so far){failure}", timeout.as_secs())),
+        Some(st) if !fail.is_empty() => Err(format!("{} of {} failed: {} ({st})", fail.len(), pass + fail.len(), fail.join(", "))),
+        Some(st) if !st.success() => Err(format!("{pass} passed, but the app exited with {st}{}{failure}", if s.done { "" } else { " before finishing" })),
         Some(_) => Ok(format!("{pass} passed")),
     }
 }

@@ -37,6 +37,36 @@ fn main() {
 | `footprint_mb`, `peak_footprint_mb` | memory, as Activity Monitor shows it |
 | `is_misspelled`, `context_menu_for_word` | the text system |
 
+`cargo ferrokit check` runs the app with `CHECK=all` and counts the
+`[check]` lines (a name may have several words); it shows only those lines,
+so run the bundled app with `CHECK=all` yourself to see everything it
+prints. Things that catch people
+out, usually once:
+
+- **One turn to act, the next to look.** A `spawn` or `later` callback runs
+  inside a [`batch`](crate::batch), so effects and table updates happen
+  after it returns: change something in one step, check it in the next.
+- **Undo steps.** AppKit closes an event's undo group only when the app
+  handles an event, so in an unattended run the groups stay open across
+  turns and one ⌘Z can undo several changes. Make each step its own group:
+  `undo.setGroupsByEvent(false)` on the window's `undoManager()`, then
+  `beginUndoGrouping()` and `endUndoGrouping()` around each step (the
+  `AGENTS.md` that `cargo ferrokit new` writes has the helper).
+- **Selecting from code is silent.** `TableModel::select` doesn't call
+  `on_select`, and `set_rows` clears the selection.
+- **The real settings.** Checks run against the app's own user defaults, so
+  [`stored`](crate::stored) values from the last run are still there:
+  reset the ones a check depends on at its start.
+- **Menu items:** `testing::menu_key` presses a menu's shortcut, including
+  your own [`menu_command`](crate::menu_command)s; `testing::shortcut`
+  sends an action along the responder chain (Undo, Copy) and doesn't reach
+  menu items.
+- **AppKit types in checks:** looking at a native view directly needs
+  `objc2`, `objc2-foundation` and `objc2-app-kit` (0.6, 0.3 and 0.3) in
+  your `Cargo.toml`, with the AppKit features you use.
+- **A panic doesn't end the app.** It's caught and reported (see below), so
+  `check` stops 15 s after one if no more checks arrive.
+
 Unattended runs see AppKit's real behaviour in most places. Two exceptions:
 clicks posted to a window that isn't active are ignored, so drive controls
 through their own entry points (as the helpers do); and mouse drags between
@@ -114,12 +144,9 @@ fn start(window: Retained<NSWindow>) {
 `SOAK=<minutes>` sets the length, `SOAK_SEED` the seed (printed at the
 start, so a run can be repeated) and `SOAK_MS` the time between actions.
 The app takes the front at the start and pauses while another app is in
-front. `scripts/soak.sh <example> [minutes] [seed]` runs a soak and
-summarises the log, crash reports and logged exceptions included. The
-`habits` and `sql_browser` examples have soaks.
-
-In this repository, `scripts/check-all.sh` builds everything, runs clippy,
-the unit and doc tests, and every app's suite, and prints a summary.
+front. The `habits` and `sql_browser` examples have soaks (in Ferrokit's
+repository, `scripts/soak.sh` runs one and summarises the log and crash
+reports).
 
 ## When something fails
 
@@ -177,8 +204,6 @@ cargo ferrokit bundle --zip
 - `bundle` makes a signed `My App.app` with the hardened runtime: ad hoc,
   or with `sign` from `Cargo.toml`. `--universal` builds for Apple silicon
   and Intel (after `rustup target add x86_64-apple-darwin`).
-
-In this repository, `scripts/package-app.sh` does the same for examples.
 
 ## The App Sandbox
 
