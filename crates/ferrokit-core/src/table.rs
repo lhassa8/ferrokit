@@ -783,6 +783,10 @@ impl Source {
                 let image = NSImageView::new(mtm);
                 image.setFrame(objc2_foundation::NSRect::new(objc2_foundation::NSPoint::new(2.0, 0.0), objc2_foundation::NSSize::new(16.0, 16.0)));
                 image.setAutoresizingMask(objc2_app_kit::NSAutoresizingMaskOptions::ViewMinYMargin | objc2_app_kit::NSAutoresizingMaskOptions::ViewMaxYMargin);
+                // The icon is decoration: the text names the row. (macOS 15
+                // and 26 otherwise read an unnamed image in every row.)
+                // SAFETY: NSAccessibility's setter taking a BOOL.
+                let () = unsafe { msg_send![&*image, setAccessibilityElement: false] };
                 let text = NSTextField::labelWithString(&NSString::new(), mtm);
                 text.setLineBreakMode(NSLineBreakMode::ByTruncatingTail);
                 text.setFrame(objc2_foundation::NSRect::new(objc2_foundation::NSPoint::new(22.0, 0.0), objc2_foundation::NSSize::new(100.0, 17.0)));
