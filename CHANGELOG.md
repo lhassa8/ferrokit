@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0 (unreleased): one name, Ferrokit
+## 0.4.0 (2026-11-02): one name, Ferrokit
 
 The crates take the project's name and share one version number, released together:
 
