@@ -38,15 +38,20 @@ fn main() {
 | `is_misspelled`, `context_menu_for_word` | the text system |
 
 `cargo ferrokit check` runs the app with `CHECK=all` and counts the
-`[check]` lines (a name may have several words). Things that catch people
+`[check]` lines (a name may have several words); it shows only those lines,
+so run the bundled app with `CHECK=all` yourself to see everything it
+prints. Things that catch people
 out, usually once:
 
 - **One turn to act, the next to look.** A `spawn` or `later` callback runs
   inside a [`batch`](crate::batch), so effects and table updates happen
   after it returns: change something in one step, check it in the next.
-- **Undo groups by event.** Everything registered in one turn of the run
-  loop is one undo step, so put a turn between two changes you'll undo
-  separately (a `spawn` that sleeps a few milliseconds).
+- **Undo steps.** AppKit closes an event's undo group only when the app
+  handles an event, so in an unattended run the groups stay open across
+  turns and one ⌘Z can undo several changes. Make each step its own group:
+  `undo.setGroupsByEvent(false)` on the window's `undoManager()`, then
+  `beginUndoGrouping()` and `endUndoGrouping()` around each step (the
+  `AGENTS.md` that `cargo ferrokit new` writes has the helper).
 - **Selecting from code is silent.** `TableModel::select` doesn't call
   `on_select`, and `set_rows` clears the selection.
 - **The real settings.** Checks run against the app's own user defaults, so

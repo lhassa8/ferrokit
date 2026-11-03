@@ -146,8 +146,8 @@ impl<T> Column<T> {
     }
 
     /// Lets the user edit this column's text or number cells (double-click,
-    /// or Return on the selected row's cell). Finishing an edit emits
-    /// [`TableEvent::Edit`]; the model doesn't change the row: apply it with
+    /// or Return on the selected row's cell). Finishing an edit (Return, Tab
+    /// or a click elsewhere; not Escape) emits [`TableEvent::Edit`]; the model doesn't change the row: apply it with
     /// [`TableModel::update_row`]. No effect on checkbox columns.
     pub fn editable(mut self, editable: bool) -> Self {
         self.editable = editable;
@@ -421,8 +421,15 @@ define_class!(
             let Some(table) = table_of(sender) else { return };
             let row = table.rowForView(sender);
             let Some(column) = sender.identifier().map(|i| i.to_string()) else { return };
+            let value = sender.stringValue().to_string();
+            // Editing ends with Return, Tab or the focus moving away; an
+            // edit cancelled with Escape (or left as it was) isn't one.
+            let shown = (row >= 0).then(|| data.cell(row as usize, &column)).flatten().map(|(kind, v)| display(kind, &v));
+            if shown.as_deref() == Some(value.as_str()) {
+                return;
+            }
             if let Some(row) = (row >= 0).then_some(row as usize).and_then(|r| data.model_row(r)) {
-                data.push(TableEvent::Edit { row, column, value: sender.stringValue().to_string() });
+                data.push(TableEvent::Edit { row, column, value });
             }
         }
 
@@ -739,9 +746,14 @@ impl Source {
                 if self.data().is_some_and(|d| d.editable(&ident.to_string())) {
                     // A borderless editable label: NSTableView starts editing
                     // on double-click (or a click on the selected row), and
-                    // the action fires when editing ends.
+                    // the action fires when editing ends: with Return, and
+                    // also with Tab or a click elsewhere (a label sends it
+                    // only on Return otherwise, and the edit was lost).
                     f.setEditable(true);
                     f.setSelectable(true);
+                    if let Some(cell) = f.cell() {
+                        cell.setSendsActionOnEndEditing(true);
+                    }
                     // SAFETY: target is this source, which outlives the table's cells.
                     unsafe {
                         f.setTarget(Some(self));

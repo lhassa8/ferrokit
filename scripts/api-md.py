@@ -161,6 +161,16 @@ def fields(crate, item):
     return [d["index"][str(f)] for f in ids if str(f) in d["index"] and public(d["index"][str(f)])]
 
 
+def entry_sig(crate, item):
+    """The signature; a function made by a macro is shown by its name."""
+    sig = signature(item)
+    name = item.get("name") or ""
+    if kind(item) == "function" and name and f"fn {name}" not in sig:
+        params = [p[0] for p in inner(item)["sig"]["inputs"]]
+        return f"fn {name}({', '.join(params)})"
+    return sig or name
+
+
 def entry(line, item):
     s = summary(item)
     return f"- `{line}`" + (f": {s}" if s else "")
@@ -184,7 +194,7 @@ def render_type(out, crate, item, name):
     for f in fields(crate, item):
         out.append(entry(signature(f), f))
     for m in methods(crate, item):
-        out.append(entry(signature(m), m))
+        out.append(entry(entry_sig(crate, m), m))
     out.append("")
 
 
@@ -213,7 +223,7 @@ def render_module(out, crate, module, title, depth, seen):
         out.append("")
         free = [(c, it, n) for c, it, n in groups[sec] if kind(it) in ("function", "constant", "static", "type_alias", "macro")]
         for c, it, n in free:
-            out.append(entry(signature(it) or n, it))
+            out.append(entry(entry_sig(c, it), it))
         if free:
             out.append("")
         for c, it, n in groups[sec]:
@@ -241,7 +251,17 @@ def main():
         "Conventions: views are built once and update from signals; models (`TableModel`, `TextModel`) are created once; row indices are model indices; text offsets are UTF-8 bytes; everything runs on the main thread.",
         "",
     ]
-    render_module(out, "ferrokit", root, "", 2, set())
+    body = []
+    render_module(body, "ferrokit", root, "", 2, set())
+    heads = [l[3:] for l in body if l.startswith("## ")]
+    anchor = lambda h: re.sub(r"[^a-z0-9 _-]", "", h.lower()).replace(" ", "-")
+    out += [
+        "**Where to look:** app, windows, menus and the shell → App and windows, `chrome`, `dialogs`, `commands`; state → `signal`, `resource`, `store`, `undo`; views and modifiers → `view`, `layout`, `appkit_views`, `controls`, `style`, `motion`; tables, outlines, text → `models`, `table`, `outline`, `text`; charts → `charts`, `canvas`; checks → Module `testing`.",
+        "",
+        "**Contents:** " + " · ".join(f"[{h.replace('`', '')}](#{anchor(h)})" for h in heads),
+        "",
+    ]
+    out += body
     text = "\n".join(out).rstrip() + "\n"
     text = re.sub(r"\n{3,}", "\n\n", text)
     OUT.write_text(text)

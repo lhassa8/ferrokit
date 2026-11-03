@@ -4,6 +4,10 @@ Every public item of `ferrokit`, and the `ferrokit-core` types it re-exports, on
 
 Conventions: views are built once and update from signals; models (`TableModel`, `TextModel`) are created once; row indices are model indices; text offsets are UTF-8 bytes; everything runs on the main thread.
 
+**Where to look:** app, windows, menus and the shell → App and windows, `chrome`, `dialogs`, `commands`; state → `signal`, `resource`, `store`, `undo`; views and modifiers → `view`, `layout`, `appkit_views`, `controls`, `style`, `motion`; tables, outlines, text → `models`, `table`, `outline`, `text`; charts → `charts`, `canvas`; checks → Module `testing`.
+
+**Contents:** [App and windows (lib)](#app-and-windows-lib) · [signal](#signal) · [view](#view) · [layout](#layout) · [appkit_views](#appkit_views) · [controls](#controls) · [models](#models) · [table](#table) · [outline](#outline) · [text](#text) · [commands](#commands) · [chrome](#chrome) · [dialogs](#dialogs) · [appearance](#appearance) · [frame](#frame) · [store](#store) · [undo](#undo) · [resource](#resource) · [documents](#documents) · [collection](#collection) · [syntax](#syntax) · [style](#style) · [surface](#surface) · [material](#material) · [widgets](#widgets) · [media](#media) · [browser](#browser) · [failure](#failure) · [filter](#filter) · [form](#form) · [quicklook](#quicklook) · [services](#services) · [status](#status) · [motion](#motion) · [popover](#popover) · [canvas](#canvas) · [value](#value) · [transfer](#transfer) · [l10n](#l10n) · [charts](#charts) · [host](#host) · [Module testing](#module-testing) · [Module input](#module-input) · [Module soak](#module-soak)
+
 ## App and windows (lib)
 
 - `pub fn right_to_left() -> bool`: Whether the app lays out right to left: its language is Arabic, Hebrew, Persian or Urdu (the app's localisation and the user's languages), or the `NSForceRightToLeftWritingDirection` default is set. Ferrokit mirrors its layout then, as AppKit mirrors its own.
@@ -350,6 +354,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn disabled(mut self, when: impl crate::IntoValue<bool>) -> Self`: Disables the button: `true`, or a closure reading signals (disabled while it returns true).
 - `pub fn symbol(mut self, name: impl crate::IntoValue<String>) -> Self`: An SF Symbol on the button, before its title, or alone when the title is empty (the title is then what VoiceOver reads; give it one with `accessibility_label`). A closure changes it with signals: Play and Pause, `move || if playing.get() { "pause.fill" } else { "play.fill" }`.
 - `pub fn default_action(mut self) -> Self`: Makes this the window's default button: blue, and Return presses it.
+- `pub fn cancel_action(mut self) -> Self`: Makes this the window's cancel button: Escape presses it, as in a sheet's Cancel.
 - `pub fn style(mut self, style: ButtonStyle) -> Self`: How it's drawn: borderless, inline, recessed, circular, toolbar, glass.
 - `pub fn control_size(mut self, size: ControlSize) -> Self`: Mini, small, regular or large.
 - `pub fn destructive(mut self) -> Self`: Marks the action as destructive (Delete, Discard): AppKit draws it in red where the style allows, and it's never pressed by Return.
@@ -580,7 +585,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn width(mut self, width: f64) -> Self`: Initial width in points (default 120).
 - `pub fn min_width(mut self, min_width: f64) -> Self`: Smallest width the user can drag the column to.
 - `pub fn decimals(mut self, decimals: usize) -> Self`: Decimal places shown for a number column (default 0).
-- `pub fn editable(mut self, editable: bool) -> Self`: Lets the user edit this column's text or number cells (double-click, or Return on the selected row's cell). Finishing an edit emits `TableEvent::Edit`; the model doesn't change the row: apply it with `TableModel::update_row`. No effect on checkbox columns.
+- `pub fn editable(mut self, editable: bool) -> Self`: Lets the user edit this column's text or number cells (double-click, or Return on the selected row's cell). Finishing an edit (Return, Tab or a click elsewhere; not Escape) emits `TableEvent::Edit`; the model doesn't change the row: apply it with `TableModel::update_row`. No effect on checkbox columns.
 - `pub fn sortable(mut self, sortable: bool) -> Self`: Whether a header click sorts by this column (default true).
 
 ### `ColumnState`
@@ -1032,17 +1037,17 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 
 `pub struct Font`: A font: one of the system's text styles (sized as the Mac sizes them: `body` is 13 pt, `large_title` 26 pt), or a custom one. Change its weight, size or slant with the methods.
 
-- `styles!`: The largest title (26 pt).
-- `styles!`: A window or section title (22 pt).
-- `styles!`: A smaller title (17 pt).
-- `styles!`: A smaller title still (15 pt).
-- `styles!`: Emphasised body text, as in a list's headings (13 pt, bold).
-- `styles!`: Secondary headings (11 pt).
-- `styles!`: Body text, what labels use (13 pt).
-- `styles!`: Text set apart from the body (12 pt).
-- `styles!`: Footnotes (10 pt).
-- `styles!`: Captions (10 pt).
-- `styles!`: Secondary captions (10 pt).
+- `fn large_title()`: The largest title (26 pt).
+- `fn title()`: A window or section title (22 pt).
+- `fn title2()`: A smaller title (17 pt).
+- `fn title3()`: A smaller title still (15 pt).
+- `fn headline()`: Emphasised body text, as in a list's headings (13 pt, bold).
+- `fn subheadline()`: Secondary headings (11 pt).
+- `fn body()`: Body text, what labels use (13 pt).
+- `fn callout()`: Text set apart from the body (12 pt).
+- `fn footnote()`: Footnotes (10 pt).
+- `fn caption()`: Captions (10 pt).
+- `fn caption2()`: Secondary captions (10 pt).
 - `pub fn system(size: f64) -> Font`: The system font at `size` points.
 - `pub fn monospaced(size: f64) -> Font`: The system's monospaced font (SF Mono) at `size` points.
 - `pub fn named(name: &str, size: f64) -> Font`: A font by family or PostScript name (`"Avenir Next"`, `"Georgia-Bold"`) at `size` points; the system font if it isn't installed.
@@ -1711,7 +1716,7 @@ Helpers for automated checks of apps built with ferrokit: the accessibility tree
 - `pub depth: usize`: Nesting depth under the window's content view.
 - `pub role: String`: `AXButton`, `AXTextField`…
 - `pub subrole: String`: `AXSwitch`, `AXSearchField`…
-- `pub name: String`: What VoiceOver reads as the name: the label, else the title, else a linked title element's value, else the placeholder.
+- `pub name: String`: What VoiceOver reads as the name: the label, else the title, else a linked title element's value, else the placeholder; for static text (labels, table and sidebar rows) and a list's items, its text.
 - `pub label: String`: The element's own label (set with `accessibility_label`).
 
 ## Module `input`

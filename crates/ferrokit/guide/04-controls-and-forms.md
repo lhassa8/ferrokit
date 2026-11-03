@@ -97,7 +97,8 @@ let name = Signal::new(String::new());
 let save = button("Save", || println!("saved"))
     .disabled(move || name.with(String::is_empty))  // re-evaluated when `name` changes
     .default_action();                           // Return presses it
-# let _ = save;
+let cancel = button("Cancel", || println!("cancelled")).cancel_action(); // Escape presses it
+# let _ = (save, cancel);
 ```
 
 `text_field(…).on_submit(f)` runs `f` on Return in that field.
