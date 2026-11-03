@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.1 (unreleased): docs for people and AI assistants
+## 0.4.1 (2026-11-03): docs for people and AI assistants
 
 A patch release: one addition (`Button::cancel_action`), nothing changed or removed. Two AI agents, new to Ferrokit, each built an app from the published docs alone, twice; this release fixes what they ran into.
 
