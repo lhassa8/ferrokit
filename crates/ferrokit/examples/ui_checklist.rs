@@ -37,6 +37,13 @@ fn mtm() -> MainThreadMarker {
     MainThreadMarker::new().unwrap()
 }
 
+/// Whether an image view is hidden from VoiceOver: the view and its cell
+/// (which answers for it on macOS 15 and 26).
+fn ax_hidden(view: &objc2_app_kit::NSImageView) -> bool {
+    let on = |o: &objc2::runtime::AnyObject| -> bool { unsafe { objc2::msg_send![o, isAccessibilityElement] } };
+    !on(view) && view.cell().is_none_or(|c| !on(&c))
+}
+
 fn field(text: &str) -> Retained<NSView> {
     let f = NSTextField::textFieldWithString(&NSString::from_str(text), mtm());
     f.setFrame(objc2_foundation::NSRect::new(
@@ -3053,7 +3060,7 @@ fn rich_table_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         let cell = tv.viewAtColumn_row_makeIfNecessary(0, view_row as isize, true).and_then(|v| v.downcast::<NSTableCellView>().ok());
         let (has_image, text) = cell.as_ref().map_or((false, String::new()), |c| unsafe { (c.imageView().is_some_and(|i| i.image().is_some()), c.textField().map(|t| t.stringValue().to_string()).unwrap_or_default()) });
         // The icon is decoration (the text names the row), hidden from VoiceOver.
-        let icon_hidden = cell.as_ref().and_then(|c| unsafe { c.imageView() }).is_some_and(|i| !objc2_app_kit::NSAccessibility::isAccessibilityElement(&*i));
+        let icon_hidden = cell.as_ref().and_then(|c| unsafe { c.imageView() }).is_some_and(|i| ax_hidden(&i));
         let bar = tv.viewAtColumn_row_makeIfNecessary(1, view_row as isize, true).and_then(|v| v.subviews().iter().find_map(|s| s.downcast::<NSProgressIndicator>().ok()));
         let tasks_now = model2.rows().clone();
         let bar_ok = bar.as_ref().is_some_and(|b| (b.doubleValue() - tasks_now[m].done).abs() < 1e-9 && !b.isIndeterminate());
@@ -4367,7 +4374,7 @@ fn outline_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         .and_then(|v| v.downcast::<objc2_app_kit::NSTableCellView>().ok())
         .and_then(|c| unsafe { c.imageView() });
     // The icon is decoration (the title names the row), hidden from VoiceOver.
-    let icon_hidden = icon.as_ref().is_some_and(|iv| !objc2_app_kit::NSAccessibility::isAccessibilityElement(&**iv));
+    let icon_hidden = icon.as_ref().is_some_and(|iv| ax_hidden(iv));
     let icon = icon.is_some_and(|iv| iv.image().is_some());
     check(
         "sidebar-style",
