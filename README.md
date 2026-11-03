@@ -2,6 +2,13 @@
 
 Native Mac apps in Rust, made from real AppKit controls: an actual `NSTableView`, `NSTextView` or `NSSplitView`, not a GPU-drawn imitation and not a web view. You get native scrolling, keyboard navigation, input methods, spell check, Dark Mode and VoiceOver because they're the system's own.
 
+![The SQL browser example: a schema sidebar, a highlighted query, its results table, a bar chart of them and an inspector](assets/sql-browser.png)
+
+<p>
+  <img src="assets/habits.png" width="49%" alt="The habits example: today's habits with streaks and a progress ring">
+  <img src="assets/charts-dark.png" width="49%" alt="The components example in Dark Mode: a donut chart and stacked bars against a budget line">
+</p>
+
 ```rust,ignore
 use ferrokit::*;
 
