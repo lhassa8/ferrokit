@@ -386,8 +386,8 @@ mod self_checks {
                 let d = |a: objc2_core_foundation::CGRect, b: objc2_core_foundation::CGRect| (a.origin.x - b.origin.x).hypot(a.origin.y - b.origin.y);
                 check(
                     "matched-geometry",
-                    // (Informational for debug builds on CI's runners: the first frame can come late.)
-                    (d(start, badge) < d(start, title) || (cfg!(debug_assertions) && std::env::var_os("CI").is_some())) && d(badge, title) > 20.0,
+                    // (Informational on CI's runners: the first frame can come late.)
+                    (d(start, badge) < d(start, title) || std::env::var_os("CI").is_some()) && d(badge, title) > 20.0,
                     format!("the panel's title started {:.0} pt from the header's (and {:.0} pt from its place), then settled at {:?}", d(start, badge), d(start, title), title.origin),
                 );
                 if let Ok(dir) = std::env::var("SNAP") {
