@@ -211,6 +211,9 @@ fn cell(ov: &NSOutlineView, title: &str, icon: Option<(&str, Option<crate::Color
         text.setContentCompressionResistancePriority_forOrientation(250.0, objc2_app_kit::NSLayoutConstraintOrientation::Horizontal);
         if icon.is_some() {
             let image = NSImageView::new(mtm);
+            // The icon is decoration: the title names the row. (macOS 15 and
+            // 26 otherwise read an unnamed image in every row.)
+            objc2_app_kit::NSAccessibility::setAccessibilityElement(&*image, false);
             v.addSubview(&image);
             // SAFETY: as above.
             unsafe { v.setImageView(Some(&image)) };

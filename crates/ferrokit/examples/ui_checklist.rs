@@ -3051,15 +3051,17 @@ fn rich_table_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         let view_row = 1;
         let m = model2.row_at(view_row).unwrap();
         let cell = tv.viewAtColumn_row_makeIfNecessary(0, view_row as isize, true).and_then(|v| v.downcast::<NSTableCellView>().ok());
-        let (has_image, text) = cell.map_or((false, String::new()), |c| unsafe { (c.imageView().is_some_and(|i| i.image().is_some()), c.textField().map(|t| t.stringValue().to_string()).unwrap_or_default()) });
+        let (has_image, text) = cell.as_ref().map_or((false, String::new()), |c| unsafe { (c.imageView().is_some_and(|i| i.image().is_some()), c.textField().map(|t| t.stringValue().to_string()).unwrap_or_default()) });
+        // The icon is decoration (the text names the row), hidden from VoiceOver.
+        let icon_hidden = cell.as_ref().and_then(|c| unsafe { c.imageView() }).is_some_and(|i| !objc2_app_kit::NSAccessibility::isAccessibilityElement(&*i));
         let bar = tv.viewAtColumn_row_makeIfNecessary(1, view_row as isize, true).and_then(|v| v.subviews().iter().find_map(|s| s.downcast::<NSProgressIndicator>().ok()));
         let tasks_now = model2.rows().clone();
         let bar_ok = bar.as_ref().is_some_and(|b| (b.doubleValue() - tasks_now[m].done).abs() < 1e-9 && !b.isIndeterminate());
         let name_width = tv.tableColumnWithIdentifier(&NSString::from_str("name")).map_or(0.0, |c| c.width());
         check(
             "table-cell-kinds",
-            has_image && text == tasks_now[m].name && bar_ok && name_width > 250.0 && name_width < 420.0,
-            format!("icon cell: image {has_image}, text {text:?}; progress cell at {:?}; fitted Name column {name_width:.0} pt (longest name)", bar.map(|b| b.doubleValue())),
+            has_image && icon_hidden && text == tasks_now[m].name && bar_ok && name_width > 250.0 && name_width < 420.0,
+            format!("icon cell: image {has_image} (hidden from VoiceOver {icon_hidden}), text {text:?}; progress cell at {:?}; fitted Name column {name_width:.0} pt (longest name)", bar.map(|b| b.doubleValue())),
         );
 
         // Copying the selection: rows only, never headers.
@@ -4363,12 +4365,14 @@ fn outline_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let icon = side
         .viewAtColumn_row_makeIfNecessary(0, 1, true)
         .and_then(|v| v.downcast::<objc2_app_kit::NSTableCellView>().ok())
-        .and_then(|c| unsafe { c.imageView() })
-        .is_some_and(|iv| iv.image().is_some());
+        .and_then(|c| unsafe { c.imageView() });
+    // The icon is decoration (the title names the row), hidden from VoiceOver.
+    let icon_hidden = icon.as_ref().is_some_and(|iv| !objc2_app_kit::NSAccessibility::isAccessibilityElement(&**iv));
+    let icon = icon.is_some_and(|iv| iv.image().is_some());
     check(
         "sidebar-style",
-        side.style() == objc2_app_kit::NSTableViewStyle::SourceList && side.numberOfRows() == 6 && group && icon,
-        format!("style source list: {}; {} rows (2 sections + 4 items); section expanded: {group}; icon: {icon}", side.style() == objc2_app_kit::NSTableViewStyle::SourceList, side.numberOfRows()),
+        side.style() == objc2_app_kit::NSTableViewStyle::SourceList && side.numberOfRows() == 6 && group && icon && icon_hidden,
+        format!("style source list: {}; {} rows (2 sections + 4 items); section expanded: {group}; icon: {icon} (hidden from VoiceOver {icon_hidden})", side.style() == objc2_app_kit::NSTableViewStyle::SourceList, side.numberOfRows()),
     );
 
     // Sidebar selection both ways.
