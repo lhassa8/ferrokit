@@ -1,13 +1,46 @@
 # Ferrokit
 
-Native Mac apps in Rust, made from real AppKit controls: an actual `NSTableView`, `NSTextView` or `NSSplitView`, not a GPU-drawn imitation and not a web view. You get native scrolling, keyboard navigation, input methods, spell check, Dark Mode and VoiceOver because they're the system's own.
+**Mac apps in Rust that are actually Mac apps.**
+
+Ferrokit builds your UI from the real thing: an actual `NSTableView`, `NSTextView`, `NSSplitView` and `NSPopover`. It isn't a web view, and it isn't a GPU renderer doing an impression of AppKit. So the details Mac users notice are right because they're Apple's own: scrolling, keyboard navigation, spell check, Dark Mode, VoiceOver.
 
 ![The SQL browser example: a schema sidebar, a highlighted query, its results table, a bar chart of them and an inspector](assets/sql-browser.png)
+
+<!-- The demo video goes here: drag target/demo/ferrokit-demo.mp4 into GitHub's editor and keep the link it inserts on its own line. -->
 
 <p>
   <img src="assets/habits.png" width="49%" alt="The habits example: today's habits with streaks and a progress ring">
   <img src="assets/charts-dark.png" width="49%" alt="The components example in Dark Mode: a donut chart and stacked bars against a budget line">
 </p>
+
+## See it in one command
+
+```bash
+git clone https://github.com/lhassa8/ferrokit && cd ferrokit && cargo run --release -p ferrokit --example sql_browser
+```
+
+That's a SQLite browser over a generated sample of a million orders. Click `orders` and all million rows appear in about a fifth of a second. Then try these:
+
+- **Fling the table:** scroll as fast as you can, then sort by `total`.
+- **Run a query:** as you type it's highlighted, ⌘R runs it, and ⌥⌘K charts it.
+- **Drag a result out:** drag the `results.csv` chip into Finder, and a real file lands there.
+- **Switch to Dark Mode:** everything follows, mid-query.
+
+## What you get without writing it
+
+When a view is the real AppKit control, a long list of features comes with it:
+
+- **Spell check:** right-click a misspelled word in any text view for suggestions, as in Mail.
+- **Find:** ⌘F opens the system Find bar, and ⌘Z undoes per window.
+- **Input methods:** Japanese, Chinese and Korean input and the emoji picker just work, because it's Apple's text system.
+- **VoiceOver:** it reads AppKit's own accessibility tree, and `testing::ax_audit` finds controls you forgot to name.
+- **Keyboard:** Tab order, arrow keys in tables and outlines, Return on default buttons.
+- **The new look:** Dark Mode, accent colours, sidebar materials, and Liquid Glass on macOS 26.
+- **The system's services:** the Share menu (AirDrop, Mail, Messages), Quick Look, printing, notifications, and drag and drop with Finder.
+
+## What the code looks like
+
+Views are built once. When a signal changes, only the views that read it update, in place: there's no virtual DOM and no diffing.
 
 ```rust,ignore
 use ferrokit::*;
@@ -15,35 +48,54 @@ use ferrokit::*;
 fn main() {
     let count = Signal::new(0);
     App::new("Counter")
-        .window(Window::new("Counter").view(vstack((
-            label(move || format!("Clicked {} times", count.get())),
-            button("Click me", move || count.update(|n| *n += 1)),
-        ))))
+        .window(Window::new("Counter").size(320.0, 140.0).view(
+            vstack((
+                text(move || format!("Clicked {} times", count.get())),
+                button("Click me", move || count.update(|n| *n += 1)),
+            ))
+            .padding(20.0),
+        ))
         .run();
 }
 ```
 
-## Which crate do I want?
+A table is your rows and the columns that read them. Header clicks sort it, and only the rows on screen get views:
 
-Use [`ferrokit`](crates/ferrokit), with [`cargo ferrokit`](crates/cargo-ferrokit) to make, check and bundle your app. Start with the [guide](crates/ferrokit/guide/README.md).
-
-| Crate | What it is |
-| --- | --- |
-| [`ferrokit`](crates/ferrokit) | The framework: whole Mac apps where every view is a real AppKit view, updated in place by fine-grained signals. |
-| [`cargo-ferrokit`](crates/cargo-ferrokit) | `cargo ferrokit new`, `run`, `check`, `bundle` and `notarize`. |
-| [`ferrokit-core`](crates/ferrokit-core) | The AppKit layer under `ferrokit`. You don't need to depend on it yourself. |
-
-The crates share one version number and are released together: use matching versions. Version **0.4.0**, an alpha: the API will change. macOS 15 or later.
-
-## Try it
-
-A SQLite browser built with `ferrokit` (it opens a generated sample with a million orders):
-
-```bash
-cargo run --release -p ferrokit --example sql_browser
+```rust,ignore
+let model = Rc::new(TableModel::new(ViewId(1), vec![
+    Column::text("customer", "Customer", |o: &Order| o.customer.clone()),
+    Column::number("total", "Total", |o: &Order| o.total),
+    Column::check("paid", "Paid", |o: &Order| o.paid),
+]));
+model.set_rows(orders); // 200,000 rows load in about 150 ms
+let view = table(&model).on_activate(|row| println!("opened row {row}"));
 ```
 
-Start an app of your own:
+The [guide](crates/ferrokit/guide/README.md) has the rest in 13 chapters, and every example in it compiles as a test.
+
+## The example apps
+
+Ferrokit comes with complete apps rather than toy demos. Each one also runs as a self-check suite (`CHECK=all`):
+
+| Run it with `--example` | What it is | Look at |
+| --- | --- | --- |
+| `sql_browser` | A SQLite browser | A million-row table, a SQL editor with highlighting, charts, an inspector, and query history |
+| `habits` | A habit tracker | Cards with a progress ring, streak calendars, Insights charts, reminders, and a menu-bar panel |
+| `components` | A trip budget | Donut, stacked-bar, area, scatter, histogram and heat-map charts, plus gauges, ratings and token fields |
+| `motion` | A packing list | Rows sliding in and out, a spring that opens a details panel, a shake when there's nothing to remove |
+| `materials` | A travel journal | A transparent title bar, a sidebar behind the window buttons, Liquid Glass, a HUD panel |
+| `media` | A trip briefing | A web view, a PDF with Find, a video player, the Share menu, Quick Look |
+| `log_viewer` | A live log viewer | Following a growing file of a million lines at 60 Hz |
+| `gallery` | A grid browser | 100,000 colour swatches, or your Applications folder with Finder icons |
+| `journal` | A rich text journal | The format bar, the ruler and the Format menu, saving RTF as TextEdit does |
+
+```bash
+cargo run --release -p ferrokit --example habits
+```
+
+## From idea to notarised app
+
+`cargo ferrokit` takes an app from an empty folder to a signed `.app` you can share:
 
 ```bash
 cargo install cargo-ferrokit
@@ -53,16 +105,56 @@ cargo install cargo-ferrokit
 cargo ferrokit new my-app && cd my-app && cargo ferrokit run
 ```
 
+| Command | What it does |
+| --- | --- |
+| `run` | Builds a real `.app` bundle, with its name, icon and identity, and runs it |
+| `check` | Clippy, tests, a bundle, and your app's own self-checks |
+| `bundle` | A signed `.app` with the hardened runtime, universal on request |
+| `notarize` | Developer ID signing, Apple's notary service and stapling, then a zip ready to send |
+
+## Is it for me?
+
+**Yes, if:**
+- you want a Mac app that feels like it came from Apple;
+- your app is heavy on data: tables, editors, outlines, logs, charts;
+- you'd rather write Rust than Swift.
+
+**Not yet, if:**
+- you need Windows or Linux. Ferrokit is Mac only for now, and Windows is the planned second platform. Cross-platform toolkits such as Tauri, egui, Iced, Slint and GPUI are the tools for that today; they draw their own widgets or use a web view.
+- you need a stable API. It's an alpha (0.4), and the API will still change.
+
+## Testing it like you mean it
+
+Ferrokit tests itself with real apps. About 460 self-checks across 17 example apps click real buttons, type into real text views and read back what AppKit did. They run in release and debug builds and in the App Sandbox, on macOS 15, 26 and the newest beta. Your app gets the same tools: `ferrokit::testing` and `cargo ferrokit check`.
+
+## Built something?
+
+Ferrokit is new, and you could be one of its first users. If you build anything with it, even a weekend toy, [open an issue](https://github.com/lhassa8/ferrokit/issues) and show it off. Bug reports and "how do I…" questions are just as welcome.
+
+---
+
+## Which crate do I want?
+
+Use [`ferrokit`](crates/ferrokit), with [`cargo ferrokit`](crates/cargo-ferrokit) to make, check and bundle your app.
+
+| Crate | What it is |
+| --- | --- |
+| [`ferrokit`](crates/ferrokit) | The framework: whole Mac apps where every view is a real AppKit view, updated in place by fine-grained signals. |
+| [`cargo-ferrokit`](crates/cargo-ferrokit) | `cargo ferrokit new`, `run`, `check`, `bundle` and `notarize`. |
+| [`ferrokit-core`](crates/ferrokit-core) | The AppKit layer under `ferrokit`. You don't need to depend on it yourself. |
+
+The crates share one version number and are released together, so use matching versions. The current version is **0.4.0**. It needs macOS 15 or later.
+
 ## Stability
 
-Ferrokit is young (an alpha) and has no users yet; this is what it promises meanwhile.
+Ferrokit is an alpha and has no users yet. Until then, it promises the following.
 
 - **Versions:** while it's 0.x, a minor release (0.4 → 0.5) may change the API; a patch release (0.4.0 → 0.4.1) never does. Every change that breaks code is listed in the CHANGELOG with what to write instead, and a renamed item keeps working, deprecated, for one minor release where it can.
 - **One version:** the crates are released together under one version; `ferrokit` pins `ferrokit-core` exactly.
 - **macOS:** 15 or later. Checked on macOS 15 and the current release (CI), and on the newest beta locally. Each macOS release is checked when it ships; AppKit changes (macOS 27 turned column browser cells into text cells) are fixed in a patch.
 - **Rust:** the latest stable; the minimum (`rust-version`, 1.88) only rises in a minor release.
 - **Failures:** an Objective-C exception or a panic in code AppKit calls is caught where it came in, reported (`App::on_error`) and survived, never silently dropped.
-- **Checks:** every change runs about 460 self-checks across 17 example apps and the project templates (`scripts/check-all.sh`), as release and as debug builds, and in the App Sandbox.
+- **Checks:** every change runs the self-checks above (`scripts/check-all.sh`).
 
 ## Earlier names
 
