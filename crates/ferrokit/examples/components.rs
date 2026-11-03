@@ -444,12 +444,13 @@ mod self_checks {
                 snap(&w5, "trends-zoomed");
                 page.set(2);
             });
-            later_ms(160, move || {
+            // A slow machine (a debug build on CI) can take a while to draw the page.
+            let get2 = get.clone();
+            let drawn = move || get2("Scatter chart").is_some_and(|(_, d)| d.iter().any(|o| o.starts_with("fill ellipse")));
+            later_when(160, 3000, drawn, move || {
                 snap(&w, "rides");
-                page.set(3);
-                // Drawn now: a slow machine may not have drawn the page yet.
-                w.displayIfNeeded();
                 let scatter = get("Scatter chart");
+                page.set(3);
                 let w3 = w.clone();
                 let dots = scatter.as_ref().map(|(_, d)| d.iter().filter(|o| o.starts_with("fill ellipse") && o.ends_with("Purple")).count());
                 check("chart-scatter", dots == Some(8), format!("{dots:?} dots (8); {:?}", scatter.map(|s| s.0.accessibilityLabel())));
@@ -523,6 +524,17 @@ mod self_checks {
 
     fn later_ms(ms: u64, f: impl FnOnce() + 'static) {
         spawn(move || std::thread::sleep(std::time::Duration::from_millis(ms)), move |()| f());
+    }
+
+    /// After `ms`, calls `f` once `ready` holds, or `up_to` ms later anyway.
+    fn later_when(ms: u64, up_to: u64, ready: impl Fn() -> bool + 'static, f: impl FnOnce() + 'static) {
+        later_ms(ms, move || {
+            if ready() || up_to == 0 {
+                f()
+            } else {
+                later_when(50, up_to.saturating_sub(50), ready, f)
+            }
+        });
     }
 
     fn post_notification(field: &NSTextField) {
