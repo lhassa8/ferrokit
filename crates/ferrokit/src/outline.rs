@@ -212,8 +212,13 @@ fn cell(ov: &NSOutlineView, title: &str, icon: Option<(&str, Option<crate::Color
         if icon.is_some() {
             let image = NSImageView::new(mtm);
             // The icon is decoration: the title names the row. (macOS 15 and
-            // 26 otherwise read an unnamed image in every row.)
+            // 26 otherwise read an unnamed image in every row.) The view's
+            // cell answers for it there, so hide both.
             objc2_app_kit::NSAccessibility::setAccessibilityElement(&*image, false);
+            if let Some(cell) = image.cell() {
+                // SAFETY: NSAccessibility's setter taking a BOOL.
+                let () = unsafe { objc2::msg_send![&*cell, setAccessibilityElement: false] };
+            }
             v.addSubview(&image);
             // SAFETY: as above.
             unsafe { v.setImageView(Some(&image)) };
