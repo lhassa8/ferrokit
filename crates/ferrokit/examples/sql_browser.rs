@@ -976,6 +976,9 @@ fn welcome() -> Window {
         .view(hstack((start, side)).spacing(0.0))
 }
 
+#[path = "shared/tour.rs"]
+mod tour;
+
 fn main() {
     let check = std::env::var("CHECK").unwrap_or_default();
     // A file to open (not AppKit's options, like `-AppleLanguages "(de)"`).
@@ -1006,6 +1009,11 @@ fn main() {
             if check == "l10n" {
                 // Run with -AppleLanguages "(de)": the app in German.
                 self_checks::l10n();
+                return;
+            }
+            if std::env::var("DEMO").is_ok() {
+                // `DEMO=1`: a fast tour on the sample, for recording.
+                spawn(|| std::thread::sleep(std::time::Duration::from_millis(400)), |()| demo::run());
                 return;
             }
             if std::env::var("SOAK").is_ok() {
@@ -2305,5 +2313,124 @@ mod soak {
             }),
         ];
         ferrokit::testing::soak::run(Settings::from_env(), actions);
+    }
+}
+
+mod demo {
+    use ferrokit::testing::input::{self, Key, Mod};
+    use ferrokit::*;
+    use objc2::rc::Retained;
+    use objc2_app_kit::{NSAccessibility, NSOutlineView, NSTableCellView, NSTableView, NSWindow};
+    use objc2_foundation::{NSArray, NSSortDescriptor};
+
+    use super::tour::{at, place, play, type_slowly, views};
+
+    fn doc() -> Option<Retained<NSWindow>> {
+        windows().into_iter().find(|w| w.title().to_string() == "ferrokit-sample.sqlite" && w.isVisible())
+    }
+
+    fn results(w: &NSWindow) -> Option<Retained<NSTableView>> {
+        views(w).into_iter().filter_map(|v| v.downcast::<NSTableView>().ok()).find(|t| t.downcast_ref::<NSOutlineView>().is_none())
+    }
+
+    fn with_doc(f: impl FnOnce(&NSWindow) + 'static) -> Box<dyn FnOnce()> {
+        Box::new(move || {
+            if let Some(w) = doc() {
+                f(&w)
+            }
+        })
+    }
+
+    /// Clicks the sidebar row showing `name`.
+    fn sidebar(name: &'static str) -> Box<dyn FnOnce()> {
+        with_doc(move |w| {
+            let Some(o) = views(w).into_iter().find_map(|v| v.downcast::<NSOutlineView>().ok()) else { return };
+            let row = (0..o.numberOfRows()).find(|&r| {
+                o.viewAtColumn_row_makeIfNecessary(0, r, true)
+                    .and_then(|v| v.downcast::<NSTableCellView>().ok())
+                    // SAFETY: reading the cell's outlet on the main thread.
+                    .and_then(|c| unsafe { c.textField() })
+                    .is_some_and(|f| f.stringValue().to_string().starts_with(name))
+            });
+            if let Some(r) = row {
+                let rect = o.rectOfRow(r);
+                input::click_at(&o, rect.origin.x + 50.0, rect.origin.y + rect.size.height / 2.0);
+            }
+        })
+    }
+
+    pub fn run() {
+        set_appearance(Appearance::Light);
+        if let Some(w) = windows().into_iter().find(|w| w.isVisible()) {
+            place(&w, 800.0, 460.0);
+        }
+        let mut steps = vec![at(1700, || {
+            for w in windows() {
+                if let Some(row) = views(&w).into_iter().find(|v| v.accessibilityLabel().is_some_and(|l| l.to_string() == "Open the Sample")) {
+                    input::click(&row);
+                }
+            }
+        })];
+        steps.push((900, with_doc(|w| place(w, 1120.0, 700.0))));
+        // A million orders.
+        steps.push((1000, sidebar("orders")));
+        for row in [120_000, 380_000, 640_000, 999_000, 0] {
+            steps.push((
+                380,
+                with_doc(move |w| {
+                    if let Some(t) = results(w) {
+                        t.scrollRowToVisible(row);
+                    }
+                }),
+            ));
+        }
+        // Sorted by total, biggest first.
+        steps.push((
+            700,
+            with_doc(|w| {
+                let Some(t) = results(w) else { return };
+                if t.tableColumns().count() > 4
+                    && let Some(d) = t.tableColumns().objectAtIndex(4).sortDescriptorPrototype()
+                {
+                    let d: Retained<NSSortDescriptor> = unsafe { Retained::cast_unchecked(d.reversedSortDescriptor()) };
+                    t.setSortDescriptors(&NSArray::from_retained_slice(&[d]));
+                }
+            }),
+        ));
+        // A query, typed and run, then charted.
+        steps.push((
+            1200,
+            with_doc(|w| {
+                if let Some(editor) = views(w).into_iter().find(|v| v.accessibilityLabel().is_some_and(|l| l.to_string() == "Query")) {
+                    input::click(&editor);
+                    input::key(w, Key::Char('a'), &[Mod::Command]);
+                }
+            }),
+        ));
+        steps.extend(type_slowly("SELECT substr(ordered_at, 1, 7) AS month, round(sum(total)) AS sales FROM orders GROUP BY month", 22));
+        steps.push((400, with_doc(|w| input::key(w, Key::Char('r'), &[Mod::Command]))));
+        steps.push((1300, with_doc(|w| input::key(w, Key::Char('k'), &[Mod::Command, Mod::Option]))));
+        // A row picked: the inspector shows it.
+        steps.push((
+            1500,
+            with_doc(|w| {
+                if let Some(t) = results(w).filter(|t| t.numberOfRows() > 6) {
+                    let rect = t.rectOfRow(5);
+                    input::click_at(&t, rect.origin.x + 30.0, rect.origin.y + rect.size.height / 2.0);
+                }
+            }),
+        ));
+        steps.push(at(1600, || set_appearance(Appearance::Dark)));
+        steps.push((
+            900,
+            with_doc(|w| {
+                if let Some(t) = results(w).filter(|t| t.numberOfRows() > 12) {
+                    let rect = t.rectOfRow(11);
+                    input::click_at(&t, rect.origin.x + 30.0, rect.origin.y + rect.size.height / 2.0);
+                }
+            }),
+        ));
+        steps.push(at(1500, || {}));
+        play(steps);
     }
 }

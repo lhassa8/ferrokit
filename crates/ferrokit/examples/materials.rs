@@ -132,8 +132,13 @@ fn dusk_png(w: usize, h: usize) -> Vec<u8> {
     }
 }
 
+#[path = "shared/tour.rs"]
+mod tour;
+
 fn main() {
     let checks = std::env::var("CHECK").is_ok_and(|v| v == "all");
+    // `DEMO=1`: a short tour, for recording.
+    let demo = std::env::var("DEMO").is_ok();
     let cover = dusk_png(900, 420);
     App::new("Materials")
         .window(
@@ -171,9 +176,35 @@ fn main() {
             if checks {
                 // Once the windows are on screen, for the captures.
                 spawn(|| std::thread::sleep(std::time::Duration::from_millis(600)), |()| self_checks::run());
+            } else if demo {
+                spawn(|| std::thread::sleep(std::time::Duration::from_millis(300)), |()| demo::run());
             }
         })
         .run();
+}
+
+mod demo {
+    use ferrokit::*;
+    use objc2_foundation::NSPoint;
+
+    use super::tour::{at, place, play};
+
+    pub fn run() {
+        let find = |title: &str| windows().into_iter().find(|w| w.title().to_string() == title);
+        let (Some(journal), Some(playing)) = (find("Journal"), find("Now Playing")) else { return };
+        set_appearance(Appearance::Light);
+        place(&journal, 1000.0, 680.0);
+        // The player floats over the journal's lower right corner.
+        let f = journal.frame();
+        playing.setFrameOrigin(NSPoint::new(f.origin.x + f.size.width - playing.frame().size.width - 28.0, f.origin.y + 28.0));
+        playing.orderFront(None);
+        let steps = vec![
+            at(2600, || set_appearance(Appearance::Dark)),
+            at(2400, || set_appearance(Appearance::Light)),
+            at(1400, || {}),
+        ];
+        play(steps);
+    }
 }
 
 mod self_checks {

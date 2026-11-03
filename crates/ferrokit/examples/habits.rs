@@ -1051,13 +1051,20 @@ mod soak {
         // Most of the screen, centred.
         if let Some(screen) = w.screen().or_else(|| objc2_app_kit::NSScreen::mainScreen(mtm)) {
             let v = screen.visibleFrame();
-            let (wd, ht) = ((v.size.width * 0.97).min(1600.0), (v.size.height * 0.97).min(1100.0));
+            let (wd, ht) = ((v.size.width * 0.97).min(1180.0), (v.size.height * 0.97).min(800.0));
             let origin = objc2_foundation::NSPoint::new(v.origin.x + (v.size.width - wd) / 2.0, v.origin.y + (v.size.height - ht) / 2.0);
             let frame = objc2_foundation::NSRect::new(origin, objc2_foundation::NSSize::new(wd, ht));
             w.setFrame_display(frame, true);
             eprintln!("demo window {:.0} × {:.0} on a {:.0} × {:.0} screen", wd, ht, v.size.width, v.size.height);
+            // For scripts/record-demo.sh: points from the screen's top left.
+            let f = w.frame();
+            eprintln!("[demo] frame {:.0} {:.0} {:.0} {:.0}", f.origin.x, screen.frame().size.height - f.origin.y - f.size.height, f.size.width, f.size.height);
+            eprintln!("[demo] window {}", w.windowNumber());
         }
         set_appearance(Appearance::Light);
+        // No pointer in the recording (the tour's clicks don't move it).
+        // SAFETY: +[NSCursor hide] on the main thread (no binding enabled for it).
+        let _: () = unsafe { objc2::msg_send![objc2::class!(NSCursor), hide] };
         let today = untrack(|| t.today.get());
         untrack(|| t.done.update(|d| d.retain(|&(_, day)| day != today)));
         untrack(|| t.page.set(Page::Today));
@@ -1198,7 +1205,7 @@ mod soak {
 
     fn play(mut steps: Vec<(u64, Box<dyn FnOnce()>)>) {
         if steps.is_empty() {
-            eprintln!("demo done");
+            eprintln!("[demo] done");
             return;
         }
         let (wait, step) = steps.remove(0);
