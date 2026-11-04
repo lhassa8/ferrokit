@@ -8,6 +8,7 @@
 //! Main thread only. Every function panics off the main thread.
 
 #![warn(missing_docs)]
+#![doc(html_logo_url = "https://raw.githubusercontent.com/lhassa8/ferrokit/main/assets/icon.png", html_favicon_url = "https://raw.githubusercontent.com/lhassa8/ferrokit/main/assets/icon-128.png")]
 
 mod appearance;
 mod events;

@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo.png" width="280" alt="Ferrokit"></p>
+
 # Ferrokit
 
 **Mac apps in Rust that are actually Mac apps.**

@@ -1,3 +1,5 @@
+<img src="https://raw.githubusercontent.com/lhassa8/ferrokit/main/assets/icon.png" width="96" align="right" alt="">
+
 # ferrokit
 
 A native macOS UI framework for Rust. Every view is a real AppKit view (an
