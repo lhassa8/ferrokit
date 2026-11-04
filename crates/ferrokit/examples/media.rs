@@ -389,6 +389,12 @@ mod self_checks {
                     ferrokit::testing::snapshot_windows(&dir);
                 }
                 c2("quick-look", open && files == [super::report_path()] && shown == Some(0) && is_quick_look_open(), format!("open {open}; files {files:?}; showing {shown:?}"));
+                // The panel takes the key window, but menu commands still go
+                // to the window under it (Sift found them disabled).
+                let focused = focused_window();
+                let reaches = focused.as_ref().is_some_and(|f| std::ptr::eq(&**f, &*w));
+                let named = focused.map(|f| f.class().name().to_string_lossy().into_owned());
+                c2("quick-look-commands-reach-window", reaches, format!("commands go to {named:?}"));
                 close_quick_look();
                 let c3 = c2.clone();
                 wait_for(2000, || !is_quick_look_open(), move |closed| {
