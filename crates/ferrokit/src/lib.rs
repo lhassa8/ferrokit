@@ -54,6 +54,7 @@
 //! lists every public item on one page. macOS 15 or later. Main thread only.
 
 #![warn(missing_docs)]
+#![doc(html_logo_url = "https://raw.githubusercontent.com/lhassa8/ferrokit/main/assets/icon.png", html_favicon_url = "https://raw.githubusercontent.com/lhassa8/ferrokit/main/assets/icon-128.png")]
 
 mod appkit_views;
 mod canvas;

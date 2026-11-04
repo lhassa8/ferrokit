@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo.png" width="280" alt="Ferrokit"></p>
+
 # Ferrokit
 
 **Mac apps in Rust that are actually Mac apps.**
@@ -147,7 +149,7 @@ Use [`ferrokit`](crates/ferrokit), with [`cargo ferrokit`](crates/cargo-ferrokit
 | [`cargo-ferrokit`](crates/cargo-ferrokit) | `cargo ferrokit new`, `run`, `check`, `bundle` and `notarize`. |
 | [`ferrokit-core`](crates/ferrokit-core) | The AppKit layer under `ferrokit`. You don't need to depend on it yourself. |
 
-The crates share one version number and are released together, so use matching versions. The current version is **0.4.1**. It needs macOS 15 or later.
+The crates share one version number and are released together, so use matching versions. The current version is **0.4.2**. It needs macOS 15 or later.
 
 ## Stability
 

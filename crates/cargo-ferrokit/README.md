@@ -1,3 +1,5 @@
+<img src="https://raw.githubusercontent.com/lhassa8/ferrokit/main/assets/icon.png" width="96" align="right" alt="">
+
 # cargo-ferrokit
 
 Make, run, check, bundle and notarize native Mac apps built with
