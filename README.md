@@ -112,6 +112,10 @@ cargo ferrokit new my-app && cd my-app && cargo ferrokit run
 | `bundle` | A signed `.app` with the hardened runtime, universal on request |
 | `notarize` | Developer ID signing, Apple's notary service and stapling, then a zip ready to send |
 
+## Bring your AI assistant
+
+If Claude Code, Cursor or Codex writes most of your code, it can learn Ferrokit from what ships with it. `cargo ferrokit new` puts an `AGENTS.md` in every new app: where the docs are, how a Ferrokit app is written, recipes that compile, and the known limits with their workarounds. The crate carries `API.md`, every public item on one page, and the guide is [on docs.rs](https://docs.rs/ferrokit/latest/ferrokit/guide/). To test this, fresh AI agents built two apps from the published docs alone. They didn't guess a single API name wrong, and what tripped them up is fixed in 0.4.1.
+
 ## Is it for me?
 
 **Yes, if:**
@@ -125,7 +129,7 @@ cargo ferrokit new my-app && cd my-app && cargo ferrokit run
 
 ## Testing it like you mean it
 
-Ferrokit tests itself with real apps. About 460 self-checks across 17 example apps click real buttons, type into real text views and read back what AppKit did. They run in release and debug builds and in the App Sandbox, on macOS 15, 26 and the newest beta. Your app gets the same tools: `ferrokit::testing` and `cargo ferrokit check`.
+Ferrokit tests itself with real apps. About 470 self-checks across 17 example apps click real buttons, type into real text views and read back what AppKit did. They run in release and debug builds and in the App Sandbox, on macOS 15, 26 and the newest beta. Your app gets the same tools: `ferrokit::testing` and `cargo ferrokit check`.
 
 ## Built something?
 
