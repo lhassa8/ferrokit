@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.2 (2026-11-03): the logo
+
+Docs only, no code changes: Ferrokit's icon on the `ferrokit` and `cargo-ferrokit` crate pages and as the docs.rs logo and favicon, and the emblem at the top of the GitHub README.
+
 ## 0.4.1 (2026-11-03): docs for people and AI assistants
 
 A patch release: one addition (`Button::cancel_action`), nothing changed or removed. Two AI agents, new to Ferrokit, each built an app from the published docs alone, twice; this release fixes what they ran into.
