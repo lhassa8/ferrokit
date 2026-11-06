@@ -2323,8 +2323,288 @@ fn hidden_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                             ferrokit::close_window(&w);
                         }
                         let events = events.clone();
-                        after_events(move || table_selection_checks(events.clone()));
+                        after_events(move || native_checks(events.clone()));
                     });
+                });
+            });
+        });
+    });
+}
+
+mod swatch {
+    //! A view the app draws itself (L3's custom `NSView`): a filled
+    //! rectangle that counts its instances and draws, takes the focus, and
+    //! reads as an image to VoiceOver.
+    use std::cell::Cell;
+
+    use objc2::rc::Retained;
+    use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
+    use objc2_app_kit::{NSBezierPath, NSColor, NSView};
+    use objc2_foundation::{NSCopying, NSRect, NSString};
+
+    thread_local! {
+        /// Swatches alive now (made minus deallocated).
+        pub static LIVE: Cell<i64> = const { Cell::new(0) };
+    }
+
+    pub struct State {
+        /// Its height, set by an update and read by its measure.
+        pub height: Cell<f64>,
+        pub draws: Cell<u32>,
+        /// Times it was marked for display.
+        pub marked: Cell<u32>,
+    }
+
+    impl Drop for State {
+        fn drop(&mut self) {
+            let _ = LIVE.try_with(|l| l.set(l.get() - 1));
+        }
+    }
+
+    define_class!(
+        #[unsafe(super(NSView))]
+        #[thread_kind = MainThreadOnly]
+        #[name = "ChecklistSwatch"]
+        #[ivars = State]
+        pub struct Swatch;
+
+        impl Swatch {
+            #[unsafe(method(drawRect:))]
+            fn draw_rect(&self, _dirty: NSRect) {
+                self.ivars().draws.set(self.ivars().draws.get() + 1);
+                NSColor::systemTealColor().setFill();
+                NSBezierPath::fillRect(self.bounds());
+            }
+
+            #[unsafe(method(setNeedsDisplay:))]
+            fn set_needs_display(&self, flag: bool) {
+                if flag {
+                    self.ivars().marked.set(self.ivars().marked.get() + 1);
+                }
+                // SAFETY: NSView's own method.
+                let () = unsafe { msg_send![super(self), setNeedsDisplay: flag] };
+            }
+
+            #[unsafe(method(acceptsFirstResponder))]
+            fn accepts_first_responder(&self) -> bool {
+                true
+            }
+
+            #[unsafe(method(isAccessibilityElement))]
+            fn is_accessibility_element(&self) -> bool {
+                true
+            }
+
+            #[unsafe(method_id(accessibilityRole))]
+            fn accessibility_role(&self) -> Option<Retained<NSString>> {
+                // SAFETY: AppKit's constant.
+                Some(unsafe { objc2_app_kit::NSAccessibilityImageRole }.copy())
+            }
+        }
+    );
+
+    impl Swatch {
+        pub fn new(mtm: MainThreadMarker) -> Retained<Swatch> {
+            LIVE.with(|l| l.set(l.get() + 1));
+            let this = Swatch::alloc(mtm).set_ivars(State { height: Cell::new(20.0), draws: Cell::new(0), marked: Cell::new(0) });
+            // SAFETY: NSView's designated initialiser.
+            unsafe { msg_send![super(this), initWithFrame: NSRect::ZERO] }
+        }
+    }
+}
+use swatch::Swatch;
+
+/// L3: custom native views (`native`): layout, updates, focus,
+/// accessibility and teardown, with a view the checklist draws itself.
+fn native_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use ferrokit::{AnyView, Size, native};
+    use objc2::DefinedClass;
+    use objc2::rc::Weak;
+    type Held = Rc<RefCell<Option<Weak<Swatch>>>>;
+    let hold = |h: &Held, s: &Retained<Swatch>| *h.borrow_mut() = Some(Weak::from_retained(s));
+    let get = |h: &Held| h.borrow().as_ref().and_then(Weak::load);
+    let (measured, focusable, filler): (Held, Held, Held) = Default::default();
+    let tall = Signal::new(30.0);
+    let (runs, removed) = (Rc::new(Cell::new(0u32)), Rc::new(Cell::new(0u32)));
+    let (first, second) = (Signal::new("one".to_string()), Signal::new("two".to_string()));
+    let lives_before = swatch::LIVE.with(Cell::get);
+    let w = {
+        let (m, f, fl, r, rm) = (measured.clone(), focusable.clone(), filler.clone(), runs.clone(), removed.clone());
+        open(
+            Window::new("Native").size(300.0, 400.0).view(
+                vstack((
+                    text("Above"),
+                    native(move |mtm| {
+                        let s = Swatch::new(mtm);
+                        hold(&m, &s);
+                        s
+                    })
+                    .update(move |s| {
+                        s.ivars().height.set(tall.get());
+                        r.set(r.get() + 1);
+                    })
+                    .measure(|s| Size { w: 80.0, h: s.ivars().height.get() })
+                    .flexible(false, false)
+                    .on_remove(move |_| rm.set(rm.get() + 1))
+                    .accessibility_label("Measured swatch"),
+                    text("Below"),
+                    hstack((
+                        text_field(&first).accessibility_label("First"),
+                        native(move |mtm| {
+                            let s = Swatch::new(mtm);
+                            hold(&f, &s);
+                            s
+                        })
+                        .measure(|_| Size { w: 40.0, h: 20.0 })
+                        .flexible(false, false)
+                        .accessibility_label("Focusable swatch"),
+                        text_field(&second).accessibility_label("Second"),
+                    )),
+                    // No name: the audit should report it.
+                    native(move |mtm| {
+                        let s = Swatch::new(mtm);
+                        hold(&fl, &s);
+                        s
+                    })
+                    .min_height(50.0),
+                ))
+                .padding(12.0),
+            ),
+        )
+    };
+    let label = {
+        let w = w.clone();
+        move |t: &str| w.contentView().unwrap().subviews().iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string() == t)
+    };
+    let mid_y = |v: &NSView| v.frame().origin.y + v.frame().size.height / 2.0;
+    after_events(move || {
+        let (Some(m), Some(fl)) = (get(&measured), get(&filler)) else {
+            check("native-layout", false, "the swatches weren't built".into());
+            return;
+        };
+        let size = m.frame().size;
+        let content_w = w.contentView().unwrap().frame().size.width;
+        let fills = (fl.frame().size.width - (content_w - 24.0)).abs() < 1.0 && fl.frame().size.height >= 50.0;
+        check(
+            "native-layout",
+            (size.width, size.height) == (80.0, 30.0) && fills,
+            format!("measured {}×{} (80×30); the flexible one {}×{} in {content_w} (fills, at least 50 high)", size.width, size.height, fl.frame().size.width, fl.frame().size.height),
+        );
+        let gap = (mid_y(&label("Below").unwrap()) - mid_y(&label("Above").unwrap())).abs();
+        let marked = m.ivars().marked.get();
+        tall.set(60.0);
+        let (label, measured, focusable, w, runs, removed, events) = (label.clone(), measured.clone(), focusable.clone(), w.clone(), runs.clone(), removed.clone(), events.clone());
+        after_events(move || {
+            let m = get(&measured).unwrap();
+            let gap2 = (mid_y(&label("Below").unwrap()) - mid_y(&label("Above").unwrap())).abs();
+            let redrawn = m.ivars().marked.get() > marked;
+            check(
+                "native-update",
+                runs.get() == 2 && m.frame().size.height == 60.0 && (gap2 - gap - 30.0).abs() < 1.0 && redrawn,
+                format!("update ran {} times (2); height {} (60); Above to Below {gap:.0} → {gap2:.0}; marked for display {redrawn}", runs.get(), m.frame().size.height),
+            );
+            let audit = ferrokit::testing::ax_audit(&w);
+            let named = ferrokit::testing::ax_elements(&w).iter().any(|e| e.role == "AXImage" && e.name == "Measured swatch");
+            check(
+                "native-accessibility",
+                named && audit.len() == 1 && audit[0].contains("AXImage"),
+                format!("named swatch read as an image {named}; audit {audit:?} (only the unnamed one)"),
+            );
+            // Then teardown: the window closed, and a hundred views through a dynamic.
+            let finish = {
+                let (w, runs, removed, measured, events) = (w.clone(), runs.clone(), removed.clone(), measured.clone(), events.clone());
+                move || {
+                    ferrokit::close_window(&w);
+                    let (runs, removed, measured, events) = (runs.clone(), removed.clone(), measured.clone(), events.clone());
+                    after_events(move || {
+                        tall.set(90.0);
+                        let after = runs.get();
+                        let lives = swatch::LIVE.with(Cell::get);
+                        let gone = get(&measured).is_none();
+                        // A hundred at a time through a dynamic, three times.
+                        let show = Signal::new(false);
+                        let removals = Rc::new(Cell::new(0u32));
+                        let rm = removals.clone();
+                        let w2 = open(Window::new("Native Cycles").size(200.0, 200.0).view(dynamic(move || {
+                            if show.get() {
+                                let rm = rm.clone();
+                                AnyView::new(vstack(
+                                    (0..100)
+                                        .map(|_| {
+                                            let rm = rm.clone();
+                                            AnyView::new(native(Swatch::new).flexible(false, false).measure(|_| Size { w: 4.0, h: 1.0 }).on_remove(move |_| rm.set(rm.get() + 1)))
+                                        })
+                                        .collect::<Vec<_>>(),
+                                ))
+                            } else {
+                                AnyView::new(text("None"))
+                            }
+                        })));
+                        let nodes = live_nodes();
+                        let mut peak = 0;
+                        for _ in 0..3 {
+                            show.set(true);
+                            peak = peak.max(swatch::LIVE.with(Cell::get) - lives);
+                            show.set(false);
+                        }
+                        let (events, removals, removed) = (events.clone(), removals.clone(), removed.clone());
+                        after_events(move || {
+                            let back = swatch::LIVE.with(Cell::get) - lives;
+                            let nodes_back = live_nodes() == nodes;
+                            check(
+                                "native-teardown",
+                                lives == lives_before && gone && after == 2 && removed.get() == 1 && peak == 100 && back == 0 && removals.get() == 300 && nodes_back,
+                                format!(
+                                    "closed window: swatches alive {} (0), update after close {} (none), on_remove {}; a dynamic three times: {peak} built, {back} left, on_remove {} (300), nodes back {nodes_back}",
+                                    lives - lives_before,
+                                    after - 2,
+                                    removed.get(),
+                                    removals.get()
+                                ),
+                            );
+                            ferrokit::close_window(&w2);
+                            let events = events.clone();
+                            after_events(move || table_selection_checks(events.clone()));
+                        });
+                    });
+                }
+            };
+            // Tab order: First → the swatch → Second (AppKit's key view
+            // loop), by real Tab keys when the app can be active, else by
+            // AppKit's own entry point.
+            let field = |t: &str| label(t).unwrap();
+            let (a, b, sw) = (field("one"), field("two"), get(&focusable).unwrap());
+            let real = ferrokit::testing::input::ready(&w);
+            let tab = {
+                let w = w.clone();
+                move |from: &NSView| {
+                    if real {
+                        ferrokit::testing::input::key(&w, ferrokit::testing::input::Key::Tab, &[]);
+                    } else {
+                        w.selectKeyViewFollowingView(from);
+                    }
+                }
+            };
+            let made = w.makeFirstResponder(Some(&a));
+            tab(&a);
+            // Posted keys arrive in their own time: wait for the focus to move.
+            let on_swatch = {
+                let (w, sw) = (w.clone(), sw.clone());
+                move || w.firstResponder().is_some_and(|r| std::ptr::eq(&*r as *const _ as *const u8, &*sw as *const _ as *const u8))
+            };
+            let sw2 = sw.clone();
+            until(on_swatch.clone(), 2000, move || {
+                let into_swatch = on_swatch();
+                tab(&sw2);
+                let b2 = b.clone();
+                until(move || b2.currentEditor().is_some(), 2000, move || {
+                    let into_second = b.currentEditor().is_some();
+                    check(
+                        "native-focus",
+                        made && into_swatch && into_second,
+                        format!("Tab ({}) from the first field reaches the swatch {into_swatch}, then the second field {into_second}", if real { "real keys" } else { "AppKit's key view loop, app not active" }),
+                    );
+                    finish();
                 });
             });
         });

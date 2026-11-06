@@ -33,6 +33,8 @@ the guide can't drift from the API.
 13. [Web, PDF, video and services](13-web-pdf-video-and-services.md): web
     pages, PDFs, video and sound, the Share menu, printing, notifications
     and menu-bar extras.
+14. [Custom native views](14-custom-native-views.md): any `NSView` as a
+    Ferrokit view, from MapKit's map to a view your app draws itself.
 
 The example apps are the long form of these chapters. They're in
 Ferrokit's repository (and in the published crate's `examples` folder):
@@ -49,6 +51,7 @@ Ferrokit's repository (and in the published crate's `examples` folder):
 | `native_csv` | a 200,000-row CSV browser: table, sidebar, search, sheet, notes |
 | `log_viewer` | a log tail at display rate: `on_frame`, `append`, filtering |
 | `hands_on` | drag and drop, the clipboard, panels, undo, input methods |
+| `native_views` | `MKMapView` and a view the app draws itself, wrapped with `native` |
 | `ui_checklist` | the framework's regression suite |
 
 Run one from a clone of the repository:

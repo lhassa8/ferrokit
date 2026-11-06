@@ -11,7 +11,7 @@
 ## Where the docs are
 
 Read before guessing; names are regular, but behaviour has rules.
-- **The guide:** <https://docs.rs/ferrokit/latest/ferrokit/guide/>, 13 chapters with compiled examples. Also in the crate's source: `~/.cargo/registry/src/*/ferrokit-{{version}}.*/guide/`.
+- **The guide:** <https://docs.rs/ferrokit/latest/ferrokit/guide/>, 14 chapters with compiled examples. Also in the crate's source: `~/.cargo/registry/src/*/ferrokit-{{version}}.*/guide/`.
 - **Every public item on one page:** `API.md` in the same folder. Search it for what a type can do before reading source.
 - **Complete apps:** `examples/` in the same folder. `native_csv.rs` (sidebar, table, search, sheet, notes), `habits.rs` (cards, sheets, charts, a menu-bar panel), `notes.rs` (a document app), `sql_browser.rs` (the flagship).
 - `TableModel`, `Column` and `TextModel` are documented in `ferrokit-core` (re-exported by `ferrokit`): `~/.cargo/registry/src/*/ferrokit-core-{{version}}.*/src/table.rs` and `text.rs`.
@@ -27,6 +27,7 @@ Read before guessing; names are regular, but behaviour has rules.
 - **Settings:** `stored("key", default)` is a signal saved in user defaults (bool, numbers, String). App data belongs in a file: `std::fs` and `serde` in `~/Library/Application Support/<bundle id>/` (the `habits` example keeps its small data in `stored` strings; a file scales better).
 - **Errors and crashes:** `App::on_error(|failure| …)` hears about panics and exceptions Ferrokit caught (the app goes on); `App::crash_reports(|report| …)` writes a report for a panic that ends the app and hands it over at the next launch (show it or send it, then `report.mark_sent()`).
 - **Updates:** Sparkle 2, set up in `Cargo.toml` (`[package.metadata.ferrokit.updates]`), not in code: the bundled app gets Check for Updates…; `updates::on_event`, `updates::check` and `updates::set_automatic_checks` are there if the app wants more. `cargo ferrokit appcast` writes the feed for a release.
+- **A view Ferrokit doesn't have** (a map, a view you draw): `native(|mtm| MyView::new(mtm))` wraps any `NSView` (with the `objc2` crates in `Cargo.toml`, below). `.update(move |v| …)` changes it in place as an effect, like any view; `.measure(|v| Size { w, h })` and `.flexible(false, false)` size it; `.keep(delegate)` keeps a delegate (AppKit's are weak); `.on_remove(|v| …)` cleans up. The guide's *Custom native views* chapter has a delegate and a drawn view.
 - **Undo:** `undoable("Delete", apply, revert)` runs `apply` now and puts `revert` on the window's undo history; ⌘Z and ⇧⌘Z work per window.
 - Prefer Ferrokit's own API over raw `objc2` calls. Reach for `objc2-app-kit` only for something Ferrokit doesn't cover, and say so in a comment.
 
@@ -137,4 +138,4 @@ Work around these instead of searching for them:
 - Table rows don't animate in or out; `for_each` lists do. Leave a table's rows still.
 - A popover anchors to a view, not to a toolbar item: use a sheet from the toolbar.
 - Sidebar items have a symbol and a title, no count badge: put the count in the title.
-- No custom native views: `View` can't be implemented outside Ferrokit (`Cx` and `Node` are opaque). Raw AppKit on a view Ferrokit made (`model.table_view()`, `scroll_view()`) works, but it's on you to keep it working.
+- `View` can't be implemented outside Ferrokit (`Cx` and `Node` are opaque): wrap an `NSView` with `native(..)` instead (see Recipes). A wrapped view is a leaf: Ferrokit views can't go inside it.

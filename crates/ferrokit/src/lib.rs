@@ -48,7 +48,7 @@
 //! - **Testing:** [`testing`] (self-checks, real input, accessibility
 //!   audits, window captures, soaks).
 //!
-//! **Start with the [guide], 13 chapters whose examples are compiled as doc
+//! **Start with the [guide], 14 chapters whose examples are compiled as doc
 //! tests.** `API.md`, in the crate's source and
 //! [on GitHub](https://github.com/lhassa8/ferrokit/blob/main/crates/ferrokit/API.md),
 //! lists every public item on one page. macOS 15 or later. Main thread only.
@@ -79,6 +79,7 @@ mod quicklook;
 mod services;
 mod status;
 mod motion;
+mod native;
 mod widgets;
 mod interact;
 mod menu;
@@ -156,6 +157,7 @@ pub use status::MenuBarExtra;
 pub use motion::{Animation, Keyframes, Transition, animate, animated, animated_with, keyframes, reduce_motion, stop_animation};
 pub use popover::Edge;
 pub use canvas::{Canvas, Painter, canvas};
+pub use native::{NativeView, native};
 pub use value::{IntoValue, Value};
 pub use transfer::{Clipboard, DragItem, WriteFile};
 pub use l10n::{format_date, format_number, format_number_for, local_day, local_day_start, today, weekday, language, parse_strings, plural_category, set_language, t, t_plural, t_with};
@@ -1526,6 +1528,7 @@ pub fn spawn<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static, then:
 /// - [Motion](guide::ch11_motion): animated changes, transitions, hover and click, and Reduce Motion.
 /// - [More controls and charts](guide::ch12_more_controls_and_charts): tabs, radio groups, gauges, token fields, tooltips, and charts.
 /// - [Web, PDF, video and services](guide::ch13_web_pdf_video_and_services): web pages, PDFs, video, Share, printing, notifications, menu-bar extras.
+/// - [Custom native views](guide::ch14_custom_native_views): any `NSView` as a Ferrokit view (a map, a view of your own drawing).
 #[cfg(any(doc, doctest))]
 pub mod guide {
     // The chapters' links name the crate's items.
@@ -1560,4 +1563,6 @@ pub mod guide {
     pub mod ch12_more_controls_and_charts {}
     #[doc = include_str!("../guide/13-web-pdf-video-and-services.md")]
     pub mod ch13_web_pdf_video_and_services {}
+    #[doc = include_str!("../guide/14-custom-native-views.md")]
+    pub mod ch14_custom_native_views {}
 }

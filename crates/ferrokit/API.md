@@ -6,7 +6,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 
 **Where to look:** app, windows, menus and the shell → App and windows, `chrome`, `dialogs`, `commands`; state → `signal`, `resource`, `store`, `undo`; views and modifiers → `view`, `layout`, `appkit_views`, `controls`, `style`, `motion`; tables, outlines, text → `models`, `table`, `outline`, `text`; charts → `charts`, `canvas`; checks → Module `testing`.
 
-**Contents:** [App and windows (lib)](#app-and-windows-lib) · [signal](#signal) · [view](#view) · [layout](#layout) · [appkit_views](#appkit_views) · [controls](#controls) · [models](#models) · [table](#table) · [outline](#outline) · [text](#text) · [commands](#commands) · [chrome](#chrome) · [dialogs](#dialogs) · [appearance](#appearance) · [frame](#frame) · [store](#store) · [undo](#undo) · [resource](#resource) · [documents](#documents) · [collection](#collection) · [syntax](#syntax) · [style](#style) · [surface](#surface) · [material](#material) · [widgets](#widgets) · [media](#media) · [browser](#browser) · [crash](#crash) · [updates](#updates) · [failure](#failure) · [filter](#filter) · [form](#form) · [quicklook](#quicklook) · [services](#services) · [status](#status) · [motion](#motion) · [popover](#popover) · [canvas](#canvas) · [value](#value) · [transfer](#transfer) · [l10n](#l10n) · [charts](#charts) · [host](#host) · [Module updates](#module-updates) · [Module testing](#module-testing) · [Module input](#module-input) · [Module soak](#module-soak)
+**Contents:** [App and windows (lib)](#app-and-windows-lib) · [signal](#signal) · [view](#view) · [layout](#layout) · [appkit_views](#appkit_views) · [controls](#controls) · [models](#models) · [table](#table) · [outline](#outline) · [text](#text) · [commands](#commands) · [chrome](#chrome) · [dialogs](#dialogs) · [appearance](#appearance) · [frame](#frame) · [store](#store) · [undo](#undo) · [resource](#resource) · [documents](#documents) · [collection](#collection) · [syntax](#syntax) · [style](#style) · [surface](#surface) · [material](#material) · [widgets](#widgets) · [media](#media) · [browser](#browser) · [crash](#crash) · [updates](#updates) · [failure](#failure) · [filter](#filter) · [form](#form) · [quicklook](#quicklook) · [services](#services) · [status](#status) · [motion](#motion) · [popover](#popover) · [canvas](#canvas) · [native](#native) · [value](#value) · [transfer](#transfer) · [l10n](#l10n) · [charts](#charts) · [host](#host) · [Module updates](#module-updates) · [Module testing](#module-testing) · [Module input](#module-input) · [Module soak](#module-soak)
 
 ## App and windows (lib)
 
@@ -1578,6 +1578,20 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn text(&mut self, x: f64, y: f64, text: &str, size: f64, color: Color, align: Align)`: Text in the system font at `size` points. `x` is its start, centre or end (`align`); `y` is its top.
 - `pub fn bold_text(&mut self, x: f64, y: f64, text: &str, size: f64, color: Color, align: Align)`: Bold text (see `text`).
 - `pub fn measure(&self, text: &str, size: f64) -> (f64, f64)`: The width and height of `text` at `size` points.
+
+## native
+
+- `pub fn native<V>(make: impl FnOnce(MainThreadMarker) -> Retained<V> + 'static) -> NativeView<V> where V: Message + AsRef<NSView> + 'static`: Wraps an `NSView` Ferrokit doesn't have: `make` builds it, once, when the view is built (on the main thread; `mtm` is the marker AppKit's initialisers take). Any view works: AppKit's, another framework's (`MKMapView`, `SCNView`), or the app's own subclass made with `define_class!`.
+
+### `NativeView`
+
+`pub struct NativeView<V: 'static>`: An `NSView` of the app's choosing, wrapped as a Ferrokit view (see `native`).
+
+- `pub fn update(mut self, f: impl FnMut(&V) + 'static) -> Self`: Changes the view in place: `f` runs as an effect, now and again whenever a signal it read changes. After each run the view is measured again (its neighbours move if its size changed) and redrawn (`setNeedsDisplay`). Each `update` is an effect of its own, so unrelated properties don't re-apply together.
+- `pub fn measure(mut self, f: impl Fn(&V) -> Size + 'static) -> Self`: The view's ideal size, asked when it's built and after each `update`. Without it, the view's `fittingSize` (its Auto Layout size, which is zero for a plain `NSView`).
+- `pub fn flexible(mut self, horizontal: bool, vertical: bool) -> Self`: Whether the view stretches across (`horizontal`) and down (`vertical`) to fill the room it gets. Both by default (a map, a drawing); `(false, false)` keeps it at its measured size, like a control.
+- `pub fn keep<T: Message + 'static>(mut self, object: Retained<T>) -> Self`: Keeps `object` alive as long as the view: a delegate, a target, an observer (AppKit holds delegates weakly).
+- `pub fn on_remove(mut self, f: impl FnOnce(&V) + 'static) -> Self`: Runs `f` once the view has left its window (removed from the tree, or its window closed), after its updates have stopped: stop a timer, end an observation, clear a delegate.
 
 ## value
 

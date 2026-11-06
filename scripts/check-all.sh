@@ -157,6 +157,7 @@ suite media CHECK=all "$ex/media"
 suite habits CHECK=all "$ex/habits"
 suite input CHECK=all "$ex/input"
 suite values CHECK=all "$ex/values"
+suite native_views CHECK=all "$ex/native_views"
 suite sql_browser CHECK=all "$ex/sql_browser"
 suite sql_browser_de CHECK=l10n "$ex/sql_browser" -AppleLanguages "(de)"
 # The notes example in the App Sandbox (signed with the entitlements

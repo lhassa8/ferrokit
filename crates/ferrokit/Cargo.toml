@@ -39,3 +39,6 @@ objc2-user-notifications = { version = "0.3", default-features = false, features
 rusqlite = { version = "0.41", features = ["hooks", "bundled"] }
 # ui_checklist catches an exception AppKit's password AutoFill can raise.
 objc2 = { version = "0.6", features = ["exception"] }
+# The native_views example (L3) wraps MapKit's map view.
+objc2-map-kit = { version = "0.3", default-features = false, features = ["std", "objc2-app-kit", "objc2-core-location", "MKMapView", "MKGeometry", "MKTypes", "MKMapConfiguration", "MKStandardMapConfiguration", "MKHybridMapConfiguration"] }
+objc2-core-location = { version = "0.3", default-features = false, features = ["std"] }
