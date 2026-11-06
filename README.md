@@ -129,11 +129,11 @@ If Claude Code, Cursor or Codex writes most of your code, it can learn Ferrokit 
 
 **Not yet, if:**
 - you need Windows or Linux. Ferrokit is Mac only for now, and Windows is the planned second platform. Cross-platform toolkits such as Tauri, egui, Iced, Slint and GPUI are the tools for that today; they draw their own widgets or use a web view.
-- you need a stable API. It's an alpha (0.4), and the API will still change.
+- you need a stable API. It's an alpha (0.5), and the API will still change.
 
 ## Testing it like you mean it
 
-Ferrokit tests itself with real apps. About 470 self-checks across 17 example apps click real buttons, type into real text views and read back what AppKit did. They run in release and debug builds and in the App Sandbox, on macOS 15, 26 and the newest beta. Your app gets the same tools: `ferrokit::testing` and `cargo ferrokit check`.
+Ferrokit tests itself with real apps. About 500 self-checks across 18 example apps click real buttons, type into real text views and read back what AppKit did. They run in release and debug builds and in the App Sandbox, on macOS 15, 26 and the newest beta. Your app gets the same tools: `ferrokit::testing` and `cargo ferrokit check`.
 
 ## Built something?
 
@@ -151,7 +151,7 @@ Use [`ferrokit`](crates/ferrokit), with [`cargo ferrokit`](crates/cargo-ferrokit
 | [`cargo-ferrokit`](crates/cargo-ferrokit) | `cargo ferrokit new`, `run`, `check`, `bundle`, `notarize` and `appcast`. |
 | [`ferrokit-core`](crates/ferrokit-core) | The AppKit layer under `ferrokit`. You don't need to depend on it yourself. |
 
-The crates share one version number and are released together, so use matching versions. The current version is **0.4.2**. It needs macOS 15 or later.
+The crates share one version number and are released together, so use matching versions. The current version is **0.5.0**. It needs macOS 15 or later.
 
 ## Stability
 

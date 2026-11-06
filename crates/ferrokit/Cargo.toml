@@ -14,7 +14,7 @@ categories = ["gui", "os::macos-apis"]
 default-target = "aarch64-apple-darwin"
 
 [dependencies]
-ferrokit-core = { path = "../ferrokit-core", version = "=0.4.2" }
+ferrokit-core = { path = "../ferrokit-core", version = "=0.5.0" }
 objc2 = { version = "0.6", features = ["exception"] }
 block2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSGeometry", "NSObject", "NSNotification", "NSArray", "NSDictionary", "NSData", "NSRange", "NSUndoManager", "NSIndexSet", "NSSortDescriptor", "NSURL", "NSUserDefaults", "NSRunLoop", "NSDate", "NSIndexPath", "NSSet", "NSError", "NSOperation", "NSBundle", "NSLocale", "NSFormatter", "NSNumberFormatter", "NSValue", "NSDateFormatter", "NSTimeZone", "NSCalendar", "NSURLRequest", "NSOperation", "NSKeyValueObserving", "NSProcessInfo", "NSPredicate", "NSComparisonPredicate", "NSCompoundPredicate", "NSExpression", "NSAttributedString", "NSFileManager"] }
