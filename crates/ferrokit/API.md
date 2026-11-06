@@ -6,7 +6,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 
 **Where to look:** app, windows, menus and the shell → App and windows, `chrome`, `dialogs`, `commands`; state → `signal`, `resource`, `store`, `undo`; views and modifiers → `view`, `layout`, `appkit_views`, `controls`, `style`, `motion`; tables, outlines, text → `models`, `table`, `outline`, `text`; charts → `charts`, `canvas`; checks → Module `testing`.
 
-**Contents:** [App and windows (lib)](#app-and-windows-lib) · [signal](#signal) · [view](#view) · [layout](#layout) · [appkit_views](#appkit_views) · [controls](#controls) · [models](#models) · [table](#table) · [outline](#outline) · [text](#text) · [commands](#commands) · [chrome](#chrome) · [dialogs](#dialogs) · [appearance](#appearance) · [frame](#frame) · [store](#store) · [undo](#undo) · [resource](#resource) · [documents](#documents) · [collection](#collection) · [syntax](#syntax) · [style](#style) · [surface](#surface) · [material](#material) · [widgets](#widgets) · [media](#media) · [browser](#browser) · [failure](#failure) · [filter](#filter) · [form](#form) · [quicklook](#quicklook) · [services](#services) · [status](#status) · [motion](#motion) · [popover](#popover) · [canvas](#canvas) · [value](#value) · [transfer](#transfer) · [l10n](#l10n) · [charts](#charts) · [host](#host) · [Module testing](#module-testing) · [Module input](#module-input) · [Module soak](#module-soak)
+**Contents:** [App and windows (lib)](#app-and-windows-lib) · [signal](#signal) · [view](#view) · [layout](#layout) · [appkit_views](#appkit_views) · [controls](#controls) · [models](#models) · [table](#table) · [outline](#outline) · [text](#text) · [commands](#commands) · [chrome](#chrome) · [dialogs](#dialogs) · [appearance](#appearance) · [frame](#frame) · [store](#store) · [undo](#undo) · [resource](#resource) · [documents](#documents) · [collection](#collection) · [syntax](#syntax) · [style](#style) · [surface](#surface) · [material](#material) · [widgets](#widgets) · [media](#media) · [browser](#browser) · [crash](#crash) · [failure](#failure) · [filter](#filter) · [form](#form) · [quicklook](#quicklook) · [services](#services) · [status](#status) · [motion](#motion) · [popover](#popover) · [canvas](#canvas) · [value](#value) · [transfer](#transfer) · [l10n](#l10n) · [charts](#charts) · [host](#host) · [Module testing](#module-testing) · [Module input](#module-input) · [Module soak](#module-soak)
 
 ## App and windows (lib)
 
@@ -100,6 +100,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn menu_bar_extra(mut self, extra: MenuBarExtra) -> Self`: Adds an item to the right side of the menu bar, with a menu or a panel (see `MenuBarExtra`).
 - `pub fn menu_bar_only(mut self) -> Self`: Makes this a menu-bar app: no Dock icon and no menu bar of its own, only its `menu_bar_extra`s (and any windows it opens).
 - `pub fn dock_menu(mut self, items: impl Fn() -> Vec<MenuItem> + 'static) -> Self`: Items for the Dock icon's menu (Control-click or a long press on the icon), above the system's own: "New Window", a recent item. `items` runs each time the menu opens, so it can read the app's state.
+- `pub fn crash_reports(mut self, f: impl Fn(CrashReport) + 'static) -> Self`: Crash reports. From now on, a panic Ferrokit doesn't catch (one outside a control's action, menu item, timer or the like, which `on_error` hears about and survives; or one on a background thread) writes a report before the app ends: the app, its version, macOS, the thread, the message and where, and the backtrace, in `~/Library/Logs/<app>/Crashes`. At the next launch, after the windows are on screen, `f` gets each report not yet marked sent: ask the user to send it, send it to a service, or keep it.
 - `pub fn on_launch(mut self, f: impl FnOnce() + 'static) -> Self`: Runs `f` on the first run-loop pass after the windows are on screen.
 - `pub fn on_command(self, command: Command, action: impl Fn() + 'static) -> Self`: Handles `command` when nothing nearer the focus does (or no window is open). See `Command`.
 - `pub fn on_error(self, f: impl Fn(&Failure) + 'static) -> Self`: Calls `f` when something fails where AppKit called into the app (an action, a menu item, a timer, a notification, a sheet's completion): an Objective-C exception or a Rust panic, caught there so the app goes on (it's also printed to stderr). Log it, or tell the user.
@@ -1261,6 +1262,17 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn on_activate(mut self, f: impl Fn(&T) + 'static) -> Self`: Called with an item the user double-clicks (opening a file, say).
 - `pub fn column_width(mut self, points: f64) -> Self`: The columns' width at first, in points (200 unless set); the user can resize them.
 
+## crash
+
+### `CrashReport`
+
+`pub struct CrashReport`: A report of a crash in an earlier run (see `App::crash_reports`).
+
+- `pub path: PathBuf`: The report's file.
+- `pub text: String`: What it says: the app and its version, macOS, when, the thread, the panic's message and place, and the backtrace.
+- `pub when: Option<SystemTime>`: When the app crashed.
+- `pub fn mark_sent(&self) -> std::io::Result<()>`: Moves the report to the `Sent` folder beside it, so it isn't handed to the app again: call it once it's sent (or the user declined).
+
 ## failure
 
 ### `Failure`
@@ -1715,6 +1727,8 @@ Helpers for automated checks of apps built with ferrokit: the accessibility tree
 - `pub fn capture_reveals(on: bool)`: From now on, `reveal_in_finder` records what it's asked to show instead of opening Finder windows (`false` stops).
 - `pub fn revealed() -> Vec<Vec<std::path::PathBuf>>`: What `reveal_in_finder` was asked to show since the last call, while `capture_reveals` is on: one list of paths per call.
 - `pub fn set_last_opened(path: &std::path::Path, secs: Option<i64>) -> std::io::Result<()>`: Sets `path`'s last-opened date (seconds since 1970, `None` for never), for checks of lists that use `file_dates`.
+- `pub fn catching(f: impl FnOnce())`: Runs `f` the way Ferrokit runs code AppKit calls in (an action, a timer): a panic in it is caught and reported (see `failures`), not a crash.
+- `pub fn pending_crash_reports(dir: &std::path::Path) -> Vec<crate::CrashReport>`: The crash reports in `dir` not yet marked sent, oldest first (what `App::crash_reports` hands the app at launch). Checks point `FERROKIT_CRASH_DIR` at a folder of their own.
 - `pub fn is_misspelled(word: &str) -> bool`: Whether the system spell checker flags `word` in English. (With automatic language detection one isolated word can be guessed as another language and pass, so the language is given.)
 - `pub fn context_menu_for_word(view: &objc2_app_kit::NSTextView, word: &str) -> Vec<String>`: The titles of a text view's context menu for a right-click on `word`.
 - `pub fn capture_window(window: &objc2_app_kit::NSWindow) -> Option<Retained<objc2_app_kit::NSBitmapImageRep>>`: Captures `window` as the window server shows it (lossless, no shadow, via `screencapture -l`): what's on screen, which in-process snapshots can miss (Core Animation layers, animations, vibrancy). Needs the screen-recording permission; `None` without it.

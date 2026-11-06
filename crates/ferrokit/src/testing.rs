@@ -291,6 +291,20 @@ pub fn set_last_opened(path: &std::path::Path, secs: Option<i64>) -> std::io::Re
     crate::services::set_last_opened(path, secs)
 }
 
+/// Runs `f` the way Ferrokit runs code AppKit calls in (an action, a
+/// timer): a panic in it is caught and reported (see
+/// [`failures`]), not a crash.
+pub fn catching(f: impl FnOnce()) {
+    crate::failure::entry("a check", (), f);
+}
+
+/// The crash reports in `dir` not yet marked sent, oldest first (what
+/// [`App::crash_reports`](crate::App::crash_reports) hands the app at
+/// launch). Checks point `FERROKIT_CRASH_DIR` at a folder of their own.
+pub fn pending_crash_reports(dir: &std::path::Path) -> Vec<crate::CrashReport> {
+    crate::crash::pending(dir)
+}
+
 /// Whether the system spell checker flags `word` in English. (With automatic
 /// language detection one isolated word can be guessed as another language
 /// and pass, so the language is given.)

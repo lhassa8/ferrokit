@@ -3067,7 +3067,61 @@ fn failure_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         format!("caught {:?}; after them the label reads {shown:?}; on_error told {} time(s)", caught.iter().map(|f| f.to_string()).collect::<Vec<_>>(), HOOKED.with(Cell::get)),
     );
     ferrokit::close_window(&w);
+    crash_report_check();
     after_events(move || rtl_checks(events.clone()));
+}
+
+/// L5: a panic Ferrokit doesn't catch writes a crash report; one it
+/// catches doesn't. A child run of this app crashes on purpose.
+fn crash_report_check() {
+    let dir = std::env::temp_dir().join(format!("ferrokit-crashes-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .env("CRASH_TEST", "1")
+        .env("FERROKIT_CRASH_DIR", &dir)
+        .env_remove("CHECK")
+        .stderr(std::process::Stdio::null())
+        .status();
+    let crashed = status.as_ref().is_ok_and(|s| !s.success());
+    let reports = ferrokit::testing::pending_crash_reports(&dir);
+    let text = reports.first().map(|r| r.text.clone()).unwrap_or_default();
+    let complete = ["App: Crash Test", "macOS:", "Thread: the main thread", "Panic: a deliberate crash, for the check", "ui_checklist.rs:", "Backtrace:"].iter().all(|t| text.contains(t));
+    let not_caught = !text.contains("a caught panic");
+    // The next launch hands the report to the app.
+    let launched = std::process::Command::new(std::env::current_exe().unwrap())
+        .env("CRASH_TEST", "deliver")
+        .env("FERROKIT_CRASH_DIR", &dir)
+        .env_remove("CHECK")
+        .stderr(std::process::Stdio::null())
+        .status();
+    let delivered = std::fs::read_to_string(dir.join("delivered")).unwrap_or_default();
+    let handed = launched.as_ref().is_ok_and(|s| s.success()) && reports.first().is_some_and(|r| delivered == r.path.display().to_string());
+    let sent = reports.first().is_some_and(|r| r.mark_sent().is_ok()) && ferrokit::testing::pending_crash_reports(&dir).is_empty() && dir.join("Sent").read_dir().is_ok_and(|d| d.count() == 1);
+    let _ = std::fs::remove_dir_all(&dir);
+    check(
+        "crash-report",
+        crashed && reports.len() == 1 && complete && not_caught && handed && sent,
+        format!("child ended with {status:?}; {} report(s); complete {complete}; the caught panic left out {not_caught}; handed over at the next launch {handed}; marked sent {sent}; first lines {:?}", reports.len(), text.lines().take(5).collect::<Vec<_>>()),
+    );
+}
+
+/// The child run of [`crash_report_check`]: crash reports on, a panic
+/// Ferrokit catches, then one it doesn't.
+fn crash_test() {
+    if std::env::var("CRASH_TEST").is_ok_and(|v| v == "deliver") {
+        // The next launch: the report reaches the handler, which notes it.
+        let dir = std::path::PathBuf::from(std::env::var_os("FERROKIT_CRASH_DIR").unwrap());
+        spawn(|| std::thread::sleep(std::time::Duration::from_secs(5)), |()| std::process::exit(1));
+        return App::new("Crash Test")
+            .crash_reports(move |report| {
+                let _ = std::fs::write(dir.join("delivered"), report.path.display().to_string());
+                std::process::exit(0);
+            })
+            .run();
+    }
+    let _app = App::new("Crash Test").crash_reports(|_| {});
+    ferrokit::testing::catching(|| panic!("a caught panic"));
+    panic!("a deliberate crash, for the check");
 }
 
 /// R5: right to left, a row's first item is on the right and its last on
@@ -5278,6 +5332,9 @@ fn restore_run(step: String) {
 }
 
 fn main() {
+    if std::env::var("CRASH_TEST").is_ok() {
+        return crash_test();
+    }
     if let Ok(step) = std::env::var("RESTORE") {
         return restore_run(step);
     }

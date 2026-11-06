@@ -169,6 +169,65 @@ let app = App::new("Notes").on_error(|failure| eprintln!("to the crash log: {fai
 # let _ = app;
 ```
 
+## Crash reports
+
+`on_error` hears about failures the app survives. A panic Ferrokit doesn't
+catch (outside a control's action, menu item, timer and the like, or on a
+background thread) ends the app. `App::crash_reports(|report| ..)` writes
+a report for each one before the app ends: the app and its version,
+macOS, the thread, the panic's message and place, and the backtrace, in
+`~/Library/Logs/<app>/Crashes` (inside the container when sandboxed). At
+the next launch, once the windows are up, the handler gets each report not
+yet marked sent. Panics caught at the places AppKit calls in stay
+`on_error` failures and write no report.
+
+What to do with a report is the app's choice. Two common ones:
+
+- **Ask the user.** Show an alert saying the app quit unexpectedly, and
+  offer to show the report in the Finder (for attaching to an email or an
+  issue). Mark it sent either way, so it isn't asked about again.
+- **Send it to a service.** Post `report.text` to your server or a crash
+  service from a background thread (`spawn`), and mark it sent when the
+  upload succeeds. Sentry's Rust SDK (`sentry` crate) can also capture
+  panics itself; if you use it, its own hook replaces this one.
+
+```rust,no_run
+use ferrokit::*;
+
+let app = App::new("Notes").crash_reports(|report| {
+    let Some(window) = windows().into_iter().next() else { return };
+    let path = report.path.clone();
+    alert(
+        &window,
+        Alert::new("Notes quit unexpectedly last time.", "A report was saved. You can attach it to an email to the developer.")
+            .button("Show Report")
+            .button("Not Now"),
+        move |choice| {
+            if choice == 0 {
+                reveal_in_finder(&[&path]);
+            }
+        },
+    );
+    let _ = report.mark_sent();
+});
+# let _ = app;
+```
+
+A crash that isn't a panic, such as a bad memory access in unsafe code or
+a C library, ends the app at once. macOS keeps those in
+`~/Library/Logs/DiagnosticReports` (the user sees them in Console), and
+offers to send them to Apple, not to you. Uploading a build's debug
+symbols isn't needed for Rust panics: the backtrace names the functions,
+as long as release builds keep their symbols (the default; don't set
+`strip = true` if you want readable reports).
+
+For checks, `FERROKIT_CRASH_DIR` points the reports at a folder of the
+check's own, `testing::pending_crash_reports(dir)` reads them, and
+`testing::catching(|| ..)` runs code as Ferrokit runs an action, so a
+panic in it is caught. The `ui_checklist` example's `crash-report` check
+crashes a child run of itself and reads the report back at its next
+launch.
+
 ## Packaging: `cargo ferrokit`
 
 `cargo ferrokit` (install it with `cargo install cargo-ferrokit`) does the

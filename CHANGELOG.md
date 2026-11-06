@@ -2,6 +2,7 @@
 
 ## Unreleased (0.5)
 
+- **Added: crash reports.** `App::crash_reports(|report| ..)`: a panic Ferrokit doesn't catch writes a report (app, version, macOS, thread, message, place, backtrace) to `~/Library/Logs/<app>/Crashes`, and the next launch hands each unsent report to the handler (`CrashReport`, `mark_sent`). Caught failures stay `on_error`'s. For checks: `testing::catching`, `testing::pending_crash_reports` and `FERROKIT_CRASH_DIR`. A recipe in the guide's *Testing and shipping* chapter. (L5.)
 - **Added: `Column::date`** (and `.with_time()`): a table column of `Option<SystemTime>`, shown in the user's date format and language, relative where it can be ("Today"), sorted by date (no date first) and copied as shown. Not editable. (L4's known gap.)
 - **Added: bare keys on tables.** `Table::on_key(TableKey::Delete, |rows| …)` (⌫ or ⌦) and `TableKey::Space` get the selected rows when the key is pressed without ⌘, ⌥ or ⌃; in `ferrokit-core`, `TableModel::set_keys` and `TableEvent::Key`. (L4's known gap.)
 - **Added: `Table::selection(&Signal<Vec<usize>>)`** binds a table's selection (model indices) to a signal, both ways; `set_rows` clears it and the signal follows. (L4's known gap.)
