@@ -2,6 +2,7 @@
 
 ## Unreleased (0.5)
 
+- **Fixed (`ferrokit-core`): a redraw requested before the app ran blocked later ones.** `request_redraw` before the event sink existed (a table filled before `App::run`) left its once-per-frame flag set, so no later request was sent and queued table events (a drop, an edit) waited forever. Found when `set_rows` started requesting one (for the bound selection).
 - **Added: `cargo ferrokit bundle --app-store`** (`cargo-ferrokit`): a universal, sandboxed app with its Mac App Store provisioning profile embedded and checked (bundle id, team, macOS), signed with `app-store-sign`, in a `.pkg` signed with `installer-sign` for Transporter; `--build` sets the build number, `--dry-run` runs without the identities. A guide section. (L5.)
 - **Added: crash reports.** `App::crash_reports(|report| ..)`: a panic Ferrokit doesn't catch writes a report (app, version, macOS, thread, message, place, backtrace) to `~/Library/Logs/<app>/Crashes`, and the next launch hands each unsent report to the handler (`CrashReport`, `mark_sent`). Caught failures stay `on_error`'s. For checks: `testing::catching`, `testing::pending_crash_reports` and `FERROKIT_CRASH_DIR`. A recipe in the guide's *Testing and shipping* chapter. (L5.)
 - **Added: `Column::date`** (and `.with_time()`): a table column of `Option<SystemTime>`, shown in the user's date format and language, relative where it can be ("Today"), sorted by date (no date first) and copied as shown. Not editable. (L4's known gap.)
