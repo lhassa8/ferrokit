@@ -32,7 +32,11 @@ done
 # run makes a universal, sandboxed app with the build number, and an
 # unsigned installer package holding it.
 printf 'sandbox = true\ncategory = "public.app-category.productivity"\n' >>e2e-app/Cargo.toml
-if pkg=$(cd e2e-app && cargo ferrokit bundle --app-store --dry-run --build 7 2>"$dir/store.log"); then
+other=x86_64-apple-darwin
+[ "$(uname -m)" = x86_64 ] && other=aarch64-apple-darwin
+if ! rustup target list --installed 2>/dev/null | grep -qx "$other"; then
+  echo "[check] app-store-dry-run SKIP the Rust target $other isn't installed (rustup target add $other)"
+elif pkg=$(cd e2e-app && cargo ferrokit bundle --app-store --dry-run --build 7 2>"$dir/store.log"); then
   app="$(dirname "$pkg")/E2e App.app"
   archs=$(lipo -archs "$app/Contents/MacOS/e2e-app" 2>/dev/null || true)
   build=$(plutil -extract CFBundleVersion raw "$app/Contents/Info.plist" 2>/dev/null || true)

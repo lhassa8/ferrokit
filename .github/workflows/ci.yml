@@ -21,6 +21,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+          # Both Mac architectures: `cargo ferrokit bundle --universal` and
+          # `--app-store` build for Intel too.
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
       - name: Build (workspace and examples)
         run: cargo build --release --workspace --examples
       - name: Clippy
