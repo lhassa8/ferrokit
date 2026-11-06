@@ -4342,7 +4342,12 @@ fn table_window() -> impl View {
 /// Runs `f` after two run-loop passes (model events are delivered on the
 /// pass after AppKit's callback).
 fn after_events(f: impl Fn() + 'static) {
-    let f = Rc::new(f);
+    after_events_dyn(Rc::new(f));
+}
+
+// Not generic, so the long chains of checks don't nest `later`'s closure
+// types past the compiler's recursion limit (debug builds hit it).
+fn after_events_dyn(f: Rc<dyn Fn()>) {
     later(move || {
         let f = f.clone();
         later(move || f())
