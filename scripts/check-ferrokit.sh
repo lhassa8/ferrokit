@@ -28,6 +28,27 @@ for app in e2e-app e2e-docs; do
   fi
   sed -n 's/^ *\(\[check\] [^d].*\)/\1/p' "$dir/$app.log" | sed "s/^\[check\] /[check] $app: /"
 done
+# The Mac App Store, as far as it goes without Apple's identities: a dry
+# run makes a universal, sandboxed app with the build number, and an
+# unsigned installer package holding it.
+printf 'sandbox = true\ncategory = "public.app-category.productivity"\n' >>e2e-app/Cargo.toml
+if pkg=$(cd e2e-app && cargo ferrokit bundle --app-store --dry-run --build 7 2>"$dir/store.log"); then
+  app="$(dirname "$pkg")/E2e App.app"
+  archs=$(lipo -archs "$app/Contents/MacOS/e2e-app" 2>/dev/null || true)
+  build=$(plutil -extract CFBundleVersion raw "$app/Contents/Info.plist" 2>/dev/null || true)
+  sandboxed=$(codesign -d --entitlements - --xml "$app" 2>/dev/null | grep -c app-sandbox || true)
+  holds=$(pkgutil --payload-files "$pkg" 2>/dev/null | grep -c '^\./E2e App.app/Contents/MacOS/e2e-app$' || true)
+  if [ "$archs" = "x86_64 arm64" ] && [ "$build" = "7" ] && [ "$sandboxed" -ge 1 ] && [ "$holds" = "1" ]; then
+    echo "[check] app-store-dry-run PASS universal ($archs), build $build, sandboxed, in $(basename "$pkg")"
+  else
+    echo "[check] app-store-dry-run FAIL archs '$archs', build '$build', sandbox $sandboxed, package holds the app $holds"
+    failed=$((failed + 1))
+  fi
+else
+  echo "[check] app-store-dry-run FAIL"
+  tail -20 "$dir/store.log"
+  failed=$((failed + 1))
+fi
 # A failing app: multi-word check names are counted, and a panic that stops
 # the checks ends the run in seconds, not at the timeout.
 cargo ferrokit new e2e-fails --ferrokit-path "$root/crates/ferrokit" >/dev/null

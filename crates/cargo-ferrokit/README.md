@@ -24,6 +24,7 @@ cd my-app && cargo ferrokit run
 | `check` | Clippy (warnings are errors), tests, a bundle, the app's self-checks (`CHECK=all`), the signature. |
 | `bundle [--universal] [--zip]` | A signed `.app` with the hardened runtime (ad hoc, or your Developer ID). |
 | `notarize [--dry-run]` | Developer ID signing, Apple's notary service, stapling, a zip to share. |
+| `bundle --app-store [--build <n>] [--dry-run]` | For the Mac App Store: universal, sandboxed, the provisioning profile embedded, Apple Distribution signing, a signed `.pkg` for Transporter. |
 
 Settings live in the app's `Cargo.toml`:
 
@@ -39,6 +40,9 @@ sign = "Developer ID Application: Your Name (TEAMID)"
 notary-profile = "my-profile"   # xcrun notarytool store-credentials my-profile …
 sandbox = true                  # sign for the App Sandbox (files the user chooses, bookmarks)
 network = true                  # with the sandbox: outgoing connections
+app-store-sign = "Apple Distribution: Your Name (TEAMID)"            # bundle --app-store
+installer-sign = "3rd Party Mac Developer Installer: Your Name (TEAMID)"
+provisioning-profile = "MyApp.provisionprofile"                      # a Mac App Store profile
 
 [[package.metadata.ferrokit.documents]]
 name = "Text"

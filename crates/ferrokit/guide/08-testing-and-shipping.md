@@ -308,3 +308,43 @@ cargo ferrokit notarize
 
 The zip opens on any Mac running macOS 15 or later with no Gatekeeper
 warning.
+
+## The Mac App Store
+
+The Mac App Store takes an installer package of a sandboxed app, signed
+with your App Store identities. You need, from your Apple Developer
+account:
+
+- an **Apple Distribution** certificate (signs the app) and a **Mac
+  Installer Distribution** certificate (signs the package; Keychain Access
+  shows it as "3rd Party Mac Developer Installer"), both in your keychain;
+- a **Mac App Store provisioning profile** for the app's bundle id
+  (developer.apple.com ▸ Profiles), saved next to the app;
+- the app in **App Store Connect**, with the same bundle id.
+
+```toml
+[package.metadata.ferrokit]
+sandbox = true
+category = "public.app-category.productivity"
+app-store-sign = "Apple Distribution: Your Name (TEAMID)"
+installer-sign = "3rd Party Mac Developer Installer: Your Name (TEAMID)"
+provisioning-profile = "MyApp.provisionprofile"
+```
+
+```bash
+cargo ferrokit bundle --app-store --build 42
+```
+
+It builds the app for Apple silicon and Intel, embeds the profile, signs
+the app with its sandbox entitlements and the profile's app and team ids
+(a profile for another app, or for iOS, is refused with the reason),
+and writes `My App.pkg`. `--build` is the build number (`CFBundleVersion`;
+each upload needs a higher one), and the version is the package's.
+`--dry-run` does all of it without your identities: ad hoc signing and an
+unsigned package, then the signing commands it would run.
+
+Upload the package with Apple's Transporter app (from the Mac App Store).
+Before submitting, run the sandboxed build yourself (`cargo ferrokit run`
+with `sandbox = true`): App Review checks that the app works in the
+sandbox, and files outside the container are reachable only through open
+and save panels, drops and the bookmarks Ferrokit keeps.

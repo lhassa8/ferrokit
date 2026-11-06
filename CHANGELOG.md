@@ -2,6 +2,7 @@
 
 ## Unreleased (0.5)
 
+- **Added: `cargo ferrokit bundle --app-store`** (`cargo-ferrokit`): a universal, sandboxed app with its Mac App Store provisioning profile embedded and checked (bundle id, team, macOS), signed with `app-store-sign`, in a `.pkg` signed with `installer-sign` for Transporter; `--build` sets the build number, `--dry-run` runs without the identities. A guide section. (L5.)
 - **Added: crash reports.** `App::crash_reports(|report| ..)`: a panic Ferrokit doesn't catch writes a report (app, version, macOS, thread, message, place, backtrace) to `~/Library/Logs/<app>/Crashes`, and the next launch hands each unsent report to the handler (`CrashReport`, `mark_sent`). Caught failures stay `on_error`'s. For checks: `testing::catching`, `testing::pending_crash_reports` and `FERROKIT_CRASH_DIR`. A recipe in the guide's *Testing and shipping* chapter. (L5.)
 - **Added: `Column::date`** (and `.with_time()`): a table column of `Option<SystemTime>`, shown in the user's date format and language, relative where it can be ("Today"), sorted by date (no date first) and copied as shown. Not editable. (L4's known gap.)
 - **Added: bare keys on tables.** `Table::on_key(TableKey::Delete, |rows| …)` (⌫ or ⌦) and `TableKey::Space` get the selected rows when the key is pressed without ⌘, ⌥ or ⌃; in `ferrokit-core`, `TableModel::set_keys` and `TableEvent::Key`. (L4's known gap.)
