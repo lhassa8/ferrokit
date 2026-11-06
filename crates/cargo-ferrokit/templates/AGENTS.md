@@ -102,7 +102,8 @@ fn as_undo_steps(window: &NSWindow, steps: &[&dyn Fn()]) {
 ```
 
 - **A table row's menu:** `table(&model).row_menu("Delete", move |row| …)`; each call adds an item. Number columns: `Column::number(…).decimals(2)`.
-- **A filtered table that keeps its selection:** keep the selected item's id in a signal (set it in `on_select`), and in the `watch` that calls `set_rows`, find that id's new model index and `select` it (`set_rows` clears the selection).
+- **A table's selection in a signal:** `table(&model).selection(&selected)` binds a `Signal<Vec<usize>>` of model indices both ways.
+- **A filtered table that keeps its selection:** keep the selected item's id in a signal (set it from the bound selection), and in the `watch` that calls `set_rows`, find that id's new model index and set the bound signal to it (`set_rows` clears the selection).
 - **Delete with ⌘⌫:** handle it with `.on_command(DELETE, …)` on the table, not the window: then it doesn't fire while the focus is in a text field or editor, where ⌘⌫ deletes text.
 - **Counts in a sidebar:** the title is a closure, so `format!("{} ({n})", …)` shows a count.
 - **Menu titles that change:** `menu_command(move || if read.get() { "Mark as Unread" } else { "Mark as Read" }.to_string(), TOGGLE)`.
@@ -134,5 +135,4 @@ Work around these instead of searching for them:
 - Table rows don't animate in or out; `for_each` lists do. Leave a table's rows still.
 - A popover anchors to a view, not to a toolbar item: use a sheet from the toolbar.
 - Sidebar items have a symbol and a title, no count badge: put the count in the title.
-- Table selection isn't bound to a signal: keep your own (see the filtered-table recipe).
 - No custom native views: `View` can't be implemented outside Ferrokit (`Cx` and `Node` are opaque). Raw AppKit on a view Ferrokit made (`model.table_view()`, `scroll_view()`) works, but it's on you to keep it working.

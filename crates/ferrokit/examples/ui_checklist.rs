@@ -2323,9 +2323,46 @@ fn hidden_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                             ferrokit::close_window(&w);
                         }
                         let events = events.clone();
-                        after_events(move || tabs_and_dock_checks(events.clone()));
+                        after_events(move || table_selection_checks(events.clone()));
                     });
                 });
+            });
+        });
+    });
+}
+
+/// L4: a table's selection bound to a signal, both ways.
+fn table_selection_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let model = Rc::new(TableModel::new(ViewId(960), vec![Column::text("n", "N", |n: &u32| n.to_string())]));
+    model.set_rows((0..6).collect());
+    let selected = Signal::new(Vec::<usize>::new());
+    let w = open(Window::new("Bound Selection").size(240.0, 260.0).view(table(&model).selection(&selected)));
+    let m = model.clone();
+    after_events(move || {
+        // The signal selects (any order).
+        selected.set(vec![3, 1]);
+        let from_signal = m.selection();
+        // The user selects: the table tells the signal.
+        let set = objc2_foundation::NSIndexSet::indexSetWithIndex(4);
+        m.table_view().selectRowIndexes_byExtendingSelection(&set, false);
+        let (m, w, events) = (m.clone(), w.clone(), events.clone());
+        after_events(move || {
+            let from_user = selected.get_untracked();
+            // Replacing the rows clears the selection, and the signal follows.
+            m.set_rows((10..16).collect());
+            let (m, w, events, from_signal) = (m.clone(), w.clone(), events.clone(), from_signal.clone());
+            after_events(move || {
+                let cleared = selected.get_untracked();
+                selected.set(vec![5]);
+                let again = m.selection();
+                check(
+                    "table-selection-bound",
+                    from_signal == [1, 3] && from_user == [4] && cleared.is_empty() && again == [5],
+                    format!("signal [3, 1] → table {from_signal:?}; user picks 4 → signal {from_user:?}; set_rows → signal {cleared:?}; signal [5] → table {again:?}"),
+                );
+                ferrokit::close_window(&w);
+                let events = events.clone();
+                after_events(move || tabs_and_dock_checks(events.clone()));
             });
         });
     });

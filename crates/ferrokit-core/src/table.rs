@@ -1275,6 +1275,8 @@ impl<T: 'static> TableModel<T> {
         // SAFETY: nil sender.
         unsafe { self.inner.table.deselectAll(None) };
         self.inner.quiet.set(false);
+        // Views bound to the selection hear that it was cleared.
+        crate::request_redraw();
     }
 
     /// The rows, in model order (unsorted).

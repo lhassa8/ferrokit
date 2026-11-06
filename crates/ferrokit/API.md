@@ -539,6 +539,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 
 `pub struct Table<T: 'static>`: A native `NSTableView` showing a `TableModel`: millions of rows, sorting, column resizing, type-select and VoiceOver come from AppKit.
 
+- `pub fn selection(mut self, rows: &Signal<Vec<usize>>) -> Self`: Binds the selection (model indices) to `rows`, both ways: the user selecting rows sets it, and setting it selects them (scrolling the first into view). `TableModel::set_rows` clears the selection, and `rows` follows; set it after replacing the rows to select again.
 - `pub fn row_menu(mut self, title: &str, action: impl Fn(usize) + 'static) -> Self`: A right-click menu for rows: each action gets the clicked row (model index), or the selected row when invoked another way.
 - `pub fn on_select(mut self, f: impl Fn(Vec<usize>) + 'static) -> Self`: The selected rows (model indices) changed.
 - `pub fn on_activate(mut self, f: impl Fn(usize) + 'static) -> Self`: A row was double-clicked, or Return pressed on it.
