@@ -113,6 +113,8 @@ cargo ferrokit new my-app && cd my-app && cargo ferrokit run
 | `check` | Clippy, tests, a bundle, and your app's own self-checks |
 | `bundle` | A signed `.app` with the hardened runtime, universal on request |
 | `notarize` | Developer ID signing, Apple's notary service and stapling, then a zip ready to send |
+| `appcast` | Updates through Sparkle: the release zipped and the feed written; the app has Check for Updates… |
+| `bundle --app-store` | A universal, sandboxed app in a signed installer package for the Mac App Store |
 
 ## Bring your AI assistant
 
@@ -146,7 +148,7 @@ Use [`ferrokit`](crates/ferrokit), with [`cargo ferrokit`](crates/cargo-ferrokit
 | Crate | What it is |
 | --- | --- |
 | [`ferrokit`](crates/ferrokit) | The framework: whole Mac apps where every view is a real AppKit view, updated in place by fine-grained signals. |
-| [`cargo-ferrokit`](crates/cargo-ferrokit) | `cargo ferrokit new`, `run`, `check`, `bundle` and `notarize`. |
+| [`cargo-ferrokit`](crates/cargo-ferrokit) | `cargo ferrokit new`, `run`, `check`, `bundle`, `notarize` and `appcast`. |
 | [`ferrokit-core`](crates/ferrokit-core) | The AppKit layer under `ferrokit`. You don't need to depend on it yourself. |
 
 The crates share one version number and are released together, so use matching versions. The current version is **0.4.2**. It needs macOS 15 or later.

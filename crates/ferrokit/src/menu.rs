@@ -43,13 +43,15 @@ fn submenu(mtm: MainThreadMarker, title: &str, items: Vec<Option<Retained<NSMenu
 
 /// Builds and installs the menu bar for an app called `name`. `menus` are
 /// the app's own (a "File" one is merged with the standard File menu);
-/// `settings` adds Settings… (⌘,); `file_after_close` goes below Close (a
+/// `settings` adds Settings… (⌘,); `updater` (Sparkle's controller) adds
+/// Check for Updates…; `file_after_close` goes below Close (a
 /// document app's Save items). Returns the targets to keep alive.
 pub(crate) fn install(
     mtm: MainThreadMarker,
     name: &str,
     menus: Vec<(String, Vec<MenuItem>)>,
     settings: Option<Retained<NSObject>>,
+    updater: Option<Retained<NSObject>>,
     file_after_close: Vec<MenuItem>,
     window_items: Vec<MenuItem>,
 ) -> Vec<Retained<NSObject>> {
@@ -65,7 +67,16 @@ pub(crate) fn install(
         keep.push(target);
         i
     });
-    let mut app_items = vec![Some(item(mtm, &t_with("About {name}", &[("name", &name)]), Some(sel!(orderFrontStandardAboutPanel:)), "")), None];
+    let mut app_items = vec![Some(item(mtm, &t_with("About {name}", &[("name", &name)]), Some(sel!(orderFrontStandardAboutPanel:)), ""))];
+    if let Some(target) = updater {
+        // Sparkle's controller enables it while no check is running.
+        let i = item(mtm, &t("Check for Updates…"), Some(sel!(checkForUpdates:)), "");
+        // SAFETY: the target is returned to the caller, who keeps it.
+        unsafe { i.setTarget(Some(&target)) };
+        keep.push(target);
+        app_items.push(Some(i));
+    }
+    app_items.push(None);
     if let Some(i) = settings_item {
         app_items.extend([Some(i), None]);
     }

@@ -202,6 +202,14 @@ pub fn key_equiv(w: &objc2_app_kit::NSWindow, chars: &str, shift: bool) -> bool 
     NSApplication::sharedApplication(mtm()).mainMenu().unwrap().performKeyEquivalent(&event)
 }
 
+/// The titles of the app menu's items (the first menu: About, Check for
+/// Updates…, Settings…, Hide, Quit), separators as `"-"`.
+pub fn app_menu_titles() -> Vec<String> {
+    let bar = NSApplication::sharedApplication(mtm()).mainMenu();
+    let menu = bar.and_then(|b| b.itemAtIndex(0)).and_then(|i| i.submenu());
+    menu.map(|m| m.itemArray().iter().map(|i| if i.isSeparatorItem() { "-".into() } else { i.title().to_string() }).collect()).unwrap_or_default()
+}
+
 /// Sends a key-down with `chars` and `modifiers` to the main menu's key
 /// equivalents (no window needed); true if an enabled item took it.
 pub fn menu_key(chars: &str, modifiers: objc2_app_kit::NSEventModifierFlags) -> bool {

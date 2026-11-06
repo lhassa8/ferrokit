@@ -309,6 +309,86 @@ cargo ferrokit notarize
 The zip opens on any Mac running macOS 15 or later with no Gatekeeper
 warning.
 
+## Updates
+
+Apps outside the Mac App Store usually update through
+[Sparkle](https://sparkle-project.org), and Ferrokit uses Sparkle 2. When
+the app is bundled with it, the app menu gets **Check for Updates…**, and
+Sparkle does the rest. At the second launch it asks the user whether to
+check automatically. When there's a new version it shows the release notes,
+downloads the update, checks its signature, installs it and relaunches.
+The app's code doesn't change.
+
+Once:
+
+1. Download Sparkle 2 (`Sparkle-2.x.tar.xz` from
+   github.com/sparkle-project/Sparkle/releases) and unpack it, for example
+   in `~/Developer/Sparkle-2.10.1`. Its licence is MIT-style: include its
+   notice with your app's credits.
+2. Make the key that signs your updates. Sparkle's `bin/generate_keys`
+   keeps the private key in your login keychain and prints the public
+   key. Back the private key up (`generate_keys -x <file>`): without it you
+   can't publish updates your users will accept.
+3. Tell `cargo ferrokit` where updates come from:
+
+```toml
+[package.metadata.ferrokit.updates]
+feed = "https://example.com/myapp/appcast.xml"
+public-key = "…"                           # what generate_keys printed
+sparkle = "~/Developer/Sparkle-2.10.1"      # or set FERROKIT_SPARKLE
+```
+
+`cargo ferrokit bundle` (and `run`, `check`, `notarize`) then embeds
+`Sparkle.framework`, signs its parts with the app's identity, and puts the
+feed and the public key in `Info.plist`. A sandboxed app gets the settings
+and entitlements that Sparkle's installer (and, without `network = true`,
+its downloader) needs. `bundle --app-store` leaves Sparkle out: the App
+Store does the updating there.
+
+Each release:
+
+1. Raise `version` in `Cargo.toml`.
+2. `cargo ferrokit notarize` (a Developer ID signature and Apple's ticket).
+3. `cargo ferrokit appcast`. It zips the app into `updates/` as
+   `My App 1.1.0.zip` and writes `updates/appcast.xml` with Sparkle's
+   `generate_appcast`, signing the update with your key.
+4. Upload the new files to the feed's folder. Any HTTPS host works: your
+   site, S3, GitHub Pages.
+
+Keep `updates/` between releases. `generate_appcast` keeps the feed's
+history and makes small delta updates from the earlier versions.
+
+Nothing in the app has to call Sparkle. The `updates` module is for an
+app that wants more: `updates::check()` runs a check from a button,
+`set_automatic_checks` and `set_automatic_downloads` back a Settings
+checkbox, and `updates::on_event` reports what the updater does:
+
+```rust,no_run
+use ferrokit::*;
+
+updates::on_event(|event| match event {
+    // Downloaded and checked; it installs when the app quits.
+    UpdateEvent::ReadyOnQuit { version } => set_dock_badge(Some(version.as_str())),
+    UpdateEvent::Failed { message } => eprintln!("update failed: {message}"),
+    _ => {}
+});
+```
+
+Run unbundled (`cargo run`), the app has no Sparkle, and these functions
+do nothing (`updates::available()` is false). A bundle that's set up for
+updates but can't start Sparkle prints why and reports it to `on_event`.
+Ad hoc builds turn off library validation so they can load Sparkle; with
+a Developer ID, the app and Sparkle share your team and need no
+exception.
+
+`check-ferrokit.sh` (part of `check-all`) tests the whole path when
+Sparkle is unpacked in `target/sparkle-<version>` or `FERROKIT_SPARKLE`
+names it. It installs version 1.0.0, serves 1.1.0 from a feed on
+`127.0.0.1`, shows that an update signed with the wrong key is refused,
+and that the right one installs when the app quits. It runs both plain
+and sandboxed. A feed on `127.0.0.1` is only for testing like this: a
+real feed must be HTTPS.
+
 ## The Mac App Store
 
 The Mac App Store takes an installer package of a sandboxed app, signed

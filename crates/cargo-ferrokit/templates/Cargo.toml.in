@@ -27,4 +27,9 @@ min-macos = "15.0"
 # app-store-sign = "Apple Distribution: Your Name (TEAMID)"
 # installer-sign = "3rd Party Mac Developer Installer: Your Name (TEAMID)"
 # provisioning-profile = "MyApp.provisionprofile"
+# Updates through Sparkle 2 (Check for Updates…; `cargo ferrokit appcast` writes the feed):
+# [package.metadata.ferrokit.updates]
+# feed = "https://example.com/myapp/appcast.xml"
+# public-key = "…"                     # what Sparkle's bin/generate_keys prints
+# sparkle = "~/Developer/Sparkle-2.10.1"  # Sparkle's release, unpacked
 {{documents}}

@@ -94,6 +94,7 @@ mod surface;
 mod syntax;
 mod transfer;
 mod undo;
+pub mod updates;
 mod value;
 pub mod testing;
 mod view;
@@ -145,6 +146,7 @@ pub use widgets::{Gauge, Link, PathControl, RadioGroup, TabStyle, Tabs, TokenFie
 pub use media::{PdfView, VideoControls, VideoPlayer, WebPage, WebView, pdf_view, pdf_view_data, video_player, video_stream, web_view};
 pub use browser::{ColumnBrowser, column_browser};
 pub use crash::CrashReport;
+pub use updates::UpdateEvent;
 pub use failure::Failure;
 pub use filter::{FieldKind, FieldValue, Filter, FilterEditor, FilterField, FilterRule, FilterTest, Match, filter_editor};
 pub use form::{Form, FormRow, FormStyle, Section, disclosure, form, form_content, form_row, group_box, section};
@@ -1187,7 +1189,9 @@ impl App {
                 show_welcome();
             }).key_with("1", &[Modifier::Shift]));
         }
-        let targets = menu::install(mtm, &self.name, menus, settings, file_after, window_items);
+        // Sparkle, when the bundle has it: Check for Updates… in the app menu.
+        let updater = objc2::rc::autoreleasepool(|_| updates::start());
+        let targets = menu::install(mtm, &self.name, menus, settings, updater, file_after, window_items);
         EXTRAS.with_borrow_mut(|e| e.extend(targets));
         for extra in self.extras {
             status::install(extra, &self.name);

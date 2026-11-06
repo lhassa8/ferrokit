@@ -6,7 +6,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 
 **Where to look:** app, windows, menus and the shell → App and windows, `chrome`, `dialogs`, `commands`; state → `signal`, `resource`, `store`, `undo`; views and modifiers → `view`, `layout`, `appkit_views`, `controls`, `style`, `motion`; tables, outlines, text → `models`, `table`, `outline`, `text`; charts → `charts`, `canvas`; checks → Module `testing`.
 
-**Contents:** [App and windows (lib)](#app-and-windows-lib) · [signal](#signal) · [view](#view) · [layout](#layout) · [appkit_views](#appkit_views) · [controls](#controls) · [models](#models) · [table](#table) · [outline](#outline) · [text](#text) · [commands](#commands) · [chrome](#chrome) · [dialogs](#dialogs) · [appearance](#appearance) · [frame](#frame) · [store](#store) · [undo](#undo) · [resource](#resource) · [documents](#documents) · [collection](#collection) · [syntax](#syntax) · [style](#style) · [surface](#surface) · [material](#material) · [widgets](#widgets) · [media](#media) · [browser](#browser) · [crash](#crash) · [failure](#failure) · [filter](#filter) · [form](#form) · [quicklook](#quicklook) · [services](#services) · [status](#status) · [motion](#motion) · [popover](#popover) · [canvas](#canvas) · [value](#value) · [transfer](#transfer) · [l10n](#l10n) · [charts](#charts) · [host](#host) · [Module testing](#module-testing) · [Module input](#module-input) · [Module soak](#module-soak)
+**Contents:** [App and windows (lib)](#app-and-windows-lib) · [signal](#signal) · [view](#view) · [layout](#layout) · [appkit_views](#appkit_views) · [controls](#controls) · [models](#models) · [table](#table) · [outline](#outline) · [text](#text) · [commands](#commands) · [chrome](#chrome) · [dialogs](#dialogs) · [appearance](#appearance) · [frame](#frame) · [store](#store) · [undo](#undo) · [resource](#resource) · [documents](#documents) · [collection](#collection) · [syntax](#syntax) · [style](#style) · [surface](#surface) · [material](#material) · [widgets](#widgets) · [media](#media) · [browser](#browser) · [crash](#crash) · [updates](#updates) · [failure](#failure) · [filter](#filter) · [form](#form) · [quicklook](#quicklook) · [services](#services) · [status](#status) · [motion](#motion) · [popover](#popover) · [canvas](#canvas) · [value](#value) · [transfer](#transfer) · [l10n](#l10n) · [charts](#charts) · [host](#host) · [Module updates](#module-updates) · [Module testing](#module-testing) · [Module input](#module-input) · [Module soak](#module-soak)
 
 ## App and windows (lib)
 
@@ -1273,6 +1273,17 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub when: Option<SystemTime>`: When the app crashed.
 - `pub fn mark_sent(&self) -> std::io::Result<()>`: Moves the report to the `Sent` folder beside it, so it isn't handed to the app again: call it once it's sent (or the user declined).
 
+## updates
+
+### `UpdateEvent`
+
+`pub enum UpdateEvent`: What Sparkle's updater did (see `on_event`).
+
+- `Found`: The feed has a newer version than this one.
+- `UpToDate`: The check found nothing newer.
+- `ReadyOnQuit`: The update is downloaded and checked, and installs when the app quits (Sparkle's automatic updates, or the user chose Install on Quit).
+- `Failed`: A check or an update failed: the feed couldn't be read, the download or its signature was bad, the install failed.
+
 ## failure
 
 ### `Failure`
@@ -1700,6 +1711,23 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 
 `pub struct ViewId(pub u64)`: Identifies a mounted native view. Chosen by the caller; stable for the view's lifetime (views are created once and updated in place).
 
+## Module `updates`
+
+Updates through Sparkle 2: when the app's bundle holds `Sparkle.framework` and names a feed (`cargo ferrokit bundle` puts both in from `[package.metadata.ferrokit.updates]`), the app starts Sparkle's updater at launch and gets **Check for Updates…** in its app menu. Sparkle checks the feed on its schedule (it asks the user first), shows what's new, downloads, checks the update's signature, installs and relaunches.
+
+### updates
+
+- `pub fn available() -> bool`: Whether the app has Sparkle (it was bundled with updates).
+- `pub fn check()`: Checks for updates as **Check for Updates…** does: Sparkle shows its progress and what it finds.
+- `pub fn check_in_background()`: Checks without showing anything unless there's an update (as Sparkle's scheduled checks do). With automatic checks and downloads both on, an update is downloaded and installed when the app quits; otherwise Sparkle shows it.
+- `pub fn can_check() -> bool`: Whether a check can start now (there's Sparkle and none is running).
+- `pub fn automatic_checks() -> bool`: Whether Sparkle checks on its schedule (daily by default). Sparkle asks the user at the second launch; this is their answer, or what the app set.
+- `pub fn set_automatic_checks(on: bool)`: Turns scheduled checks on or off (a Settings checkbox, say). Kept in the app's defaults.
+- `pub fn automatic_downloads() -> bool`: Whether updates found by scheduled checks download on their own and install when the app quits (Sparkle does this only while automatic checks are on too).
+- `pub fn set_automatic_downloads(on: bool)`: Turns automatic downloads on or off. Kept in the app's defaults.
+- `pub fn last_check() -> Option<SystemTime>`: When Sparkle last checked, if it has.
+- `pub fn on_event(f: impl Fn(&UpdateEvent) + 'static)`: Calls `f` with what the updater does: found an update, up to date, ready to install on quit, failed. Sparkle shows its own windows for checks the user starts; this is for the app's own status (a badge, a line in Settings) and for checks.
+
 ## Module `testing`
 
 Helpers for automated checks of apps built with ferrokit: the accessibility tree as VoiceOver sees it, key equivalents through the menu, simulated edits, memory footprint and window snapshots. Used by the checklist and the example apps' self-checks.
@@ -1722,6 +1750,7 @@ Helpers for automated checks of apps built with ferrokit: the accessibility tree
 - `pub fn quick_look_state() -> (Vec<std::path::PathBuf>, Option<usize>)`: The files the Quick Look panel was given, and the one it shows (`None` while it's closed).
 - `pub fn snapshot_windows(dir: &str)`: Renders every window to `<dir>/<title>.png` (AppKit's own drawing, no screen-recording permission needed). The window's frame view is drawn, so the image includes the title bar and the window background (which the content view alone doesn't draw).
 - `pub fn key_equiv(w: &objc2_app_kit::NSWindow, chars: &str, shift: bool) -> bool`: Sends a ⌘-key equivalent through the main menu, as a key press would.
+- `pub fn app_menu_titles() -> Vec<String>`: The titles of the app menu's items (the first menu: About, Check for Updates…, Settings…, Hide, Quit), separators as `"-"`.
 - `pub fn menu_key(chars: &str, modifiers: objc2_app_kit::NSEventModifierFlags) -> bool`: Sends a key-down with `chars` and `modifiers` to the main menu's key equivalents (no window needed); true if an enabled item took it.
 - `pub fn shortcut(window: &objc2_app_kit::NSWindow, chars: &str, shift: bool) -> bool`: Performs a keyboard shortcut the way the menu bar does, without needing the app to be active: finds the main-menu item for ⌘`chars` (⇧⌘ when `shift`; AppKit's rule: an uppercase key equivalent implies Shift). An item of the app's own (`menu_item`, `menu_command`) runs if it's enabled; a standard item (Undo, Select All) sends its action along `window`'s responder chain, starting at its first responder. Returns whether an item matched and something handled it.
 - `pub fn capture_reveals(on: bool)`: From now on, `reveal_in_finder` records what it's asked to show instead of opening Finder windows (`false` stops).
