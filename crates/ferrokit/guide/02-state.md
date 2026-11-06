@@ -42,7 +42,7 @@ setting it does nothing, and `try_get` and `is_alive` check first.
 
 What a view shows takes either a value or a closure that reads signals:
 `text("Total")` or `text(move || format!("{} left", left.get()))`, and the
-same for `.color(..)`, `.background(..)`, `.opacity(..)`, `.disabled(..)`,
+same for `.color(..)`, `.background(..)`, `.opacity(..)`, `.disabled(..)`, `.hidden(..)`,
 a button's title and symbol, and a menu item's title. A closure runs again
 when a signal it read changes, and only that view updates. (These take
 `impl IntoValue<T>`.)

@@ -249,6 +249,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn hover_highlight(mut self, color: crate::Color) -> Self`: A background while hovered (see `ViewExt::hover_highlight`).
 - `pub fn tooltip(mut self, text: &str) -> Self`: A tooltip (see `ViewExt::tooltip`).
 - `pub fn disabled(mut self, when: impl crate::IntoValue<bool>) -> Self`: Disabled controls (see `ViewExt::disabled`).
+- `pub fn hidden(mut self, when: impl crate::IntoValue<bool>) -> Self`: Hidden while `when()` is true (see `ViewExt::hidden`).
 - `pub fn on_click(mut self, action: impl Fn() + 'static) -> Self`: The view as a button (see `ViewExt::on_click`).
 
 ### `Node`
@@ -316,6 +317,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `fn on_hover(self, action: impl Fn(bool) + 'static) -> Modified<Self>`: Calls `action` with `true` when the pointer moves over the view and `false` when it leaves (while the app is active).
 - `fn hover_highlight(self, color: crate::Color) -> Modified<Self>`: A background of `color` while the pointer is over the view, fading in and out: for rows and cards that can be clicked.
 - `fn tooltip(self, text: &str) -> Modified<Self>`: A tooltip: `text` appears in a small box when the pointer rests on the view (SwiftUI's `help`). VoiceOver reads it as the view's help.
+- `fn hidden(self, when: impl crate::IntoValue<bool>) -> Modified<Self>`: Hides the view while `when()` is true, following the signals it reads: its native views stay built (no rebuild, the state inside kept) but aren't shown, and it takes no room in its stack, as if it weren't there. For a panel shown in one mode only, rather than a `dynamic` that rebuilds it each time. VoiceOver and Tab skip it.
 - `fn disabled(self, when: impl crate::IntoValue<bool>) -> Modified<Self>`: Disables the view's controls while `when()` is true (a picker that only matters once a checkbox is on, a form while it's saving), following the signals it reads. SwiftUI's `disabled`.
 - `fn on_click(self, action: impl Fn() + 'static) -> Modified<Self>`: Makes the whole view a button: a click on it calls `action`, it dims while pressed, and VoiceOver reads it as a button named by its text. For rows, cards and tiles; controls inside it don't get clicks.
 

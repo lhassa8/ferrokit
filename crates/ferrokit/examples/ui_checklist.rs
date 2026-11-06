@@ -2227,7 +2227,78 @@ fn window_panel_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     for w in &panels {
         ferrokit::close_window(w);
     }
-    after_events(move || tabs_and_dock_checks(events.clone()));
+    after_events(move || hidden_checks(events.clone()));
+}
+
+/// L4: `.hidden(..)` hides a view without rebuilding it, and it takes no
+/// room; a hidden view inside another waits for it; a `dynamic` replaced
+/// while hidden shows its new content.
+fn hidden_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let (middle, outer, inner, version) = (Signal::new(true), Signal::new(false), Signal::new(false), Signal::new(1));
+    let w = open(
+        Window::new("Hidden").size(260.0, 260.0).view(
+            vstack((
+                text("Top"),
+                text("Middle").hidden(move || middle.get()),
+                text("Bottom"),
+                vstack((text("Outer"), text("Inner").hidden(move || inner.get()), dynamic(move || text(format!("Version {}", version.get())))))
+                    .hidden(move || outer.get()),
+                spacer(),
+            ))
+            .padding(12.0),
+        ),
+    );
+    let label = {
+        let w = w.clone();
+        move |t: &str| w.contentView().unwrap().subviews().iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string() == t)
+    };
+    let mid_y = |f: &NSTextField| f.frame().origin.y + f.frame().size.height / 2.0;
+    after_events(move || {
+        let (top, mid, bottom) = (label("Top").unwrap(), label("Middle").unwrap(), label("Bottom").unwrap());
+        let gap_hidden = (mid_y(&bottom) - mid_y(&top)).abs();
+        let hidden = mid.isHidden() && !top.isHidden() && !bottom.isHidden();
+        middle.set(false);
+        let (label, events) = (label.clone(), events.clone());
+        after_events(move || {
+            let (top, bottom, mid2) = (label("Top").unwrap(), label("Bottom").unwrap(), label("Middle").unwrap());
+            let gap_shown = (mid_y(&bottom) - mid_y(&top)).abs();
+            let kept = std::ptr::eq(&*mid, &*mid2);
+            check(
+                "hidden-takes-no-room",
+                hidden && !mid2.isHidden() && kept && gap_shown > gap_hidden * 1.6,
+                format!("hidden {hidden}, shown {}, same view {kept}; Top to Bottom {gap_hidden:.1} hidden, {gap_shown:.1} shown", !mid2.isHidden()),
+            );
+            // Nested: the inner view shown while the outer is hidden stays
+            // hidden until the outer shows; a dynamic replaced while hidden
+            // shows its new content.
+            batch(|| {
+                inner.set(true);
+                outer.set(true);
+            });
+            let (label, events) = (label.clone(), events.clone());
+            after_events(move || {
+                let all_hidden = ["Outer", "Inner", "Version 1"].iter().all(|t| label(t).is_some_and(|f| f.isHidden()));
+                inner.set(false);
+                version.set(2);
+                let (label, events) = (label.clone(), events.clone());
+                after_events(move || {
+                    let waits = label("Inner").is_some_and(|f| f.isHidden());
+                    outer.set(false);
+                    let (label, events) = (label.clone(), events.clone());
+                    after_events(move || {
+                        let shown = ["Outer", "Inner", "Version 2"].iter().all(|t| label(t).is_some_and(|f| !f.isHidden()));
+                        let replaced = label("Version 1").is_none();
+                        check("hidden-nested-and-dynamic", all_hidden && waits && shown && replaced, format!("all hidden {all_hidden}, inner waits {waits}, all shown {shown}, old version gone {replaced}"));
+                        if let Some(w) = windows().into_iter().find(|w| w.title().to_string() == "Hidden") {
+                            ferrokit::close_window(&w);
+                        }
+                        let events = events.clone();
+                        after_events(move || tabs_and_dock_checks(events.clone()));
+                    });
+                });
+            });
+        });
+    });
 }
 
 /// C5: windows as tabs, no full screen, the Dock badge and the Dock menu.

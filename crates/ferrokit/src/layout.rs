@@ -48,6 +48,10 @@ fn cross_axis(a: Axis) -> Axis {
 /// dirty flags when `clean` is set: they are laid out through their parent).
 fn each_child<'a>(children: &'a [Node], clean: bool, f: &mut dyn FnMut(&'a Node)) {
     for c in children {
+        // A hidden view takes no room (see `ViewExt::hidden`).
+        if c.meta.hidden.get() {
+            continue;
+        }
         match &c.kind {
             Kind::Group(g) => {
                 if clean {
@@ -72,6 +76,9 @@ fn flat(children: &[Node], clean: bool) -> Vec<&Node> {
 
 /// The node's ideal size (cached until its subtree changes).
 pub(crate) fn ideal(node: &Node) -> Size {
+    if node.meta.hidden.get() {
+        return Size::default();
+    }
     if let Some(s) = node.meta.ideal.get() {
         return s;
     }
