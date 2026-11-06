@@ -411,6 +411,13 @@ impl<T: 'static> Signal<T> {
         self.inner().value.borrow().clone()
     }
 
+    /// Reads the value through `f` without subscribing: like
+    /// [`with`](Self::with), for a large value (a `Vec`, a tree) that an
+    /// effect reads but shouldn't re-run for.
+    pub fn with_untracked<R>(&self, f: impl FnOnce(&T) -> R) -> R {
+        f(&self.inner().value.borrow())
+    }
+
     /// Replaces the value and notifies readers (nothing, once freed).
     pub fn set(&self, value: T) {
         let Some(inner) = self.try_inner() else { return };
@@ -507,6 +514,16 @@ impl<T: PartialEq + Clone + 'static> Memo<T> {
     pub fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R {
         self.signal.with(f)
     }
+
+    /// The current value, without subscribing.
+    pub fn get_untracked(&self) -> T {
+        self.signal.get_untracked()
+    }
+
+    /// Reads the value through `f` without subscribing.
+    pub fn with_untracked<R>(&self, f: impl FnOnce(&T) -> R) -> R {
+        self.signal.with_untracked(f)
+    }
 }
 
 #[cfg(test)]
@@ -536,6 +553,22 @@ mod tests {
         })
         .join();
         assert!(exited.is_ok());
+    }
+
+    #[test]
+    fn with_untracked_reads_without_subscribing() {
+        let s = Signal::new(vec![1, 2, 3]);
+        let m = Memo::new(move || s.with(|v| v.len()));
+        let (runs, bump) = counter();
+        let seen = Rc::new(Cell::new(0));
+        let seen2 = seen.clone();
+        let _e = Effect::new(move || {
+            bump();
+            seen2.set(s.with_untracked(|v| v.iter().sum::<i32>()) + m.with_untracked(|n| *n as i32) + m.get_untracked() as i32);
+        });
+        assert_eq!((runs.get(), seen.get()), (1, 12));
+        s.update(|v| v.push(4));
+        assert_eq!(runs.get(), 1, "neither the signal nor the memo subscribed");
     }
 
     #[test]

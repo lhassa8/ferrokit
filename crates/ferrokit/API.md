@@ -135,6 +135,8 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn new(f: impl Fn() -> T + 'static) -> Self`: A value computed by `f` from other signals.
 - `pub fn get(&self) -> T`: The current value, subscribing the running effect.
 - `pub fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R`: Reads the value through `f`, subscribing the running effect.
+- `pub fn get_untracked(&self) -> T`: The current value, without subscribing.
+- `pub fn with_untracked<R>(&self, f: impl FnOnce(&T) -> R) -> R`: Reads the value through `f` without subscribing.
 
 ### `Signal`
 
@@ -146,6 +148,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R`: Reads the value through `f`, subscribing the running effect.
 - `pub fn get(&self) -> T where T: Clone`: A copy of the value, subscribing the running effect.
 - `pub fn get_untracked(&self) -> T where T: Clone`: A copy of the value, without subscribing.
+- `pub fn with_untracked<R>(&self, f: impl FnOnce(&T) -> R) -> R`: Reads the value through `f` without subscribing: like `with`, for a large value (a `Vec`, a tree) that an effect reads but shouldn't re-run for.
 - `pub fn set(&self, value: T)`: Replaces the value and notifies readers (nothing, once freed).
 - `pub fn set_if_changed(&self, value: T) where T: PartialEq`: Replaces the value and notifies readers only if it changed.
 - `pub fn update(&self, f: impl FnOnce(&mut T))`: Changes the value in place and notifies readers (nothing, once freed).

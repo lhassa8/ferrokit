@@ -14,7 +14,8 @@ name.update(|n| n.push_str(" Hopper"));    // changes in place, notifies
 let now = name.get();                      // a copy, subscribing the reader
 let len = name.with(|n| n.len());          // read without copying
 let quiet = name.get_untracked();          // read without subscribing
-# let _ = (now, len, quiet);
+let chars = name.with_untracked(|n| n.chars().count()); // the same, without copying
+# let _ = (now, len, quiet, chars);
 ```
 
 `set_if_changed` skips the notification when the value is equal.
