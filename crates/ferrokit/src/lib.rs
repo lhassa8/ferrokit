@@ -134,7 +134,7 @@ pub use layout::layout_stats;
 pub use models::{Table, TextEditor, table, text_editor};
 pub use outline::{Outline, TreeNode, outline, sidebar};
 pub use collection::{Collection, CollectionItem, ItemImage, collection, collection_cells_made};
-pub use ferrokit_core::table::{CellImage, Column, ColumnState, Sort, TableModel};
+pub use ferrokit_core::table::{CellImage, Column, ColumnState, Sort, TableKey, TableModel};
 pub use ferrokit_core::text::{Color, TextModel, TextStyle};
 pub use syntax::Syntax;
 pub use style::{Font, Weight};

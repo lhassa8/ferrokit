@@ -48,6 +48,9 @@ let view = table(&model)
   `(row, column, new text)`.
 - `update_row`, `append` and `select` change the model in place. Only the
   rows on screen have views; 200,000 rows load in about 150 ms.
+- `.on_key(TableKey::Delete, |rows| …)` and `TableKey::Space` take those
+  keys without ⌘ while rows are selected (Delete to remove them, Space to
+  Quick Look them, as in the Finder). Put the action in a menu too.
 - `.selection(&rows)` binds the selection to a `Signal<Vec<usize>>` of
   model indices, both ways: clicking rows sets it, and setting it selects
   them. `set_rows` clears the selection and the signal with it, so set the

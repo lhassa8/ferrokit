@@ -9,7 +9,7 @@ use ferrokit::{
     Align, App, AppEvent, Effect, Identifiable, Signal, View, ViewExt, Window, batch, button, checkbox, dynamic, effect_runs,
     for_each, grid, hstack, later, layout_stats, layout_passes, layout_times_us, live_nodes, open, secure_field, spacer, spawn, text,
     text_field, toggle, vstack, windows, divider, image, picker, progress, scroll, slider, stepper, table, Column, Sort,
-    TableModel, ViewId, TreeNode, outline, sidebar, TextModel, text_editor, split, toolbar_button, toolbar_space,
+    TableKey, TableModel, ViewId, TreeNode, outline, sidebar, TextModel, text_editor, split, toolbar_button, toolbar_space,
     toolbar_search, menu_item, menu_separator, MenuItem, Modifier, submenu, stored, set_undoable, Alert, OpenOptions, SheetHandle, alert, open_panel, save_panel, sheet,
 };
 use objc2::MainThreadMarker;
@@ -2336,7 +2336,16 @@ fn table_selection_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let model = Rc::new(TableModel::new(ViewId(960), vec![Column::text("n", "N", |n: &u32| n.to_string())]));
     model.set_rows((0..6).collect());
     let selected = Signal::new(Vec::<usize>::new());
-    let w = open(Window::new("Bound Selection").size(240.0, 260.0).view(table(&model).selection(&selected)));
+    let pressed = Rc::new(RefCell::new(Vec::new()));
+    let (p1, p2) = (pressed.clone(), pressed.clone());
+    let w = open(
+        Window::new("Bound Selection").size(240.0, 260.0).view(
+            table(&model)
+                .selection(&selected)
+                .on_key(TableKey::Delete, move |rows| p1.borrow_mut().push(format!("delete {rows:?}")))
+                .on_key(TableKey::Space, move |rows| p2.borrow_mut().push(format!("space {rows:?}"))),
+        ),
+    );
     let m = model.clone();
     after_events(move || {
         // The signal selects (any order).
@@ -2345,24 +2354,52 @@ fn table_selection_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         // The user selects: the table tells the signal.
         let set = objc2_foundation::NSIndexSet::indexSetWithIndex(4);
         m.table_view().selectRowIndexes_byExtendingSelection(&set, false);
-        let (m, w, events) = (m.clone(), w.clone(), events.clone());
+        let (m, w, events, pressed) = (m.clone(), w.clone(), events.clone(), pressed.clone());
         after_events(move || {
             let from_user = selected.get_untracked();
             // Replacing the rows clears the selection, and the signal follows.
             m.set_rows((10..16).collect());
-            let (m, w, events, from_signal) = (m.clone(), w.clone(), events.clone(), from_signal.clone());
+            let (m, w, events, from_signal, pressed) = (m.clone(), w.clone(), events.clone(), from_signal.clone(), pressed.clone());
             after_events(move || {
                 let cleared = selected.get_untracked();
                 selected.set(vec![5]);
                 let again = m.selection();
+                // Bare keys: Delete, Forward Delete and Space reach the app
+                // with the selection; with ⌘ they don't.
+                let tv = m.table_view();
+                let key = |code: u16, chars: &str, flags: NSEventModifierFlags| {
+                    let e = objc2_app_kit::NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+                        objc2_app_kit::NSEventType::KeyDown,
+                        objc2_foundation::NSPoint::new(0.0, 0.0),
+                        flags,
+                        0.0,
+                        w.windowNumber(),
+                        None,
+                        &NSString::from_str(chars),
+                        &NSString::from_str(chars),
+                        false,
+                        code,
+                    )
+                    .unwrap();
+                    let _: () = unsafe { objc2::msg_send![&*tv, keyDown: &*e] };
+                };
+                key(51, "\u{7f}", NSEventModifierFlags::empty());
+                key(117, "\u{f728}", NSEventModifierFlags::Function);
+                key(49, " ", NSEventModifierFlags::empty());
+                key(51, "\u{7f}", NSEventModifierFlags::Command);
                 check(
                     "table-selection-bound",
                     from_signal == [1, 3] && from_user == [4] && cleared.is_empty() && again == [5],
                     format!("signal [3, 1] → table {from_signal:?}; user picks 4 → signal {from_user:?}; set_rows → signal {cleared:?}; signal [5] → table {again:?}"),
                 );
-                ferrokit::close_window(&w);
-                let events = events.clone();
-                after_events(move || tabs_and_dock_checks(events.clone()));
+                let (pressed, w, events) = (pressed.clone(), w.clone(), events.clone());
+                after_events(move || {
+                    let keys = pressed.borrow().clone();
+                    check("table-bare-keys", keys == ["delete [5]", "delete [5]", "space [5]"], format!("{keys:?} (⌘⌫ not among them)"));
+                    ferrokit::close_window(&w);
+                    let events = events.clone();
+                    after_events(move || tabs_and_dock_checks(events.clone()));
+                });
             });
         });
     });

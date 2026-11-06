@@ -102,6 +102,7 @@ fn as_undo_steps(window: &NSWindow, steps: &[&dyn Fn()]) {
 ```
 
 - **A table row's menu:** `table(&model).row_menu("Delete", move |row| …)`; each call adds an item. Number columns: `Column::number(…).decimals(2)`.
+- **Delete and Space on a table:** `table(&model).on_key(TableKey::Delete, |rows| …)` (⌫ or ⌦, no ⌘) and `TableKey::Space` (Quick Look); keep a menu item for the same action.
 - **A table's selection in a signal:** `table(&model).selection(&selected)` binds a `Signal<Vec<usize>>` of model indices both ways.
 - **A filtered table that keeps its selection:** keep the selected item's id in a signal (set it from the bound selection), and in the `watch` that calls `set_rows`, find that id's new model index and set the bound signal to it (`set_rows` clears the selection).
 - **Delete with ⌘⌫:** handle it with `.on_command(DELETE, …)` on the table, not the window: then it doesn't fire while the focus is in a text field or editor, where ⌘⌫ deletes text.
@@ -129,7 +130,6 @@ fn as_undo_steps(window: &NSWindow, steps: &[&dyn Fn()]) {
 ## Known limits (0.4)
 
 Work around these instead of searching for them:
-- Table shortcuts need ⌘ (`MenuItem::key` adds it); a bare Delete key isn't bindable yet. Use ⌘⌫: `.key("\u{8}")`.
 - Tables take dropped files (`on_files_dropped(&["txt"], |paths, row| …)`), not URLs dragged from a browser.
 - Columns are text, number, check and progress: show dates as sortable text (`iso_date`, above).
 - Table rows don't animate in or out; `for_each` lists do. Leave a table's rows still.

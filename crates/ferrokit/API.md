@@ -539,6 +539,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 
 `pub struct Table<T: 'static>`: A native `NSTableView` showing a `TableModel`: millions of rows, sorting, column resizing, type-select and VoiceOver come from AppKit.
 
+- `pub fn on_key(mut self, key: TableKey, f: impl Fn(Vec<usize>) + 'static) -> Self`: A bare key on the table, without ⌘: `f` gets the selected rows (model indices) when the user presses `key` with rows selected. `TableKey::Delete` (⌫ or ⌦) to remove them, `TableKey::Space` to Quick Look them, as in the Finder. Put the same action in a menu too (Edit ▸ Delete, File ▸ Quick Look), where people look for it.
 - `pub fn selection(mut self, rows: &Signal<Vec<usize>>) -> Self`: Binds the selection (model indices) to `rows`, both ways: the user selecting rows sets it, and setting it selects them (scrolling the first into view). `TableModel::set_rows` clears the selection, and `rows` follows; set it after replacing the rows to select again.
 - `pub fn row_menu(mut self, title: &str, action: impl Fn(usize) + 'static) -> Self`: A right-click menu for rows: each action gets the clicked row (model index), or the selected row when invoked another way.
 - `pub fn on_select(mut self, f: impl Fn(Vec<usize>) + 'static) -> Self`: The selected rows (model indices) changed.
@@ -608,6 +609,13 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub column: String`: The column id.
 - `pub ascending: bool`: Ascending (A→Z, 0→9) or descending.
 
+### `TableKey`
+
+`pub enum TableKey`: A key a table can take without ⌘ (see `TableModel::set_keys`).
+
+- `Delete`: Delete (⌫) or Forward Delete (⌦): remove the selected rows, say.
+- `Space`: Space: Quick Look the selected rows, say.
+
 ### `TableModel`
 
 `pub struct TableModel<T: 'static>`: A native table backed by rows of `T`. See the module docs.
@@ -632,6 +640,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn set_reorderable(&self, on: bool)`: Lets the user drag rows to a new place (also turns on `set_row_drag`); each drop is reported as `TableEvent::RowsMoved`. Refused while the table is sorted.
 - `pub fn set_file_drop(&self, extensions: Option<&[&str]>)`: Accepts files dropped from the Finder: `Some(&["csv", "txt"])` for those extensions, `Some(&[])` for any file, `None` to stop. Each drop is reported as `TableEvent::FilesDropped`.
 - `pub fn set_pastes(&self, on: bool)`: Reports ⌘V on the table as `TableEvent::Paste` (and enables Paste in the Edit menu while there is text to paste). Off by default.
+- `pub fn set_keys(&self, keys: &[TableKey])`: Reports these keys, pressed without ⌘, ⌥ or ⌃ while rows are selected, as `TableEvent::Key` instead of AppKit's handling (Space would type-select, Delete beep). None by default.
 - `pub fn selected_text(&self) -> String`: The selected rows as tab-separated text (columns in their current order, one line per row, as ⌘C copies them).
 - `pub fn copy_to(&self, pasteboard: &NSPasteboard) -> bool`: Copies the selected rows to `pasteboard` (what ⌘C does with the general pasteboard). False if nothing is selected.
 - `pub fn paste_from(&self, pasteboard: &NSPasteboard) -> bool`: Pastes `pasteboard`'s text (what ⌘V does with the general pasteboard): queues `TableEvent::Paste` if the table takes pastes.

@@ -2,6 +2,7 @@
 
 ## Unreleased (0.5)
 
+- **Added: bare keys on tables.** `Table::on_key(TableKey::Delete, |rows| …)` (⌫ or ⌦) and `TableKey::Space` get the selected rows when the key is pressed without ⌘, ⌥ or ⌃; in `ferrokit-core`, `TableModel::set_keys` and `TableEvent::Key`. (L4's known gap.)
 - **Added: `Table::selection(&Signal<Vec<usize>>)`** binds a table's selection (model indices) to a signal, both ways; `set_rows` clears it and the signal follows. (L4's known gap.)
 - **Added: files in `services`.** `reveal_in_finder(&[path])` shows items selected in the Finder; `move_to_trash(path)` moves an item to the Trash and returns its new path (for undo); `file_dates(path)` reads the dates modified, created, added and last opened (`FileDates`). For checks: `testing::capture_reveals`, `testing::revealed` and `testing::set_last_opened`. Found by Sift, the L1 app.
 - **Changed: `testing::shortcut` runs the app's own menu items and commands** (`menu_item`, `menu_command`) when they're enabled; it used to send their action along the responder chain, where nothing answered, and return false. It also no longer matches an item that needs ⌥ or ⌃ as well. Found by Sift, the L1 app.

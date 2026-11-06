@@ -245,6 +245,14 @@ pub enum TableEvent {
     /// The user pasted (⌘V) text (see [`TableModel::set_pastes`]); rows
     /// copied from a table arrive as tab-separated lines.
     Paste(String),
+    /// The user pressed a bare key the table handles (see
+    /// [`TableModel::set_keys`]) with rows selected.
+    Key {
+        /// The key.
+        key: TableKey,
+        /// The selected rows (model indices).
+        rows: Vec<usize>,
+    },
 }
 
 /// Which transfers a table takes part in (see the `set_…` methods on
@@ -253,6 +261,8 @@ pub enum TableEvent {
 struct Transfer {
     drag: bool,
     reorder: bool,
+    /// Bare keys reported as [`TableEvent::Key`].
+    keys: Vec<TableKey>,
     /// File drops: `None` off; `Some(extensions)`, any file if empty.
     files: Option<Vec<String>>,
     pastes: bool,
@@ -446,6 +456,32 @@ define_class!(
     }
 );
 
+/// A key a table can take without ⌘ (see [`TableModel::set_keys`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum TableKey {
+    /// Delete (⌫) or Forward Delete (⌦): remove the selected rows, say.
+    Delete,
+    /// Space: Quick Look the selected rows, say.
+    Space,
+}
+
+impl TableKey {
+    /// The key a key-down event is, if it's one of these without ⌘, ⌥ or ⌃.
+    fn of(event: &NSEvent) -> Option<TableKey> {
+        use objc2_app_kit::NSEventModifierFlags as F;
+        if event.modifierFlags().intersects(F::Command | F::Option | F::Control) {
+            return None;
+        }
+        // 51: Delete, 117: Forward Delete, 49: Space.
+        match event.keyCode() {
+            51 | 117 => Some(TableKey::Delete),
+            49 => Some(TableKey::Space),
+            _ => None,
+        }
+    }
+}
+
 /// What a drag carries that this table accepts.
 enum Dropped {
     Rows(Vec<usize>),
@@ -477,6 +513,17 @@ define_class!(
                     {
                         data.push(TableEvent::Activate(row));
                     }
+                    return;
+                }
+            }
+            // A bare key the app handles, with rows selected.
+            if let Some(key) = TableKey::of(event)
+                && let Some(data) = self.source().and_then(|s| s.data())
+                && data.transfer().keys.contains(&key)
+            {
+                let rows: Vec<usize> = indexes(&self.selectedRowIndexes()).into_iter().filter_map(|r| data.model_row(r)).collect();
+                if !rows.is_empty() {
+                    data.push(TableEvent::Key { key, rows });
                     return;
                 }
             }
@@ -1442,6 +1489,13 @@ impl<T: 'static> TableModel<T> {
     /// in the Edit menu while there is text to paste). Off by default.
     pub fn set_pastes(&self, on: bool) {
         self.inner.transfer.borrow_mut().pastes = on;
+    }
+
+    /// Reports these keys, pressed without ⌘, ⌥ or ⌃ while rows are
+    /// selected, as [`TableEvent::Key`] instead of AppKit's handling
+    /// (Space would type-select, Delete beep). None by default.
+    pub fn set_keys(&self, keys: &[TableKey]) {
+        self.inner.transfer.borrow_mut().keys = keys.to_vec();
     }
 
     fn register_drag_types(&self) {
