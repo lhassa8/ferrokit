@@ -660,12 +660,15 @@ fn canvas_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let level = Signal::new(0.5);
     let clicks = Rc::new(RefCell::new(Vec::new()));
     let c = clicks.clone();
+    let doubles = Rc::new(RefCell::new(Vec::new()));
+    let d = doubles.clone();
     let w = open(Window::new("Canvas").size(300.0, 200.0).view(
         canvas(move |p| {
             p.fill_rect(0.0, 0.0, p.width() * level.get(), p.height(), Color::Rgb(1.0, 0.0, 0.0));
             p.text(4.0, 4.0, &format!("{:.0}%", level.get() * 100.0), 12.0, Color::Primary, Align::Start);
         })
         .on_click(move |x, y| c.borrow_mut().push((x.round(), y.round())))
+        .on_double_click(move |x, y| d.borrow_mut().push((x.round(), y.round())))
         .description(move || format!("Level {:.0}%", level.get() * 100.0)),
     ));
     let view = || {
@@ -719,6 +722,27 @@ fn canvas_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     )
     .unwrap();
     let _: () = unsafe { objc2::msg_send![&*v, mouseDown: &*down] };
+    let single_only = doubles.borrow().is_empty();
+    // The second click of a double click: a click, then the double click.
+    let second = objc2_app_kit::NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+        objc2_app_kit::NSEventType::LeftMouseDown,
+        at,
+        NSEventModifierFlags::empty(),
+        0.0,
+        w.windowNumber(),
+        None,
+        0,
+        2,
+        1.0,
+    )
+    .unwrap();
+    let _: () = unsafe { objc2::msg_send![&*v, mouseDown: &*second] };
+    check(
+        "canvas-double-click",
+        single_only && *clicks.borrow() == [(30.0, 20.0), (30.0, 20.0)] && *doubles.borrow() == [(30.0, 20.0)],
+        format!("first click: no double {single_only}; clicks {:?}; double clicks {:?}", clicks.borrow(), doubles.borrow()),
+    );
+    clicks.borrow_mut().truncate(1);
     let label = v.accessibilityLabel().map(|l| l.to_string());
     let role = v.accessibilityRole().map(|r| r.to_string());
     check(

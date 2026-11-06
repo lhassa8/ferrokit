@@ -1504,6 +1504,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 
 - `pub fn on_hover(mut self, f: impl Fn(Option<(f64, f64)>) + 'static) -> Self`: Called with the pointer's position as it moves over the canvas, and `None` when it leaves (while the app is active).
 - `pub fn on_click(mut self, f: impl Fn(f64, f64) + 'static) -> Self`: Called with the position of a click.
+- `pub fn on_double_click(mut self, f: impl Fn(f64, f64) + 'static) -> Self`: Called with the position of a double click, after `on_click` runs for its second click (so a click can select a tile and a double click open it, as in the Finder). The interval is the user's double-click setting.
 - `pub fn on_scroll(mut self, f: impl Fn(f64, f64, f64, f64) -> bool + 'static) -> Self`: Called with how far the user scrolls over the canvas (`dx, dy` in points, positive to the right and down… as the content would move) and the pointer's position; returns whether it used the scroll. What it doesn't use scrolls an enclosing scroll view.
 - `pub fn on_magnify(mut self, f: impl Fn(f64, f64, f64) -> bool + 'static) -> Self`: Called as the user pinches (or ⌘-scrolls) over the canvas: how much larger (0.1 is 10%; negative is smaller) and the pointer's position; returns whether it used it.
 - `pub fn description(mut self, f: impl Fn() -> String + 'static) -> Self`: What VoiceOver reads for the canvas (an image to it), kept up to date as the signals `f` reads change.

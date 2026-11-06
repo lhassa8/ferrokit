@@ -2,6 +2,7 @@
 
 ## Unreleased (0.5)
 
+- **Added: `Canvas::on_double_click`**: called with the position of a double click, after `on_click` runs for its second click, so a click can select a tile and a double click open it. Found by Sift, the L1 app.
 - **Added: `.hidden(..)`** on any view: hides it while a value or closure is true, without rebuilding it (its native views and their state are kept), and it takes no room in its stack while hidden. A hidden view inside another hidden one waits for it. Found by Sift, the L1 app.
 - **Added: `Signal::with_untracked`**, and `Memo::get_untracked` and `Memo::with_untracked`: read a large value without copying it and without subscribing the running effect. Found by Sift, the L1 app.
 - **Fixed: menu commands disabled while Quick Look shows.** `quick_look` makes its panel the key window, and commands went to the key window, so while the panel was open every `menu_command` was disabled: ⌘Y couldn't close it, and the app's other shortcuts did nothing until the user clicked the window. Now a key window with nothing of the app's in it (the Quick Look panel, the font and colour panels) passes commands to the main window, as the Finder's menus act on its window while Quick Look shows; sheets keep them. Found by Sift, the L1 app.

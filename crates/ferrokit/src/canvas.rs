@@ -274,6 +274,7 @@ pub(crate) struct CanvasState {
     size: Cell<Option<Signal<(f64, f64)>>>,
     hover: RefCell<Option<Hover>>,
     click: RefCell<Option<Click>>,
+    double_click: RefCell<Option<Click>>,
     scroll: RefCell<Option<Scroll>>,
     magnify: RefCell<Option<Magnify>>,
     drag: RefCell<Option<Drag>>,
@@ -351,6 +352,12 @@ define_class!(
             let click = self.ivars().click.borrow().clone();
             if let Some(f) = click {
                 crate::failure::entry("a canvas's click", (), || f(p.x, p.y));
+            }
+            // The second click of a double click: the click ran too (it
+            // selects, as in the Finder), then the double click (it opens).
+            let double = self.ivars().double_click.borrow().clone();
+            if let Some(f) = double.filter(|_| event.clickCount() == 2) {
+                crate::failure::entry("a canvas's double click", (), || f(p.x, p.y));
             }
         }
 
@@ -476,6 +483,7 @@ pub struct Canvas {
     draw: Draw,
     hover: Option<Hover>,
     click: Option<Click>,
+    double_click: Option<Click>,
     scroll: Option<Scroll>,
     magnify: Option<Magnify>,
     description: Option<Rc<dyn Fn() -> String>>,
@@ -497,6 +505,15 @@ impl Canvas {
     /// Called with the position of a click.
     pub fn on_click(mut self, f: impl Fn(f64, f64) + 'static) -> Self {
         self.click = Some(Rc::new(f));
+        self
+    }
+
+    /// Called with the position of a double click, after
+    /// [`on_click`](Self::on_click) runs for its second click (so a click
+    /// can select a tile and a double click open it, as in the Finder).
+    /// The interval is the user's double-click setting.
+    pub fn on_double_click(mut self, f: impl Fn(f64, f64) + 'static) -> Self {
+        self.double_click = Some(Rc::new(f));
         self
     }
 
@@ -570,7 +587,7 @@ impl Canvas {
 /// # let _ = meter;
 /// ```
 pub fn canvas(draw: impl Fn(&mut Painter) + 'static) -> Canvas {
-    Canvas { draw: Rc::new(draw), hover: None, click: None, scroll: None, magnify: None, description: None, min: Size { w: 200.0, h: 120.0 }, drag: None, export: None, grows: (true, true) }
+    Canvas { draw: Rc::new(draw), hover: None, click: None, double_click: None, scroll: None, magnify: None, description: None, min: Size { w: 200.0, h: 120.0 }, drag: None, export: None, grows: (true, true) }
 }
 
 impl View for Canvas {
@@ -582,6 +599,7 @@ impl View for Canvas {
             size: Cell::new(Some(size)),
             hover: RefCell::new(self.hover.clone()),
             click: RefCell::new(self.click),
+            double_click: RefCell::new(self.double_click),
             scroll: RefCell::new(self.scroll),
             magnify: RefCell::new(self.magnify),
             drag: RefCell::new(self.drag),

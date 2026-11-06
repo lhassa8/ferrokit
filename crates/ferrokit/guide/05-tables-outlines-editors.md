@@ -344,7 +344,8 @@ let meter = canvas(move |p| {
     p.fill_rounded_rect(0.0, 0.0, p.width(), p.height(), 6.0, Color::Separator);
     p.fill_rounded_rect(0.0, 0.0, p.width() * level.get(), p.height(), 6.0, Color::Green);
 })
-.on_click(move |x, _y| println!("clicked at {x}"))
+.on_click(move |x, _y| println!("clicked at {x}"))          // selects, say
+.on_double_click(move |x, _y| println!("opened at {x}"))   // after the click, on the second one
 .description(move || format!("Level {:.0}%", level.get() * 100.0))
 .min_size(200.0, 24.0);
 # let _ = meter;
