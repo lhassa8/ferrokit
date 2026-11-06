@@ -8,7 +8,7 @@ Ferrokit builds your UI from the real thing: an actual `NSTableView`, `NSTextVie
 
 ![The SQL browser example: a schema sidebar, a highlighted query, its results table, a bar chart of them and an inspector](assets/sql-browser.png)
 
-<!-- The demo video goes here: drag target/demo/ferrokit-demo.mp4 into GitHub's editor and keep the link it inserts on its own line. -->
+https://github.com/user-attachments/assets/47f03091-6c3d-4e5b-a77d-bddb544e64e1
 
 <p>
   <img src="assets/habits.png" width="49%" alt="The habits example: today's habits with streaks and a progress ring">
