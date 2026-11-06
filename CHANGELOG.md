@@ -2,6 +2,7 @@
 
 ## Unreleased (0.5)
 
+- **Added: `Column::date`** (and `.with_time()`): a table column of `Option<SystemTime>`, shown in the user's date format and language, relative where it can be ("Today"), sorted by date (no date first) and copied as shown. Not editable. (L4's known gap.)
 - **Added: bare keys on tables.** `Table::on_key(TableKey::Delete, |rows| …)` (⌫ or ⌦) and `TableKey::Space` get the selected rows when the key is pressed without ⌘, ⌥ or ⌃; in `ferrokit-core`, `TableModel::set_keys` and `TableEvent::Key`. (L4's known gap.)
 - **Added: `Table::selection(&Signal<Vec<usize>>)`** binds a table's selection (model indices) to a signal, both ways; `set_rows` clears it and the signal follows. (L4's known gap.)
 - **Added: files in `services`.** `reveal_in_finder(&[path])` shows items selected in the Finder; `move_to_trash(path)` moves an item to the Trash and returns its new path (for undo); `file_dates(path)` reads the dates modified, created, added and last opened (`FileDates`). For checks: `testing::capture_reveals`, `testing::revealed` and `testing::set_last_opened`. Found by Sift, the L1 app.

@@ -587,6 +587,8 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn number(id: &str, title: &str, value: impl Fn(&T) -> f64 + 'static) -> Self`: A right-aligned number column, sorted numerically.
 - `pub fn check(id: &str, title: &str, value: impl Fn(&T) -> bool + 'static) -> Self`: A checkbox column. Clicking a checkbox emits `TableEvent::Toggle`; the model doesn't change the row itself.
 - `pub fn progress(id: &str, title: &str, value: impl Fn(&T) -> f64 + 'static) -> Self`: A progress bar from 0 to 1 (values outside are clamped). Sorted and copied as the number; VoiceOver reads it as a percentage.
+- `pub fn date(id: &str, title: &str, value: impl Fn(&T) -> Option<std::time::SystemTime> + 'static) -> Self`: A date column: shown in the user's format and language ("12 Mar 2024", "Today", "Yesterday"), sorted by date, oldest first; `None` shows nothing and sorts before every date. Copied as shown. `with_time` adds the time.
+- `pub fn with_time(mut self) -> Self`: Shows a date column's time too ("Today at 09:41").
 - `pub fn icon(mut self, image: impl Fn(&T) -> Option<CellImage> + 'static) -> Self`: Shows an image before each cell's text (a text or number column), e.g. a file's icon before its name. `None` leaves the space empty.
 - `pub fn fit(mut self) -> Self`: Sizes the column to its widest content (and its title) whenever the rows change. With many rows, the longest values are measured.
 - `pub fn width(mut self, width: f64) -> Self`: Initial width in points (default 120).

@@ -2392,6 +2392,26 @@ fn table_selection_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                     from_signal == [1, 3] && from_user == [4] && cleared.is_empty() && again == [5],
                     format!("signal [3, 1] → table {from_signal:?}; user picks 4 → signal {from_user:?}; set_rows → signal {cleared:?}; signal [5] → table {again:?}"),
                 );
+                // A date column: sorted by date (no date first), shown in
+                // the user's format, copied as shown.
+                let day = |secs: u64| std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+                let dated = Rc::new(TableModel::new(
+                    ViewId(961),
+                    vec![Column::text("name", "Name", |r: &(&str, Option<std::time::SystemTime>)| r.0.to_string()), Column::date("when", "Date Modified", |r: &(&str, Option<std::time::SystemTime>)| r.1)],
+                ));
+                dated.set_rows(vec![("now", Some(std::time::SystemTime::now())), ("never", None), ("2020", Some(day(1_600_000_000))), ("2001", Some(day(1_000_000_000)))]);
+                dated.set_sort(Some(Sort { column: "when".into(), ascending: true }));
+                dated.select(&[0, 1, 2, 3]);
+                let copied = dated.selected_text();
+                let lines: Vec<&str> = copied.lines().collect();
+                let names: Vec<&str> = lines.iter().map(|l| l.split('\t').next().unwrap_or("")).collect();
+                let shown_2020 = lines.iter().find(|l| l.starts_with("2020\t")).map(|l| l.split('\t').nth(1).unwrap_or("").to_string()).unwrap_or_default();
+                let never_empty = lines.iter().any(|l| *l == "never\t" || *l == "never");
+                check(
+                    "table-date-column",
+                    names == ["never", "2001", "2020", "now"] && shown_2020.contains("2020") && never_empty,
+                    format!("sorted {names:?}; 2020 shown as {shown_2020:?}; no date shown empty {never_empty}; copied {copied:?}"),
+                );
                 let (pressed, w, events) = (pressed.clone(), w.clone(), events.clone());
                 after_events(move || {
                     let keys = pressed.borrow().clone();

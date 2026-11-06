@@ -34,6 +34,7 @@ use objc2_foundation::{
 
 use crate::ViewId;
 use crate::host::mtm;
+use crate::kept::{UiCell, UiLocal};
 
 /// A cell's value.
 #[derive(Debug, Clone, PartialEq)]
@@ -53,6 +54,8 @@ enum Kind {
     Check,
     /// A bar from 0 to 1 (the value is a number).
     Progress,
+    /// A date (the value is seconds since 1970; not finite: none).
+    Date { time: bool },
 }
 
 /// A small image shown before a cell's text (see [`Column::icon`]).
@@ -111,6 +114,34 @@ impl<T> Column<T> {
         Self::new(id, title, Kind::Progress, Box::new(move |row| Value::Number(value(row).clamp(0.0, 1.0)))).width(100.0)
     }
 
+    /// A date column: shown in the user's format and language ("12 Mar
+    /// 2024", "Today", "Yesterday"), sorted by date, oldest first;
+    /// `None` shows nothing and sorts before every date. Copied as shown.
+    /// [`with_time`](Self::with_time) adds the time.
+    pub fn date(id: &str, title: &str, value: impl Fn(&T) -> Option<std::time::SystemTime> + 'static) -> Self {
+        Self::new(
+            id,
+            title,
+            Kind::Date { time: false },
+            Box::new(move |row| {
+                let secs = value(row).map_or(f64::NEG_INFINITY, |t| match t.duration_since(std::time::UNIX_EPOCH) {
+                    Ok(d) => d.as_secs_f64(),
+                    Err(e) => -e.duration().as_secs_f64(),
+                });
+                Value::Number(secs)
+            }),
+        )
+        .width(150.0)
+    }
+
+    /// Shows a date column's time too ("Today at 09:41").
+    pub fn with_time(mut self) -> Self {
+        if let Kind::Date { .. } = self.kind {
+            self.kind = Kind::Date { time: true };
+        }
+        self
+    }
+
     /// Shows an image before each cell's text (a text or number column),
     /// e.g. a file's icon before its name. `None` leaves the space empty.
     pub fn icon(mut self, image: impl Fn(&T) -> Option<CellImage> + 'static) -> Self {
@@ -164,10 +195,38 @@ impl<T> Column<T> {
 fn display(kind: Kind, value: &Value) -> String {
     match (kind, value) {
         (_, Value::Text(s)) => s.clone(),
+        (Kind::Date { time }, Value::Number(n)) => format_date(*n, time),
         (Kind::Number { decimals }, Value::Number(n)) => format!("{n:.decimals$}"),
         (_, Value::Number(n)) => n.to_string(),
         (_, Value::Bool(b)) => if *b { "Yes".into() } else { "No".into() },
     }
+}
+
+thread_local! {
+    /// The date formatters (date only, date and time), made once: making
+    /// one is slow, and a table formats every visible cell.
+    static DATE_FORMATS: UiCell<[Option<Retained<objc2_foundation::NSDateFormatter>>; 2]> = const { UiCell::new([None, None]) };
+}
+
+/// `secs` since 1970 in the user's date format, relative where it can be
+/// ("Today"); empty when not finite (no date).
+fn format_date(secs: f64, time: bool) -> String {
+    use objc2_foundation::{NSDate, NSDateFormatter, NSDateFormatterStyle};
+    if !secs.is_finite() {
+        return String::new();
+    }
+    let formatter = DATE_FORMATS.with_borrow_mut(|f| {
+        f[time as usize]
+            .get_or_insert_with(|| {
+                let f = NSDateFormatter::new();
+                f.setDateStyle(NSDateFormatterStyle::MediumStyle);
+                f.setTimeStyle(if time { NSDateFormatterStyle::ShortStyle } else { NSDateFormatterStyle::NoStyle });
+                f.setDoesRelativeDateFormatting(true);
+                f
+            })
+            .clone()
+    });
+    formatter.stringFromDate(&NSDate::dateWithTimeIntervalSince1970(secs)).to_string()
 }
 
 /// Group header slots in `order` carry this bit (and the group's index).
@@ -931,7 +990,7 @@ impl<T: 'static> Data for Inner<T> {
     }
 
     fn editable(&self, column: &str) -> bool {
-        self.columns.borrow().iter().any(|c| c.id == column && c.editable && c.kind != Kind::Check)
+        self.columns.borrow().iter().any(|c| c.id == column && c.editable && c.kind != Kind::Check && !matches!(c.kind, Kind::Date { .. }))
     }
 
     fn title(&self, column: &str) -> Option<String> {
@@ -1677,6 +1736,17 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn dates_shown_in_the_users_format() {
+        use super::{Kind, Value, display};
+        let none = display(Kind::Date { time: false }, &Value::Number(f64::NEG_INFINITY));
+        assert_eq!(none, "");
+        // 2020-09-13 12:26:40 UTC: the year shows in every medium style.
+        let day = display(Kind::Date { time: false }, &Value::Number(1_600_000_000.0));
+        let with_time = display(Kind::Date { time: true }, &Value::Number(1_600_000_000.0));
+        assert!(day.contains("2020") && with_time.contains("2020") && with_time.len() > day.len(), "{day:?} {with_time:?}");
     }
 
     #[test]

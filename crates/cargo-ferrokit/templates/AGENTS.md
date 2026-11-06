@@ -69,7 +69,7 @@ fn ask_name(parent: &NSWindow, done: impl Fn(String) + Copy + 'static) {
 }
 
 /// A day from `local_day` or `today` (days since 1970-01-01) as
-/// `2026-11-03`: a date column that sorts as text.
+/// `2026-11-03`, for text (a table column takes `Column::date` instead).
 fn iso_date(days: i64) -> String {
     let z = days + 719_468;
     let (era, doe) = (z.div_euclid(146_097), z.rem_euclid(146_097));
@@ -102,6 +102,7 @@ fn as_undo_steps(window: &NSWindow, steps: &[&dyn Fn()]) {
 ```
 
 - **A table row's menu:** `table(&model).row_menu("Delete", move |row| …)`; each call adds an item. Number columns: `Column::number(…).decimals(2)`.
+- **A date column:** `Column::date("modified", "Date Modified", |r: &Row| Some(r.modified))` (a `SystemTime`): sorted by date, shown in the user's format ("Today", "12 Mar 2024"); `.with_time()` adds the time.
 - **Delete and Space on a table:** `table(&model).on_key(TableKey::Delete, |rows| …)` (⌫ or ⌦, no ⌘) and `TableKey::Space` (Quick Look); keep a menu item for the same action.
 - **A table's selection in a signal:** `table(&model).selection(&selected)` binds a `Signal<Vec<usize>>` of model indices both ways.
 - **A filtered table that keeps its selection:** keep the selected item's id in a signal (set it from the bound selection), and in the `watch` that calls `set_rows`, find that id's new model index and set the bound signal to it (`set_rows` clears the selection).
@@ -131,7 +132,6 @@ fn as_undo_steps(window: &NSWindow, steps: &[&dyn Fn()]) {
 
 Work around these instead of searching for them:
 - Tables take dropped files (`on_files_dropped(&["txt"], |paths, row| …)`), not URLs dragged from a browser.
-- Columns are text, number, check and progress: show dates as sortable text (`iso_date`, above).
 - Table rows don't animate in or out; `for_each` lists do. Leave a table's rows still.
 - A popover anchors to a view, not to a toolbar item: use a sheet from the toolbar.
 - Sidebar items have a symbol and a title, no count badge: put the count in the title.
