@@ -224,35 +224,50 @@ pub fn menu_key(chars: &str, modifiers: objc2_app_kit::NSEventModifierFlags) -> 
 
 /// Performs a keyboard shortcut the way the menu bar does, without needing
 /// the app to be active: finds the main-menu item for ⌘`chars` (⇧⌘ when
-/// `shift`; AppKit's rule: an uppercase key equivalent implies Shift) and
-/// sends its action along `window`'s responder chain, starting at its first
-/// responder. Returns whether an item matched and something handled it.
+/// `shift`; AppKit's rule: an uppercase key equivalent implies Shift).
+/// An item of the app's own ([`menu_item`](crate::menu_item),
+/// [`menu_command`](crate::menu_command)) runs if it's enabled; a standard
+/// item (Undo, Select All) sends its action along `window`'s responder
+/// chain, starting at its first responder. Returns whether an item matched
+/// and something handled it.
 ///
 /// (A synthesized key event through `NSMenu.performKeyEquivalent` matches
 /// the item but goes nowhere when the app isn't active: there's no key
 /// window. A person pressing keys always has the app active.)
 pub fn shortcut(window: &objc2_app_kit::NSWindow, chars: &str, shift: bool) -> bool {
     use objc2_app_kit::{NSEventModifierFlags, NSMenu};
-    fn find(menu: &NSMenu, key: &str, shift: bool) -> Option<objc2::runtime::Sel> {
+    fn find(menu: &NSMenu, key: &str, shift: bool) -> Option<(Retained<NSMenu>, isize)> {
         for i in 0..menu.numberOfItems() {
             let item = menu.itemAtIndex(i)?;
             if let Some(sub) = item.submenu() {
-                if let Some(sel) = find(&sub, key, shift) {
-                    return Some(sel);
+                if let Some(found) = find(&sub, key, shift) {
+                    return Some(found);
                 }
                 continue;
             }
             let k = item.keyEquivalent().to_string();
             let mask = item.keyEquivalentModifierMask();
             let wants_shift = mask.contains(NSEventModifierFlags::Shift) || (k.chars().all(char::is_uppercase) && !k.is_empty());
-            if k.to_lowercase() == key && mask.contains(NSEventModifierFlags::Command) && wants_shift == shift {
-                return item.action();
+            let others = mask.intersects(NSEventModifierFlags::Option | NSEventModifierFlags::Control);
+            if k.to_lowercase() == key && mask.contains(NSEventModifierFlags::Command) && wants_shift == shift && !others {
+                return Some((objc2::Message::retain(menu), i));
             }
         }
         None
     }
     let app = NSApplication::sharedApplication(mtm());
-    let Some(action) = app.mainMenu().and_then(|m| find(&m, &chars.to_lowercase(), shift)) else { return false };
+    let Some((menu, i)) = app.mainMenu().and_then(|m| find(&m, &chars.to_lowercase(), shift)) else { return false };
+    let Some(item) = menu.itemAtIndex(i) else { return false };
+    if item.target().is_some() {
+        // The app's own item: enabled as the menu shows it, then run.
+        menu.update();
+        if !item.isEnabled() {
+            return false;
+        }
+        menu.performActionForItemAtIndex(i);
+        return true;
+    }
+    let Some(action) = item.action() else { return false };
     // SAFETY: standard responder-chain dispatch with a nil sender.
     window.firstResponder().is_some_and(|r| unsafe { r.tryToPerform_with(action, None) })
 }

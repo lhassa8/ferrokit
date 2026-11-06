@@ -2,6 +2,7 @@
 
 ## Unreleased (0.5)
 
+- **Changed: `testing::shortcut` runs the app's own menu items and commands** (`menu_item`, `menu_command`) when they're enabled; it used to send their action along the responder chain, where nothing answered, and return false. It also no longer matches an item that needs ⌥ or ⌃ as well. Found by Sift, the L1 app.
 - **Added: `Canvas::on_double_click`**: called with the position of a double click, after `on_click` runs for its second click, so a click can select a tile and a double click open it. Found by Sift, the L1 app.
 - **Added: `.hidden(..)`** on any view: hides it while a value or closure is true, without rebuilding it (its native views and their state are kept), and it takes no room in its stack while hidden. A hidden view inside another hidden one waits for it. Found by Sift, the L1 app.
 - **Added: `Signal::with_untracked`**, and `Memo::get_untracked` and `Memo::with_untracked`: read a large value without copying it and without subscribing the running effect. Found by Sift, the L1 app.

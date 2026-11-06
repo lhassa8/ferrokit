@@ -114,7 +114,7 @@ fn as_undo_steps(window: &NSWindow, steps: &[&dyn Fn()]) {
 - **Undo steps:** in an unattended run, AppKit's per-event undo groups don't close, so one ⌘Z can undo several steps. Use `as_undo_steps` (above).
 - **Selecting from code is silent:** `TableModel::select` doesn't call `on_select`, and `set_rows` clears the selection. Run the selection's effect yourself in a check.
 - **Checks see the real user defaults:** reset the `stored` keys and data files a check depends on at its start (or point the app at a temporary file under `CHECK`).
-- **Commands:** `perform_in(Some(&window), ADD)` runs one as the menu would; `can_perform_in` says whether its menu item is enabled. `testing::menu_key` presses a menu shortcut; `testing::shortcut` sends a standard action (Undo, Copy) along the responder chain.
+- **Commands:** `perform_in(Some(&window), ADD)` runs one as the menu would; `can_perform_in` says whether its menu item is enabled. `testing::menu_key` presses a menu shortcut; `testing::shortcut` performs a ⌘ or ⇧⌘ shortcut without the app being active: your own menu items and commands, and standard actions (Undo, Copy) along the window's responder chain.
 - **AppKit types in checks** need the bindings in `Cargo.toml` (`ferrokit` re-exports only `NSWindow` and `Retained`); methods from a trait (`NSTextInputClient`, `NSStandardKeyBindingResponding`, `NSAnimatablePropertyContainer`) need it in scope (`use … as _;`):
   ```toml
   objc2 = "0.6"

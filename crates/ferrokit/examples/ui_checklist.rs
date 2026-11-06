@@ -924,6 +924,12 @@ fn menu_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let alt_key = menu_key("n", cmd | NSEventModifierFlags::Option);
     let after = m.items.get_untracked();
     let refresh = menu_key("R", cmd | NSEventModifierFlags::Shift);
+    // testing::shortcut runs the app's own items too (it used to send
+    // their action along the responder chain, where nothing answered).
+    let before = m.items.get_untracked();
+    let via_shortcut = windows().first().is_some_and(|w| ferrokit::testing::shortcut(w, "n", false)) && m.items.get_untracked() == before + 1;
+    m.items.set(before);
+    check("shortcut-runs-app-items", via_shortcut, format!("⌘N through testing::shortcut: {via_shortcut}"));
     check(
         "menu-key-equivalents",
         off && blocked && new_key && on && alt_key && after == 0 && refresh && m.refreshed.get_untracked() == 1,

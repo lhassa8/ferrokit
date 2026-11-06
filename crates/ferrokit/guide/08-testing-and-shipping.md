@@ -59,8 +59,9 @@ out, usually once:
   reset the ones a check depends on at its start.
 - **Menu items:** `testing::menu_key` presses a menu's shortcut, including
   your own [`menu_command`](crate::menu_command)s; `testing::shortcut`
-  sends an action along the responder chain (Undo, Copy) and doesn't reach
-  menu items.
+  does the same for a ⌘ or ⇧⌘ shortcut without the app being active: your
+  own items run if they're enabled, and standard ones (Undo, Copy) go along
+  the window's responder chain.
 - **AppKit types in checks:** looking at a native view directly needs
   `objc2`, `objc2-foundation` and `objc2-app-kit` (0.6, 0.3 and 0.3) in
   your `Cargo.toml`, with the AppKit features you use.
