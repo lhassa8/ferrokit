@@ -1384,12 +1384,24 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 ## services
 
 - `pub fn cancel_notification(id: &str)`: Removes the notification `id`: a daily one stops repeating, and one already shown leaves Notification Center.
+- `pub fn file_dates(path: impl AsRef<Path>) -> std::io::Result<FileDates>`: The dates of the file or folder at `path` (not following a symbolic link): for "last opened" lists, "date added" columns and the like. Reading them is cheap (no Spotlight query): a few thousand files take a few milliseconds.
+- `pub fn move_to_trash(path: impl AsRef<Path>) -> std::io::Result<PathBuf>`: Moves `path` (a file or a folder) to the Trash of its volume, as the Finder's Move to Trash does, and returns where it is now: keep it to put the item back (undo) with `std::fs::rename` to the old path. The name in the Trash can differ from the old one when the Trash already has an item with that name.
 - `pub fn notifications_supported() -> bool`: Whether this app can post notifications: it must run from an app bundle with a bundle identifier (a plain `cargo run` binary can't).
 - `pub fn notify(notification: Notification)`: Posts `notification` through Notification Center. The first time, macOS asks the user whether to allow the app's notifications; while the app is in front they show as banners too. Without an app bundle (`notifications_supported`) it does nothing.
 - `pub fn pdf_data(view: impl View) -> Vec<u8>`: `view` as a PDF (see `save_pdf`).
 - `pub fn print(window: &NSWindow, title: &str, view: impl View)`: Prints `view` laid out at the page's width, across as many pages as it needs, with the Print sheet on `window` (printer, copies, Save as PDF).
+- `pub fn reveal_in_finder<P: AsRef<Path>>(paths: &[P])`: Shows `paths` selected in the Finder (File ▸ Show in Finder, ⌘R in many apps): one Finder window per folder, the items selected, the Finder brought to the front.
 - `pub fn save_pdf(view: impl View, path: impl AsRef<Path>) -> std::io::Result<()>`: Saves `view` as a PDF at `path`, on letter or A4 pages (the user's default paper) as `print()` would print it, with no panel.
 - `pub fn share_button(items: impl Fn() -> Vec<ShareItem> + 'static) -> ShareButton`: A button showing the system's Share menu (Mail, Messages, AirDrop, Notes…) for what `items()` returns when it's clicked.
+
+### `FileDates`
+
+`pub struct FileDates`: A file's dates (see `file_dates`); `None` where the file system doesn't keep one.
+
+- `pub modified: Option<std::time::SystemTime>`: When its content last changed.
+- `pub created: Option<std::time::SystemTime>`: When it was made.
+- `pub added: Option<std::time::SystemTime>`: When it was put in its folder (moved, copied or downloaded there). Copying files to a new Mac, or restoring them, resets it.
+- `pub last_opened: Option<std::time::SystemTime>`: When it was last opened in an app (the date Spotlight calls Last Opened, `kMDItemLastUsedDate`); `None` if never.
 
 ### `Notification`
 
@@ -1688,6 +1700,9 @@ Helpers for automated checks of apps built with ferrokit: the accessibility tree
 - `pub fn key_equiv(w: &objc2_app_kit::NSWindow, chars: &str, shift: bool) -> bool`: Sends a ⌘-key equivalent through the main menu, as a key press would.
 - `pub fn menu_key(chars: &str, modifiers: objc2_app_kit::NSEventModifierFlags) -> bool`: Sends a key-down with `chars` and `modifiers` to the main menu's key equivalents (no window needed); true if an enabled item took it.
 - `pub fn shortcut(window: &objc2_app_kit::NSWindow, chars: &str, shift: bool) -> bool`: Performs a keyboard shortcut the way the menu bar does, without needing the app to be active: finds the main-menu item for ⌘`chars` (⇧⌘ when `shift`; AppKit's rule: an uppercase key equivalent implies Shift). An item of the app's own (`menu_item`, `menu_command`) runs if it's enabled; a standard item (Undo, Select All) sends its action along `window`'s responder chain, starting at its first responder. Returns whether an item matched and something handled it.
+- `pub fn capture_reveals(on: bool)`: From now on, `reveal_in_finder` records what it's asked to show instead of opening Finder windows (`false` stops).
+- `pub fn revealed() -> Vec<Vec<std::path::PathBuf>>`: What `reveal_in_finder` was asked to show since the last call, while `capture_reveals` is on: one list of paths per call.
+- `pub fn set_last_opened(path: &std::path::Path, secs: Option<i64>) -> std::io::Result<()>`: Sets `path`'s last-opened date (seconds since 1970, `None` for never), for checks of lists that use `file_dates`.
 - `pub fn is_misspelled(word: &str) -> bool`: Whether the system spell checker flags `word` in English. (With automatic language detection one isolated word can be guessed as another language and pass, so the language is given.)
 - `pub fn context_menu_for_word(view: &objc2_app_kit::NSTextView, word: &str) -> Vec<String>`: The titles of a text view's context menu for a right-click on `word`.
 - `pub fn capture_window(window: &objc2_app_kit::NSWindow) -> Option<Retained<objc2_app_kit::NSBitmapImageRep>>`: Captures `window` as the window server shows it (lossless, no shadow, via `screencapture -l`): what's on screen, which in-process snapshots can miss (Core Animation layers, animations, vibrancy). Needs the screen-recording permission; `None` without it.

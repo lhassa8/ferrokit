@@ -63,6 +63,7 @@ version = "0.4.2"
 dependencies = [
  "block2",
  "ferrokit-core",
+ "libc",
  "objc2",
  "objc2-app-kit",
  "objc2-av-foundation",

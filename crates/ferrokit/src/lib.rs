@@ -147,7 +147,7 @@ pub use failure::Failure;
 pub use filter::{FieldKind, FieldValue, Filter, FilterEditor, FilterField, FilterRule, FilterTest, Match, filter_editor};
 pub use form::{Form, FormRow, FormStyle, Section, disclosure, form, form_content, form_row, group_box, section};
 pub use quicklook::{Thumbnail, close_quick_look, is_quick_look_open, quick_look, thumbnail};
-pub use services::{Notification, SentNotification, ShareButton, ShareItem, cancel_notification, notifications_supported, notify, pdf_data, print, save_pdf, share_button};
+pub use services::{FileDates, Notification, SentNotification, ShareButton, ShareItem, cancel_notification, file_dates, move_to_trash, notifications_supported, notify, pdf_data, print, reveal_in_finder, save_pdf, share_button};
 pub use status::MenuBarExtra;
 pub use motion::{Animation, Keyframes, Transition, animate, animated, animated_with, keyframes, reduce_motion, stop_animation};
 pub use popover::Edge;

@@ -223,8 +223,41 @@ App::new("Countdown")
 - **`App::menu_bar_only()`** makes a menu-bar app: no Dock icon and no menu
   bar of its own.
 
+## Files
+
+Three calls cover what a file list needs from the Finder:
+
+- **`reveal_in_finder(&[path])`** shows the items selected in a Finder
+  window (File ▸ Show in Finder).
+- **`move_to_trash(path)`** moves an item to its volume's Trash and returns
+  where it went. Keep that path to undo: `std::fs::rename(trashed, old)`
+  puts it back.
+- **`file_dates(path)`** reads a file's dates without a Spotlight query:
+  modified, created, added to its folder, and last opened (what the Finder
+  calls Last Opened). Copying files to a new Mac resets the date added, so
+  for "not used in a year", count from the last opening or, for files never
+  opened, the date modified.
+
+```rust,no_run
+use ferrokit::*;
+
+let path = std::path::Path::new("/tmp/old.zip");
+if let Ok(dates) = file_dates(path) {
+    let used = dates.last_opened.max(dates.modified);
+    # let _ = used;
+}
+if let Ok(trashed) = move_to_trash(path) {
+    let undo = move || std::fs::rename(&trashed, "/tmp/old.zip");
+    # let _ = undo;
+}
+reveal_in_finder(&["/tmp"]);
+```
+
 ## Testing
 
+`testing::capture_reveals(true)` makes `reveal_in_finder` record what it's
+asked to show (`testing::revealed()`) instead of opening Finder windows,
+and `testing::set_last_opened(path, secs)` back-dates a file for checks.
 `testing::hold_notifications()` makes `notify` record notifications
 instead of posting them (no permission prompt), `sent_notifications()`
 reads them and `click_notification(id)` runs a click.

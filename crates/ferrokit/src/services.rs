@@ -1,5 +1,5 @@
-//! The system's services: the Share menu, printing (and saving as PDF), and
-//! notifications.
+//! The system's services: the Share menu, printing (and saving as PDF),
+//! notifications, and files (Reveal in Finder, Move to Trash, their dates).
 
 use ferrokit_core::kept::{UiCell, UiLocal};
 use std::cell::{Cell, RefCell};
@@ -426,4 +426,160 @@ pub fn cancel_notification(id: &str) {
     let ids = NSArray::from_retained_slice(&[NSString::from_str(id)]);
     center.removePendingNotificationRequestsWithIdentifiers(&ids);
     center.removeDeliveredNotificationsWithIdentifiers(&ids);
+}
+
+// ---- files ----
+
+thread_local! {
+    /// What `reveal_in_finder` was asked to show, while checks capture it
+    /// (`testing::capture_reveals`) instead of opening Finder windows.
+    static REVEALS: UiCell<Option<Vec<Vec<PathBuf>>>> = const { UiCell::new(None) };
+}
+
+pub(crate) fn capture_reveals(on: bool) {
+    REVEALS.with_borrow_mut(|r| *r = on.then(Vec::new));
+}
+
+pub(crate) fn take_reveals() -> Vec<Vec<PathBuf>> {
+    REVEALS.with_borrow_mut(|r| r.as_mut().map(std::mem::take).unwrap_or_default())
+}
+
+/// Shows `paths` selected in the Finder (File ▸ Show in Finder, ⌘R in
+/// many apps): one Finder window per folder, the items selected, the
+/// Finder brought to the front.
+pub fn reveal_in_finder<P: AsRef<Path>>(paths: &[P]) {
+    let paths: Vec<PathBuf> = paths.iter().map(|p| p.as_ref().to_path_buf()).collect();
+    if REVEALS.with_borrow_mut(|r| r.as_mut().map(|r| r.push(paths.clone())).is_some()) {
+        return;
+    }
+    let urls: Vec<Retained<NSURL>> = paths.iter().map(|p| NSURL::fileURLWithPath(&NSString::from_str(&p.to_string_lossy()))).collect();
+    objc2_app_kit::NSWorkspace::sharedWorkspace().activateFileViewerSelectingURLs(&NSArray::from_retained_slice(&urls));
+}
+
+/// Moves `path` (a file or a folder) to the Trash of its volume, as the
+/// Finder's Move to Trash does, and returns where it is now: keep it to
+/// put the item back (undo) with [`std::fs::rename`] to the old path. The
+/// name in the Trash can differ from the old one when the Trash already
+/// has an item with that name.
+pub fn move_to_trash(path: impl AsRef<Path>) -> std::io::Result<PathBuf> {
+    let path = path.as_ref();
+    if std::fs::symlink_metadata(path).is_err() {
+        return Err(std::io::Error::new(std::io::ErrorKind::NotFound, format!("{} doesn't exist", path.display())));
+    }
+    let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
+    let mut result: Option<Retained<NSURL>> = None;
+    objc2_foundation::NSFileManager::defaultManager()
+        .trashItemAtURL_resultingItemURL_error(&url, Some(&mut result))
+        .map_err(|e| std::io::Error::other(e.localizedDescription().to_string()))?;
+    result.and_then(|u| u.path()).map(|p| PathBuf::from(p.to_string())).ok_or_else(|| std::io::Error::other("the Trash didn't say where the item went"))
+}
+
+/// A file's dates (see [`file_dates`]); `None` where the file system
+/// doesn't keep one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct FileDates {
+    /// When its content last changed.
+    pub modified: Option<std::time::SystemTime>,
+    /// When it was made.
+    pub created: Option<std::time::SystemTime>,
+    /// When it was put in its folder (moved, copied or downloaded there).
+    /// Copying files to a new Mac, or restoring them, resets it.
+    pub added: Option<std::time::SystemTime>,
+    /// When it was last opened in an app (the date Spotlight calls Last
+    /// Opened, `kMDItemLastUsedDate`); `None` if never.
+    pub last_opened: Option<std::time::SystemTime>,
+}
+
+/// The dates of the file or folder at `path` (not following a symbolic
+/// link): for "last opened" lists, "date added" columns and the like.
+/// Reading them is cheap (no Spotlight query): a few thousand files take a
+/// few milliseconds.
+pub fn file_dates(path: impl AsRef<Path>) -> std::io::Result<FileDates> {
+    use std::os::unix::ffi::OsStrExt;
+    let path = path.as_ref();
+    let meta = std::fs::symlink_metadata(path)?;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(std::io::Error::other)?;
+    let at = |secs: i64| (secs > 0).then(|| std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs as u64));
+    Ok(FileDates { modified: meta.modified().ok(), created: meta.created().ok(), added: date_added(&c).and_then(at), last_opened: last_opened(&c).and_then(at) })
+}
+
+/// The extended attribute macOS keeps the last-opened date in (a
+/// `timespec`, seconds first, little-endian).
+const LAST_USED: &std::ffi::CStr = c"com.apple.lastuseddate#PS";
+
+fn last_opened(path: &std::ffi::CStr) -> Option<i64> {
+    let mut value = [0u8; 16];
+    // SAFETY: NUL-terminated strings; `value` has room for the length given.
+    let n = unsafe { libc::getxattr(path.as_ptr(), LAST_USED.as_ptr(), value.as_mut_ptr().cast(), value.len(), 0, libc::XATTR_NOFOLLOW) };
+    (n >= 8).then(|| i64::from_le_bytes(value[..8].try_into().expect("8 bytes")))
+}
+
+fn date_added(path: &std::ffi::CStr) -> Option<i64> {
+    // The reply: its length, then the attribute.
+    #[repr(C, packed(4))]
+    struct Reply {
+        length: u32,
+        added: libc::timespec,
+    }
+    // SAFETY: plain C structs, valid zeroed.
+    let mut list: libc::attrlist = unsafe { std::mem::zeroed() };
+    list.bitmapcount = libc::ATTR_BIT_MAP_COUNT;
+    list.commonattr = libc::ATTR_CMN_ADDEDTIME;
+    let mut reply: Reply = unsafe { std::mem::zeroed() };
+    // SAFETY: `list` asks for one timespec, which `reply` has room for.
+    let r = unsafe { libc::getattrlist(path.as_ptr(), (&raw mut list).cast(), (&raw mut reply).cast(), size_of::<Reply>(), libc::FSOPT_NOFOLLOW) };
+    let (length, secs) = (reply.length, reply.added.tv_sec);
+    (r == 0 && length as usize >= size_of::<Reply>()).then_some(secs)
+}
+
+/// Sets a file's last-opened date, for tests (`None` removes it).
+pub(crate) fn set_last_opened(path: &Path, secs: Option<i64>) -> std::io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(std::io::Error::other)?;
+    // SAFETY: NUL-terminated strings; a buffer of the length given.
+    let r = match secs {
+        Some(s) => {
+            let mut value = [0u8; 16];
+            value[..8].copy_from_slice(&s.to_le_bytes());
+            unsafe { libc::setxattr(c.as_ptr(), LAST_USED.as_ptr(), value.as_ptr().cast(), value.len(), 0, libc::XATTR_NOFOLLOW) }
+        }
+        None => unsafe { libc::removexattr(c.as_ptr(), LAST_USED.as_ptr(), libc::XATTR_NOFOLLOW) },
+    };
+    if r == 0 { Ok(()) } else { Err(std::io::Error::last_os_error()) }
+}
+
+#[cfg(test)]
+mod file_tests {
+    use super::*;
+
+    #[test]
+    fn dates_of_a_file() {
+        let dir = std::env::temp_dir().join(format!("ferrokit-dates-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "a").unwrap();
+        let fresh = file_dates(&file).unwrap();
+        let now = std::time::SystemTime::now();
+        let recent = |t: Option<std::time::SystemTime>| t.is_some_and(|t| now.duration_since(t).map_or(true, |d| d.as_secs() < 60));
+        assert!(recent(fresh.modified) && recent(fresh.created) && recent(fresh.added), "{fresh:?}");
+        assert_eq!(fresh.last_opened, None);
+        set_last_opened(&file, Some(1_600_000_000)).unwrap();
+        assert_eq!(file_dates(&file).unwrap().last_opened, Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000)));
+        assert!(file_dates(dir.join("missing")).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reveals_are_captured() {
+        capture_reveals(true);
+        reveal_in_finder(&["/tmp/a", "/tmp/b"]);
+        assert_eq!(take_reveals(), vec![vec![PathBuf::from("/tmp/a"), PathBuf::from("/tmp/b")]]);
+        capture_reveals(false);
+    }
+
+    #[test]
+    fn trashing_a_missing_file_fails() {
+        assert_eq!(move_to_trash("/nonexistent/ferrokit-nothing").unwrap_err().kind(), std::io::ErrorKind::NotFound);
+    }
 }

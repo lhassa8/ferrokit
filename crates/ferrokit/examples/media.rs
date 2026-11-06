@@ -445,6 +445,33 @@ mod self_checks {
         let label = share.as_ref().and_then(|b| objc2_app_kit::NSAccessibility::accessibilityLabel(&**b)).map(|l| l.to_string());
         check("share", items.as_ref() == Some(&want) && label.as_deref() == Some("Share"), format!("{items:?}; label {label:?}"));
 
+        // Files: Reveal in Finder (captured, no Finder window), Move to
+        // Trash and its new path (moved back where the Trash allows it),
+        // and the dates.
+        ferrokit::testing::capture_reveals(true);
+        ferrokit::reveal_in_finder(&[super::report_path()]);
+        let revealed = ferrokit::testing::revealed();
+        ferrokit::testing::capture_reveals(false);
+        let scratch = std::env::temp_dir().join(format!("ferrokit-media-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&scratch);
+        let file = scratch.join("Ferrokit check (safe to delete).txt");
+        let _ = std::fs::write(&file, "Ferrokit's media example moved this to the Trash to check Move to Trash.");
+        let _ = ferrokit::testing::set_last_opened(&file, Some(1_600_000_000));
+        let dates = ferrokit::file_dates(&file).ok();
+        let trashed = ferrokit::move_to_trash(&file);
+        let gone = !file.exists();
+        let in_trash = trashed.as_ref().is_ok_and(|p| p.components().any(|c| c.as_os_str() == ".Trash" || c.as_os_str() == ".Trashes") && p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("Ferrokit check")));
+        let put_back = trashed.as_ref().is_ok_and(|p| std::fs::rename(p, &file).is_ok());
+        let _ = std::fs::remove_dir_all(&scratch);
+        check(
+            "files",
+            revealed == [vec![super::report_path()]]
+                && dates.is_some_and(|d| d.added.is_some() && d.last_opened == Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000)))
+                && gone
+                && in_trash,
+            format!("revealed {revealed:?}; dates {dates:?}; trashed {trashed:?}, gone {gone}, in a Trash {in_trash}; put back {put_back} (the Trash may not allow it)"),
+        );
+
         // A notification, and its click.
         let remind = buttons(&w).into_iter().find(|b| b.title().to_string() == "Remind Me").unwrap();
         // SAFETY: clicking a button on the main thread.

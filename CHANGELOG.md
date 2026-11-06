@@ -2,6 +2,7 @@
 
 ## Unreleased (0.5)
 
+- **Added: files in `services`.** `reveal_in_finder(&[path])` shows items selected in the Finder; `move_to_trash(path)` moves an item to the Trash and returns its new path (for undo); `file_dates(path)` reads the dates modified, created, added and last opened (`FileDates`). For checks: `testing::capture_reveals`, `testing::revealed` and `testing::set_last_opened`. Found by Sift, the L1 app.
 - **Changed: `testing::shortcut` runs the app's own menu items and commands** (`menu_item`, `menu_command`) when they're enabled; it used to send their action along the responder chain, where nothing answered, and return false. It also no longer matches an item that needs ⌥ or ⌃ as well. Found by Sift, the L1 app.
 - **Added: `Canvas::on_double_click`**: called with the position of a double click, after `on_click` runs for its second click, so a click can select a tile and a double click open it. Found by Sift, the L1 app.
 - **Added: `.hidden(..)`** on any view: hides it while a value or closure is true, without rebuilding it (its native views and their state are kept), and it takes no room in its stack while hidden. A hidden view inside another hidden one waits for it. Found by Sift, the L1 app.

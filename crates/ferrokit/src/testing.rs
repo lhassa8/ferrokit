@@ -272,6 +272,25 @@ pub fn shortcut(window: &objc2_app_kit::NSWindow, chars: &str, shift: bool) -> b
     window.firstResponder().is_some_and(|r| unsafe { r.tryToPerform_with(action, None) })
 }
 
+/// From now on, [`reveal_in_finder`](crate::reveal_in_finder) records what
+/// it's asked to show instead of opening Finder windows (`false` stops).
+pub fn capture_reveals(on: bool) {
+    crate::services::capture_reveals(on);
+}
+
+/// What [`reveal_in_finder`](crate::reveal_in_finder) was asked to show
+/// since the last call, while [`capture_reveals`] is on: one list of paths
+/// per call.
+pub fn revealed() -> Vec<Vec<std::path::PathBuf>> {
+    crate::services::take_reveals()
+}
+
+/// Sets `path`'s last-opened date (seconds since 1970, `None` for never),
+/// for checks of lists that use [`file_dates`](crate::file_dates).
+pub fn set_last_opened(path: &std::path::Path, secs: Option<i64>) -> std::io::Result<()> {
+    crate::services::set_last_opened(path, secs)
+}
+
 /// Whether the system spell checker flags `word` in English. (With automatic
 /// language detection one isolated word can be guessed as another language
 /// and pass, so the language is given.)
