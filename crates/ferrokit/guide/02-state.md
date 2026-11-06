@@ -14,7 +14,8 @@ name.update(|n| n.push_str(" Hopper"));    // changes in place, notifies
 let now = name.get();                      // a copy, subscribing the reader
 let len = name.with(|n| n.len());          // read without copying
 let quiet = name.get_untracked();          // read without subscribing
-# let _ = (now, len, quiet);
+let chars = name.with_untracked(|n| n.chars().count()); // the same, without copying
+# let _ = (now, len, quiet, chars);
 ```
 
 `set_if_changed` skips the notification when the value is equal.
@@ -41,7 +42,7 @@ setting it does nothing, and `try_get` and `is_alive` check first.
 
 What a view shows takes either a value or a closure that reads signals:
 `text("Total")` or `text(move || format!("{} left", left.get()))`, and the
-same for `.color(..)`, `.background(..)`, `.opacity(..)`, `.disabled(..)`,
+same for `.color(..)`, `.background(..)`, `.opacity(..)`, `.disabled(..)`, `.hidden(..)`,
 a button's title and symbol, and a menu item's title. A closure runs again
 when a signal it read changes, and only that view updates. (These take
 `impl IntoValue<T>`.)

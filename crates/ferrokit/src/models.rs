@@ -5,7 +5,7 @@ use ferrokit_core::kept::{UiCell, UiLocal};
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 
-use ferrokit_core::table::{ColumnState, Sort, TableEvent, TableModel};
+use ferrokit_core::table::{ColumnState, Sort, TableEvent, TableKey, TableModel};
 use ferrokit_core::text::{TextEvent, TextModel, TextStyle};
 use objc2::rc::Retained;
 
@@ -47,6 +47,8 @@ fn register(drain: &Drain) {
 type Callback<A> = Option<Box<dyn Fn(A)>>;
 /// A row-menu item: its title and the action given the row.
 type RowAction = (String, Box<dyn Fn(usize)>);
+/// A bare key's action, given the selected rows.
+type KeyAction = (TableKey, Box<dyn Fn(Vec<usize>)>);
 
 /// A native `NSTableView` showing a [`TableModel`]: millions of rows,
 /// sorting, column resizing, type-select and VoiceOver come from AppKit.
@@ -64,9 +66,30 @@ pub struct Table<T: 'static> {
     on_paste: Callback<String>,
     row_drag: bool,
     row_menu: Vec<RowAction>,
+    selection: Option<Signal<Vec<usize>>>,
+    keys: Vec<KeyAction>,
 }
 
 impl<T: 'static> Table<T> {
+    /// A bare key on the table, without ⌘: `f` gets the selected rows
+    /// (model indices) when the user presses `key` with rows selected.
+    /// `TableKey::Delete` (⌫ or ⌦) to remove them, `TableKey::Space` to
+    /// Quick Look them, as in the Finder. Put the same action in a menu too
+    /// (Edit ▸ Delete, File ▸ Quick Look), where people look for it.
+    pub fn on_key(mut self, key: TableKey, f: impl Fn(Vec<usize>) + 'static) -> Self {
+        self.keys.push((key, Box::new(f)));
+        self
+    }
+
+    /// Binds the selection (model indices) to `rows`, both ways: the user
+    /// selecting rows sets it, and setting it selects them (scrolling the
+    /// first into view). [`TableModel::set_rows`] clears the selection, and
+    /// `rows` follows; set it after replacing the rows to select again.
+    pub fn selection(mut self, rows: &Signal<Vec<usize>>) -> Self {
+        self.selection = Some(*rows);
+        self
+    }
+
     /// A right-click menu for rows: each action gets the clicked row (model
     /// index), or the selected row when invoked another way.
     pub fn row_menu(mut self, title: &str, action: impl Fn(usize) + 'static) -> Self {
@@ -183,12 +206,35 @@ impl<T: 'static> View for Table<T> {
         if self.on_paste.is_some() {
             self.model.set_pastes(true);
         }
+        if !self.keys.is_empty() {
+            self.model.set_keys(&self.keys.iter().map(|(k, _)| *k).collect::<Vec<_>>());
+        }
         let model = self.model.clone();
-        let Table { on_select, on_activate, on_sort, on_toggle, on_edit, on_columns, on_move, on_files, on_paste, .. } = self;
+        if let Some(bound) = self.selection {
+            // The signal selects rows; what the table shows is compared as a set.
+            let m = model.clone();
+            node.own(Effect::new(move || {
+                let mut want = bound.get();
+                want.sort_unstable();
+                untrack(|| {
+                    let mut now = m.selection();
+                    now.sort_unstable();
+                    if now != want {
+                        m.select(&want);
+                    }
+                });
+            }));
+        }
+        let Table { on_select, on_activate, on_sort, on_toggle, on_edit, on_columns, on_move, on_files, on_paste, selection, keys, .. } = self;
         let drain: Drain = Rc::new(move || {
             for event in model.drain_events() {
                 match event {
-                    TableEvent::Selection(rows) => on_select.iter().for_each(|f| f(rows.clone())),
+                    TableEvent::Selection(rows) => {
+                        if let Some(bound) = selection {
+                            bound.set_if_changed(rows.clone());
+                        }
+                        on_select.iter().for_each(|f| f(rows.clone()));
+                    }
                     TableEvent::Activate(row) => on_activate.iter().for_each(|f| f(row)),
                     TableEvent::Sort(sort) => on_sort.iter().for_each(|f| f(sort.clone())),
                     TableEvent::Toggle { row, column, value } => on_toggle.iter().for_each(|f| f((row, column.clone(), value))),
@@ -197,7 +243,21 @@ impl<T: 'static> View for Table<T> {
                     TableEvent::RowsMoved { rows, before } => on_move.iter().for_each(|f| f((rows.clone(), before))),
                     TableEvent::FilesDropped { paths, before } => on_files.iter().for_each(|f| f((paths.clone(), before))),
                     TableEvent::Paste(text) => on_paste.iter().for_each(|f| f(text.clone())),
+                    TableEvent::Key { key, rows } => keys.iter().filter(|(k, _)| *k == key).for_each(|(_, f)| f(rows.clone())),
                     _ => {}
+                }
+            }
+            // A selection changed without an event (set_rows clears it).
+            if let Some(bound) = selection {
+                let now = model.selection();
+                let same = untrack(|| bound.with(|b| {
+                    let (mut a, mut c) = (b.clone(), now.clone());
+                    a.sort_unstable();
+                    c.sort_unstable();
+                    a == c
+                }));
+                if !same {
+                    bound.set(now);
                 }
             }
         });
@@ -223,6 +283,8 @@ pub fn table<T: 'static>(model: &Rc<TableModel<T>>) -> Table<T> {
         on_paste: None,
         row_drag: false,
         row_menu: Vec::new(),
+        selection: None,
+        keys: Vec::new(),
     }
 }
 

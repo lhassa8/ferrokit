@@ -11,7 +11,7 @@
 ## Where the docs are
 
 Read before guessing; names are regular, but behaviour has rules.
-- **The guide:** <https://docs.rs/ferrokit/latest/ferrokit/guide/>, 13 chapters with compiled examples. Also in the crate's source: `~/.cargo/registry/src/*/ferrokit-{{version}}.*/guide/`.
+- **The guide:** <https://docs.rs/ferrokit/latest/ferrokit/guide/>, 14 chapters with compiled examples. Also in the crate's source: `~/.cargo/registry/src/*/ferrokit-{{version}}.*/guide/`.
 - **Every public item on one page:** `API.md` in the same folder. Search it for what a type can do before reading source.
 - **Complete apps:** `examples/` in the same folder. `native_csv.rs` (sidebar, table, search, sheet, notes), `habits.rs` (cards, sheets, charts, a menu-bar panel), `notes.rs` (a document app), `sql_browser.rs` (the flagship).
 - `TableModel`, `Column` and `TextModel` are documented in `ferrokit-core` (re-exported by `ferrokit`): `~/.cargo/registry/src/*/ferrokit-core-{{version}}.*/src/table.rs` and `text.rs`.
@@ -25,6 +25,9 @@ Read before guessing; names are regular, but behaviour has rules.
 - **Menus and shortcuts are commands.** Declare `const ADD: Command = Command::new("add");`, put `menu_command("Add", ADD).key("n")` in `App::menu`, and handle it with `.on_command(ADD, …)` on a view (acts when the focus is in or under it) or `Window::on_command` (anywhere in the window). `on_command_when` greys the menu item out.
 - **Background work:** `spawn(work, |result| …)` runs `work` on another thread and hands the result back on the main thread; `Resource` for loading that a newer load replaces.
 - **Settings:** `stored("key", default)` is a signal saved in user defaults (bool, numbers, String). App data belongs in a file: `std::fs` and `serde` in `~/Library/Application Support/<bundle id>/` (the `habits` example keeps its small data in `stored` strings; a file scales better).
+- **Errors and crashes:** `App::on_error(|failure| …)` hears about panics and exceptions Ferrokit caught (the app goes on); `App::crash_reports(|report| …)` writes a report for a panic that ends the app and hands it over at the next launch (show it or send it, then `report.mark_sent()`).
+- **Updates:** Sparkle 2, set up in `Cargo.toml` (`[package.metadata.ferrokit.updates]`), not in code: the bundled app gets Check for Updates…; `updates::on_event`, `updates::check` and `updates::set_automatic_checks` are there if the app wants more. `cargo ferrokit appcast` writes the feed for a release.
+- **A view Ferrokit doesn't have** (a map, a view you draw): `native(|mtm| MyView::new(mtm))` wraps any `NSView` (with the `objc2` crates in `Cargo.toml`, below). `.update(move |v| …)` changes it in place as an effect, like any view; `.measure(|v| Size { w, h })` and `.flexible(false, false)` size it; `.keep(delegate)` keeps a delegate (AppKit's are weak); `.on_remove(|v| …)` cleans up. The guide's *Custom native views* chapter has a delegate and a drawn view.
 - **Undo:** `undoable("Delete", apply, revert)` runs `apply` now and puts `revert` on the window's undo history; ⌘Z and ⇧⌘Z work per window.
 - Prefer Ferrokit's own API over raw `objc2` calls. Reach for `objc2-app-kit` only for something Ferrokit doesn't cover, and say so in a comment.
 
@@ -69,7 +72,7 @@ fn ask_name(parent: &NSWindow, done: impl Fn(String) + Copy + 'static) {
 }
 
 /// A day from `local_day` or `today` (days since 1970-01-01) as
-/// `2026-11-03`: a date column that sorts as text.
+/// `2026-11-03`, for text (a table column takes `Column::date` instead).
 fn iso_date(days: i64) -> String {
     let z = days + 719_468;
     let (era, doe) = (z.div_euclid(146_097), z.rem_euclid(146_097));
@@ -102,7 +105,10 @@ fn as_undo_steps(window: &NSWindow, steps: &[&dyn Fn()]) {
 ```
 
 - **A table row's menu:** `table(&model).row_menu("Delete", move |row| …)`; each call adds an item. Number columns: `Column::number(…).decimals(2)`.
-- **A filtered table that keeps its selection:** keep the selected item's id in a signal (set it in `on_select`), and in the `watch` that calls `set_rows`, find that id's new model index and `select` it (`set_rows` clears the selection).
+- **A date column:** `Column::date("modified", "Date Modified", |r: &Row| Some(r.modified))` (a `SystemTime`): sorted by date, shown in the user's format ("Today", "12 Mar 2024"); `.with_time()` adds the time.
+- **Delete and Space on a table:** `table(&model).on_key(TableKey::Delete, |rows| …)` (⌫ or ⌦, no ⌘) and `TableKey::Space` (Quick Look); keep a menu item for the same action.
+- **A table's selection in a signal:** `table(&model).selection(&selected)` binds a `Signal<Vec<usize>>` of model indices both ways.
+- **A filtered table that keeps its selection:** keep the selected item's id in a signal (set it from the bound selection), and in the `watch` that calls `set_rows`, find that id's new model index and set the bound signal to it (`set_rows` clears the selection).
 - **Delete with ⌘⌫:** handle it with `.on_command(DELETE, …)` on the table, not the window: then it doesn't fire while the focus is in a text field or editor, where ⌘⌫ deletes text.
 - **Counts in a sidebar:** the title is a closure, so `format!("{} ({n})", …)` shows a count.
 - **Menu titles that change:** `menu_command(move || if read.get() { "Mark as Unread" } else { "Mark as Read" }.to_string(), TOGGLE)`.
@@ -114,7 +120,7 @@ fn as_undo_steps(window: &NSWindow, steps: &[&dyn Fn()]) {
 - **Undo steps:** in an unattended run, AppKit's per-event undo groups don't close, so one ⌘Z can undo several steps. Use `as_undo_steps` (above).
 - **Selecting from code is silent:** `TableModel::select` doesn't call `on_select`, and `set_rows` clears the selection. Run the selection's effect yourself in a check.
 - **Checks see the real user defaults:** reset the `stored` keys and data files a check depends on at its start (or point the app at a temporary file under `CHECK`).
-- **Commands:** `perform_in(Some(&window), ADD)` runs one as the menu would; `can_perform_in` says whether its menu item is enabled. `testing::menu_key` presses a menu shortcut; `testing::shortcut` sends a standard action (Undo, Copy) along the responder chain.
+- **Commands:** `perform_in(Some(&window), ADD)` runs one as the menu would; `can_perform_in` says whether its menu item is enabled. `testing::menu_key` presses a menu shortcut; `testing::shortcut` performs a ⌘ or ⇧⌘ shortcut without the app being active: your own menu items and commands, and standard actions (Undo, Copy) along the window's responder chain.
 - **AppKit types in checks** need the bindings in `Cargo.toml` (`ferrokit` re-exports only `NSWindow` and `Retained`); methods from a trait (`NSTextInputClient`, `NSStandardKeyBindingResponding`, `NSAnimatablePropertyContainer`) need it in scope (`use … as _;`):
   ```toml
   objc2 = "0.6"
@@ -125,14 +131,11 @@ fn as_undo_steps(window: &NSWindow, steps: &[&dyn Fn()]) {
 - `testing::ax_audit(&window)` lists controls VoiceOver can't name: give each `.accessibility_label(…)`.
 - A caught panic doesn't end the app; `check` stops 15 s after one if no more checks arrive. Look for `ferrokit: a panic in …` in the output.
 
-## Known limits (0.4)
+## Known limits (0.5)
 
 Work around these instead of searching for them:
-- Table shortcuts need ⌘ (`MenuItem::key` adds it); a bare Delete key isn't bindable yet. Use ⌘⌫: `.key("\u{8}")`.
 - Tables take dropped files (`on_files_dropped(&["txt"], |paths, row| …)`), not URLs dragged from a browser.
-- Columns are text, number, check and progress: show dates as sortable text (`iso_date`, above).
 - Table rows don't animate in or out; `for_each` lists do. Leave a table's rows still.
 - A popover anchors to a view, not to a toolbar item: use a sheet from the toolbar.
 - Sidebar items have a symbol and a title, no count badge: put the count in the title.
-- Table selection isn't bound to a signal: keep your own (see the filtered-table recipe).
-- No custom native views: `View` can't be implemented outside Ferrokit (`Cx` and `Node` are opaque). Raw AppKit on a view Ferrokit made (`model.table_view()`, `scroll_view()`) works, but it's on you to keep it working.
+- `View` can't be implemented outside Ferrokit (`Cx` and `Node` are opaque): wrap an `NSView` with `native(..)` instead (see Recipes). A wrapped view is a leaf: Ferrokit views can't go inside it.

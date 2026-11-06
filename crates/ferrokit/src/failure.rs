@@ -42,7 +42,7 @@ pub(crate) fn guard<R>(place: &'static str, fallback: R, f: impl FnOnce() -> R) 
     // The exception catcher sits next to the code (an Objective-C exception
     // must never reach `catch_unwind`: Rust aborts on one); panics pass
     // through it to `catch_unwind`.
-    let caught = std::panic::catch_unwind(AssertUnwindSafe(|| objc2::exception::catch(AssertUnwindSafe(f))));
+    let caught = crate::crash::catching(|| std::panic::catch_unwind(AssertUnwindSafe(|| objc2::exception::catch(AssertUnwindSafe(f)))));
     let failure = match caught {
         Ok(Ok(r)) => return r,
         Err(payload) => {

@@ -202,6 +202,14 @@ pub fn key_equiv(w: &objc2_app_kit::NSWindow, chars: &str, shift: bool) -> bool 
     NSApplication::sharedApplication(mtm()).mainMenu().unwrap().performKeyEquivalent(&event)
 }
 
+/// The titles of the app menu's items (the first menu: About, Check for
+/// Updates…, Settings…, Hide, Quit), separators as `"-"`.
+pub fn app_menu_titles() -> Vec<String> {
+    let bar = NSApplication::sharedApplication(mtm()).mainMenu();
+    let menu = bar.and_then(|b| b.itemAtIndex(0)).and_then(|i| i.submenu());
+    menu.map(|m| m.itemArray().iter().map(|i| if i.isSeparatorItem() { "-".into() } else { i.title().to_string() }).collect()).unwrap_or_default()
+}
+
 /// Sends a key-down with `chars` and `modifiers` to the main menu's key
 /// equivalents (no window needed); true if an enabled item took it.
 pub fn menu_key(chars: &str, modifiers: objc2_app_kit::NSEventModifierFlags) -> bool {
@@ -224,37 +232,85 @@ pub fn menu_key(chars: &str, modifiers: objc2_app_kit::NSEventModifierFlags) -> 
 
 /// Performs a keyboard shortcut the way the menu bar does, without needing
 /// the app to be active: finds the main-menu item for ⌘`chars` (⇧⌘ when
-/// `shift`; AppKit's rule: an uppercase key equivalent implies Shift) and
-/// sends its action along `window`'s responder chain, starting at its first
-/// responder. Returns whether an item matched and something handled it.
+/// `shift`; AppKit's rule: an uppercase key equivalent implies Shift).
+/// An item of the app's own ([`menu_item`](crate::menu_item),
+/// [`menu_command`](crate::menu_command)) runs if it's enabled; a standard
+/// item (Undo, Select All) sends its action along `window`'s responder
+/// chain, starting at its first responder. Returns whether an item matched
+/// and something handled it.
 ///
 /// (A synthesized key event through `NSMenu.performKeyEquivalent` matches
 /// the item but goes nowhere when the app isn't active: there's no key
 /// window. A person pressing keys always has the app active.)
 pub fn shortcut(window: &objc2_app_kit::NSWindow, chars: &str, shift: bool) -> bool {
     use objc2_app_kit::{NSEventModifierFlags, NSMenu};
-    fn find(menu: &NSMenu, key: &str, shift: bool) -> Option<objc2::runtime::Sel> {
+    fn find(menu: &NSMenu, key: &str, shift: bool) -> Option<(Retained<NSMenu>, isize)> {
         for i in 0..menu.numberOfItems() {
             let item = menu.itemAtIndex(i)?;
             if let Some(sub) = item.submenu() {
-                if let Some(sel) = find(&sub, key, shift) {
-                    return Some(sel);
+                if let Some(found) = find(&sub, key, shift) {
+                    return Some(found);
                 }
                 continue;
             }
             let k = item.keyEquivalent().to_string();
             let mask = item.keyEquivalentModifierMask();
             let wants_shift = mask.contains(NSEventModifierFlags::Shift) || (k.chars().all(char::is_uppercase) && !k.is_empty());
-            if k.to_lowercase() == key && mask.contains(NSEventModifierFlags::Command) && wants_shift == shift {
-                return item.action();
+            let others = mask.intersects(NSEventModifierFlags::Option | NSEventModifierFlags::Control);
+            if k.to_lowercase() == key && mask.contains(NSEventModifierFlags::Command) && wants_shift == shift && !others {
+                return Some((objc2::Message::retain(menu), i));
             }
         }
         None
     }
     let app = NSApplication::sharedApplication(mtm());
-    let Some(action) = app.mainMenu().and_then(|m| find(&m, &chars.to_lowercase(), shift)) else { return false };
+    let Some((menu, i)) = app.mainMenu().and_then(|m| find(&m, &chars.to_lowercase(), shift)) else { return false };
+    let Some(item) = menu.itemAtIndex(i) else { return false };
+    if item.target().is_some() {
+        // The app's own item: enabled as the menu shows it, then run.
+        menu.update();
+        if !item.isEnabled() {
+            return false;
+        }
+        menu.performActionForItemAtIndex(i);
+        return true;
+    }
+    let Some(action) = item.action() else { return false };
     // SAFETY: standard responder-chain dispatch with a nil sender.
     window.firstResponder().is_some_and(|r| unsafe { r.tryToPerform_with(action, None) })
+}
+
+/// From now on, [`reveal_in_finder`](crate::reveal_in_finder) records what
+/// it's asked to show instead of opening Finder windows (`false` stops).
+pub fn capture_reveals(on: bool) {
+    crate::services::capture_reveals(on);
+}
+
+/// What [`reveal_in_finder`](crate::reveal_in_finder) was asked to show
+/// since the last call, while [`capture_reveals`] is on: one list of paths
+/// per call.
+pub fn revealed() -> Vec<Vec<std::path::PathBuf>> {
+    crate::services::take_reveals()
+}
+
+/// Sets `path`'s last-opened date (seconds since 1970, `None` for never),
+/// for checks of lists that use [`file_dates`](crate::file_dates).
+pub fn set_last_opened(path: &std::path::Path, secs: Option<i64>) -> std::io::Result<()> {
+    crate::services::set_last_opened(path, secs)
+}
+
+/// Runs `f` the way Ferrokit runs code AppKit calls in (an action, a
+/// timer): a panic in it is caught and reported (see
+/// [`failures`]), not a crash.
+pub fn catching(f: impl FnOnce()) {
+    crate::failure::entry("a check", (), f);
+}
+
+/// The crash reports in `dir` not yet marked sent, oldest first (what
+/// [`App::crash_reports`](crate::App::crash_reports) hands the app at
+/// launch). Checks point `FERROKIT_CRASH_DIR` at a folder of their own.
+pub fn pending_crash_reports(dir: &std::path::Path) -> Vec<crate::CrashReport> {
+    crate::crash::pending(dir)
 }
 
 /// Whether the system spell checker flags `word` in English. (With automatic

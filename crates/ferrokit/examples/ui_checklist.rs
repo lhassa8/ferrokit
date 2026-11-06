@@ -9,7 +9,7 @@ use ferrokit::{
     Align, App, AppEvent, Effect, Identifiable, Signal, View, ViewExt, Window, batch, button, checkbox, dynamic, effect_runs,
     for_each, grid, hstack, later, layout_stats, layout_passes, layout_times_us, live_nodes, open, secure_field, spacer, spawn, text,
     text_field, toggle, vstack, windows, divider, image, picker, progress, scroll, slider, stepper, table, Column, Sort,
-    TableModel, ViewId, TreeNode, outline, sidebar, TextModel, text_editor, split, toolbar_button, toolbar_space,
+    TableKey, TableModel, ViewId, TreeNode, outline, sidebar, TextModel, text_editor, split, toolbar_button, toolbar_space,
     toolbar_search, menu_item, menu_separator, MenuItem, Modifier, submenu, stored, set_undoable, Alert, OpenOptions, SheetHandle, alert, open_panel, save_panel, sheet,
 };
 use objc2::MainThreadMarker;
@@ -660,12 +660,15 @@ fn canvas_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let level = Signal::new(0.5);
     let clicks = Rc::new(RefCell::new(Vec::new()));
     let c = clicks.clone();
+    let doubles = Rc::new(RefCell::new(Vec::new()));
+    let d = doubles.clone();
     let w = open(Window::new("Canvas").size(300.0, 200.0).view(
         canvas(move |p| {
             p.fill_rect(0.0, 0.0, p.width() * level.get(), p.height(), Color::Rgb(1.0, 0.0, 0.0));
             p.text(4.0, 4.0, &format!("{:.0}%", level.get() * 100.0), 12.0, Color::Primary, Align::Start);
         })
         .on_click(move |x, y| c.borrow_mut().push((x.round(), y.round())))
+        .on_double_click(move |x, y| d.borrow_mut().push((x.round(), y.round())))
         .description(move || format!("Level {:.0}%", level.get() * 100.0)),
     ));
     let view = || {
@@ -719,6 +722,27 @@ fn canvas_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     )
     .unwrap();
     let _: () = unsafe { objc2::msg_send![&*v, mouseDown: &*down] };
+    let single_only = doubles.borrow().is_empty();
+    // The second click of a double click: a click, then the double click.
+    let second = objc2_app_kit::NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+        objc2_app_kit::NSEventType::LeftMouseDown,
+        at,
+        NSEventModifierFlags::empty(),
+        0.0,
+        w.windowNumber(),
+        None,
+        0,
+        2,
+        1.0,
+    )
+    .unwrap();
+    let _: () = unsafe { objc2::msg_send![&*v, mouseDown: &*second] };
+    check(
+        "canvas-double-click",
+        single_only && *clicks.borrow() == [(30.0, 20.0), (30.0, 20.0)] && *doubles.borrow() == [(30.0, 20.0)],
+        format!("first click: no double {single_only}; clicks {:?}; double clicks {:?}", clicks.borrow(), doubles.borrow()),
+    );
+    clicks.borrow_mut().truncate(1);
     let label = v.accessibilityLabel().map(|l| l.to_string());
     let role = v.accessibilityRole().map(|r| r.to_string());
     check(
@@ -900,6 +924,12 @@ fn menu_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let alt_key = menu_key("n", cmd | NSEventModifierFlags::Option);
     let after = m.items.get_untracked();
     let refresh = menu_key("R", cmd | NSEventModifierFlags::Shift);
+    // testing::shortcut runs the app's own items too (it used to send
+    // their action along the responder chain, where nothing answered).
+    let before = m.items.get_untracked();
+    let via_shortcut = windows().first().is_some_and(|w| ferrokit::testing::shortcut(w, "n", false)) && m.items.get_untracked() == before + 1;
+    m.items.set(before);
+    check("shortcut-runs-app-items", via_shortcut, format!("⌘N through testing::shortcut: {via_shortcut}"));
     check(
         "menu-key-equivalents",
         off && blocked && new_key && on && alt_key && after == 0 && refresh && m.refreshed.get_untracked() == 1,
@@ -2227,7 +2257,452 @@ fn window_panel_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     for w in &panels {
         ferrokit::close_window(w);
     }
-    after_events(move || tabs_and_dock_checks(events.clone()));
+    after_events(move || hidden_checks(events.clone()));
+}
+
+/// L4: `.hidden(..)` hides a view without rebuilding it, and it takes no
+/// room; a hidden view inside another waits for it; a `dynamic` replaced
+/// while hidden shows its new content.
+fn hidden_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let (middle, outer, inner, version) = (Signal::new(true), Signal::new(false), Signal::new(false), Signal::new(1));
+    let w = open(
+        Window::new("Hidden").size(260.0, 260.0).view(
+            vstack((
+                text("Top"),
+                text("Middle").hidden(move || middle.get()),
+                text("Bottom"),
+                vstack((text("Outer"), text("Inner").hidden(move || inner.get()), dynamic(move || text(format!("Version {}", version.get())))))
+                    .hidden(move || outer.get()),
+                spacer(),
+            ))
+            .padding(12.0),
+        ),
+    );
+    let label = {
+        let w = w.clone();
+        move |t: &str| w.contentView().unwrap().subviews().iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string() == t)
+    };
+    let mid_y = |f: &NSTextField| f.frame().origin.y + f.frame().size.height / 2.0;
+    after_events(move || {
+        let (top, mid, bottom) = (label("Top").unwrap(), label("Middle").unwrap(), label("Bottom").unwrap());
+        let gap_hidden = (mid_y(&bottom) - mid_y(&top)).abs();
+        let hidden = mid.isHidden() && !top.isHidden() && !bottom.isHidden();
+        middle.set(false);
+        let (label, events) = (label.clone(), events.clone());
+        after_events(move || {
+            let (top, bottom, mid2) = (label("Top").unwrap(), label("Bottom").unwrap(), label("Middle").unwrap());
+            let gap_shown = (mid_y(&bottom) - mid_y(&top)).abs();
+            let kept = std::ptr::eq(&*mid, &*mid2);
+            check(
+                "hidden-takes-no-room",
+                hidden && !mid2.isHidden() && kept && gap_shown > gap_hidden * 1.6,
+                format!("hidden {hidden}, shown {}, same view {kept}; Top to Bottom {gap_hidden:.1} hidden, {gap_shown:.1} shown", !mid2.isHidden()),
+            );
+            // Nested: the inner view shown while the outer is hidden stays
+            // hidden until the outer shows; a dynamic replaced while hidden
+            // shows its new content.
+            batch(|| {
+                inner.set(true);
+                outer.set(true);
+            });
+            let (label, events) = (label.clone(), events.clone());
+            after_events(move || {
+                let all_hidden = ["Outer", "Inner", "Version 1"].iter().all(|t| label(t).is_some_and(|f| f.isHidden()));
+                inner.set(false);
+                version.set(2);
+                let (label, events) = (label.clone(), events.clone());
+                after_events(move || {
+                    let waits = label("Inner").is_some_and(|f| f.isHidden());
+                    outer.set(false);
+                    let (label, events) = (label.clone(), events.clone());
+                    after_events(move || {
+                        let shown = ["Outer", "Inner", "Version 2"].iter().all(|t| label(t).is_some_and(|f| !f.isHidden()));
+                        let replaced = label("Version 1").is_none();
+                        check("hidden-nested-and-dynamic", all_hidden && waits && shown && replaced, format!("all hidden {all_hidden}, inner waits {waits}, all shown {shown}, old version gone {replaced}"));
+                        if let Some(w) = windows().into_iter().find(|w| w.title().to_string() == "Hidden") {
+                            ferrokit::close_window(&w);
+                        }
+                        let events = events.clone();
+                        after_events(move || native_checks(events.clone()));
+                    });
+                });
+            });
+        });
+    });
+}
+
+mod swatch {
+    //! A view the app draws itself (L3's custom `NSView`): a filled
+    //! rectangle that counts its instances and draws, takes the focus, and
+    //! reads as an image to VoiceOver.
+    use std::cell::Cell;
+
+    use objc2::rc::Retained;
+    use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
+    use objc2_app_kit::{NSBezierPath, NSColor, NSView};
+    use objc2_foundation::{NSCopying, NSRect, NSString};
+
+    thread_local! {
+        /// Swatches alive now (made minus deallocated).
+        pub static LIVE: Cell<i64> = const { Cell::new(0) };
+    }
+
+    pub struct State {
+        /// Its height, set by an update and read by its measure.
+        pub height: Cell<f64>,
+        pub draws: Cell<u32>,
+        /// Times it was marked for display.
+        pub marked: Cell<u32>,
+    }
+
+    impl Drop for State {
+        fn drop(&mut self) {
+            let _ = LIVE.try_with(|l| l.set(l.get() - 1));
+        }
+    }
+
+    define_class!(
+        #[unsafe(super(NSView))]
+        #[thread_kind = MainThreadOnly]
+        #[name = "ChecklistSwatch"]
+        #[ivars = State]
+        pub struct Swatch;
+
+        impl Swatch {
+            #[unsafe(method(drawRect:))]
+            fn draw_rect(&self, _dirty: NSRect) {
+                self.ivars().draws.set(self.ivars().draws.get() + 1);
+                NSColor::systemTealColor().setFill();
+                NSBezierPath::fillRect(self.bounds());
+            }
+
+            #[unsafe(method(setNeedsDisplay:))]
+            fn set_needs_display(&self, flag: bool) {
+                if flag {
+                    self.ivars().marked.set(self.ivars().marked.get() + 1);
+                }
+                // SAFETY: NSView's own method.
+                let () = unsafe { msg_send![super(self), setNeedsDisplay: flag] };
+            }
+
+            #[unsafe(method(acceptsFirstResponder))]
+            fn accepts_first_responder(&self) -> bool {
+                true
+            }
+
+            #[unsafe(method(isAccessibilityElement))]
+            fn is_accessibility_element(&self) -> bool {
+                true
+            }
+
+            #[unsafe(method_id(accessibilityRole))]
+            fn accessibility_role(&self) -> Option<Retained<NSString>> {
+                // SAFETY: AppKit's constant.
+                Some(unsafe { objc2_app_kit::NSAccessibilityImageRole }.copy())
+            }
+        }
+    );
+
+    impl Swatch {
+        pub fn new(mtm: MainThreadMarker) -> Retained<Swatch> {
+            LIVE.with(|l| l.set(l.get() + 1));
+            let this = Swatch::alloc(mtm).set_ivars(State { height: Cell::new(20.0), draws: Cell::new(0), marked: Cell::new(0) });
+            // SAFETY: NSView's designated initialiser.
+            unsafe { msg_send![super(this), initWithFrame: NSRect::ZERO] }
+        }
+    }
+}
+use swatch::Swatch;
+
+/// L3: custom native views (`native`): layout, updates, focus,
+/// accessibility and teardown, with a view the checklist draws itself.
+fn native_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use ferrokit::{AnyView, Size, native};
+    use objc2::DefinedClass;
+    use objc2::rc::Weak;
+    type Held = Rc<RefCell<Option<Weak<Swatch>>>>;
+    let hold = |h: &Held, s: &Retained<Swatch>| *h.borrow_mut() = Some(Weak::from_retained(s));
+    let get = |h: &Held| h.borrow().as_ref().and_then(Weak::load);
+    let (measured, focusable, filler): (Held, Held, Held) = Default::default();
+    let tall = Signal::new(30.0);
+    let (runs, removed) = (Rc::new(Cell::new(0u32)), Rc::new(Cell::new(0u32)));
+    let (first, second) = (Signal::new("one".to_string()), Signal::new("two".to_string()));
+    let lives_before = swatch::LIVE.with(Cell::get);
+    let w = {
+        let (m, f, fl, r, rm) = (measured.clone(), focusable.clone(), filler.clone(), runs.clone(), removed.clone());
+        open(
+            Window::new("Native").size(300.0, 400.0).view(
+                vstack((
+                    text("Above"),
+                    native(move |mtm| {
+                        let s = Swatch::new(mtm);
+                        hold(&m, &s);
+                        s
+                    })
+                    .update(move |s| {
+                        s.ivars().height.set(tall.get());
+                        r.set(r.get() + 1);
+                    })
+                    .measure(|s| Size { w: 80.0, h: s.ivars().height.get() })
+                    .flexible(false, false)
+                    .on_remove(move |_| rm.set(rm.get() + 1))
+                    .accessibility_label("Measured swatch"),
+                    text("Below"),
+                    hstack((
+                        text_field(&first).accessibility_label("First"),
+                        native(move |mtm| {
+                            let s = Swatch::new(mtm);
+                            hold(&f, &s);
+                            s
+                        })
+                        .measure(|_| Size { w: 40.0, h: 20.0 })
+                        .flexible(false, false)
+                        .accessibility_label("Focusable swatch"),
+                        text_field(&second).accessibility_label("Second"),
+                    )),
+                    // No name: the audit should report it.
+                    native(move |mtm| {
+                        let s = Swatch::new(mtm);
+                        hold(&fl, &s);
+                        s
+                    })
+                    .min_height(50.0),
+                ))
+                .padding(12.0),
+            ),
+        )
+    };
+    let label = {
+        let w = w.clone();
+        move |t: &str| w.contentView().unwrap().subviews().iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string() == t)
+    };
+    let mid_y = |v: &NSView| v.frame().origin.y + v.frame().size.height / 2.0;
+    after_events(move || {
+        let (Some(m), Some(fl)) = (get(&measured), get(&filler)) else {
+            check("native-layout", false, "the swatches weren't built".into());
+            return;
+        };
+        let size = m.frame().size;
+        let content_w = w.contentView().unwrap().frame().size.width;
+        let fills = (fl.frame().size.width - (content_w - 24.0)).abs() < 1.0 && fl.frame().size.height >= 50.0;
+        check(
+            "native-layout",
+            (size.width, size.height) == (80.0, 30.0) && fills,
+            format!("measured {}×{} (80×30); the flexible one {}×{} in {content_w} (fills, at least 50 high)", size.width, size.height, fl.frame().size.width, fl.frame().size.height),
+        );
+        let gap = (mid_y(&label("Below").unwrap()) - mid_y(&label("Above").unwrap())).abs();
+        let marked = m.ivars().marked.get();
+        tall.set(60.0);
+        let (label, measured, focusable, w, runs, removed, events) = (label.clone(), measured.clone(), focusable.clone(), w.clone(), runs.clone(), removed.clone(), events.clone());
+        after_events(move || {
+            let m = get(&measured).unwrap();
+            let gap2 = (mid_y(&label("Below").unwrap()) - mid_y(&label("Above").unwrap())).abs();
+            let redrawn = m.ivars().marked.get() > marked;
+            check(
+                "native-update",
+                runs.get() == 2 && m.frame().size.height == 60.0 && (gap2 - gap - 30.0).abs() < 1.0 && redrawn,
+                format!("update ran {} times (2); height {} (60); Above to Below {gap:.0} → {gap2:.0}; marked for display {redrawn}", runs.get(), m.frame().size.height),
+            );
+            let audit = ferrokit::testing::ax_audit(&w);
+            let named = ferrokit::testing::ax_elements(&w).iter().any(|e| e.role == "AXImage" && e.name == "Measured swatch");
+            check(
+                "native-accessibility",
+                named && audit.len() == 1 && audit[0].contains("AXImage"),
+                format!("named swatch read as an image {named}; audit {audit:?} (only the unnamed one)"),
+            );
+            // Then teardown: the window closed, and a hundred views through a dynamic.
+            let finish = {
+                let (w, runs, removed, measured, events) = (w.clone(), runs.clone(), removed.clone(), measured.clone(), events.clone());
+                move || {
+                    ferrokit::close_window(&w);
+                    let (runs, removed, measured, events) = (runs.clone(), removed.clone(), measured.clone(), events.clone());
+                    after_events(move || {
+                        tall.set(90.0);
+                        let after = runs.get();
+                        let lives = swatch::LIVE.with(Cell::get);
+                        let gone = get(&measured).is_none();
+                        // A hundred at a time through a dynamic, three times.
+                        let show = Signal::new(false);
+                        let removals = Rc::new(Cell::new(0u32));
+                        let rm = removals.clone();
+                        let w2 = open(Window::new("Native Cycles").size(200.0, 200.0).view(dynamic(move || {
+                            if show.get() {
+                                let rm = rm.clone();
+                                AnyView::new(vstack(
+                                    (0..100)
+                                        .map(|_| {
+                                            let rm = rm.clone();
+                                            AnyView::new(native(Swatch::new).flexible(false, false).measure(|_| Size { w: 4.0, h: 1.0 }).on_remove(move |_| rm.set(rm.get() + 1)))
+                                        })
+                                        .collect::<Vec<_>>(),
+                                ))
+                            } else {
+                                AnyView::new(text("None"))
+                            }
+                        })));
+                        let nodes = live_nodes();
+                        let mut peak = 0;
+                        for _ in 0..3 {
+                            show.set(true);
+                            peak = peak.max(swatch::LIVE.with(Cell::get) - lives);
+                            show.set(false);
+                        }
+                        let (events, removals, removed) = (events.clone(), removals.clone(), removed.clone());
+                        after_events(move || {
+                            let back = swatch::LIVE.with(Cell::get) - lives;
+                            let nodes_back = live_nodes() == nodes;
+                            check(
+                                "native-teardown",
+                                lives == lives_before && gone && after == 2 && removed.get() == 1 && peak == 100 && back == 0 && removals.get() == 300 && nodes_back,
+                                format!(
+                                    "closed window: swatches alive {} (0), update after close {} (none), on_remove {}; a dynamic three times: {peak} built, {back} left, on_remove {} (300), nodes back {nodes_back}",
+                                    lives - lives_before,
+                                    after - 2,
+                                    removed.get(),
+                                    removals.get()
+                                ),
+                            );
+                            ferrokit::close_window(&w2);
+                            let events = events.clone();
+                            after_events(move || table_selection_checks(events.clone()));
+                        });
+                    });
+                }
+            };
+            // Tab order: First → the swatch → Second (AppKit's key view
+            // loop), by real Tab keys when the app can be active, else by
+            // AppKit's own entry point.
+            let field = |t: &str| label(t).unwrap();
+            let (a, b, sw) = (field("one"), field("two"), get(&focusable).unwrap());
+            let real = ferrokit::testing::input::ready(&w);
+            let tab = {
+                let w = w.clone();
+                move |from: &NSView| {
+                    if real {
+                        ferrokit::testing::input::key(&w, ferrokit::testing::input::Key::Tab, &[]);
+                    } else {
+                        w.selectKeyViewFollowingView(from);
+                    }
+                }
+            };
+            let made = w.makeFirstResponder(Some(&a));
+            tab(&a);
+            // Posted keys arrive in their own time: wait for the focus to move.
+            let on_swatch = {
+                let (w, sw) = (w.clone(), sw.clone());
+                move || w.firstResponder().is_some_and(|r| std::ptr::eq(&*r as *const _ as *const u8, &*sw as *const _ as *const u8))
+            };
+            let sw2 = sw.clone();
+            until(on_swatch.clone(), 2000, move || {
+                let into_swatch = on_swatch();
+                tab(&sw2);
+                let b2 = b.clone();
+                until(move || b2.currentEditor().is_some(), 2000, move || {
+                    let into_second = b.currentEditor().is_some();
+                    check(
+                        "native-focus",
+                        made && into_swatch && into_second,
+                        format!("Tab ({}) from the first field reaches the swatch {into_swatch}, then the second field {into_second}", if real { "real keys" } else { "AppKit's key view loop, app not active" }),
+                    );
+                    finish();
+                });
+            });
+        });
+    });
+}
+
+/// L4: a table's selection bound to a signal, both ways.
+fn table_selection_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let model = Rc::new(TableModel::new(ViewId(960), vec![Column::text("n", "N", |n: &u32| n.to_string())]));
+    model.set_rows((0..6).collect());
+    let selected = Signal::new(Vec::<usize>::new());
+    let pressed = Rc::new(RefCell::new(Vec::new()));
+    let (p1, p2) = (pressed.clone(), pressed.clone());
+    let w = open(
+        Window::new("Bound Selection").size(240.0, 260.0).view(
+            table(&model)
+                .selection(&selected)
+                .on_key(TableKey::Delete, move |rows| p1.borrow_mut().push(format!("delete {rows:?}")))
+                .on_key(TableKey::Space, move |rows| p2.borrow_mut().push(format!("space {rows:?}"))),
+        ),
+    );
+    let m = model.clone();
+    after_events(move || {
+        // The signal selects (any order).
+        selected.set(vec![3, 1]);
+        let from_signal = m.selection();
+        // The user selects: the table tells the signal.
+        let set = objc2_foundation::NSIndexSet::indexSetWithIndex(4);
+        m.table_view().selectRowIndexes_byExtendingSelection(&set, false);
+        let (m, w, events, pressed) = (m.clone(), w.clone(), events.clone(), pressed.clone());
+        after_events(move || {
+            let from_user = selected.get_untracked();
+            // Replacing the rows clears the selection, and the signal follows.
+            m.set_rows((10..16).collect());
+            let (m, w, events, from_signal, pressed) = (m.clone(), w.clone(), events.clone(), from_signal.clone(), pressed.clone());
+            after_events(move || {
+                let cleared = selected.get_untracked();
+                selected.set(vec![5]);
+                let again = m.selection();
+                // Bare keys: Delete, Forward Delete and Space reach the app
+                // with the selection; with ⌘ they don't.
+                let tv = m.table_view();
+                let key = |code: u16, chars: &str, flags: NSEventModifierFlags| {
+                    let e = objc2_app_kit::NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+                        objc2_app_kit::NSEventType::KeyDown,
+                        objc2_foundation::NSPoint::new(0.0, 0.0),
+                        flags,
+                        0.0,
+                        w.windowNumber(),
+                        None,
+                        &NSString::from_str(chars),
+                        &NSString::from_str(chars),
+                        false,
+                        code,
+                    )
+                    .unwrap();
+                    let _: () = unsafe { objc2::msg_send![&*tv, keyDown: &*e] };
+                };
+                key(51, "\u{7f}", NSEventModifierFlags::empty());
+                key(117, "\u{f728}", NSEventModifierFlags::Function);
+                key(49, " ", NSEventModifierFlags::empty());
+                key(51, "\u{7f}", NSEventModifierFlags::Command);
+                check(
+                    "table-selection-bound",
+                    from_signal == [1, 3] && from_user == [4] && cleared.is_empty() && again == [5],
+                    format!("signal [3, 1] → table {from_signal:?}; user picks 4 → signal {from_user:?}; set_rows → signal {cleared:?}; signal [5] → table {again:?}"),
+                );
+                // A date column: sorted by date (no date first), shown in
+                // the user's format, copied as shown.
+                let day = |secs: u64| std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+                let dated = Rc::new(TableModel::new(
+                    ViewId(961),
+                    vec![Column::text("name", "Name", |r: &(&str, Option<std::time::SystemTime>)| r.0.to_string()), Column::date("when", "Date Modified", |r: &(&str, Option<std::time::SystemTime>)| r.1)],
+                ));
+                dated.set_rows(vec![("now", Some(std::time::SystemTime::now())), ("never", None), ("2020", Some(day(1_600_000_000))), ("2001", Some(day(1_000_000_000)))]);
+                dated.set_sort(Some(Sort { column: "when".into(), ascending: true }));
+                dated.select(&[0, 1, 2, 3]);
+                let copied = dated.selected_text();
+                let lines: Vec<&str> = copied.lines().collect();
+                let names: Vec<&str> = lines.iter().map(|l| l.split('\t').next().unwrap_or("")).collect();
+                let shown_2020 = lines.iter().find(|l| l.starts_with("2020\t")).map(|l| l.split('\t').nth(1).unwrap_or("").to_string()).unwrap_or_default();
+                let never_empty = lines.iter().any(|l| *l == "never\t" || *l == "never");
+                check(
+                    "table-date-column",
+                    names == ["never", "2001", "2020", "now"] && shown_2020.contains("2020") && never_empty,
+                    format!("sorted {names:?}; 2020 shown as {shown_2020:?}; no date shown empty {never_empty}; copied {copied:?}"),
+                );
+                let (pressed, w, events) = (pressed.clone(), w.clone(), events.clone());
+                after_events(move || {
+                    let keys = pressed.borrow().clone();
+                    check("table-bare-keys", keys == ["delete [5]", "delete [5]", "space [5]"], format!("{keys:?} (⌘⌫ not among them)"));
+                    ferrokit::close_window(&w);
+                    let events = events.clone();
+                    after_events(move || tabs_and_dock_checks(events.clone()));
+                });
+            });
+        });
+    });
 }
 
 /// C5: windows as tabs, no full screen, the Dock badge and the Dock menu.
@@ -2872,7 +3347,61 @@ fn failure_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         format!("caught {:?}; after them the label reads {shown:?}; on_error told {} time(s)", caught.iter().map(|f| f.to_string()).collect::<Vec<_>>(), HOOKED.with(Cell::get)),
     );
     ferrokit::close_window(&w);
+    crash_report_check();
     after_events(move || rtl_checks(events.clone()));
+}
+
+/// L5: a panic Ferrokit doesn't catch writes a crash report; one it
+/// catches doesn't. A child run of this app crashes on purpose.
+fn crash_report_check() {
+    let dir = std::env::temp_dir().join(format!("ferrokit-crashes-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .env("CRASH_TEST", "1")
+        .env("FERROKIT_CRASH_DIR", &dir)
+        .env_remove("CHECK")
+        .stderr(std::process::Stdio::null())
+        .status();
+    let crashed = status.as_ref().is_ok_and(|s| !s.success());
+    let reports = ferrokit::testing::pending_crash_reports(&dir);
+    let text = reports.first().map(|r| r.text.clone()).unwrap_or_default();
+    let complete = ["App: Crash Test", "macOS:", "Thread: the main thread", "Panic: a deliberate crash, for the check", "ui_checklist.rs:", "Backtrace:"].iter().all(|t| text.contains(t));
+    let not_caught = !text.contains("a caught panic");
+    // The next launch hands the report to the app.
+    let launched = std::process::Command::new(std::env::current_exe().unwrap())
+        .env("CRASH_TEST", "deliver")
+        .env("FERROKIT_CRASH_DIR", &dir)
+        .env_remove("CHECK")
+        .stderr(std::process::Stdio::null())
+        .status();
+    let delivered = std::fs::read_to_string(dir.join("delivered")).unwrap_or_default();
+    let handed = launched.as_ref().is_ok_and(|s| s.success()) && reports.first().is_some_and(|r| delivered == r.path.display().to_string());
+    let sent = reports.first().is_some_and(|r| r.mark_sent().is_ok()) && ferrokit::testing::pending_crash_reports(&dir).is_empty() && dir.join("Sent").read_dir().is_ok_and(|d| d.count() == 1);
+    let _ = std::fs::remove_dir_all(&dir);
+    check(
+        "crash-report",
+        crashed && reports.len() == 1 && complete && not_caught && handed && sent,
+        format!("child ended with {status:?}; {} report(s); complete {complete}; the caught panic left out {not_caught}; handed over at the next launch {handed}; marked sent {sent}; first lines {:?}", reports.len(), text.lines().take(5).collect::<Vec<_>>()),
+    );
+}
+
+/// The child run of [`crash_report_check`]: crash reports on, a panic
+/// Ferrokit catches, then one it doesn't.
+fn crash_test() {
+    if std::env::var("CRASH_TEST").is_ok_and(|v| v == "deliver") {
+        // The next launch: the report reaches the handler, which notes it.
+        let dir = std::path::PathBuf::from(std::env::var_os("FERROKIT_CRASH_DIR").unwrap());
+        spawn(|| std::thread::sleep(std::time::Duration::from_secs(5)), |()| std::process::exit(1));
+        return App::new("Crash Test")
+            .crash_reports(move |report| {
+                let _ = std::fs::write(dir.join("delivered"), report.path.display().to_string());
+                std::process::exit(0);
+            })
+            .run();
+    }
+    let _app = App::new("Crash Test").crash_reports(|_| {});
+    ferrokit::testing::catching(|| panic!("a caught panic"));
+    panic!("a deliberate crash, for the check");
 }
 
 /// R5: right to left, a row's first item is on the right and its last on
@@ -4093,7 +4622,12 @@ fn table_window() -> impl View {
 /// Runs `f` after two run-loop passes (model events are delivered on the
 /// pass after AppKit's callback).
 fn after_events(f: impl Fn() + 'static) {
-    let f = Rc::new(f);
+    after_events_dyn(Rc::new(f));
+}
+
+// Not generic, so the long chains of checks don't nest `later`'s closure
+// types past the compiler's recursion limit (debug builds hit it).
+fn after_events_dyn(f: Rc<dyn Fn()>) {
     later(move || {
         let f = f.clone();
         later(move || f())
@@ -5083,6 +5617,9 @@ fn restore_run(step: String) {
 }
 
 fn main() {
+    if std::env::var("CRASH_TEST").is_ok() {
+        return crash_test();
+    }
     if let Ok(step) = std::env::var("RESTORE") {
         return restore_run(step);
     }

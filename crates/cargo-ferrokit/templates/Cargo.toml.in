@@ -23,4 +23,13 @@ min-macos = "15.0"
 # For distribution (ad hoc signing without it), then `cargo ferrokit notarize`:
 # sign = "Developer ID Application: Your Name (TEAMID)"
 # notary-profile = "my-profile"  # made once: xcrun notarytool store-credentials my-profile …
+# For the Mac App Store (`cargo ferrokit bundle --app-store`), with sandbox = true and a category:
+# app-store-sign = "Apple Distribution: Your Name (TEAMID)"
+# installer-sign = "3rd Party Mac Developer Installer: Your Name (TEAMID)"
+# provisioning-profile = "MyApp.provisionprofile"
+# Updates through Sparkle 2 (Check for Updates…; `cargo ferrokit appcast` writes the feed):
+# [package.metadata.ferrokit.updates]
+# feed = "https://example.com/myapp/appcast.xml"
+# public-key = "…"                     # what Sparkle's bin/generate_keys prints
+# sparkle = "~/Developer/Sparkle-2.10.1"  # Sparkle's release, unpacked
 {{documents}}

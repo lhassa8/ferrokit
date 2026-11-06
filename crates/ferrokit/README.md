@@ -47,9 +47,10 @@ It's for data-heavy desktop apps where the Mac's own widgets matter:
 - **Accessibility:** VoiceOver reads AppKit's own accessibility tree;
   `.accessibility_label` names controls, and `testing::ax_audit` finds the
   ones without a name.
-- **Testing and shipping:** self-check helpers, and
-  [`cargo ferrokit`](https://crates.io/crates/cargo-ferrokit) to make, check,
-  bundle and notarise apps.
+- **Testing and shipping:** self-check helpers, crash reports, updates
+  through Sparkle, and [`cargo ferrokit`](https://crates.io/crates/cargo-ferrokit)
+  to make, check, bundle and notarise apps (or package them for the Mac App
+  Store).
 
 Read the [guide](https://docs.rs/ferrokit/latest/ferrokit/guide/); every
 example in it is compiled as a doc test. [`API.md`](API.md) lists every
@@ -70,6 +71,6 @@ cargo install cargo-ferrokit && cargo ferrokit new my-app
 macOS 15 or later. Main thread only. Built on
 [`ferrokit-core`](https://crates.io/crates/ferrokit-core) and objc2.
 
-**Status:** 0.4.2 (formerly `appkit-ui`), an alpha: the API will change. Part of [Ferrokit](https://github.com/lhassa8/ferrokit); its crates share one version number.
+**Status:** 0.5.0 (formerly `appkit-ui`), an alpha: the API will change. Part of [Ferrokit](https://github.com/lhassa8/ferrokit); its crates share one version number.
 
 License: MIT OR Apache-2.0.

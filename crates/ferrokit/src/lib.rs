@@ -48,7 +48,7 @@
 //! - **Testing:** [`testing`] (self-checks, real input, accessibility
 //!   audits, window captures, soaks).
 //!
-//! **Start with the [guide], 13 chapters whose examples are compiled as doc
+//! **Start with the [guide], 14 chapters whose examples are compiled as doc
 //! tests.** `API.md`, in the crate's source and
 //! [on GitHub](https://github.com/lhassa8/ferrokit/blob/main/crates/ferrokit/API.md),
 //! lists every public item on one page. macOS 15 or later. Main thread only.
@@ -70,6 +70,7 @@ mod l10n;
 mod layout;
 mod material;
 mod browser;
+mod crash;
 mod failure;
 mod filter;
 mod form;
@@ -78,6 +79,7 @@ mod quicklook;
 mod services;
 mod status;
 mod motion;
+mod native;
 mod widgets;
 mod interact;
 mod menu;
@@ -93,6 +95,7 @@ mod surface;
 mod syntax;
 mod transfer;
 mod undo;
+pub mod updates;
 mod value;
 pub mod testing;
 mod view;
@@ -134,7 +137,7 @@ pub use layout::layout_stats;
 pub use models::{Table, TextEditor, table, text_editor};
 pub use outline::{Outline, TreeNode, outline, sidebar};
 pub use collection::{Collection, CollectionItem, ItemImage, collection, collection_cells_made};
-pub use ferrokit_core::table::{CellImage, Column, ColumnState, Sort, TableModel};
+pub use ferrokit_core::table::{CellImage, Column, ColumnState, Sort, TableKey, TableModel};
 pub use ferrokit_core::text::{Color, TextModel, TextStyle};
 pub use syntax::Syntax;
 pub use style::{Font, Weight};
@@ -143,15 +146,18 @@ pub use material::{Glass, Material, has_liquid_glass};
 pub use widgets::{Gauge, Link, PathControl, RadioGroup, TabStyle, Tabs, TokenField, gauge, link, path_control, radio_group, rating, tabs, token_field};
 pub use media::{PdfView, VideoControls, VideoPlayer, WebPage, WebView, pdf_view, pdf_view_data, video_player, video_stream, web_view};
 pub use browser::{ColumnBrowser, column_browser};
+pub use crash::CrashReport;
+pub use updates::UpdateEvent;
 pub use failure::Failure;
 pub use filter::{FieldKind, FieldValue, Filter, FilterEditor, FilterField, FilterRule, FilterTest, Match, filter_editor};
 pub use form::{Form, FormRow, FormStyle, Section, disclosure, form, form_content, form_row, group_box, section};
 pub use quicklook::{Thumbnail, close_quick_look, is_quick_look_open, quick_look, thumbnail};
-pub use services::{Notification, SentNotification, ShareButton, ShareItem, cancel_notification, notifications_supported, notify, pdf_data, print, save_pdf, share_button};
+pub use services::{FileDates, Notification, SentNotification, ShareButton, ShareItem, cancel_notification, file_dates, move_to_trash, notifications_supported, notify, pdf_data, print, reveal_in_finder, save_pdf, share_button};
 pub use status::MenuBarExtra;
 pub use motion::{Animation, Keyframes, Transition, animate, animated, animated_with, keyframes, reduce_motion, stop_animation};
 pub use popover::Edge;
 pub use canvas::{Canvas, Painter, canvas};
+pub use native::{NativeView, native};
 pub use value::{IntoValue, Value};
 pub use transfer::{Clipboard, DragItem, WriteFile};
 pub use l10n::{format_date, format_number, format_number_for, local_day, local_day_start, today, weekday, language, parse_strings, plural_category, set_language, t, t_plural, t_with};
@@ -1000,12 +1006,13 @@ pub struct App {
     menu_bar_only: bool,
     welcome: Option<Rc<dyn Fn() -> Window>>,
     dock_menu: Option<Rc<dyn Fn() -> Vec<MenuItem>>>,
+    crash_reports: Option<Box<dyn Fn(CrashReport)>>,
 }
 
 impl App {
     /// An app called `name` (shown in the menu bar).
     pub fn new(name: &str) -> Self {
-        App { name: name.into(), windows: Vec::new(), on_launch: None, menus: Vec::new(), settings: None, documents: None, extras: Vec::new(), menu_bar_only: false, welcome: None, dock_menu: None }
+        App { name: name.into(), windows: Vec::new(), on_launch: None, menus: Vec::new(), settings: None, documents: None, extras: Vec::new(), menu_bar_only: false, welcome: None, dock_menu: None, crash_reports: None }
     }
 
     /// Opens `window` at launch. Call more than once for several windows.
@@ -1083,6 +1090,35 @@ impl App {
         self
     }
 
+    /// Crash reports. From now on, a panic Ferrokit doesn't catch (one
+    /// outside a control's action, menu item, timer or the like, which
+    /// [`on_error`](Self::on_error) hears about and survives; or one on a
+    /// background thread) writes a report before the app ends: the app,
+    /// its version, macOS, the thread, the message and where, and the
+    /// backtrace, in `~/Library/Logs/<app>/Crashes`. At the next launch,
+    /// after the windows are on screen, `f` gets each report not yet
+    /// [marked sent](CrashReport::mark_sent): ask the user to send it, send
+    /// it to a service, or keep it.
+    ///
+    /// ```no_run
+    /// use ferrokit::*;
+    ///
+    /// let app = App::new("Notes").crash_reports(|report| {
+    ///     // Show it, send it, then:
+    ///     let _ = report.mark_sent();
+    /// });
+    /// # let _ = app;
+    /// ```
+    ///
+    /// A crash that isn't a panic (a bad memory access in unsafe code or a
+    /// C library) ends the app at once; macOS writes those to
+    /// `~/Library/Logs/DiagnosticReports`.
+    pub fn crash_reports(mut self, f: impl Fn(CrashReport) + 'static) -> Self {
+        crash::install(&self.name);
+        self.crash_reports = Some(Box::new(f));
+        self
+    }
+
     /// Runs `f` on the first run-loop pass after the windows are on screen.
     pub fn on_launch(mut self, f: impl FnOnce() + 'static) -> Self {
         self.on_launch = Some(Box::new(f));
@@ -1155,7 +1191,9 @@ impl App {
                 show_welcome();
             }).key_with("1", &[Modifier::Shift]));
         }
-        let targets = menu::install(mtm, &self.name, menus, settings, file_after, window_items);
+        // Sparkle, when the bundle has it: Check for Updates… in the app menu.
+        let updater = objc2::rc::autoreleasepool(|_| updates::start());
+        let targets = menu::install(mtm, &self.name, menus, settings, updater, file_after, window_items);
         EXTRAS.with_borrow_mut(|e| e.extend(targets));
         for extra in self.extras {
             status::install(extra, &self.name);
@@ -1206,6 +1244,15 @@ impl App {
             later(move || {
                 if let Some(f) = f.borrow_mut().take() {
                     f();
+                }
+            });
+        }
+        if let Some(f) = self.crash_reports {
+            // The last run's reports, once the windows are up.
+            let dir = crash::folder(&self.name);
+            later(move || {
+                for report in crash::pending(&dir) {
+                    failure::entry("a crash report's handler", (), || f(report));
                 }
             });
         }
@@ -1481,6 +1528,7 @@ pub fn spawn<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static, then:
 /// - [Motion](guide::ch11_motion): animated changes, transitions, hover and click, and Reduce Motion.
 /// - [More controls and charts](guide::ch12_more_controls_and_charts): tabs, radio groups, gauges, token fields, tooltips, and charts.
 /// - [Web, PDF, video and services](guide::ch13_web_pdf_video_and_services): web pages, PDFs, video, Share, printing, notifications, menu-bar extras.
+/// - [Custom native views](guide::ch14_custom_native_views): any `NSView` as a Ferrokit view (a map, a view of your own drawing).
 #[cfg(any(doc, doctest))]
 pub mod guide {
     // The chapters' links name the crate's items.
@@ -1515,4 +1563,6 @@ pub mod guide {
     pub mod ch12_more_controls_and_charts {}
     #[doc = include_str!("../guide/13-web-pdf-video-and-services.md")]
     pub mod ch13_web_pdf_video_and_services {}
+    #[doc = include_str!("../guide/14-custom-native-views.md")]
+    pub mod ch14_custom_native_views {}
 }

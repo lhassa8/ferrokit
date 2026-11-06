@@ -104,6 +104,22 @@ let body = dynamic(move || if signed_in.get() { AnyView::new(text("Welcome back"
 # let _ = body;
 ```
 
+To hide a view and keep it, use `.hidden(|| …)` instead: its native views
+stay built, with their state (a field's text, a table's scroll position),
+and while hidden it takes no room in its stack. It's the better fit for a
+panel shown in one mode only, which a `dynamic` would rebuild each time.
+
+```rust,no_run
+use ferrokit::*;
+
+let advanced = Signal::new(false);
+let form = vstack((
+    checkbox("Show advanced options", &advanced),
+    vstack((text("Cache size"), text_field(&Signal::new(String::new())))).hidden(move || !advanced.get()),
+));
+# let _ = form;
+```
+
 ## Scrolling
 
 `scroll(view)` puts a view in an `NSScrollView` and lays its content out

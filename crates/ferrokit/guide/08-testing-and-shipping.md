@@ -59,8 +59,9 @@ out, usually once:
   reset the ones a check depends on at its start.
 - **Menu items:** `testing::menu_key` presses a menu's shortcut, including
   your own [`menu_command`](crate::menu_command)s; `testing::shortcut`
-  sends an action along the responder chain (Undo, Copy) and doesn't reach
-  menu items.
+  does the same for a ⌘ or ⇧⌘ shortcut without the app being active: your
+  own items run if they're enabled, and standard ones (Undo, Copy) go along
+  the window's responder chain.
 - **AppKit types in checks:** looking at a native view directly needs
   `objc2`, `objc2-foundation` and `objc2-app-kit` (0.6, 0.3 and 0.3) in
   your `Cargo.toml`, with the AppKit features you use.
@@ -168,6 +169,65 @@ let app = App::new("Notes").on_error(|failure| eprintln!("to the crash log: {fai
 # let _ = app;
 ```
 
+## Crash reports
+
+`on_error` hears about failures the app survives. A panic Ferrokit doesn't
+catch (outside a control's action, menu item, timer and the like, or on a
+background thread) ends the app. `App::crash_reports(|report| ..)` writes
+a report for each one before the app ends: the app and its version,
+macOS, the thread, the panic's message and place, and the backtrace, in
+`~/Library/Logs/<app>/Crashes` (inside the container when sandboxed). At
+the next launch, once the windows are up, the handler gets each report not
+yet marked sent. Panics caught at the places AppKit calls in stay
+`on_error` failures and write no report.
+
+What to do with a report is the app's choice. Two common ones:
+
+- **Ask the user.** Show an alert saying the app quit unexpectedly, and
+  offer to show the report in the Finder (for attaching to an email or an
+  issue). Mark it sent either way, so it isn't asked about again.
+- **Send it to a service.** Post `report.text` to your server or a crash
+  service from a background thread (`spawn`), and mark it sent when the
+  upload succeeds. Sentry's Rust SDK (`sentry` crate) can also capture
+  panics itself; if you use it, its own hook replaces this one.
+
+```rust,no_run
+use ferrokit::*;
+
+let app = App::new("Notes").crash_reports(|report| {
+    let Some(window) = windows().into_iter().next() else { return };
+    let path = report.path.clone();
+    alert(
+        &window,
+        Alert::new("Notes quit unexpectedly last time.", "A report was saved. You can attach it to an email to the developer.")
+            .button("Show Report")
+            .button("Not Now"),
+        move |choice| {
+            if choice == 0 {
+                reveal_in_finder(&[&path]);
+            }
+        },
+    );
+    let _ = report.mark_sent();
+});
+# let _ = app;
+```
+
+A crash that isn't a panic, such as a bad memory access in unsafe code or
+a C library, ends the app at once. macOS keeps those in
+`~/Library/Logs/DiagnosticReports` (the user sees them in Console), and
+offers to send them to Apple, not to you. Uploading a build's debug
+symbols isn't needed for Rust panics: the backtrace names the functions,
+as long as release builds keep their symbols (the default; don't set
+`strip = true` if you want readable reports).
+
+For checks, `FERROKIT_CRASH_DIR` points the reports at a folder of the
+check's own, `testing::pending_crash_reports(dir)` reads them, and
+`testing::catching(|| ..)` runs code as Ferrokit runs an action, so a
+panic in it is caught. The `ui_checklist` example's `crash-report` check
+crashes a child run of itself and reads the report back at its next
+launch.
+
 ## Packaging: `cargo ferrokit`
 
 `cargo ferrokit` (install it with `cargo install cargo-ferrokit`) does the
@@ -248,3 +308,123 @@ cargo ferrokit notarize
 
 The zip opens on any Mac running macOS 15 or later with no Gatekeeper
 warning.
+
+## Updates
+
+Apps outside the Mac App Store usually update through
+[Sparkle](https://sparkle-project.org), and Ferrokit uses Sparkle 2. When
+the app is bundled with it, the app menu gets **Check for Updates…**, and
+Sparkle does the rest. At the second launch it asks the user whether to
+check automatically. When there's a new version it shows the release notes,
+downloads the update, checks its signature, installs it and relaunches.
+The app's code doesn't change.
+
+Once:
+
+1. Download Sparkle 2 (`Sparkle-2.x.tar.xz` from
+   github.com/sparkle-project/Sparkle/releases) and unpack it, for example
+   in `~/Developer/Sparkle-2.10.1`. Its licence is MIT-style: include its
+   notice with your app's credits.
+2. Make the key that signs your updates. Sparkle's `bin/generate_keys`
+   keeps the private key in your login keychain and prints the public
+   key. Back the private key up (`generate_keys -x <file>`): without it you
+   can't publish updates your users will accept.
+3. Tell `cargo ferrokit` where updates come from:
+
+```toml
+[package.metadata.ferrokit.updates]
+feed = "https://example.com/myapp/appcast.xml"
+public-key = "…"                           # what generate_keys printed
+sparkle = "~/Developer/Sparkle-2.10.1"      # or set FERROKIT_SPARKLE
+```
+
+`cargo ferrokit bundle` (and `run`, `check`, `notarize`) then embeds
+`Sparkle.framework`, signs its parts with the app's identity, and puts the
+feed and the public key in `Info.plist`. A sandboxed app gets the settings
+and entitlements that Sparkle's installer (and, without `network = true`,
+its downloader) needs. `bundle --app-store` leaves Sparkle out: the App
+Store does the updating there.
+
+Each release:
+
+1. Raise `version` in `Cargo.toml`.
+2. `cargo ferrokit notarize` (a Developer ID signature and Apple's ticket).
+3. `cargo ferrokit appcast`. It zips the app into `updates/` as
+   `My App 1.1.0.zip` and writes `updates/appcast.xml` with Sparkle's
+   `generate_appcast`, signing the update with your key.
+4. Upload the new files to the feed's folder. Any HTTPS host works: your
+   site, S3, GitHub Pages.
+
+Keep `updates/` between releases. `generate_appcast` keeps the feed's
+history and makes small delta updates from the earlier versions.
+
+Nothing in the app has to call Sparkle. The `updates` module is for an
+app that wants more: `updates::check()` runs a check from a button,
+`set_automatic_checks` and `set_automatic_downloads` back a Settings
+checkbox, and `updates::on_event` reports what the updater does:
+
+```rust,no_run
+use ferrokit::*;
+
+updates::on_event(|event| match event {
+    // Downloaded and checked; it installs when the app quits.
+    UpdateEvent::ReadyOnQuit { version } => set_dock_badge(Some(version.as_str())),
+    UpdateEvent::Failed { message } => eprintln!("update failed: {message}"),
+    _ => {}
+});
+```
+
+Run unbundled (`cargo run`), the app has no Sparkle, and these functions
+do nothing (`updates::available()` is false). A bundle that's set up for
+updates but can't start Sparkle prints why and reports it to `on_event`.
+Ad hoc builds turn off library validation so they can load Sparkle; with
+a Developer ID, the app and Sparkle share your team and need no
+exception.
+
+`check-ferrokit.sh` (part of `check-all`) tests the whole path when
+Sparkle is unpacked in `target/sparkle-<version>` or `FERROKIT_SPARKLE`
+names it. It installs version 1.0.0, serves 1.1.0 from a feed on
+`127.0.0.1`, shows that an update signed with the wrong key is refused,
+and that the right one installs when the app quits. It runs both plain
+and sandboxed. A feed on `127.0.0.1` is only for testing like this: a
+real feed must be HTTPS.
+
+## The Mac App Store
+
+The Mac App Store takes an installer package of a sandboxed app, signed
+with your App Store identities. You need, from your Apple Developer
+account:
+
+- an **Apple Distribution** certificate (signs the app) and a **Mac
+  Installer Distribution** certificate (signs the package; Keychain Access
+  shows it as "3rd Party Mac Developer Installer"), both in your keychain;
+- a **Mac App Store provisioning profile** for the app's bundle id
+  (developer.apple.com ▸ Profiles), saved next to the app;
+- the app in **App Store Connect**, with the same bundle id.
+
+```toml
+[package.metadata.ferrokit]
+sandbox = true
+category = "public.app-category.productivity"
+app-store-sign = "Apple Distribution: Your Name (TEAMID)"
+installer-sign = "3rd Party Mac Developer Installer: Your Name (TEAMID)"
+provisioning-profile = "MyApp.provisionprofile"
+```
+
+```bash
+cargo ferrokit bundle --app-store --build 42
+```
+
+It builds the app for Apple silicon and Intel, embeds the profile, signs
+the app with its sandbox entitlements and the profile's app and team ids
+(a profile for another app, or for iOS, is refused with the reason),
+and writes `My App.pkg`. `--build` is the build number (`CFBundleVersion`;
+each upload needs a higher one), and the version is the package's.
+`--dry-run` does all of it without your identities: ad hoc signing and an
+unsigned package, then the signing commands it would run.
+
+Upload the package with Apple's Transporter app (from the Mac App Store).
+Before submitting, run the sandboxed build yourself (`cargo ferrokit run`
+with `sandbox = true`): App Review checks that the app works in the
+sandbox, and files outside the container are reachable only through open
+and save panels, drops and the bookmarks Ferrokit keeps.

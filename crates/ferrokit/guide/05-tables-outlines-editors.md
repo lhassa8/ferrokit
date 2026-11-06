@@ -48,6 +48,16 @@ let view = table(&model)
   `(row, column, new text)`.
 - `update_row`, `append` and `select` change the model in place. Only the
   rows on screen have views; 200,000 rows load in about 150 ms.
+- `Column::date(id, title, |row| Option<SystemTime>)` shows dates in the
+  user's format and language ("Today", "12 Mar 2024"), sorted by date with
+  rows without one first; `.with_time()` adds the time.
+- `.on_key(TableKey::Delete, |rows| …)` and `TableKey::Space` take those
+  keys without ⌘ while rows are selected (Delete to remove them, Space to
+  Quick Look them, as in the Finder). Put the action in a menu too.
+- `.selection(&rows)` binds the selection to a `Signal<Vec<usize>>` of
+  model indices, both ways: clicking rows sets it, and setting it selects
+  them. `set_rows` clears the selection and the signal with it, so set the
+  signal after replacing the rows to select again.
 
 ### Groups, icons, progress bars, fitted columns
 
@@ -344,7 +354,8 @@ let meter = canvas(move |p| {
     p.fill_rounded_rect(0.0, 0.0, p.width(), p.height(), 6.0, Color::Separator);
     p.fill_rounded_rect(0.0, 0.0, p.width() * level.get(), p.height(), 6.0, Color::Green);
 })
-.on_click(move |x, _y| println!("clicked at {x}"))
+.on_click(move |x, _y| println!("clicked at {x}"))          // selects, say
+.on_double_click(move |x, _y| println!("opened at {x}"))   // after the click, on the second one
 .description(move || format!("Level {:.0}%", level.get() * 100.0))
 .min_size(200.0, 24.0);
 # let _ = meter;

@@ -99,6 +99,11 @@ pub(crate) struct Meta {
     pub(crate) dirty: Cell<bool>,
     /// Commands this node handles and values it publishes to the focus.
     pub(crate) responds: RefCell<crate::commands::Responds>,
+    /// Hidden by [`ViewExt::hidden`]: left out of layout, its views hidden.
+    pub(crate) hidden: Cell<bool>,
+    /// The views it hid (and those hidden views inside it showed while it
+    /// was hidden), shown again when it is.
+    hid: RefCell<Vec<NativeView>>,
 }
 
 impl Meta {
@@ -597,6 +602,15 @@ pub trait ViewExt: View + Sized {
         Modified::new(self).tooltip(text)
     }
 
+    /// Hides the view while `when()` is true, following the signals it
+    /// reads: its native views stay built (no rebuild, the state inside
+    /// kept) but aren't shown, and it takes no room in its stack, as if it
+    /// weren't there. For a panel shown in one mode only, rather than a
+    /// [`dynamic`] that rebuilds it each time. VoiceOver and Tab skip it.
+    fn hidden(self, when: impl crate::IntoValue<bool>) -> Modified<Self> {
+        Modified::new(self).hidden(when)
+    }
+
     /// Disables the view's controls while `when()` is true (a picker that
     /// only matters once a checkbox is on, a form while it's saving),
     /// following the signals it reads. SwiftUI's `disabled`.
@@ -635,6 +649,7 @@ pub struct Modified<V> {
     click: Option<Rc<dyn Fn()>>,
     tooltip: Option<String>,
     disabled: Option<crate::Value<bool>>,
+    hidden: Option<crate::Value<bool>>,
     font: Option<crate::Font>,
     color: Option<crate::Value<crate::Color>>,
     ax_value: Option<crate::Value<String>>,
@@ -660,7 +675,7 @@ enum Op {
 
 impl<V: View> Modified<V> {
     fn new(view: V) -> Self {
-        Modified { view, ops: Vec::new(), menu: None, label: None, responds: Default::default(), popover: None, opacity: None, opacity_when: None, transition: None, matched: None, hover: None, click: None, tooltip: None, disabled: None, font: None, color: None, ax_value: None }
+        Modified { view, ops: Vec::new(), menu: None, label: None, responds: Default::default(), popover: None, opacity: None, opacity_when: None, transition: None, matched: None, hover: None, click: None, tooltip: None, disabled: None, hidden: None, font: None, color: None, ax_value: None }
     }
 
     /// Shows `content` in a popover pointing at this view while `shown` is
@@ -870,6 +885,12 @@ impl<V: View> Modified<V> {
     /// Disabled controls (see [`ViewExt::disabled`]).
     pub fn disabled(mut self, when: impl crate::IntoValue<bool>) -> Self {
         self.disabled = Some(when.into_value());
+        self
+    }
+
+    /// Hidden while `when()` is true (see [`ViewExt::hidden`]).
+    pub fn hidden(mut self, when: impl crate::IntoValue<bool>) -> Self {
+        self.hidden = Some(when.into_value());
         self
     }
 
@@ -1101,8 +1122,59 @@ impl<V: View> View for Modified<V> {
                 crate::popover::attach(&mut node, anchor, spec);
             }
         }
+        if let Some(when) = self.hidden {
+            node = hide_when(node, when);
+        }
         node
     }
+}
+
+/// `node` in a group of its own that [`ViewExt::hidden`] hides while
+/// `when()` is true. The views are found each time (a [`dynamic`] inside
+/// may have replaced them).
+fn hide_when(node: Node, when: crate::Value<bool>) -> Node {
+    let children = Rc::new(RefCell::new(Vec::new()));
+    let mut group = Node::new(Kind::Group(children.clone()));
+    node.meta.set_parent(&group.meta);
+    children.borrow_mut().push(node);
+    let meta = group.meta.clone();
+    let first = Cell::new(true);
+    group.own(Effect::new(move || {
+        let hide = when.get();
+        if meta.hidden.get() == hide && !first.get() {
+            return;
+        }
+        let initial = first.replace(false);
+        if !initial || hide {
+            set_hidden(&meta, &children, hide);
+        }
+    }));
+    group
+}
+
+fn set_hidden(meta: &Rc<Meta>, children: &RefCell<Vec<Node>>, hide: bool) {
+    meta.hidden.set(hide);
+    if hide {
+        let views: Vec<NativeView> = children.borrow().iter().flat_map(Node::all_views).filter(|v| !v.isHidden()).collect();
+        views.iter().for_each(|v| v.setHidden(true));
+        meta.hid.borrow_mut().extend(views);
+    } else {
+        let views = std::mem::take(&mut *meta.hid.borrow_mut());
+        // Inside a view that's still hidden, they wait for it.
+        let mut up = meta.parent();
+        while let Some(m) = up {
+            if m.hidden.get() {
+                m.hid.borrow_mut().extend(views);
+                return;
+            }
+            up = m.parent();
+        }
+        views.iter().for_each(|v| v.setHidden(false));
+    }
+    // Laid out again (it was skipped while hidden, so it may still be dirty).
+    meta.dirty.set(false);
+    meta.mark();
+    invalidate_layout();
 }
 
 /// Makes `node`'s last surface follow `color` (a dynamic background).

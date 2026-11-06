@@ -104,13 +104,40 @@ pub(crate) fn acting_in<R>(window: Option<Retained<NSWindow>>, f: impl FnOnce() 
 
 /// The window commands go to: the window of the toolbar button acting, the
 /// key window, else the main window, else the most recently opened visible
-/// one (an inactive app has neither).
+/// one (an inactive app has neither). A key window with nothing of the app's
+/// in it, such as the Quick Look panel or the font and colour panels, passes
+/// commands to the main window, as the Finder's menus act on its window while
+/// Quick Look shows; a sheet (an Open panel, an alert) keeps them.
 pub fn focused_window() -> Option<Retained<NSWindow>> {
     if let Some(w) = ACTING.with_borrow(Clone::clone) {
         return Some(w);
     }
     let app = NSApplication::sharedApplication(crate::mtm());
-    app.keyWindow().or_else(|| app.mainWindow()).or_else(|| crate::windows().into_iter().rev().find(|w| w.isVisible()))
+    app.keyWindow()
+        .filter(|w| takes_commands(w))
+        .or_else(|| app.mainWindow())
+        .or_else(|| crate::windows().into_iter().rev().find(|w| w.isVisible()))
+}
+
+/// Whether `window` takes commands itself: it shows views of the app's, or
+/// it's a sheet (commands wait while it's up).
+fn takes_commands(window: &NSWindow) -> bool {
+    window.sheetParent().is_some() || crate::root_meta(window).is_some() || focus_leaf(window).is_some()
+}
+
+/// The node of ours nearest the focus in `window`, if the focus is in a view
+/// of ours.
+fn focus_leaf(window: &NSWindow) -> Option<Rc<Meta>> {
+    let mut view: Option<Retained<NSView>> = window.firstResponder().and_then(|r| r.downcast::<NSView>().ok());
+    while let Some(v) = view {
+        let key = Retained::as_ptr(&v) as usize;
+        if let Some(meta) = LEAVES.with_borrow(|l| l.get(&key).and_then(Weak::upgrade)) {
+            return Some(meta);
+        }
+        // SAFETY: reading the view hierarchy on the main thread.
+        view = unsafe { v.superview() };
+    }
+    None
 }
 
 /// The node with focus in `window` (the window's root if no view of ours has
@@ -118,17 +145,7 @@ pub fn focused_window() -> Option<Retained<NSWindow>> {
 /// a sidebar's or inspector's pane is its own tree, and the window's own
 /// handlers live on the content pane's root.
 fn chain(window: &NSWindow) -> Vec<Rc<Meta>> {
-    let mut start = None;
-    let mut view: Option<Retained<NSView>> = window.firstResponder().and_then(|r| r.downcast::<NSView>().ok());
-    while let Some(v) = view {
-        let key = Retained::as_ptr(&v) as usize;
-        if let Some(meta) = LEAVES.with_borrow(|l| l.get(&key).and_then(Weak::upgrade)) {
-            start = Some(meta);
-            break;
-        }
-        // SAFETY: reading the view hierarchy on the main thread.
-        view = unsafe { v.superview() };
-    }
+    let start = focus_leaf(window);
     let root = crate::root_meta(window);
     let mut out = Vec::new();
     let mut cur = start.or_else(|| root.clone());

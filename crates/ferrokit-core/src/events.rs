@@ -35,12 +35,15 @@ pub fn set_event_sink(sink: impl Fn(Event) + 'static) {
     SINK.with_borrow_mut(|s| *s = Some(Box::new(sink)));
 }
 
-pub(crate) fn emit(event: Event) {
-    SINK.with_borrow(|s| {
-        if let Some(sink) = s {
+/// Sends `event` to the sink; false if there's none yet.
+pub(crate) fn emit(event: Event) -> bool {
+    SINK.with_borrow(|s| match s {
+        Some(sink) => {
             sink(event);
+            true
         }
-    });
+        None => false,
+    })
 }
 
 thread_local! {
@@ -51,11 +54,40 @@ thread_local! {
 /// (the flag clears at [`crate::begin_frame`]). Used while a snapshot swap is
 /// in progress and no input event would otherwise cause a redraw.
 pub fn request_redraw() {
-    if !REDRAW_QUEUED.with(|q| q.replace(true)) {
-        emit(Event::Redraw);
+    // A request before there's a sink (a model filled before the app runs)
+    // reaches nobody: it mustn't leave the flag set, or no later request
+    // would be sent and queued events would wait forever.
+    if !REDRAW_QUEUED.with(|q| q.replace(true)) && !emit(Event::Redraw) {
+        REDRAW_QUEUED.with(|q| q.set(false));
     }
 }
 
 pub(crate) fn frame_started() {
     REDRAW_QUEUED.with(|q| q.set(false));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::rc::Rc;
+
+    /// A redraw asked for before the sink exists (a table filled before the
+    /// app runs) doesn't block the ones after it.
+    #[test]
+    fn an_early_redraw_request_doesnt_block_later_ones() {
+        request_redraw();
+        let redraws = Rc::new(std::cell::Cell::new(0));
+        let r = redraws.clone();
+        set_event_sink(move |e| {
+            if e == Event::Redraw {
+                r.set(r.get() + 1);
+            }
+        });
+        request_redraw();
+        request_redraw();
+        assert_eq!(redraws.get(), 1, "one per frame");
+        frame_started();
+        request_redraw();
+        assert_eq!(redraws.get(), 2);
+    }
 }

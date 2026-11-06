@@ -389,6 +389,12 @@ mod self_checks {
                     ferrokit::testing::snapshot_windows(&dir);
                 }
                 c2("quick-look", open && files == [super::report_path()] && shown == Some(0) && is_quick_look_open(), format!("open {open}; files {files:?}; showing {shown:?}"));
+                // The panel takes the key window, but menu commands still go
+                // to the window under it (Sift found them disabled).
+                let focused = focused_window();
+                let reaches = focused.as_ref().is_some_and(|f| std::ptr::eq(&**f, &*w));
+                let named = focused.map(|f| f.class().name().to_string_lossy().into_owned());
+                c2("quick-look-commands-reach-window", reaches, format!("commands go to {named:?}"));
                 close_quick_look();
                 let c3 = c2.clone();
                 wait_for(2000, || !is_quick_look_open(), move |closed| {
@@ -438,6 +444,33 @@ mod self_checks {
         let want = vec![ShareItem::File(super::report_path()), ShareItem::Text("Our Lofoten trip, 6–15 July".into())];
         let label = share.as_ref().and_then(|b| objc2_app_kit::NSAccessibility::accessibilityLabel(&**b)).map(|l| l.to_string());
         check("share", items.as_ref() == Some(&want) && label.as_deref() == Some("Share"), format!("{items:?}; label {label:?}"));
+
+        // Files: Reveal in Finder (captured, no Finder window), Move to
+        // Trash and its new path (moved back where the Trash allows it),
+        // and the dates.
+        ferrokit::testing::capture_reveals(true);
+        ferrokit::reveal_in_finder(&[super::report_path()]);
+        let revealed = ferrokit::testing::revealed();
+        ferrokit::testing::capture_reveals(false);
+        let scratch = std::env::temp_dir().join(format!("ferrokit-media-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&scratch);
+        let file = scratch.join("Ferrokit check (safe to delete).txt");
+        let _ = std::fs::write(&file, "Ferrokit's media example moved this to the Trash to check Move to Trash.");
+        let _ = ferrokit::testing::set_last_opened(&file, Some(1_600_000_000));
+        let dates = ferrokit::file_dates(&file).ok();
+        let trashed = ferrokit::move_to_trash(&file);
+        let gone = !file.exists();
+        let in_trash = trashed.as_ref().is_ok_and(|p| p.components().any(|c| c.as_os_str() == ".Trash" || c.as_os_str() == ".Trashes") && p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("Ferrokit check")));
+        let put_back = trashed.as_ref().is_ok_and(|p| std::fs::rename(p, &file).is_ok());
+        let _ = std::fs::remove_dir_all(&scratch);
+        check(
+            "files",
+            revealed == [vec![super::report_path()]]
+                && dates.is_some_and(|d| d.added.is_some() && d.last_opened == Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000)))
+                && gone
+                && in_trash,
+            format!("revealed {revealed:?}; dates {dates:?}; trashed {trashed:?}, gone {gone}, in a Trash {in_trash}; put back {put_back} (the Trash may not allow it)"),
+        );
 
         // A notification, and its click.
         let remind = buttons(&w).into_iter().find(|b| b.title().to_string() == "Remind Me").unwrap();

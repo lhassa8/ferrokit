@@ -34,6 +34,7 @@ use objc2_foundation::{
 
 use crate::ViewId;
 use crate::host::mtm;
+use crate::kept::{UiCell, UiLocal};
 
 /// A cell's value.
 #[derive(Debug, Clone, PartialEq)]
@@ -53,6 +54,8 @@ enum Kind {
     Check,
     /// A bar from 0 to 1 (the value is a number).
     Progress,
+    /// A date (the value is seconds since 1970; not finite: none).
+    Date { time: bool },
 }
 
 /// A small image shown before a cell's text (see [`Column::icon`]).
@@ -111,6 +114,34 @@ impl<T> Column<T> {
         Self::new(id, title, Kind::Progress, Box::new(move |row| Value::Number(value(row).clamp(0.0, 1.0)))).width(100.0)
     }
 
+    /// A date column: shown in the user's format and language ("12 Mar
+    /// 2024", "Today", "Yesterday"), sorted by date, oldest first;
+    /// `None` shows nothing and sorts before every date. Copied as shown.
+    /// [`with_time`](Self::with_time) adds the time.
+    pub fn date(id: &str, title: &str, value: impl Fn(&T) -> Option<std::time::SystemTime> + 'static) -> Self {
+        Self::new(
+            id,
+            title,
+            Kind::Date { time: false },
+            Box::new(move |row| {
+                let secs = value(row).map_or(f64::NEG_INFINITY, |t| match t.duration_since(std::time::UNIX_EPOCH) {
+                    Ok(d) => d.as_secs_f64(),
+                    Err(e) => -e.duration().as_secs_f64(),
+                });
+                Value::Number(secs)
+            }),
+        )
+        .width(150.0)
+    }
+
+    /// Shows a date column's time too ("Today at 09:41").
+    pub fn with_time(mut self) -> Self {
+        if let Kind::Date { .. } = self.kind {
+            self.kind = Kind::Date { time: true };
+        }
+        self
+    }
+
     /// Shows an image before each cell's text (a text or number column),
     /// e.g. a file's icon before its name. `None` leaves the space empty.
     pub fn icon(mut self, image: impl Fn(&T) -> Option<CellImage> + 'static) -> Self {
@@ -164,10 +195,38 @@ impl<T> Column<T> {
 fn display(kind: Kind, value: &Value) -> String {
     match (kind, value) {
         (_, Value::Text(s)) => s.clone(),
+        (Kind::Date { time }, Value::Number(n)) => format_date(*n, time),
         (Kind::Number { decimals }, Value::Number(n)) => format!("{n:.decimals$}"),
         (_, Value::Number(n)) => n.to_string(),
         (_, Value::Bool(b)) => if *b { "Yes".into() } else { "No".into() },
     }
+}
+
+thread_local! {
+    /// The date formatters (date only, date and time), made once: making
+    /// one is slow, and a table formats every visible cell.
+    static DATE_FORMATS: UiCell<[Option<Retained<objc2_foundation::NSDateFormatter>>; 2]> = const { UiCell::new([None, None]) };
+}
+
+/// `secs` since 1970 in the user's date format, relative where it can be
+/// ("Today"); empty when not finite (no date).
+fn format_date(secs: f64, time: bool) -> String {
+    use objc2_foundation::{NSDate, NSDateFormatter, NSDateFormatterStyle};
+    if !secs.is_finite() {
+        return String::new();
+    }
+    let formatter = DATE_FORMATS.with_borrow_mut(|f| {
+        f[time as usize]
+            .get_or_insert_with(|| {
+                let f = NSDateFormatter::new();
+                f.setDateStyle(NSDateFormatterStyle::MediumStyle);
+                f.setTimeStyle(if time { NSDateFormatterStyle::ShortStyle } else { NSDateFormatterStyle::NoStyle });
+                f.setDoesRelativeDateFormatting(true);
+                f
+            })
+            .clone()
+    });
+    formatter.stringFromDate(&NSDate::dateWithTimeIntervalSince1970(secs)).to_string()
 }
 
 /// Group header slots in `order` carry this bit (and the group's index).
@@ -245,6 +304,14 @@ pub enum TableEvent {
     /// The user pasted (⌘V) text (see [`TableModel::set_pastes`]); rows
     /// copied from a table arrive as tab-separated lines.
     Paste(String),
+    /// The user pressed a bare key the table handles (see
+    /// [`TableModel::set_keys`]) with rows selected.
+    Key {
+        /// The key.
+        key: TableKey,
+        /// The selected rows (model indices).
+        rows: Vec<usize>,
+    },
 }
 
 /// Which transfers a table takes part in (see the `set_…` methods on
@@ -253,6 +320,8 @@ pub enum TableEvent {
 struct Transfer {
     drag: bool,
     reorder: bool,
+    /// Bare keys reported as [`TableEvent::Key`].
+    keys: Vec<TableKey>,
     /// File drops: `None` off; `Some(extensions)`, any file if empty.
     files: Option<Vec<String>>,
     pastes: bool,
@@ -446,6 +515,32 @@ define_class!(
     }
 );
 
+/// A key a table can take without ⌘ (see [`TableModel::set_keys`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum TableKey {
+    /// Delete (⌫) or Forward Delete (⌦): remove the selected rows, say.
+    Delete,
+    /// Space: Quick Look the selected rows, say.
+    Space,
+}
+
+impl TableKey {
+    /// The key a key-down event is, if it's one of these without ⌘, ⌥ or ⌃.
+    fn of(event: &NSEvent) -> Option<TableKey> {
+        use objc2_app_kit::NSEventModifierFlags as F;
+        if event.modifierFlags().intersects(F::Command | F::Option | F::Control) {
+            return None;
+        }
+        // 51: Delete, 117: Forward Delete, 49: Space.
+        match event.keyCode() {
+            51 | 117 => Some(TableKey::Delete),
+            49 => Some(TableKey::Space),
+            _ => None,
+        }
+    }
+}
+
 /// What a drag carries that this table accepts.
 enum Dropped {
     Rows(Vec<usize>),
@@ -477,6 +572,17 @@ define_class!(
                     {
                         data.push(TableEvent::Activate(row));
                     }
+                    return;
+                }
+            }
+            // A bare key the app handles, with rows selected.
+            if let Some(key) = TableKey::of(event)
+                && let Some(data) = self.source().and_then(|s| s.data())
+                && data.transfer().keys.contains(&key)
+            {
+                let rows: Vec<usize> = indexes(&self.selectedRowIndexes()).into_iter().filter_map(|r| data.model_row(r)).collect();
+                if !rows.is_empty() {
+                    data.push(TableEvent::Key { key, rows });
                     return;
                 }
             }
@@ -884,7 +990,7 @@ impl<T: 'static> Data for Inner<T> {
     }
 
     fn editable(&self, column: &str) -> bool {
-        self.columns.borrow().iter().any(|c| c.id == column && c.editable && c.kind != Kind::Check)
+        self.columns.borrow().iter().any(|c| c.id == column && c.editable && c.kind != Kind::Check && !matches!(c.kind, Kind::Date { .. }))
     }
 
     fn title(&self, column: &str) -> Option<String> {
@@ -1275,6 +1381,8 @@ impl<T: 'static> TableModel<T> {
         // SAFETY: nil sender.
         unsafe { self.inner.table.deselectAll(None) };
         self.inner.quiet.set(false);
+        // Views bound to the selection hear that it was cleared.
+        crate::request_redraw();
     }
 
     /// The rows, in model order (unsorted).
@@ -1440,6 +1548,13 @@ impl<T: 'static> TableModel<T> {
     /// in the Edit menu while there is text to paste). Off by default.
     pub fn set_pastes(&self, on: bool) {
         self.inner.transfer.borrow_mut().pastes = on;
+    }
+
+    /// Reports these keys, pressed without ⌘, ⌥ or ⌃ while rows are
+    /// selected, as [`TableEvent::Key`] instead of AppKit's handling
+    /// (Space would type-select, Delete beep). None by default.
+    pub fn set_keys(&self, keys: &[TableKey]) {
+        self.inner.transfer.borrow_mut().keys = keys.to_vec();
     }
 
     fn register_drag_types(&self) {
@@ -1621,6 +1736,17 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn dates_shown_in_the_users_format() {
+        use super::{Kind, Value, display};
+        let none = display(Kind::Date { time: false }, &Value::Number(f64::NEG_INFINITY));
+        assert_eq!(none, "");
+        // 2020-09-13 12:26:40 UTC: the year shows in every medium style.
+        let day = display(Kind::Date { time: false }, &Value::Number(1_600_000_000.0));
+        let with_time = display(Kind::Date { time: true }, &Value::Number(1_600_000_000.0));
+        assert!(day.contains("2020") && with_time.contains("2020") && with_time.len() > day.len(), "{day:?} {with_time:?}");
     }
 
     #[test]

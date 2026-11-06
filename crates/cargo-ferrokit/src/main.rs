@@ -27,6 +27,20 @@ USAGE:
         runtime: ad hoc, or with `sign` from Cargo.toml or --sign.
         --universal builds for Apple silicon and Intel.
 
+    cargo ferrokit bundle --app-store [--build <number>] [--dry-run] [--bin <name>]
+        For the Mac App Store: a universal app with the App Sandbox, its
+        provisioning profile embedded, signed with `app-store-sign`, in a .pkg
+        signed with `installer-sign`, ready to upload (Transporter). --build
+        sets the build number (CFBundleVersion; each upload needs a higher
+        one). --dry-run signs ad hoc, makes the package unsigned, and prints
+        the signing commands.
+
+    cargo ferrokit appcast [--key-file <file>] [--app <path>] [--out <dir>] [--bin <name>]
+        For updates through Sparkle: zips the bundled app as \"<name> <version>.zip\"
+        in the updates folder (updates/ by default) and writes the feed there with
+        Sparkle's generate_appcast, signing with the key from your keychain (or
+        --key-file). Upload the folder's new files where `feed` points.
+
     cargo ferrokit check [--no-lint] [--timeout <seconds>] [--bin <name>]
         Builds, runs clippy (warnings are errors) and the tests, bundles, then
         runs the app's self-checks (the app with CHECK=all; see the template)
@@ -51,9 +65,17 @@ Settings, in the app's Cargo.toml:
     sandbox = true              # the App Sandbox (needed for the Mac App Store):
                                 # files the user chooses, bookmarks to reopen them
     network = true              # with the sandbox: outgoing connections
+    app-store-sign = \"Apple Distribution: …\"           # bundle --app-store
+    installer-sign = \"3rd Party Mac Developer Installer: …\"
+    provisioning-profile = \"MyApp.provisionprofile\"   # from developer.apple.com
     [[package.metadata.ferrokit.documents]]
     name = \"Text\"
-    extensions = [\"txt\", \"md\"]";
+    extensions = [\"txt\", \"md\"]
+    [package.metadata.ferrokit.updates]                # updates through Sparkle 2
+    feed = \"https://example.com/myapp/appcast.xml\"
+    public-key = \"…\"          # what Sparkle's bin/generate_keys prints
+    sparkle = \"~/Developer/Sparkle-2.10.1\"   # Sparkle's release, unpacked
+                                # (or FERROKIT_SPARKLE)";
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -70,6 +92,7 @@ fn main() -> ExitCode {
         Some("bundle") => bundle_command(rest),
         Some("check") => check(rest),
         Some("notarize") => notarize(rest),
+        Some("appcast") => appcast(rest),
         Some("-V" | "--version") => {
             println!("cargo-ferrokit {}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -150,6 +173,17 @@ fn sh(program: &str, args: &[&str], dir: Option<&Path>) -> Result<()> {
     if status.success() { Ok(()) } else { Err(format!("{program} {} failed ({status})", args.first().copied().unwrap_or_default())) }
 }
 
+/// Runs `program args…` like [`sh`], its output shown with the commands'
+/// (on stderr), so stdout keeps only what `cargo ferrokit` prints.
+fn sh_quiet(program: &str, args: &[&str]) -> Result<()> {
+    eprintln!("    \x1b[2m{program} {}\x1b[0m", args.join(" "));
+    let out = output(program, args, None)?;
+    if !out.trim().is_empty() {
+        eprintln!("{}", out.trim_end());
+    }
+    Ok(())
+}
+
 /// Runs a command and returns its standard output.
 fn output(program: &str, args: &[&str], dir: Option<&Path>) -> Result<String> {
     let mut cmd = Command::new(program);
@@ -195,6 +229,63 @@ struct Project {
     /// network access (`network = true`).
     sandbox: bool,
     network: bool,
+    /// For `bundle --app-store`: the identities and the profile.
+    app_store_sign: Option<String>,
+    installer_sign: Option<String>,
+    provisioning_profile: Option<PathBuf>,
+    /// Updates through Sparkle (`[package.metadata.ferrokit.updates]`).
+    updates: Option<Updates>,
+}
+
+/// Where the app's updates come from and the key that checks them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Updates {
+    feed: String,
+    public_key: String,
+    /// Sparkle's unpacked release (`Sparkle.framework`, `bin/`).
+    sparkle: Option<PathBuf>,
+}
+
+impl Updates {
+    fn from_metadata(u: &serde_json::Value, dir: &Path) -> Result<Option<Updates>> {
+        if u.is_null() {
+            return Ok(None);
+        }
+        let text = |key: &str| u[key].as_str().map(String::from).filter(|s| !s.trim().is_empty());
+        let feed = text("feed").ok_or("[package.metadata.ferrokit.updates] needs `feed`: the appcast's URL, as https://example.com/myapp/appcast.xml")?;
+        if !feed.starts_with("https://") && !feed.starts_with("http://127.0.0.1") && !feed.starts_with("http://localhost") {
+            return Err(format!("updates: the feed {feed} must be https:// (macOS refuses plain http)"));
+        }
+        let public_key = text("public-key").ok_or("[package.metadata.ferrokit.updates] needs `public-key`: run Sparkle's bin/generate_keys once and copy the key it prints")?;
+        let sparkle = text("sparkle").map(|s| match s.strip_prefix("~/") {
+            Some(rest) => std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(rest),
+            None => dir.join(s),
+        });
+        Ok(Some(Updates { feed, public_key, sparkle }))
+    }
+
+    /// Sparkle's release folder: `FERROKIT_SPARKLE`, else `sparkle`.
+    fn sparkle_dir(&self) -> Result<PathBuf> {
+        let dir = std::env::var_os("FERROKIT_SPARKLE").map(PathBuf::from).or_else(|| self.sparkle.clone()).ok_or(
+            "updates need Sparkle 2: download it from https://github.com/sparkle-project/Sparkle/releases, unpack it, and set `sparkle = \"<folder>\"` under [package.metadata.ferrokit.updates] (or FERROKIT_SPARKLE)",
+        )?;
+        if !dir.join("Sparkle.framework").is_dir() {
+            return Err(format!("{} has no Sparkle.framework: point `sparkle` at Sparkle's unpacked release", dir.display()));
+        }
+        Ok(dir)
+    }
+
+    /// Where the update files go: the feed's folder.
+    fn url_prefix(&self) -> String {
+        match self.feed.rsplit_once('/') {
+            Some((dir, _)) => format!("{dir}/"),
+            None => self.feed.clone(),
+        }
+    }
+
+    fn feed_name(&self) -> &str {
+        self.feed.rsplit('/').next().filter(|n| !n.is_empty()).unwrap_or("appcast.xml")
+    }
 }
 
 impl Project {
@@ -237,6 +328,7 @@ impl Project {
                 (d["name"].as_str().unwrap_or("Document").to_string(), exts)
             })
             .collect();
+        let updates = Updates::from_metadata(&m["updates"], &dir)?;
         let languages = m["languages"].as_array().into_iter().flatten().filter_map(|l| l.as_str().map(String::from)).filter(|l| l != "en").collect();
         Ok(Project {
             languages,
@@ -251,6 +343,10 @@ impl Project {
             sandbox: m["sandbox"].as_bool().unwrap_or(false),
             network: m["network"].as_bool().unwrap_or(false),
             notary_profile: text("notary-profile"),
+            app_store_sign: text("app-store-sign"),
+            installer_sign: text("installer-sign"),
+            provisioning_profile: text("provisioning-profile").map(|p| dir.join(p)),
+            updates,
             documents,
             package: name,
             dir,
@@ -316,7 +412,7 @@ fn new(args: &[String]) -> Result<()> {
 }
 
 /// The ferrokit that new apps depend on.
-const FERROKIT_VERSION: &str = "0.4";
+const FERROKIT_VERSION: &str = "0.5";
 
 // ---- bundle ----
 
@@ -325,13 +421,29 @@ struct BundleOptions {
     universal: bool,
     sign: String,
     out: Option<PathBuf>,
+    /// The Mac App Store's additions: a build number, a profile to embed
+    /// and entitlements from it; no hardened runtime.
+    store: Option<Store>,
+}
+
+#[derive(Default)]
+struct Store {
+    build: Option<String>,
+    profile: Option<PathBuf>,
+    entitlements: Vec<(String, String)>,
 }
 
 fn bundle_command(args: &[String]) -> Result<()> {
-    let a = Args::parse(args, &["--bin", "--sign", "--out"], &["--debug", "--universal", "--zip"])?;
+    let a = Args::parse(args, &["--bin", "--sign", "--out", "--build"], &["--debug", "--universal", "--zip", "--app-store", "--dry-run"])?;
     let project = Project::load(a.value("--bin"))?;
+    if a.flag("--app-store") {
+        return app_store(&project, a.value("--build"), a.flag("--dry-run"), a.value("--out").map(PathBuf::from));
+    }
+    if a.flag("--dry-run") || a.value("--build").is_some() {
+        return Err("--dry-run and --build go with --app-store".into());
+    }
     let sign = a.value("--sign").map(String::from).or_else(|| project.sign.clone()).unwrap_or_else(|| "-".into());
-    let app = bundle(&project, &BundleOptions { release: !a.flag("--debug"), universal: a.flag("--universal"), sign, out: a.value("--out").map(PathBuf::from) })?;
+    let app = bundle(&project, &BundleOptions { release: !a.flag("--debug"), universal: a.flag("--universal"), sign, out: a.value("--out").map(PathBuf::from), store: None })?;
     if a.flag("--zip") {
         let zip = zip(&app)?;
         println!("{}", zip.display());
@@ -347,6 +459,15 @@ fn native_triple() -> &'static str {
 /// Builds the binary and makes the signed .app; its path.
 fn bundle(p: &Project, o: &BundleOptions) -> Result<PathBuf> {
     let profile = if o.release { "release" } else { "debug" };
+    // Sparkle, unless the App Store does the updating.
+    let sparkle = match (&p.updates, &o.store) {
+        (Some(u), None) => Some(u.sparkle_dir()?),
+        (Some(_), Some(_)) => {
+            eprintln!("    note: the Mac App Store updates the app: Sparkle and the feed are left out");
+            None
+        }
+        (None, _) => None,
+    };
     step(&format!("Building {} ({profile})", p.bin));
     let mut binaries = Vec::new();
     let triples: Vec<&str> = if o.universal { vec!["aarch64-apple-darwin", "x86_64-apple-darwin"] } else { vec![] };
@@ -398,7 +519,8 @@ fn bundle(p: &Project, o: &BundleOptions) -> Result<PathBuf> {
         }
         None => false,
     };
-    std::fs::write(app.join("Contents/Info.plist"), info_plist(p, icon)).map_err(|e| e.to_string())?;
+    let build = o.store.as_ref().and_then(|s| s.build.as_deref());
+    std::fs::write(app.join("Contents/Info.plist"), info_plist(p, icon, build, sparkle.is_some())).map_err(|e| e.to_string())?;
     sh("plutil", &["-lint", "-s", &app.join("Contents/Info.plist").to_string_lossy()], None)?;
     std::fs::write(app.join("Contents/PkgInfo"), "APPL????").map_err(|e| e.to_string())?;
     // An .lproj folder per language: how macOS learns the app is localised.
@@ -406,14 +528,60 @@ fn bundle(p: &Project, o: &BundleOptions) -> Result<PathBuf> {
         let dir = resources.join(format!("{lang}.lproj"));
         std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(dir.join("InfoPlist.strings"), "")).map_err(|e| e.to_string())?;
     }
+    let framework = app.join("Contents/Frameworks/Sparkle.framework");
+    if let Some(dir) = &sparkle {
+        std::fs::create_dir_all(app.join("Contents/Frameworks")).map_err(|e| e.to_string())?;
+        // ditto keeps the framework's symbolic links.
+        sh("ditto", &[&dir.join("Sparkle.framework").to_string_lossy(), &framework.to_string_lossy()], None)?;
+    }
+    if let Some(profile) = o.store.as_ref().and_then(|s| s.profile.as_ref()) {
+        std::fs::copy(profile, app.join("Contents/embedded.provisionprofile")).map_err(|e| format!("{}: {e}", profile.display()))?;
+    }
 
     step(if o.sign == "-" { "Signing (ad hoc)" } else { "Signing" });
     let app_s = app.to_string_lossy().into_owned();
     let entitlements = out.join(format!("{}.entitlements", p.bin));
     let entitlements_s = entitlements.to_string_lossy().into_owned();
-    let mut args = vec!["--force", "--options", "runtime", "--sign", &o.sign];
-    if p.sandbox {
-        std::fs::write(&entitlements, entitlements_plist(p.network)).map_err(|e| e.to_string())?;
+    // The hardened runtime is for Developer ID; the App Store's sandbox
+    // takes its place there.
+    let mut args = if o.store.is_some() { vec!["--force", "--sign", &o.sign] } else { vec!["--force", "--options", "runtime", "--sign", &o.sign] };
+    if sparkle.is_some() {
+        // Sparkle's own programs first, inside out (as Sparkle's docs sign
+        // them), with the app's identity; the app's signature seals them.
+        let versions = framework.join("Versions/B");
+        let parts = [
+            (versions.join("XPCServices/Installer.xpc"), false),
+            (versions.join("XPCServices/Downloader.xpc"), true),
+            (versions.join("Autoupdate"), false),
+            (versions.join("Updater.app"), false),
+            (framework.clone(), false),
+        ];
+        for (part, keep_entitlements) in parts {
+            let part = part.to_string_lossy().into_owned();
+            let mut a = vec!["--force", "--options", "runtime", "--sign", &o.sign];
+            if keep_entitlements {
+                a.push("--preserve-metadata=entitlements");
+            }
+            if o.sign != "-" {
+                a.push("--timestamp");
+            }
+            a.push(&part);
+            sh("codesign", &a, None)?;
+        }
+    }
+    let mut trues = if p.sandbox { sandbox_entitlements(p.network) } else { vec![] };
+    if sparkle.is_some() && o.sign == "-" {
+        // Ad hoc code has no team, so library validation (part of the
+        // hardened runtime) would refuse Sparkle; signed with a Developer
+        // ID, the app and Sparkle share the team and need no exception.
+        trues.push("com.apple.security.cs.disable-library-validation");
+    }
+    if !trues.is_empty() {
+        let extra: Vec<(&str, &str)> = o.store.iter().flat_map(|s| s.entitlements.iter().map(|(k, v)| (k.as_str(), v.as_str()))).collect();
+        // A sandboxed app reaches Sparkle's installer through these services.
+        let services: Vec<String> = if sparkle.is_some() && p.sandbox { vec![format!("{}-spks", p.id), format!("{}-spki", p.id)] } else { vec![] };
+        let arrays: Vec<(&str, &[String])> = if services.is_empty() { vec![] } else { vec![("com.apple.security.temporary-exception.mach-lookup.global-name", &services)] };
+        std::fs::write(&entitlements, entitlements_plist(&trues, &extra, &arrays)).map_err(|e| e.to_string())?;
         args.extend(["--entitlements", &entitlements_s]);
     }
     if o.sign != "-" {
@@ -428,12 +596,22 @@ fn bundle(p: &Project, o: &BundleOptions) -> Result<PathBuf> {
 /// The App Sandbox's entitlements: files the user chooses (open and save
 /// panels, dropped files), app-scoped security bookmarks so Open Recent and
 /// reopening at launch reach them again, and outgoing network if asked.
-fn entitlements_plist(network: bool) -> String {
+fn sandbox_entitlements(network: bool) -> Vec<&'static str> {
     let mut keys = vec!["com.apple.security.app-sandbox", "com.apple.security.files.user-selected.read-write", "com.apple.security.files.bookmarks.app-scope"];
     if network {
         keys.push("com.apple.security.network.client");
     }
-    let body: String = keys.iter().map(|k| format!("    <key>{k}</key>\n    <true/>\n")).collect();
+    keys
+}
+
+/// An entitlements file: `trues` set to true, then strings and arrays.
+fn entitlements_plist(trues: &[&str], strings: &[(&str, &str)], arrays: &[(&str, &[String])]) -> String {
+    let mut body: String = trues.iter().map(|k| format!("    <key>{k}</key>\n    <true/>\n")).collect();
+    body.extend(strings.iter().map(|(k, v)| format!("    <key>{}</key>\n    <string>{}</string>\n", xml(k), xml(v))));
+    body.extend(arrays.iter().map(|(k, vs)| {
+        let items: String = vs.iter().map(|v| format!("        <string>{}</string>\n", xml(v))).collect();
+        format!("    <key>{}</key>\n    <array>\n{items}    </array>\n", xml(k))
+    }));
     format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n{body}</dict>\n</plist>\n")
 }
 
@@ -441,7 +619,7 @@ fn xml(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
-fn info_plist(p: &Project, icon: bool) -> String {
+fn info_plist(p: &Project, icon: bool, build: Option<&str>, sparkle: bool) -> String {
     let key = |k: &str, v: &str| format!("  <key>{k}</key><string>{}</string>\n", xml(v));
     let mut s = String::from(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>\n",
@@ -454,7 +632,7 @@ fn info_plist(p: &Project, icon: bool) -> String {
     s += &key("CFBundleInfoDictionaryVersion", "6.0");
     s += &key("CFBundlePackageType", "APPL");
     s += &key("CFBundleShortVersionString", &p.version);
-    s += &key("CFBundleVersion", &p.version);
+    s += &key("CFBundleVersion", build.unwrap_or(&p.version));
     s += &key("LSMinimumSystemVersion", &p.min_macos);
     s += &key("NSPrincipalClass", "NSApplication");
     s += "  <key>NSHighResolutionCapable</key><true/>\n  <key>NSSupportsAutomaticGraphicsSwitching</key><true/>\n";
@@ -463,6 +641,19 @@ fn info_plist(p: &Project, icon: bool) -> String {
     }
     if let Some(c) = &p.category {
         s += &key("LSApplicationCategoryType", c);
+    }
+    if let Some(u) = p.updates.as_ref().filter(|_| sparkle) {
+        // Sparkle's settings: where to look, and the key updates are signed with.
+        s += &key("SUFeedURL", &u.feed);
+        s += &key("SUPublicEDKey", &u.public_key);
+        if p.sandbox {
+            // Sandboxed, Sparkle installs (and downloads, without network
+            // access) through its XPC services.
+            s += "  <key>SUEnableInstallerLauncherService</key><true/>\n";
+            if !p.network {
+                s += "  <key>SUEnableDownloaderService</key><true/>\n";
+            }
+        }
     }
     if !p.languages.is_empty() {
         // Its languages, so macOS shows it (and AppKit's own panels and
@@ -518,12 +709,110 @@ fn zip(app: &Path) -> Result<PathBuf> {
     Ok(zip)
 }
 
+// ---- the Mac App Store ----
+
+/// What an App Store provisioning profile says: (application identifier,
+/// team identifier), from its entitlements as JSON.
+fn profile_ids(entitlements_json: &str) -> Result<(String, String)> {
+    let e: serde_json::Value = serde_json::from_str(entitlements_json).map_err(|e| format!("the profile's entitlements: {e}"))?;
+    let get = |keys: &[&str]| keys.iter().find_map(|k| e[*k].as_str().map(String::from));
+    let app = get(&["com.apple.application-identifier", "application-identifier"]).ok_or("the profile names no application identifier")?;
+    let team = get(&["com.apple.developer.team-identifier"]).or_else(|| app.split_once('.').map(|(t, _)| t.to_string())).ok_or("the profile names no team")?;
+    Ok((app, team))
+}
+
+/// Reads a provisioning profile's identifiers (decoding it doesn't need
+/// the keychain) and checks it's for this app.
+fn read_profile(path: &Path, bundle_id: &str) -> Result<(String, String)> {
+    let decoded = output("security", &["cms", "-D", "-i", &path.to_string_lossy()], None).map_err(|e| format!("{} isn't a provisioning profile: {e}", path.display()))?;
+    let tmp = std::env::temp_dir().join(format!("cargo-ferrokit-profile-{}.plist", std::process::id()));
+    std::fs::write(&tmp, decoded).map_err(|e| e.to_string())?;
+    let json = output("plutil", &["-extract", "Entitlements", "json", "-o", "-", &tmp.to_string_lossy()], None);
+    let platforms = output("plutil", &["-extract", "Platform", "json", "-o", "-", &tmp.to_string_lossy()], None).unwrap_or_default();
+    let _ = std::fs::remove_file(&tmp);
+    let (app, team) = profile_ids(&json?)?;
+    if !platforms.is_empty() && !platforms.contains("OSX") {
+        return Err(format!("{} is a profile for {}, not macOS: make a Mac App Store profile at developer.apple.com", path.display(), platforms.trim()));
+    }
+    if app != format!("{team}.{bundle_id}") {
+        return Err(format!("{} is for {app}, but this app is {team}.{bundle_id}: make a profile for this bundle id (or fix `id`)", path.display()));
+    }
+    Ok((app, team))
+}
+
+/// `bundle --app-store`: a universal, sandboxed app with its profile, then
+/// a signed installer package for App Store Connect.
+fn app_store(p: &Project, build: Option<&str>, dry_run: bool, out: Option<PathBuf>) -> Result<()> {
+    if !p.sandbox {
+        return Err("the Mac App Store needs the App Sandbox: set `sandbox = true` in [package.metadata.ferrokit]".into());
+    }
+    if p.category.is_none() {
+        return Err("the Mac App Store needs a category: set `category = \"public.app-category.…\"` in [package.metadata.ferrokit]".into());
+    }
+    if let Some(b) = build.filter(|b| b.is_empty() || !b.split('.').all(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))) {
+        return Err(format!("--build {b}: numbers and dots, as 42 or 1.2.42"));
+    }
+    let missing = |what: &str, key: &str| format!("the Mac App Store needs {what}: set `{key}` in [package.metadata.ferrokit]");
+    let mut notes = Vec::new();
+    let sign = match (&p.app_store_sign, dry_run) {
+        (Some(s), false) => s.clone(),
+        (None, false) => return Err(missing("an Apple Distribution identity", "app-store-sign")),
+        (s, true) => {
+            if s.is_none() {
+                notes.push(missing("an Apple Distribution identity", "app-store-sign"));
+            }
+            "-".into()
+        }
+    };
+    let installer = match (&p.installer_sign, dry_run) {
+        (Some(s), _) => s.clone(),
+        (None, false) => return Err(missing("an installer identity", "installer-sign")),
+        (None, true) => {
+            notes.push(missing("an installer identity", "installer-sign"));
+            "<installer-sign>".into()
+        }
+    };
+    let mut store = Store { build: build.map(String::from), ..Store::default() };
+    match &p.provisioning_profile {
+        Some(path) => {
+            let (app, team) = read_profile(path, &p.id)?;
+            store.entitlements = vec![("com.apple.application-identifier".into(), app), ("com.apple.developer.team-identifier".into(), team)];
+            store.profile = Some(path.clone());
+        }
+        None if dry_run => notes.push(missing("a provisioning profile", "provisioning-profile")),
+        None => return Err(missing("a provisioning profile", "provisioning-profile")),
+    }
+    let app = bundle(p, &BundleOptions { release: true, universal: true, sign: sign.clone(), out, store: Some(store) })?;
+    let pkg = app.with_extension("pkg");
+    let (app_s, pkg_s) = (app.to_string_lossy().into_owned(), pkg.to_string_lossy().into_owned());
+    let productbuild = ["--component", app_s.as_str(), "/Applications", "--sign", installer.as_str(), pkg_s.as_str()];
+    if dry_run {
+        // The package itself, unsigned: what packaging would make.
+        let _ = std::fs::remove_file(&pkg);
+        sh_quiet("productbuild", &["--component", &app_s, "/Applications", &pkg_s])?;
+        step("Dry run: signed ad hoc, package unsigned; with your identities it would run");
+        eprintln!("    codesign --force --sign {:?} --entitlements … --timestamp {app_s:?}", p.app_store_sign.as_deref().unwrap_or("<app-store-sign>"));
+        eprintln!("    productbuild {}", productbuild.map(|a| format!("{a:?}")).join(" "));
+        for n in &notes {
+            eprintln!("    note: {n}");
+        }
+        println!("{}", pkg.display());
+        return Ok(());
+    }
+    step("Packaging for App Store Connect");
+    let _ = std::fs::remove_file(&pkg);
+    sh_quiet("productbuild", &productbuild)?;
+    eprintln!("    upload it with Transporter (from the Mac App Store), or: xcrun altool --upload-package {pkg_s:?} …");
+    println!("{}", pkg.display());
+    Ok(())
+}
+
 // ---- run ----
 
 fn run(args: &[String]) -> Result<()> {
     let a = Args::parse(args, &["--bin"], &["--release"])?;
     let project = Project::load(a.value("--bin"))?;
-    let app = bundle(&project, &BundleOptions { release: a.flag("--release"), universal: false, sign: "-".into(), out: None })?;
+    let app = bundle(&project, &BundleOptions { release: a.flag("--release"), universal: false, sign: "-".into(), out: None, store: None })?;
     step(&format!("Running {}", project.display));
     // The bundle's own binary: macOS sees the app's name, icon and identity,
     // and its output stays in this terminal.
@@ -549,7 +838,7 @@ fn check(args: &[String]) -> Result<()> {
         step("Tests");
         record("tests", sh(&cargo(), &["test", "-p", &pkg], Some(&project.dir)).map(|_| String::new()));
     }
-    let app = bundle(&project, &BundleOptions { release: false, universal: false, sign: "-".into(), out: None });
+    let app = bundle(&project, &BundleOptions { release: false, universal: false, sign: "-".into(), out: None, store: None });
     match app {
         Err(e) => record("bundle", Err(e)),
         Ok(app) => {
@@ -647,6 +936,63 @@ fn self_checks(exe: &Path, timeout: Duration) -> std::result::Result<String, Str
     }
 }
 
+// ---- appcast ----
+
+/// `appcast`: the bundled app zipped into the updates folder, and the feed
+/// written (or brought up to date) there by Sparkle's generate_appcast,
+/// which signs each update with the private key.
+fn appcast(args: &[String]) -> Result<()> {
+    let a = Args::parse(args, &["--bin", "--key-file", "--app", "--out"], &[])?;
+    let p = Project::load(a.value("--bin"))?;
+    let u = p.updates.as_ref().ok_or("no updates set up: add [package.metadata.ferrokit.updates] with `feed`, `public-key` and `sparkle` (see cargo ferrokit --help)")?;
+    let sparkle = u.sparkle_dir()?;
+    let app = a.value("--app").map(PathBuf::from).unwrap_or_else(|| p.target_dir.join("release/bundle").join(format!("{}.app", p.display)));
+    if !app.is_dir() {
+        return Err(format!("{} isn't there: make it first (cargo ferrokit notarize, or bundle)", app.display()));
+    }
+    let plist = app.join("Contents/Info.plist").to_string_lossy().into_owned();
+    let read = |key: &str| output("plutil", &["-extract", key, "raw", "-o", "-", &plist], None).map(|s| s.trim().to_string());
+    let key = read("SUPublicEDKey").map_err(|_| format!("{} has no update settings: bundle it again (the updates settings are new)", app.display()))?;
+    if key != u.public_key {
+        return Err(format!("{} was bundled with another public key: bundle it again", app.display()));
+    }
+    if !app.join("Contents/Frameworks/Sparkle.framework").is_dir() {
+        return Err(format!("{} has no Sparkle.framework: bundle it again", app.display()));
+    }
+    let version = read("CFBundleShortVersionString")?;
+    let out = a.value("--out").map(PathBuf::from).unwrap_or_else(|| p.dir.join("updates"));
+    std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
+    let zip = out.join(format!("{} {version}.zip", p.display));
+    if zip.exists() {
+        return Err(format!("{} is already there: each update needs a higher version (`version` in Cargo.toml)", zip.display()));
+    }
+    let app_s = app.to_string_lossy().into_owned();
+    let signature = Command::new("codesign").args(["-dv", &app_s]).output().map(|o| String::from_utf8_lossy(&o.stderr).into_owned()).unwrap_or_default();
+    if signature.contains("Signature=adhoc") {
+        eprintln!("    note: {} is signed ad hoc: other Macs refuse it; release with `cargo ferrokit notarize`", app.display());
+    }
+
+    step(&format!("Zipping {} {version}", p.display));
+    sh("ditto", &["-c", "-k", "--sequesterRsrc", "--keepParent", &app_s, &zip.to_string_lossy()], None)?;
+
+    step("Writing the feed");
+    let feed = out.join(u.feed_name());
+    let (prefix, feed_s, out_s) = (u.url_prefix(), feed.to_string_lossy().into_owned(), out.to_string_lossy().into_owned());
+    let mut gen_args: Vec<&str> = Vec::new();
+    if let Some(k) = a.value("--key-file") {
+        gen_args.extend(["--ed-key-file", k]);
+    }
+    gen_args.extend(["--download-url-prefix", &prefix, "-o", &feed_s, &out_s]);
+    if let Err(e) = sh(&sparkle.join("bin/generate_appcast").to_string_lossy(), &gen_args, None) {
+        // A zip without a feed entry would be skipped next time: take it back.
+        let _ = std::fs::remove_file(&zip);
+        return Err(e);
+    }
+    eprintln!("    upload the new files in {} ({} {version}.zip, {} and any .delta files) to {prefix}", out.display(), p.display, u.feed_name());
+    println!("{}", feed.display());
+    Ok(())
+}
+
 // ---- notarize ----
 
 fn notarize(args: &[String]) -> Result<()> {
@@ -658,7 +1004,7 @@ fn notarize(args: &[String]) -> Result<()> {
     let profile = a.value("--profile").map(String::from).or_else(|| project.notary_profile.clone()).ok_or(
         "notarizing needs a notary profile: make one with `xcrun notarytool store-credentials <name> --apple-id … --team-id …`, then set notary-profile in Cargo.toml or pass --profile",
     )?;
-    let app = bundle(&project, &BundleOptions { release: true, universal: a.flag("--universal"), sign, out: None })?;
+    let app = bundle(&project, &BundleOptions { release: true, universal: a.flag("--universal"), sign, out: None, store: None })?;
     let zip_path = zip(&app)?;
     let (zip_s, app_s) = (zip_path.to_string_lossy().into_owned(), app.to_string_lossy().into_owned());
     let submit = ["notarytool", "submit", &zip_s, "--keychain-profile", &profile, "--wait"];
@@ -717,8 +1063,13 @@ mod tests {
             notary_profile: None,
             sandbox: false,
             network: false,
+            app_store_sign: None,
+            installer_sign: None,
+            provisioning_profile: None,
+            updates: None,
         };
-        let plist = info_plist(&p, true);
+        let plist = info_plist(&p, true, None, false);
+        assert!(info_plist(&p, true, Some("42"), false).contains("<key>CFBundleVersion</key><string>42</string>"));
         assert!(plist.contains("<key>CFBundleName</key><string>Notes &amp; More</string>"));
         assert!(plist.contains("<key>CFBundleShortVersionString</key><string>1.2.0</string>"));
         assert!(plist.contains("<array><string>txt</string><string>md</string></array>"));
@@ -727,10 +1078,21 @@ mod tests {
     }
 
     #[test]
-    fn sandbox_entitlements() {
-        let plain = entitlements_plist(false);
+    fn entitlement_files() {
+        let plain = entitlements_plist(&sandbox_entitlements(false), &[], &[]);
         assert!(plain.contains("<key>com.apple.security.app-sandbox</key>\n    <true/>"));
         assert!(plain.contains("com.apple.security.files.bookmarks.app-scope") && !plain.contains("network.client"));
-        assert!(entitlements_plist(true).contains("<key>com.apple.security.network.client</key>"));
+        assert!(entitlements_plist(&sandbox_entitlements(true), &[], &[]).contains("<key>com.apple.security.network.client</key>"));
+        let store = entitlements_plist(&sandbox_entitlements(false), &[("com.apple.application-identifier", "TEAM.com.example.a")], &[]);
+        assert!(store.contains("<key>com.apple.application-identifier</key>\n    <string>TEAM.com.example.a</string>"));
+    }
+
+    #[test]
+    fn profile_identifiers() {
+        let mac = r#"{"com.apple.application-identifier":"ABCDE12345.com.example.notes","com.apple.developer.team-identifier":"ABCDE12345","keychain-access-groups":["ABCDE12345.*"]}"#;
+        assert_eq!(profile_ids(mac).unwrap(), ("ABCDE12345.com.example.notes".into(), "ABCDE12345".into()));
+        let ios = r#"{"application-identifier":"ABCDE12345.com.example.notes"}"#;
+        assert_eq!(profile_ids(ios).unwrap().1, "ABCDE12345");
+        assert!(profile_ids("{}").is_err());
     }
 }
