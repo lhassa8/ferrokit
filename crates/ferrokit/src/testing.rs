@@ -202,6 +202,11 @@ pub fn key_equiv(w: &objc2_app_kit::NSWindow, chars: &str, shift: bool) -> bool 
     NSApplication::sharedApplication(mtm()).mainMenu().unwrap().performKeyEquivalent(&event)
 }
 
+/// How many times About {app} was shown with [`App::about`](crate::App::about)'s credits.
+pub fn about_shown() -> u32 {
+    crate::ABOUT_SHOWN.with(|a| a.get())
+}
+
 /// The titles of the app menu's items (the first menu: About, Check for
 /// Updates…, Settings…, Hide, Quit), separators as `"-"`.
 pub fn app_menu_titles() -> Vec<String> {

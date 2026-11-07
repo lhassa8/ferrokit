@@ -1009,12 +1009,13 @@ pub struct App {
     welcome: Option<Rc<dyn Fn() -> Window>>,
     dock_menu: Option<Rc<dyn Fn() -> Vec<MenuItem>>>,
     crash_reports: Option<Box<dyn Fn(CrashReport)>>,
+    about: Option<(String, Option<(String, String)>)>,
 }
 
 impl App {
     /// An app called `name` (shown in the menu bar).
     pub fn new(name: &str) -> Self {
-        App { name: name.into(), windows: Vec::new(), on_launch: None, menus: Vec::new(), settings: None, documents: None, extras: Vec::new(), menu_bar_only: false, welcome: None, dock_menu: None, crash_reports: None }
+        App { name: name.into(), windows: Vec::new(), on_launch: None, menus: Vec::new(), settings: None, documents: None, extras: Vec::new(), menu_bar_only: false, welcome: None, dock_menu: None, crash_reports: None, about: None }
     }
 
     /// Opens `window` at launch. Call more than once for several windows.
@@ -1038,6 +1039,14 @@ impl App {
     /// states are evaluated when the menu opens or a key equivalent fires.
     pub fn menu(mut self, title: &str, items: Vec<MenuItem>) -> Self {
         self.menus.push((title.into(), items));
+        self
+    }
+
+    /// Credits for About {app}: `credits` under the app's name, icon and
+    /// version (from the bundle), and `link` (title, URL) after it, e.g.
+    /// `.about("Made with Ferrokit.", Some(("ferrokit.dev", "https://…")))`.
+    pub fn about(mut self, credits: &str, link: Option<(&str, &str)>) -> Self {
+        self.about = Some((credits.into(), link.map(|(t, u)| (t.into(), u.into()))));
         self
     }
 
@@ -1168,6 +1177,7 @@ impl App {
                 open_settings();
             }))
         });
+        let about = self.about.map(|(credits, link)| Retained::into_super(appkit_views::ActionTarget::new(mtm, move || show_about(&credits, link.as_ref()))));
         let is_documents = self.documents.is_some();
         let mut menus = self.menus;
         let mut file_after = Vec::new();
@@ -1195,7 +1205,7 @@ impl App {
         }
         // Sparkle, when the bundle has it: Check for Updates… in the app menu.
         let updater = objc2::rc::autoreleasepool(|_| updates::start());
-        let targets = menu::install(mtm, &self.name, menus, settings, updater, file_after, window_items);
+        let targets = menu::install(mtm, &self.name, menus, menu::AppTargets { about, settings, updater }, file_after, window_items);
         EXTRAS.with_borrow_mut(|e| e.extend(targets));
         for extra in self.extras {
             status::install(extra, &self.name);
@@ -1267,6 +1277,42 @@ fn emit(event: AppEvent) {
     for h in handlers {
         h(event.clone());
     }
+}
+
+/// The standard About panel, with `credits` and a link under them.
+fn show_about(credits: &str, link: Option<&(String, String)>) {
+    use objc2_app_kit::{NSFont, NSForegroundColorAttributeName, NSFontAttributeName, NSLinkAttributeName, NSParagraphStyleAttributeName};
+    use objc2_foundation::{NSAttributedString, NSMutableAttributedString, NSRange, NSURL};
+    let text = match link {
+        Some((title, _)) => format!("{credits}\n{title}"),
+        None => credits.to_string(),
+    };
+    let s = NSMutableAttributedString::from_nsstring(&NSString::from_str(&text));
+    let all = NSRange::new(0, text.encode_utf16().count());
+    let centred = objc2_app_kit::NSMutableParagraphStyle::new();
+    centred.setAlignment(objc2_app_kit::NSTextAlignment::Center);
+    // SAFETY: AppKit's attribute names with values of their kinds.
+    unsafe {
+        s.addAttribute_value_range(NSFontAttributeName, &NSFont::systemFontOfSize(11.0), all);
+        s.addAttribute_value_range(NSForegroundColorAttributeName, &objc2_app_kit::NSColor::labelColor(), all);
+        s.addAttribute_value_range(NSParagraphStyleAttributeName, &centred, all);
+        if let Some((title, url)) = link
+            && let Some(u) = NSURL::URLWithString(&NSString::from_str(url))
+        {
+            let start = text.encode_utf16().count() - title.encode_utf16().count();
+            s.addAttribute_value_range(NSLinkAttributeName, &u, NSRange::new(start, title.encode_utf16().count()));
+        }
+    }
+    let credits: Retained<NSAttributedString> = Retained::into_super(s);
+    let options = objc2_foundation::NSDictionary::from_retained_objects(&[unsafe { objc2_app_kit::NSAboutPanelOptionCredits }], &[Retained::into_super(Retained::into_super(credits))]);
+    // SAFETY: the options AppKit documents.
+    unsafe { NSApplication::sharedApplication(mtm()).orderFrontStandardAboutPanelWithOptions(&options) };
+    ABOUT_SHOWN.with(|a| a.set(a.get() + 1));
+}
+
+thread_local! {
+    /// How many times About {app} was shown with credits (for checks).
+    pub(crate) static ABOUT_SHOWN: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
 /// Opens `window` as a new tab of `beside` (the tab bar's + and a "New

@@ -4964,8 +4964,39 @@ fn dynamic_hidden_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                 format!("rebuilt while hidden {rebuilt:?}; shown {shown:?}"),
             );
             ferrokit::close_window(&w3);
-            table_teardown(events.clone());
+            about_help_checks(events.clone());
         });
+    });
+}
+
+/// `App::about`: About {app} shows the credits; a "Help" menu fills the
+/// standard Help menu (one Help menu, with the app's item).
+fn about_help_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let app = NSApplication::sharedApplication(objc2::MainThreadMarker::new().unwrap());
+    let bar = app.mainMenu().unwrap();
+    let titles: Vec<String> = bar.itemArray().iter().map(|i| i.title().to_string()).collect();
+    let helps = titles.iter().filter(|t| *t == "Help").count();
+    let help = app.helpMenu().map(|m| m.itemArray().iter().map(|i| i.title().to_string()).collect::<Vec<_>>()).unwrap_or_default();
+    let before = ferrokit::testing::about_shown();
+    let about = bar.itemAtIndex(0).and_then(|i| i.submenu()).and_then(|m| m.itemAtIndex(0)).unwrap();
+    let menu = bar.itemAtIndex(0).and_then(|i| i.submenu()).unwrap();
+    menu.performActionForItemAtIndex(menu.indexOfItem(&about));
+    let events = events.clone();
+    after_events(move || {
+        let shown = ferrokit::testing::about_shown() - before;
+        // The panel, with the credits in it.
+        let panel = ferrokit::windows().into_iter().chain(NSApplication::sharedApplication(objc2::MainThreadMarker::new().unwrap()).windows().iter()).find(|w| {
+            all_views(&w.contentView().unwrap()).iter().any(|v| v.downcast_ref::<objc2_app_kit::NSTextView>().is_some_and(|t| t.string().to_string().contains("Made with Ferrokit.")))
+        });
+        check(
+            "about-help",
+            helps == 1 && help.contains(&"Checklist Help".to_string()) && shown == 1 && panel.is_some(),
+            format!("Help menus {helps}, items {help:?}; About shown {shown} time, its credits on screen {}", panel.is_some()),
+        );
+        if let Some(p) = panel {
+            p.close();
+        }
+        table_teardown(events.clone());
     });
 }
 
@@ -5891,6 +5922,9 @@ fn main() {
             ("de", "\"Rename Item\" = \"Objekt umbenennen\";\n\"Save\" = \"Speichern (App)\";\n\"{n} file\" = \"{n} Datei\";\n\"{n} files\" = \"{n} Dateien\";"),
             ("ru", "\"{n} files#one\" = \"{n} файл\";\n\"{n} files#few\" = \"{n} файла\";\n\"{n} files#many\" = \"{n} файлов\";"),
         ])
+        // About credits and the app's own Help items.
+        .about("Made with Ferrokit.", Some(("ferrokit.dev", "https://github.com/lhassa8/ferrokit")))
+        .menu("Help", vec![ferrokit::menu_item("Checklist Help", || {})])
         // C5: the Dock icon's menu, read when it opens.
         .dock_menu(|| vec![ferrokit::menu_item("New Checklist Window", || {}), ferrokit::menu_item(format!("{} windows open", ferrokit::windows().len()), || {})])
         .window(Window::new("First").size(480.0, 200.0).content(|| field("hello world")))
