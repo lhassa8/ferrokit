@@ -10,6 +10,9 @@ Found by Rowboat, the SQLite app being built on Ferrokit for the Mac App Store (
 - **Fixed: a `Memo` read inside an action was out of date.** Effects run when the batch ends, and actions run in a batch, so reading a memo right after setting what it's made from gave the old value (a sheet's Create button used the name from before the last change). Now a memo whose inputs changed in the batch under way recomputes when it's read.
 - **Added: `Canvas::on_drag(|CanvasDrag| ..)`**: drags inside a canvas (`Began`, `Moved`, `Ended`, in its coordinates), for moving what it draws, such as a diagram's cards; `testing::canvas_move` drives one.
 - **Added: `TextField::on_commit`**: runs whenever editing ends (Return, Tab, or a click elsewhere), so an edit isn't lost by leaving the field.
+- **Added: `segmented_with(&value, || options)`**: a segmented control whose segments come from signals, added, removed and retitled in place (a tab bar of queries or documents).
+- **Added: `read_stored`, `write_stored`, `remove_stored`**: user-defaults values without a signal, for values kept per document or item (a database's tabs). A `stored` signal lives as long as the app, so one per document piled up.
+- **Changed: an app item on ⌘W in the File menu** (Close Tab, as in Safari) makes the standard Close "Close Window" on ⇧⌘W.
 
 ## 0.5.0 (2026-11-06): custom views and shipping
 

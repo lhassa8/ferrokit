@@ -361,6 +361,12 @@ enum Entry {
 }
 
 impl MenuItem {
+    /// Whether this item's shortcut is ⌘`key` alone (the File menu's Close
+    /// gives ⌘W to an app item that takes it).
+    pub(crate) fn has_command_key(&self, key: &str) -> bool {
+        matches!(&self.0, Entry::Action { key: Some((k, flags)), .. } if k == key && *flags == NSEventModifierFlags::Command)
+    }
+
     /// Disabled: `true`, or a closure (read when the menu opens, and before
     /// the item's key equivalent fires).
     pub fn disabled(mut self, when: impl crate::IntoValue<bool>) -> Self {

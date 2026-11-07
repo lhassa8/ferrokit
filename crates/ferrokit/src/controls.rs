@@ -10,7 +10,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSNotification, NSString};
 
-use crate::signal::{Effect, Signal, batch};
+use crate::signal::{Effect, Signal, batch, untrack};
 use ferrokit_core::text::Color;
 use crate::appkit_views::{ActionTarget, text};
 use crate::view::{Cx, Node, Size, View, ViewExt, hstack};
@@ -978,36 +978,80 @@ pub fn color_well(value: &Signal<Color>) -> ColorWell {
 /// A segmented control choosing one of several values.
 pub struct Segmented<T> {
     value: Signal<T>,
-    options: Vec<(String, T)>,
+    options: SegmentOptions<T>,
+}
+
+type LiveOptions<T> = Box<dyn Fn() -> Vec<(String, T)>>;
+
+enum SegmentOptions<T> {
+    Fixed(Vec<(String, T)>),
+    Live(LiveOptions<T>),
 }
 
 impl<T: PartialEq + Clone + 'static> View for Segmented<T> {
     fn build(self, cx: &mut Cx) -> Node {
         use objc2_app_kit::NSSegmentSwitchTracking;
         let control = objc2_app_kit::NSSegmentedControl::new(cx.mtm);
-        control.setSegmentCount(self.options.len() as isize);
         control.setTrackingMode(NSSegmentSwitchTracking::SelectOne);
-        for (i, (title, _)) in self.options.iter().enumerate() {
-            control.setLabel_forSegment(&NSString::from_str(title), i as isize);
-            control.setWidth_forSegment(0.0, i as isize);
-        }
-        let options = std::rc::Rc::new(self.options);
-        let (value, opts, c) = (self.value, options.clone(), control.clone());
+        // The segments shown, set in place when live options change.
+        let shown: std::rc::Rc<std::cell::RefCell<Vec<(String, T)>>> = Default::default();
+        let set = {
+            let (control, shown) = (control.clone(), shown.clone());
+            move |options: Vec<(String, T)>| {
+                let changed = {
+                    let old = shown.borrow();
+                    old.len() != options.len() || old.iter().zip(&options).any(|(a, b)| a.0 != b.0)
+                };
+                if changed {
+                    control.setSegmentCount(options.len() as isize);
+                    for (i, (title, _)) in options.iter().enumerate() {
+                        control.setLabel_forSegment(&NSString::from_str(title), i as isize);
+                        control.setWidth_forSegment(0.0, i as isize);
+                    }
+                }
+                *shown.borrow_mut() = options;
+                changed
+            }
+        };
+        let live = match self.options {
+            SegmentOptions::Fixed(options) => {
+                set(options);
+                None
+            }
+            SegmentOptions::Live(f) => {
+                set(untrack(&f));
+                Some(f)
+            }
+        };
+        let (value, opts, c) = (self.value, shown.clone(), control.clone());
         let target = on_action(cx, &control, move || {
-            if let Some((_, v)) = usize::try_from(c.selectedSegment()).ok().and_then(|i| opts.get(i)) {
-                value.set(v.clone());
+            let chosen = usize::try_from(c.selectedSegment()).ok().and_then(|i| opts.borrow().get(i).map(|(_, v)| v.clone()));
+            if let Some(v) = chosen {
+                value.set(v);
             }
         });
-        let (mut node, _) = Node::leaf(cx, Retained::into_super(Retained::into_super(control.clone())), (false, false), Size::default());
+        let (mut node, handle) = Node::leaf(cx, Retained::into_super(Retained::into_super(control.clone())), (false, false), Size::default());
         let value = self.value;
-        node.own(Effect::new(move || {
-            let current = value.get();
-            if let Some(i) = options.iter().position(|(_, v)| *v == current)
-                && control.selectedSegment() != i as isize
-            {
-                control.setSelectedSegment(i as isize);
+        let select = {
+            let (control, shown) = (control.clone(), shown.clone());
+            move |current: &T| {
+                let i = shown.borrow().iter().position(|(_, v)| v == current).map_or(-1, |i| i as isize);
+                if control.selectedSegment() != i {
+                    control.setSelectedSegment(i);
+                }
             }
-        }));
+        };
+        if let Some(f) = live {
+            let (control, select) = (control.clone(), select.clone());
+            node.own(Effect::new(move || {
+                let options = f();
+                if set(options) {
+                    crate::appkit_views::remeasure(&control, &handle);
+                }
+                select(&untrack(|| value.get()));
+            }));
+        }
+        node.own(Effect::new(move || select(&value.get())));
         node.keep(target);
         node
     }
@@ -1016,7 +1060,24 @@ impl<T: PartialEq + Clone + 'static> View for Segmented<T> {
 /// A segmented control bound two ways to `value`, one segment per option
 /// (title, value). VoiceOver reads each segment's title.
 pub fn segmented<T: PartialEq + Clone + 'static>(value: &Signal<T>, options: Vec<(&str, T)>) -> Segmented<T> {
-    Segmented { value: *value, options: options.into_iter().map(|(t, v)| (t.to_string(), v)).collect() }
+    Segmented { value: *value, options: SegmentOptions::Fixed(options.into_iter().map(|(t, v)| (t.to_string(), v)).collect()) }
+}
+
+/// A segmented control whose segments come from `options` (title, value),
+/// re-read when the signals it reads change: segments are added, removed
+/// and retitled in place (a tab bar of documents or queries). Bound two
+/// ways to `value`; no segment is selected while `value` matches none.
+///
+/// ```no_run
+/// use ferrokit::*;
+///
+/// let tabs = Signal::new(vec![(1u64, "Query 1".to_string())]);
+/// let current = Signal::new(1u64);
+/// let bar = segmented_with(&current, move || tabs.get().into_iter().map(|(id, title)| (title, id)).collect());
+/// # let _ = bar;
+/// ```
+pub fn segmented_with<T: PartialEq + Clone + 'static>(value: &Signal<T>, options: impl Fn() -> Vec<(String, T)> + 'static) -> Segmented<T> {
+    Segmented { value: *value, options: SegmentOptions::Live(Box::new(options)) }
 }
 
 define_class!(

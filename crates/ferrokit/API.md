@@ -423,6 +423,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn date_picker(value: &Signal<std::time::SystemTime>) -> DatePicker`: A date picker bound two ways to `value` (date only; see `DatePicker::with_time`).
 - `pub fn search_field(value: &Signal<String>) -> SearchField`: A search field bound two ways to `value` (updated as the user types).
 - `pub fn segmented<T: PartialEq + Clone + 'static>(value: &Signal<T>, options: Vec<(&str, T)>) -> Segmented<T>`: A segmented control bound two ways to `value`, one segment per option (title, value). VoiceOver reads each segment's title.
+- `pub fn segmented_with<T: PartialEq + Clone + 'static>(value: &Signal<T>, options: impl Fn() -> Vec<(String, T)> + 'static) -> Segmented<T>`: A segmented control whose segments come from `options` (title, value), re-read when the signals it reads change: segments are added, removed and retitled in place (a tab bar of documents or queries). Bound two ways to `value`; no segment is selected while `value` matches none.
 - `pub fn time_picker(value: &Signal<(u32, u32)>) -> TimePicker`: A time-of-day picker bound two ways to `value`, an hour (0–23) and a minute: for a daily reminder or an opening time, which keep their hour and minute whatever the date or time zone. For a moment in time, use `date_picker` with `DatePicker::with_time`.
 - `pub fn checkbox(title: &str, value: &Signal<bool>) -> Checkbox`: A checkbox titled `title`, bound two ways to `value`.
 - `pub fn image(symbol: &str) -> Image`: An SF Symbol by name (e.g. `"star.fill"`). Panics if the name is unknown.
@@ -929,7 +930,10 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 
 ## store
 
+- `pub fn read_stored<T: Stored>(key: &str) -> Option<T>`: The user-defaults value under `key`, if there is one: for values kept per document or per item (a database's open tabs, a diagram's layout), where a `stored` signal for each, living as long as the app, would pile up.
+- `pub fn remove_stored(key: &str)`: Removes the user-defaults value under `key`.
 - `pub fn stored<T: Stored>(key: &str, default: T) -> Signal<T>`: A signal holding the user-defaults value under `key` (or `default` when there is none yet); every change is written back. Bind it to a control in a Settings window and read it anywhere.
+- `pub fn write_stored<T: Stored>(key: &str, value: &T)`: Writes `value` under `key` in user defaults now (see `read_stored`).
 
 ### `Stored` (trait)
 

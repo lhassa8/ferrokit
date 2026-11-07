@@ -81,3 +81,21 @@ pub fn stored<T: Stored>(key: &str, default: T) -> Signal<T> {
     WRITERS.with_borrow_mut(|w| w.push(writer));
     signal
 }
+
+/// The user-defaults value under `key`, if there is one: for values kept
+/// per document or per item (a database's open tabs, a diagram's layout),
+/// where a [`stored`] signal for each, living as long as the app, would
+/// pile up.
+pub fn read_stored<T: Stored>(key: &str) -> Option<T> {
+    T::read(&NSUserDefaults::standardUserDefaults(), &NSString::from_str(key))
+}
+
+/// Writes `value` under `key` in user defaults now (see [`read_stored`]).
+pub fn write_stored<T: Stored>(key: &str, value: &T) {
+    value.write(&NSUserDefaults::standardUserDefaults(), &NSString::from_str(key));
+}
+
+/// Removes the user-defaults value under `key`.
+pub fn remove_stored(key: &str) {
+    NSUserDefaults::standardUserDefaults().removeObjectForKey(&NSString::from_str(key));
+}

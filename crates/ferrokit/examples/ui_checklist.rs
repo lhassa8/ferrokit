@@ -6,7 +6,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use ferrokit::{
-    Align, App, AppEvent, Effect, Identifiable, Signal, View, ViewExt, Window, batch, button, checkbox, dynamic, effect_runs,
+    Align, App, AppEvent, Effect, Identifiable, Signal, View, ViewExt, Window, batch, button, segmented_with, read_stored, write_stored, remove_stored, checkbox, dynamic, effect_runs,
     for_each, grid, hstack, later, layout_stats, layout_passes, layout_times_us, live_nodes, open, secure_field, spacer, spawn, text,
     text_field, toggle, vstack, windows, divider, image, picker, progress, scroll, slider, stepper, table, Column, Sort,
     TableKey, TableModel, ViewId, TreeNode, outline, sidebar, TextModel, text_editor, split, toolbar_button, toolbar_space,
@@ -4808,7 +4808,60 @@ fn field_commit_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         // the unchanged value, which on_commit's docs allow.)
         check("field-commit", got.last().map(String::as_str) == Some("left by a click"), format!("on_commit saw {got:?}"));
         ferrokit::close_window(&w);
-        table_teardown(events.clone());
+        live_segments_checks(events.clone());
+    });
+}
+
+/// `segmented_with`: segments added, retitled and removed in place (the
+/// same control), a click choosing the value; and values kept in user
+/// defaults without a signal (`write_stored`, `read_stored`).
+fn live_segments_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let tabs = Signal::new(vec![(1u64, "One".to_string())]);
+    let chosen = Signal::new(1u64);
+    let w = open(Window::new("Segments").size(360.0, 80.0).view(
+        vstack((segmented_with(&chosen, move || tabs.get().into_iter().map(|(id, title)| (title, id)).collect()).accessibility_label("Tabs"),)).padding(12.0),
+    ));
+    fn control(w: &objc2_app_kit::NSWindow) -> Retained<objc2_app_kit::NSSegmentedControl> {
+        all_views(&w.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSSegmentedControl>().ok()).unwrap()
+    }
+    let first = control(&w);
+    let width = first.frame().size.width;
+    batch(|| {
+        tabs.set(vec![(1, "One".into()), (2, "Two".into()), (3, "Three".into())]);
+        chosen.set(3);
+    });
+    after_events(move || {
+        let c = control(&w);
+        let labels = |c: &objc2_app_kit::NSSegmentedControl| (0..c.segmentCount()).map(|i| c.labelForSegment(i).map(|l| l.to_string()).unwrap_or_default()).collect::<Vec<_>>();
+        let grown = labels(&c);
+        let same = Retained::as_ptr(&c) == Retained::as_ptr(&first);
+        let wider = c.frame().size.width > width + 20.0;
+        let selected = c.selectedSegment();
+        // A click on the second segment chooses its value.
+        c.setSelectedSegment(1);
+        unsafe { c.sendAction_to(c.action(), c.target().as_deref()) };
+        let clicked = chosen.get_untracked();
+        batch(|| tabs.update(|t| {
+            t.remove(0);
+            t[0].1 = "Second".into();
+        }));
+        let (w, events) = (w.clone(), events.clone());
+        after_events(move || {
+            let c = control(&w);
+            let shrunk = labels(&c);
+            write_stored("check.stored.direct", &"kept".to_string());
+            let read: Option<String> = read_stored("check.stored.direct");
+            remove_stored("check.stored.direct");
+            let gone: Option<String> = read_stored("check.stored.direct");
+            check(
+                "live-segments",
+                grown == ["One", "Two", "Three"] && same && wider && selected == 2 && clicked == 2 && shrunk == ["Second", "Three"] && c.selectedSegment() == 0,
+                format!("grown {grown:?} (same control {same}, wider {wider}, selected {selected}); click chose {clicked}; shrunk {shrunk:?}, selected {}", c.selectedSegment()),
+            );
+            check("stored-direct", read.as_deref() == Some("kept") && gone.is_none(), format!("read {read:?}; after removing {gone:?}"));
+            ferrokit::close_window(&w);
+            table_teardown(events.clone());
+        });
     });
 }
 

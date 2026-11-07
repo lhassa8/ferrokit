@@ -11,6 +11,7 @@
 "Quit {name}" = "{name} beenden";
 "File" = "Ablage";
 "Close" = "Schließen";
+"Close Window" = "Fenster schließen";
 "Edit" = "Bearbeiten";
 "Undo" = "Widerrufen";
 "Redo" = "Wiederholen";

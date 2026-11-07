@@ -11,6 +11,7 @@
 "Quit {name}" = "Quitter {name}";
 "File" = "Fichier";
 "Close" = "Fermer";
+"Close Window" = "Fermer la fenêtre";
 "Edit" = "Édition";
 "Undo" = "Annuler";
 "Redo" = "Rétablir";

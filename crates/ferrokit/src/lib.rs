@@ -119,13 +119,13 @@ use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
 pub use ferrokit_core::{is_dark, system_colors};
 pub use frame::{FrameLoop, on_frame};
-pub use store::{Stored, stored};
+pub use store::{Stored, read_stored, remove_stored, stored, write_stored};
 pub use undo::{set_undoable, undoable, undoable_in};
 pub use commands::{Command, can_perform, can_perform_in, focused_value, focused_value_in, focused_window, menu_command, perform, perform_in, toolbar_command};
 pub use resource::{Cancel, Load, Resource};
 pub use signal::{Effect, Memo, Signal, after_batch, batch, effect_runs, live_signals, untrack};
 pub use controls::{
-    ColorWell, ComboBox, DatePicker, SearchField, Segmented, TimePicker, color_well, combo_box, date_picker, search_field, segmented, time_picker,
+    ColorWell, ComboBox, DatePicker, SearchField, Segmented, TimePicker, color_well, combo_box, date_picker, search_field, segmented, segmented_with, time_picker,
     Checkbox, Image, Picker, Progress, Slider, Stepper, SymbolEffect, TextField, checkbox, image, image_data, image_file, picker, progress, secure_field, slider,
     stepper, text_field, toggle,
 };

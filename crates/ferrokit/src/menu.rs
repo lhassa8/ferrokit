@@ -98,12 +98,19 @@ pub(crate) fn install(
     let mut menus = menus;
     let file_items = menus.iter().position(|(t, _)| t == "File").map(|i| menus.remove(i).1).unwrap_or_default();
     let has_own = !file_items.is_empty();
+    // An app item on ⌘W (Close Tab, as in Safari) makes Close "Close
+    // Window", on ⇧⌘W.
+    let close_tab = file_items.iter().any(|i| i.has_command_key("w"));
     let (file_menu, targets) = build_titled_menu(mtm, &t("File"), file_items);
     keep.extend(targets);
     if has_own {
         file_menu.addItem(&NSMenuItem::separatorItem(mtm));
     }
-    file_menu.addItem(&item(mtm, &t("Close"), Some(sel!(performClose:)), "w"));
+    if close_tab {
+        file_menu.addItem(&item(mtm, &t("Close Window"), Some(sel!(performClose:)), "W"));
+    } else {
+        file_menu.addItem(&item(mtm, &t("Close"), Some(sel!(performClose:)), "w"));
+    }
     // A document app's Save, Save As… and Revert to Saved.
     if !file_after_close.is_empty() {
         let (after, targets) = build_titled_menu(mtm, "", file_after_close);
