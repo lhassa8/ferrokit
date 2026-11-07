@@ -282,6 +282,19 @@ sandbox = true
 network = true
 ```
 
+A document that needs files beside it (a SQLite database's `-journal`,
+`-wal` and `-shm`) gets only the document itself from the user's choice.
+Declare the others as related files, in the document type
+(`DocumentType::related`) and in `Cargo.toml`, and Ferrokit claims them
+before reading the document:
+
+```toml
+[[package.metadata.ferrokit.documents]]
+name = "SQLite Database"
+extensions = ["sqlite", "db"]
+related = ["-journal", "-wal", "-shm"]
+```
+
 `check-all` runs the `notes` example sandboxed. A file outside the app's
 container can only be granted by the user choosing it, so try Open Recent
 on one by hand once.

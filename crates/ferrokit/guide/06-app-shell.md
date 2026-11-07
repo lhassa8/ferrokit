@@ -113,6 +113,13 @@ App::new("Notes").documents(text_files).run(); // starts with an untitled docume
   change it. The document is **edited** while the content differs from the
   file (so `T: PartialEq`): undoing back to the saved text clears the dot.
 - Without `.write`, documents are read-only (a viewer: Save is disabled).
+- `.write_returning(|content, path| ..)` is for content that saving
+  changes: it returns what the document holds afterwards (a database with
+  staged changes commits them and returns none staged), which becomes the
+  saved state.
+- `.related(&["-wal", "-journal"])` names files beside each document that
+  it reads and writes too (a database's journal): the document holds access
+  to them while it's open, which the App Sandbox needs.
 - Undo is per document, since each window has its own history.
 - `new_document()`, `open_document(path)`, `save_document(window)`,
   `save_document_as(window, path)`, `revert_document(window)`,

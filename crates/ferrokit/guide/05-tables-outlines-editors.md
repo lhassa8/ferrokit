@@ -87,6 +87,7 @@ let view = table(&model).accessibility_label("Downloads");
 - Row indices in every event stay model indices, never header positions. `row_at(view_row)` is `None` for a header.
 - A progress column sorts and copies as its number; VoiceOver reads the bar's value.
 - `.fit()` measures the column's longest values (by character count, with many rows) whenever the rows change.
+- `.style(|row| CellStyle { .. })` colours a text or number cell from its row: `color`, a `background` tint, `italic`, `strikethrough` (a changed value, a NULL, a row about to go). After changing what a style depends on, refresh the row with `update_row`.
 
 ### Copy, paste, drag and drop
 

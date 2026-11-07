@@ -34,7 +34,12 @@ fn journal() -> DocumentType<Vec<u8>> {
         .spacing(0.0)
     })
     .read(|path| std::fs::read(path))
-    .write(|rtf, path| std::fs::write(path, rtf))
+    // What's on disk becomes the saved state (`write_returning`): the
+    // entry is edited again only once it differs from the file.
+    .write_returning(|rtf, path| {
+        std::fs::write(path, rtf)?;
+        std::fs::read(path)
+    })
     .size(640.0, 460.0)
 }
 

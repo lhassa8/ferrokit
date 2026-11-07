@@ -53,6 +53,8 @@ pub struct TextField {
     placeholder: Option<String>,
     on_submit: Option<Box<dyn Fn()>>,
     secure: bool,
+    /// `on_submit` also fires when editing ends without Return.
+    on_end_editing: bool,
 }
 
 impl TextField {
@@ -65,6 +67,15 @@ impl TextField {
     /// Runs (in a batch) when the user presses Return in the field.
     pub fn on_submit(mut self, f: impl Fn() + 'static) -> Self {
         self.on_submit = Some(Box::new(f));
+        self
+    }
+
+    /// Runs (in a batch) whenever editing ends: Return, Tab, or a click
+    /// elsewhere, so an edit is never lost by leaving the field. The value
+    /// may be unchanged (the user only passed through).
+    pub fn on_commit(mut self, f: impl Fn() + 'static) -> Self {
+        self.on_submit = Some(Box::new(f));
+        self.on_end_editing = true;
         self
     }
 }
@@ -97,6 +108,11 @@ impl View for TextField {
                 field.setAction(Some(sel!(fire:)));
             }
             node.keep(Retained::into_super(target));
+            if self.on_end_editing
+                && let Some(cell) = field.cell()
+            {
+                cell.setSendsActionOnEndEditing(true);
+            }
         }
         let value = self.value;
         node.own(Effect::new(move || {
@@ -112,12 +128,12 @@ impl View for TextField {
 
 /// A text field bound two ways to `value`.
 pub fn text_field(value: &Signal<String>) -> TextField {
-    TextField { value: *value, placeholder: None, on_submit: None, secure: false }
+    TextField { value: *value, placeholder: None, on_submit: None, on_end_editing: false, secure: false }
 }
 
 /// A password field (`NSSecureTextField`) bound two ways to `value`.
 pub fn secure_field(value: &Signal<String>) -> TextField {
-    TextField { value: *value, placeholder: None, on_submit: None, secure: true }
+    TextField { value: *value, placeholder: None, on_submit: None, on_end_editing: false, secure: true }
 }
 
 fn state_of(on: bool) -> isize {

@@ -6,7 +6,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 
 **Where to look:** app, windows, menus and the shell → App and windows, `chrome`, `dialogs`, `commands`; state → `signal`, `resource`, `store`, `undo`; views and modifiers → `view`, `layout`, `appkit_views`, `controls`, `style`, `motion`; tables, outlines, text → `models`, `table`, `outline`, `text`; charts → `charts`, `canvas`; checks → Module `testing`.
 
-**Contents:** [App and windows (lib)](#app-and-windows-lib) · [signal](#signal) · [view](#view) · [layout](#layout) · [appkit_views](#appkit_views) · [controls](#controls) · [models](#models) · [table](#table) · [outline](#outline) · [text](#text) · [commands](#commands) · [chrome](#chrome) · [dialogs](#dialogs) · [appearance](#appearance) · [frame](#frame) · [store](#store) · [undo](#undo) · [resource](#resource) · [documents](#documents) · [collection](#collection) · [syntax](#syntax) · [style](#style) · [surface](#surface) · [material](#material) · [widgets](#widgets) · [media](#media) · [browser](#browser) · [crash](#crash) · [updates](#updates) · [failure](#failure) · [filter](#filter) · [form](#form) · [quicklook](#quicklook) · [services](#services) · [status](#status) · [motion](#motion) · [popover](#popover) · [canvas](#canvas) · [native](#native) · [value](#value) · [transfer](#transfer) · [l10n](#l10n) · [charts](#charts) · [host](#host) · [Module updates](#module-updates) · [Module testing](#module-testing) · [Module input](#module-input) · [Module soak](#module-soak)
+**Contents:** [App and windows (lib)](#app-and-windows-lib) · [signal](#signal) · [view](#view) · [layout](#layout) · [appkit_views](#appkit_views) · [controls](#controls) · [models](#models) · [table](#table) · [outline](#outline) · [text](#text) · [commands](#commands) · [chrome](#chrome) · [dialogs](#dialogs) · [appearance](#appearance) · [frame](#frame) · [store](#store) · [undo](#undo) · [resource](#resource) · [documents](#documents) · [collection](#collection) · [syntax](#syntax) · [style](#style) · [surface](#surface) · [material](#material) · [widgets](#widgets) · [media](#media) · [browser](#browser) · [crash](#crash) · [updates](#updates) · [failure](#failure) · [filter](#filter) · [form](#form) · [quicklook](#quicklook) · [services](#services) · [status](#status) · [motion](#motion) · [popover](#popover) · [canvas](#canvas) · [native](#native) · [related](#related) · [value](#value) · [transfer](#transfer) · [l10n](#l10n) · [charts](#charts) · [host](#host) · [Module updates](#module-updates) · [Module testing](#module-testing) · [Module input](#module-input) · [Module soak](#module-soak)
 
 ## App and windows (lib)
 
@@ -530,6 +530,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 
 - `pub fn placeholder(mut self, text: &str) -> Self`: Grey text shown while the field is empty.
 - `pub fn on_submit(mut self, f: impl Fn() + 'static) -> Self`: Runs (in a batch) when the user presses Return in the field.
+- `pub fn on_commit(mut self, f: impl Fn() + 'static) -> Self`: Runs (in a batch) whenever editing ends: Return, Tab, or a click elsewhere, so an edit is never lost by leaving the field. The value may be unchanged (the user only passed through).
 
 ## models
 
@@ -580,6 +581,15 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `Symbol(String)`: An SF Symbol by name.
 - `FileIcon(std::path::PathBuf)`: The Finder's icon for a file or folder.
 
+### `CellStyle`
+
+`pub struct CellStyle`: How a cell's text looks (see `Column::style`): the default for each field is the table's own look.
+
+- `pub color: Option<crate::text::Color>`: The text's colour.
+- `pub background: Option<crate::text::Color>`: A tint behind the cell (a changed value, say).
+- `pub italic: bool`: Italic text (a placeholder such as NULL).
+- `pub strikethrough: bool`: Struck-through text (a row about to be deleted).
+
 ### `Column`
 
 `pub struct Column<T>`: A column: an id (stable, used for sorting and saved state), a title, and how to get the cell value from a row.
@@ -591,6 +601,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn date(id: &str, title: &str, value: impl Fn(&T) -> Option<std::time::SystemTime> + 'static) -> Self`: A date column: shown in the user's format and language ("12 Mar 2024", "Today", "Yesterday"), sorted by date, oldest first; `None` shows nothing and sorts before every date. Copied as shown. `with_time` adds the time.
 - `pub fn with_time(mut self) -> Self`: Shows a date column's time too ("Today at 09:41").
 - `pub fn icon(mut self, image: impl Fn(&T) -> Option<CellImage> + 'static) -> Self`: Shows an image before each cell's text (a text or number column), e.g. a file's icon before its name. `None` leaves the space empty.
+- `pub fn style(mut self, style: impl Fn(&T) -> CellStyle + 'static) -> Self`: Styles each cell of a text or number column from its row: a colour, a background tint, italic or struck-through text. The style is read when a cell is shown; after changing what it depends on, refresh the rows (`TableModel::update_row`).
 - `pub fn fit(mut self) -> Self`: Sizes the column to its widest content (and its title) whenever the rows change. With many rows, the longest values are measured.
 - `pub fn width(mut self, width: f64) -> Self`: Initial width in points (default 120).
 - `pub fn min_width(mut self, min_width: f64) -> Self`: Smallest width the user can drag the column to.
@@ -992,6 +1003,8 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn new<V: View>(extensions: &[&str], empty: impl Fn() -> T + 'static, view: impl Fn(&Document<T>) -> V + 'static) -> Self`: A document type with these file extensions (the first is used for new files; Open… shows only these). `empty` is a new document's content and `view` builds a document's window content. Add `read` to open files and `write` to save them.
 - `pub fn read(mut self, f: impl Fn(&Path) -> std::io::Result<T> + 'static) -> Self`: Reads a file into a document's content (Open…, Open Recent, Revert).
 - `pub fn write(mut self, f: impl Fn(&T, &Path) -> std::io::Result<()> + 'static) -> Self`: Writes a document's content to a file (Save, Save As…). Without it documents are read-only (a viewer).
+- `pub fn write_returning(mut self, f: impl Fn(&T, &Path) -> std::io::Result<T> + 'static) -> Self`: Like `write`, for documents whose content changes when it's saved: `f` writes the content and returns what the document holds afterwards, which becomes its saved state. A database with staged changes, say: saving commits them and returns the database with none staged.
+- `pub fn related(mut self, suffixes: &[&str]) -> Self`: Files beside each document that it reads and writes too, named by these suffixes (a SQLite database's `"-journal"`, `"-wal"`, `"-shm"`): the document holds access to them while it's open (see `related_files`), before it's read and after Save As…. In the App Sandbox, declare them too (`related = [...]` in `cargo ferrokit`'s document type).
 - `pub fn toolbar(mut self, items: impl Fn(&Document<T>) -> Vec<ToolbarItem> + 'static) -> Self`: A toolbar for each document window, built with the window's view.
 - `pub fn size(mut self, width: f64, height: f64) -> Self`: The size of new document windows (default 640 × 480).
 - `pub fn window(mut self, style: impl Fn(Window) -> Window + 'static) -> Self`: Styles each document window: `style` gets the window as the document type made it and returns it with `Window`'s chrome methods applied, e.g. `.window(|w| w.full_size_content().toolbar_style(ToolbarStyle::Unified))`.
@@ -1592,6 +1605,16 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn flexible(mut self, horizontal: bool, vertical: bool) -> Self`: Whether the view stretches across (`horizontal`) and down (`vertical`) to fill the room it gets. Both by default (a map, a drawing); `(false, false)` keeps it at its measured size, like a control.
 - `pub fn keep<T: Message + 'static>(mut self, object: Retained<T>) -> Self`: Keeps `object` alive as long as the view: a delegate, a target, an observer (AppKit holds delegates weakly).
 - `pub fn on_remove(mut self, f: impl FnOnce(&V) + 'static) -> Self`: Runs `f` once the view has left its window (removed from the tree, or its window closed), after its updates have stopped: stop a timer, end an observation, clear a delegate.
+
+## related
+
+- `pub fn related_files(document: &Path, suffixes: &[&str]) -> RelatedFiles`: Lets the app create, read and write the files beside `document` named by appending each of `suffixes` to its name (`"-wal"` gives `data.sqlite-wal`), for as long as the returned value lives.
+
+### `RelatedFiles`
+
+`pub struct RelatedFiles`: Access to the files beside a document, held while this lives (see `related_files`).
+
+- `pub fn paths(&self) -> &[PathBuf]`: The related files' paths (whether or not they exist yet).
 
 ## value
 

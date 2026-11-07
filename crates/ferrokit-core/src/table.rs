@@ -68,6 +68,21 @@ pub enum CellImage {
 }
 
 type IconFn<T> = Box<dyn Fn(&T) -> Option<CellImage>>;
+type StyleFn<T> = Box<dyn Fn(&T) -> CellStyle>;
+
+/// How a cell's text looks (see [`Column::style`]): the default for each
+/// field is the table's own look.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CellStyle {
+    /// The text's colour.
+    pub color: Option<crate::text::Color>,
+    /// A tint behind the cell (a changed value, say).
+    pub background: Option<crate::text::Color>,
+    /// Italic text (a placeholder such as NULL).
+    pub italic: bool,
+    /// Struck-through text (a row about to be deleted).
+    pub strikethrough: bool,
+}
 
 /// A row's group (see [`TableModel::set_group_by`]).
 pub type GroupKey<T> = Box<dyn Fn(&T) -> String>;
@@ -84,12 +99,13 @@ pub struct Column<T> {
     editable: bool,
     fit: bool,
     icon: Option<IconFn<T>>,
+    style: Option<StyleFn<T>>,
     value: Box<dyn Fn(&T) -> Value>,
 }
 
 impl<T> Column<T> {
     fn new(id: &str, title: &str, kind: Kind, value: Box<dyn Fn(&T) -> Value>) -> Self {
-        Self { id: id.into(), title: title.into(), width: 120.0, min_width: 40.0, kind, sortable: true, editable: false, fit: false, icon: None, value }
+        Self { id: id.into(), title: title.into(), width: 120.0, min_width: 40.0, kind, sortable: true, editable: false, fit: false, icon: None, style: None, value }
     }
 
     /// A text column.
@@ -146,6 +162,15 @@ impl<T> Column<T> {
     /// e.g. a file's icon before its name. `None` leaves the space empty.
     pub fn icon(mut self, image: impl Fn(&T) -> Option<CellImage> + 'static) -> Self {
         self.icon = Some(Box::new(image));
+        self
+    }
+
+    /// Styles each cell of a text or number column from its row: a colour,
+    /// a background tint, italic or struck-through text. The style is read
+    /// when a cell is shown; after changing what it depends on, refresh the
+    /// rows ([`TableModel::update_row`]).
+    pub fn style(mut self, style: impl Fn(&T) -> CellStyle + 'static) -> Self {
+        self.style = Some(Box::new(style));
         self
     }
 
@@ -353,6 +378,8 @@ trait Data {
     fn icon(&self, view_row: usize, column: &str) -> Option<CellImage>;
     /// Whether the column has icons.
     fn has_icon(&self, column: &str) -> bool;
+    /// The cell's style (a [`Column::style`] column).
+    fn style(&self, view_row: usize, column: &str) -> Option<CellStyle>;
 }
 
 struct SourceIvars {
@@ -871,11 +898,50 @@ impl Source {
         };
         // Set on reuse too: a column's kind can change (`set_columns`).
         field.setAlignment(if let Kind::Number { .. } = kind { NSTextAlignment::Right } else { NSTextAlignment::Natural });
-        field.setStringValue(&NSString::from_str(&display(kind, &value)));
+        let style = self.data().and_then(|d| d.style(row as usize, &ident.to_string()));
+        Self::show_text(&field, &display(kind, &value), style.as_ref());
         Some(Retained::into_super(Retained::into_super(field)))
     }
 
-    /// A cell with an image before its text (an icon column).
+    /// Sets a cell's text in its style, or the table's plain look (every field
+/// is set each time: cells are reused across rows).
+fn show_text(field: &NSTextField, text: &str, style: Option<&CellStyle>) {
+    use objc2_app_kit::{NSColor, NSFont, NSFontManager, NSFontTraitMask};
+    let size = NSFont::systemFontSize();
+    let font = match style {
+        Some(s) if s.italic => NSFontManager::sharedFontManager(MainThreadMarker::from(field)).convertFont_toHaveTrait(&NSFont::systemFontOfSize(size), NSFontTraitMask::ItalicFontMask),
+        _ => NSFont::systemFontOfSize(size),
+    };
+    let color = style.and_then(|s| s.color).map_or_else(NSColor::labelColor, |c| c.ns());
+    field.setFont(Some(&font));
+    field.setTextColor(Some(&color));
+    match style.and_then(|s| s.background) {
+        Some(bg) => {
+            field.setDrawsBackground(true);
+            field.setBackgroundColor(Some(&bg.ns()));
+        }
+        None => field.setDrawsBackground(false),
+    }
+    if style.is_some_and(|s| s.strikethrough) {
+        use objc2_app_kit::{NSFontAttributeName, NSForegroundColorAttributeName, NSStrikethroughStyleAttributeName};
+        use objc2_foundation::{NSAttributedString, NSDictionary, NSNumber};
+        let one = NSNumber::new_isize(1);
+        // SAFETY: AppKit's attribute names, with values of their types.
+        let attrs = unsafe {
+            NSDictionary::<NSString, objc2::runtime::AnyObject>::from_slices(
+                &[NSStrikethroughStyleAttributeName, NSForegroundColorAttributeName, NSFontAttributeName],
+                &[&*one as &objc2::runtime::AnyObject, &*color as &objc2::runtime::AnyObject, &*font as &objc2::runtime::AnyObject],
+            )
+        };
+        // SAFETY: the dictionary holds attributes as NSAttributedString takes them.
+        let text = unsafe { NSAttributedString::new_with_attributes(&NSString::from_str(text), &attrs) };
+        field.setAttributedStringValue(&text);
+    } else {
+        field.setStringValue(&NSString::from_str(text));
+    }
+}
+
+/// A cell with an image before its text (an icon column).
     fn icon_view(&self, table: &NSTableView, ident: &NSString, kind: Kind, value: &Value, row: NSInteger) -> Retained<NSView> {
         use objc2_app_kit::{NSImageView, NSTableCellView};
         let mtm = MainThreadMarker::from(self);
@@ -927,7 +993,8 @@ impl Source {
         }
         // SAFETY: as above.
         if let Some(tf) = unsafe { cell.textField() } {
-            tf.setStringValue(&NSString::from_str(&display(kind, value)));
+            let style = self.data().and_then(|d| d.style(row as usize, &ident.to_string()));
+            Self::show_text(&tf, &display(kind, value), style.as_ref());
         }
         Retained::into_super(cell)
     }
@@ -987,6 +1054,14 @@ impl<T: 'static> Data for Inner<T> {
 
     fn has_icon(&self, column: &str) -> bool {
         self.columns.borrow().iter().any(|c| c.id == column && c.icon.is_some())
+    }
+
+    fn style(&self, view_row: usize, column: &str) -> Option<CellStyle> {
+        let columns = self.columns.borrow();
+        let column = columns.iter().find(|c| c.id == column)?;
+        let index = self.model_row(view_row)?;
+        let rows = self.rows.borrow();
+        column.style.as_ref().map(|f| f(&rows[index]))
     }
 
     fn editable(&self, column: &str) -> bool {

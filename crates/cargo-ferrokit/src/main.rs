@@ -71,6 +71,9 @@ Settings, in the app's Cargo.toml:
     [[package.metadata.ferrokit.documents]]
     name = \"Text\"
     extensions = [\"txt\", \"md\"]
+    related = [\"-journal\"]     # files beside a document it opens too (a
+                                # database's journal), reached in the sandbox
+                                # through ferrokit's related_files
     [package.metadata.ferrokit.updates]                # updates through Sparkle 2
     feed = \"https://example.com/myapp/appcast.xml\"
     public-key = \"…\"          # what Sparkle's bin/generate_keys prints
@@ -78,6 +81,15 @@ Settings, in the app's Cargo.toml:
                                 # (or FERROKIT_SPARKLE)";
 
 type Result<T> = std::result::Result<T, String>;
+
+/// A kind of file the app opens (`[[package.metadata.ferrokit.documents]]`).
+struct DocType {
+    name: String,
+    extensions: Vec<String>,
+    /// Suffixes of files beside a document that it opens too, such as a
+    /// database's `-wal` and `-journal`.
+    related: Vec<String>,
+}
 
 fn main() -> ExitCode {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
@@ -220,7 +232,7 @@ struct Project {
     icon: Option<PathBuf>,
     min_macos: String,
     category: Option<String>,
-    documents: Vec<(String, Vec<String>)>,
+    documents: Vec<DocType>,
     /// Languages the app speaks besides English (its translations).
     languages: Vec<String>,
     sign: Option<String>,
@@ -324,8 +336,8 @@ impl Project {
             .into_iter()
             .flatten()
             .map(|d| {
-                let exts = d["extensions"].as_array().into_iter().flatten().filter_map(|e| e.as_str().map(String::from)).collect();
-                (d["name"].as_str().unwrap_or("Document").to_string(), exts)
+                let list = |key: &str| d[key].as_array().into_iter().flatten().filter_map(|e| e.as_str().map(String::from)).collect();
+                DocType { name: d["name"].as_str().unwrap_or("Document").to_string(), extensions: list("extensions"), related: list("related") }
             })
             .collect();
         let updates = Updates::from_metadata(&m["updates"], &dir)?;
@@ -665,12 +677,22 @@ fn info_plist(p: &Project, icon: bool, build: Option<&str>, sparkle: bool) -> St
         // Editor role, Alternate rank: offered for these files, never made
         // their default without the user choosing it.
         s += "  <key>CFBundleDocumentTypes</key><array>\n";
-        for (name, exts) in &p.documents {
-            let exts: String = exts.iter().map(|e| format!("<string>{}</string>", xml(e))).collect();
+        for d in &p.documents {
+            let exts: String = d.extensions.iter().map(|e| format!("<string>{}</string>", xml(e))).collect();
             s += &format!(
                 "    <dict><key>CFBundleTypeName</key><string>{}</string><key>CFBundleTypeRole</key><string>Editor</string><key>LSHandlerRank</key><string>Alternate</string><key>CFBundleTypeExtensions</key><array>{exts}</array></dict>\n",
-                xml(name)
+                xml(&d.name)
             );
+            // Files beside a document that the app may open with it (a
+            // database's journal): the sandbox lets the app reach them
+            // through a file presenter (ferrokit's `related_files`).
+            if !d.related.is_empty() {
+                let exts: String = d.extensions.iter().flat_map(|e| d.related.iter().map(move |r| format!("<string>{}{}</string>", xml(e), xml(r)))).collect();
+                s += &format!(
+                    "    <dict><key>CFBundleTypeName</key><string>{} (related)</string><key>CFBundleTypeRole</key><string>Editor</string><key>LSHandlerRank</key><string>None</string><key>NSIsRelatedItemType</key><true/><key>CFBundleTypeExtensions</key><array>{exts}</array></dict>\n",
+                    xml(&d.name)
+                );
+            }
         }
         s += "  </array>\n";
     }
@@ -1057,7 +1079,7 @@ mod tests {
             icon: None,
             min_macos: "15.0".into(),
             category: None,
-            documents: vec![("Text".into(), vec!["txt".into(), "md".into()])],
+            documents: vec![DocType { name: "Text".into(), extensions: vec!["txt".into(), "md".into()], related: vec![] }],
             languages: vec!["de".into()],
             sign: None,
             notary_profile: None,
@@ -1075,6 +1097,13 @@ mod tests {
         assert!(plist.contains("<array><string>txt</string><string>md</string></array>"));
         assert!(plist.contains("<key>CFBundleIconFile</key><string>AppIcon</string>"));
         assert!(plist.contains("<key>CFBundleLocalizations</key><array><string>en</string><string>de</string></array>"));
+        assert!(!plist.contains("NSIsRelatedItemType"), "no related files declared");
+        // Related files: their extensions, declared as related items.
+        let mut p = p;
+        p.documents = vec![DocType { name: "Database".into(), extensions: vec!["sqlite".into(), "db".into()], related: vec!["-wal".into(), "-journal".into()] }];
+        let plist = info_plist(&p, true, None, false);
+        assert!(plist.contains("<key>CFBundleTypeName</key><string>Database (related)</string>"), "{plist}");
+        assert!(plist.contains("<key>NSIsRelatedItemType</key><true/><key>CFBundleTypeExtensions</key><array><string>sqlite-wal</string><string>sqlite-journal</string><string>db-wal</string><string>db-journal</string></array>"), "{plist}");
     }
 
     #[test]

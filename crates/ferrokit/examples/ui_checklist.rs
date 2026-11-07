@@ -4561,7 +4561,13 @@ thread_local! {
             ViewId(500),
             vec![
                 Column::text("name", "Name", |o: &Order| o.name.clone()).width(180.0).editable(true),
-                Column::number("qty", "Qty", |o: &Order| o.qty).editable(true),
+                Column::number("qty", "Qty", |o: &Order| o.qty).editable(true).style(|o: &Order| ferrokit::CellStyle {
+                    // Done orders struck through; the largest tinted.
+                    strikethrough: o.done,
+                    color: o.done.then_some(ferrokit::Color::Secondary),
+                    background: (o.qty >= 49.0).then_some(ferrokit::Color::Rgba(1.0, 0.6, 0.0, 0.3)),
+                    italic: false,
+                }),
                 Column::check("done", "Done", |o: &Order| o.done),
             ],
         ));
@@ -4702,6 +4708,24 @@ fn table_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
             );
             let after = t.model.rows()[model_row].done;
             check("table-toggle", after != before, format!("row {model_row} done {before} → {after} (on_toggle → update_row)"));
+            // Cell styles: each visible row's qty cell as its row says,
+            // reused cells reset (a not-done row after a done one isn't struck).
+            let tv = t.model.table_view();
+            let qty_col = tv.columnWithIdentifier(&NSString::from_str("qty"));
+            let styled: Vec<(bool, bool, bool, bool)> = (4..12)
+                .filter_map(|pos| {
+                    let row = t.model.row_at(pos)?;
+                    let o = t.model.rows()[row].clone();
+                    let f = tv.viewAtColumn_row_makeIfNecessary(qty_col, pos as isize, true)?.downcast::<NSTextField>().ok()?;
+                    let text = f.attributedStringValue();
+                    // SAFETY: an attribute lookup within the string's length.
+                    let struck = text.length() > 0 && unsafe { text.attribute_atIndex_effectiveRange(objc2_app_kit::NSStrikethroughStyleAttributeName, 0, std::ptr::null_mut()) }.is_some();
+                    Some((o.done, struck, o.qty >= 49.0, f.drawsBackground()))
+                })
+                .collect();
+            let right = styled.iter().all(|(done, struck, big, tinted)| done == struck && big == tinted);
+            let mixed = styled.iter().any(|s| s.0) && styled.iter().any(|s| !s.0) && styled.iter().any(|s| s.2);
+            check("table-cell-style", styled.len() == 8 && right && mixed, format!("(done, struck, qty 49, tinted) per row: {styled:?}"));
             let name = t.model.rows()[edit_row].name.clone();
             let shown = t
                 .model
@@ -4749,9 +4773,34 @@ fn table_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                     left && cancelled.is_some() && kept == "Clicked away" && unchanged == cancel_name && t.edits.get_untracked() == 2,
                     format!("focus left: row {left_row} {kept:?}; Escape: row {cancel_row} {unchanged:?} (was {cancel_name:?}); edits {}", t.edits.get_untracked()),
                 );
-                table_teardown(events4.clone());
+                field_commit_checks(events4.clone());
             });
         });
+    });
+}
+
+/// A text field's `on_commit` runs when editing ends without Return (Tab,
+/// or a click elsewhere), so an edit isn't lost by leaving the field.
+fn field_commit_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let (value, commits) = (Signal::new(String::new()), Signal::new(Vec::<String>::new()));
+    let w = open(Window::new("Commit").size(300.0, 80.0).view(
+        vstack((text_field(&value).on_commit(move || commits.update(|c| c.push(value.get_untracked()))).accessibility_label("Field"),)).padding(12.0),
+    ));
+    w.makeKeyAndOrderFront(None);
+    let field = all_views(&w.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<NSTextField>().ok()).unwrap();
+    w.makeFirstResponder(Some(&field));
+    if let Some(ed) = field.currentEditor().and_then(|e| e.downcast::<objc2_app_kit::NSTextView>().ok()) {
+        unsafe { ed.insertText_replacementRange(&NSString::from_str("left by a click"), objc2_foundation::NSRange::new(usize::MAX >> 1, 0)) };
+    }
+    // Focus leaves the field (as a click elsewhere does): editing ends.
+    w.makeFirstResponder(None);
+    after_events(move || {
+        let got = commits.get_untracked();
+        // (Focusing the field twice ends an empty edit first: a commit of
+        // the unchanged value, which on_commit's docs allow.)
+        check("field-commit", got.last().map(String::as_str) == Some("left by a click"), format!("on_commit saw {got:?}"));
+        ferrokit::close_window(&w);
+        table_teardown(events.clone());
     });
 }
 

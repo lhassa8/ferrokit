@@ -29,7 +29,7 @@ use crate::view::{AnyView, View};
 use crate::{Window, mtm};
 
 type Reader<T> = Rc<dyn Fn(&Path) -> std::io::Result<T>>;
-type Writer<T> = Rc<dyn Fn(&T, &Path) -> std::io::Result<()>>;
+type Writer<T> = Rc<dyn Fn(&T, &Path) -> std::io::Result<Option<T>>>;
 type DocView<T> = Rc<dyn Fn(&Document<T>) -> AnyView>;
 type DocToolbar<T> = Rc<dyn Fn(&Document<T>) -> Vec<ToolbarItem>>;
 
@@ -44,6 +44,7 @@ pub struct DocumentType<T: 'static> {
     toolbar: Option<DocToolbar<T>>,
     size: (f64, f64),
     style: Option<Rc<dyn Fn(Window) -> Window>>,
+    related: Vec<String>,
 }
 
 impl<T: Clone + PartialEq + 'static> DocumentType<T> {
@@ -62,6 +63,7 @@ impl<T: Clone + PartialEq + 'static> DocumentType<T> {
             toolbar: None,
             size: (640.0, 480.0),
             style: None,
+            related: Vec::new(),
         }
     }
 
@@ -74,7 +76,28 @@ impl<T: Clone + PartialEq + 'static> DocumentType<T> {
     /// Writes a document's content to a file (Save, Save As…). Without it
     /// documents are read-only (a viewer).
     pub fn write(mut self, f: impl Fn(&T, &Path) -> std::io::Result<()> + 'static) -> Self {
-        self.write = Some(Rc::new(f));
+        self.write = Some(Rc::new(move |c, p| f(c, p).map(|()| None)));
+        self
+    }
+
+    /// Like [`write`](Self::write), for documents whose content changes
+    /// when it's saved: `f` writes the content and returns what the
+    /// document holds afterwards, which becomes its saved state. A database
+    /// with staged changes, say: saving commits them and returns the
+    /// database with none staged.
+    pub fn write_returning(mut self, f: impl Fn(&T, &Path) -> std::io::Result<T> + 'static) -> Self {
+        self.write = Some(Rc::new(move |c, p| f(c, p).map(Some)));
+        self
+    }
+
+    /// Files beside each document that it reads and writes too, named by
+    /// these suffixes (a SQLite database's `"-journal"`, `"-wal"`,
+    /// `"-shm"`): the document holds access to them while it's open (see
+    /// [`related_files`](crate::related_files)), before it's read and after
+    /// Save As…. In the App Sandbox, declare them too (`related = [...]`
+    /// in `cargo ferrokit`'s document type).
+    pub fn related(mut self, suffixes: &[&str]) -> Self {
+        self.related = suffixes.iter().map(|s| s.to_string()).collect();
         self
     }
 
@@ -122,6 +145,8 @@ struct DocInner<T: 'static> {
     /// Closing without asking (after the user chose).
     closing: Cell<bool>,
     effects: RefCell<Vec<Effect>>,
+    /// Access to the files beside the document (its type's `related`).
+    related: RefCell<Option<crate::RelatedFiles>>,
     /// Owns the document's signals and those its view makes outside the
     /// window's tree; they're freed with the document.
     _owner: Owner,
@@ -170,6 +195,7 @@ trait AnyDoc {
     fn save_to(&self, path: &Path) -> std::io::Result<()>;
     fn revert(&self) -> std::io::Result<()>;
     fn closing(&self) -> &Cell<bool>;
+    fn keep_related(&self, related: Option<crate::RelatedFiles>);
 }
 
 impl<T: Clone + PartialEq + 'static> AnyDoc for Document<T> {
@@ -194,9 +220,15 @@ impl<T: Clone + PartialEq + 'static> AnyDoc for Document<T> {
     fn save_to(&self, path: &Path) -> std::io::Result<()> {
         let write = self.0.kind.write.as_ref().ok_or_else(|| std::io::Error::other("this kind of document can't be saved"))?;
         let content = self.0.content.get_untracked();
-        write(&content, path)?;
-        *self.0.saved.borrow_mut() = content;
+        let related = self.0.kind.claim(path);
+        let kept = write(&content, path)?;
+        if related.is_some() {
+            *self.0.related.borrow_mut() = related;
+        }
+        let content = kept.unwrap_or(content);
+        *self.0.saved.borrow_mut() = content.clone();
         batch(|| {
+            self.0.content.set_if_changed(content);
             self.0.path.set(Some(path.to_path_buf()));
             self.0.edited.set_if_changed(false);
         });
@@ -218,6 +250,17 @@ impl<T: Clone + PartialEq + 'static> AnyDoc for Document<T> {
     fn closing(&self) -> &Cell<bool> {
         &self.0.closing
     }
+    fn keep_related(&self, related: Option<crate::RelatedFiles>) {
+        *self.0.related.borrow_mut() = related;
+    }
+}
+
+impl<T> DocumentType<T> {
+    /// Access to the files beside `path`, if the type has any.
+    fn claim(&self, path: &Path) -> Option<crate::RelatedFiles> {
+        let suffixes: Vec<&str> = self.related.iter().map(String::as_str).collect();
+        (!suffixes.is_empty()).then(|| crate::related_files(path, &suffixes))
+    }
 }
 
 /// Opens documents of the app's document type.
@@ -236,9 +279,14 @@ impl<T: Clone + PartialEq + 'static> Opener for Rc<DocumentType<T>> {
 
     fn open(&self, path: &Path) -> std::io::Result<Retained<NSWindow>> {
         let read = self.read.as_ref().ok_or_else(|| std::io::Error::other("this app can't open files"))?;
+        let related = self.claim(path);
         let content = read(path)?;
         note_recent(path);
-        Ok(show(self.clone(), content, Some(path.to_path_buf()), 0))
+        let window = show(self.clone(), content, Some(path.to_path_buf()), 0);
+        if let Some(doc) = document_of(&window) {
+            doc.keep_related(related);
+        }
+        Ok(window)
     }
 
     fn extensions(&self) -> Vec<String> {
@@ -273,6 +321,7 @@ fn show<T: Clone + PartialEq + 'static>(kind: Rc<DocumentType<T>>, content: T, p
         window: RefCell::new(Weak::default()),
         closing: Cell::new(false),
         effects: RefCell::default(),
+        related: RefCell::new(None),
         _owner: owner.clone(),
     }));
     // The document's own effects hold it weakly: it's freed (and its
