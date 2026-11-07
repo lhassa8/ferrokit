@@ -157,7 +157,7 @@ pub use services::{FileDates, Notification, SentNotification, ShareButton, Share
 pub use status::MenuBarExtra;
 pub use motion::{Animation, Keyframes, Transition, animate, animated, animated_with, keyframes, reduce_motion, stop_animation};
 pub use popover::Edge;
-pub use canvas::{Canvas, Painter, canvas};
+pub use canvas::{Canvas, CanvasDrag, Painter, canvas};
 pub use native::{NativeView, native};
 pub use related::{RelatedFiles, related_files};
 pub use value::{IntoValue, Value};

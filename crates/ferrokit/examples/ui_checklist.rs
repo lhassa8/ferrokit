@@ -662,6 +662,8 @@ fn canvas_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let c = clicks.clone();
     let doubles = Rc::new(RefCell::new(Vec::new()));
     let d = doubles.clone();
+    let drags = Rc::new(RefCell::new(Vec::new()));
+    let dr = drags.clone();
     let w = open(Window::new("Canvas").size(300.0, 200.0).view(
         canvas(move |p| {
             p.fill_rect(0.0, 0.0, p.width() * level.get(), p.height(), Color::Rgb(1.0, 0.0, 0.0));
@@ -669,6 +671,7 @@ fn canvas_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         })
         .on_click(move |x, y| c.borrow_mut().push((x.round(), y.round())))
         .on_double_click(move |x, y| d.borrow_mut().push((x.round(), y.round())))
+        .on_drag(move |e| dr.borrow_mut().push(e))
         .description(move || format!("Level {:.0}%", level.get() * 100.0)),
     ));
     let view = || {
@@ -695,6 +698,11 @@ fn canvas_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     w.setContentSize(objc2_foundation::NSSize::new(400.0, 200.0));
     let resized = canvas_drawing(&v).unwrap();
     check("canvas-resize", resized[0] == "fill rect 0,0 100x200 Rgb(1.0, 0.0, 0.0)", format!("at 400 points wide: {:?}", resized[0]));
+    // A drag inside the canvas: began where it started, moves, ended.
+    let dragged = ferrokit::testing::canvas_move(&v, (10.0, 10.0), (60.0, 40.0));
+    use ferrokit::CanvasDrag::{Began, Ended, Moved};
+    let got = drags.borrow().clone();
+    check("canvas-drag", dragged && got == [Began(10.0, 10.0), Moved(35.0, 25.0), Moved(60.0, 40.0), Ended(60.0, 40.0)], format!("{got:?}"));
     // What AppKit draws: red at the left, not at the right.
     let rep = v.bitmapImageRepForCachingDisplayInRect(v.bounds()).unwrap();
     v.cacheDisplayInRect_toBitmapImageRep(v.bounds(), &rep);

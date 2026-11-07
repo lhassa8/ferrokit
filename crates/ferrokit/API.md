@@ -1562,6 +1562,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 
 `pub struct Canvas`: A drawing canvas, made by `canvas`.
 
+- `pub fn on_drag(mut self, f: impl Fn(CanvasDrag) + 'static) -> Self`: Drags inside the canvas: moving something it draws (a card on a diagram). `f` gets `CanvasDrag::Began` once the pointer has moved a few points with the button down, then `Moved` and `Ended`. A canvas with `on_drag` doesn't start `draggable`'s drag out.
 - `pub fn on_hover(mut self, f: impl Fn(Option<(f64, f64)>) + 'static) -> Self`: Called with the pointer's position as it moves over the canvas, and `None` when it leaves (while the app is active).
 - `pub fn on_click(mut self, f: impl Fn(f64, f64) + 'static) -> Self`: Called with the position of a click.
 - `pub fn on_double_click(mut self, f: impl Fn(f64, f64) + 'static) -> Self`: Called with the position of a double click, after `on_click` runs for its second click (so a click can select a tile and a double click open it, as in the Finder). The interval is the user's double-click setting.
@@ -1571,6 +1572,14 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn draggable(mut self, f: impl Fn() -> Option<crate::DragItem> + 'static) -> Self`: Dragging the canvas carries what `f` returns (nothing if `None`): text, an image, a file, or a file written where it's dropped.
 - `pub fn exportable(mut self, name: &str) -> Self`: The canvas as an image: a right-click menu with Copy Image and Save Image…, and dragging it out gives `name`.png (to the Finder, Mail, a document). Charts use this for exporting.
 - `pub fn min_size(mut self, width: f64, height: f64) -> Self`: The smallest size it's laid out at (default 200 × 120); it takes the room it's given beyond that.
+
+### `CanvasDrag`
+
+`pub enum CanvasDrag`: A drag inside a canvas (see `Canvas::on_drag`), in the canvas's coordinates.
+
+- `Began(f64, f64)`: The drag started: where the mouse went down (x, y).
+- `Moved(f64, f64)`: The pointer moved, the button still down.
+- `Ended(f64, f64)`: The button came up.
 
 ### `Painter`
 
@@ -1809,6 +1818,7 @@ Helpers for automated checks of apps built with ferrokit: the accessibility tree
 - `pub fn canvas_scroll(view: &objc2_app_kit::NSView, dx: f64, dy: f64, x: f64, y: f64) -> bool`: Scrolls a `canvas` (or chart) by `dx, dy` points with the pointer at `x, y`, as a trackpad would; false if it didn't use it.
 - `pub fn canvas_magnify(view: &objc2_app_kit::NSView, amount: f64, x: f64, y: f64) -> bool`: Pinches a `canvas` (or chart) by `amount` (0.5 is 50% larger) at `x, y`; false if it didn't use it.
 - `pub fn canvas_drag(view: &objc2_app_kit::NSView) -> Option<crate::DragItem>`: What dragging a canvas would carry now (its `draggable`, or the image of an `exportable` one), without a drag session.
+- `pub fn canvas_move(view: &objc2_app_kit::NSView, from: (f64, f64), to: (f64, f64)) -> bool`: Drags inside a canvas from `from` to `to` (its coordinates), as a user's drag reaches its `on_drag`; false without one.
 - `pub fn fulfil(item: &crate::DragItem, dir: &std::path::Path) -> std::io::Result<std::path::PathBuf>`: Writes a promised file into `dir` as a drop there would; the path.
 - `pub fn drop_on_view(view: &objc2_app_kit::NSView, pasteboard: &objc2_app_kit::NSPasteboard) -> bool`: Drops whatever is on `pasteboard` onto `view` as AppKit does at the end of a drag (entered, then perform). Whether it was taken.
 - `pub fn set_reduce_motion(on: Option<bool>)`: Overrides the Reduce Motion setting animated changes follow (`None`: the system's), so checks can run both paths without changing it.

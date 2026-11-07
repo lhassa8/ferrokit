@@ -268,6 +268,19 @@ type Scroll = Rc<dyn Fn(f64, f64, f64, f64) -> bool>;
 type Magnify = Rc<dyn Fn(f64, f64, f64) -> bool>;
 
 type Drag = Rc<dyn Fn() -> Option<crate::DragItem>>;
+type Move = Rc<dyn Fn(CanvasDrag)>;
+
+/// A drag inside a canvas (see [`Canvas::on_drag`]), in the canvas's
+/// coordinates.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CanvasDrag {
+    /// The drag started: where the mouse went down (x, y).
+    Began(f64, f64),
+    /// The pointer moved, the button still down.
+    Moved(f64, f64),
+    /// The button came up.
+    Ended(f64, f64),
+}
 
 pub(crate) struct CanvasState {
     ops: RefCell<Vec<Op>>,
@@ -278,6 +291,9 @@ pub(crate) struct CanvasState {
     scroll: RefCell<Option<Scroll>>,
     magnify: RefCell<Option<Magnify>>,
     drag: RefCell<Option<Drag>>,
+    moved: RefCell<Option<Move>>,
+    /// Whether a drag inside the canvas is under way.
+    dragging: Cell<bool>,
     /// Where the mouse went down, until a drag starts.
     down: Cell<Option<NSPoint>>,
     /// Drawing for an image: on the content background, not transparent.
@@ -364,6 +380,22 @@ define_class!(
         #[unsafe(method(mouseDragged:))]
         fn mouse_dragged(&self, event: &NSEvent) {
             let p = self.convertPoint_fromView(event.locationInWindow(), None);
+            let moved = self.ivars().moved.borrow().clone();
+            if let Some(f) = moved {
+                if self.ivars().dragging.get() {
+                    crate::failure::entry("a canvas's drag", (), || f(CanvasDrag::Moved(p.x, p.y)));
+                    return;
+                }
+                let Some(start) = self.ivars().down.get() else { return };
+                if (p.x - start.x).hypot(p.y - start.y) >= 4.0 {
+                    self.ivars().dragging.set(true);
+                    crate::failure::entry("a canvas's drag", (), || {
+                        f(CanvasDrag::Began(start.x, start.y));
+                        f(CanvasDrag::Moved(p.x, p.y));
+                    });
+                }
+                return;
+            }
             let Some(start) = self.ivars().down.get() else { return };
             if (p.x - start.x).hypot(p.y - start.y) < 4.0 {
                 return;
@@ -372,6 +404,18 @@ define_class!(
             let drag = self.ivars().drag.borrow().clone();
             if let Some(item) = drag.and_then(|f| f()) {
                 self.begin_drag(&item, event);
+            }
+        }
+
+        #[unsafe(method(mouseUp:))]
+        fn mouse_up(&self, event: &NSEvent) {
+            let p = self.convertPoint_fromView(event.locationInWindow(), None);
+            self.ivars().down.set(None);
+            if self.ivars().dragging.replace(false) {
+                let moved = self.ivars().moved.borrow().clone();
+                if let Some(f) = moved {
+                    crate::failure::entry("a canvas's drag", (), || f(CanvasDrag::Ended(p.x, p.y)));
+                }
             }
         }
 
@@ -489,12 +533,22 @@ pub struct Canvas {
     description: Option<Rc<dyn Fn() -> String>>,
     min: Size,
     drag: Option<Drag>,
+    moved: Option<Move>,
     export: Option<String>,
     /// Whether it takes extra width and height (both, unless a chart says).
     grows: (bool, bool),
 }
 
 impl Canvas {
+    /// Drags inside the canvas: moving something it draws (a card on a
+    /// diagram). `f` gets [`CanvasDrag::Began`] once the pointer has moved a
+    /// few points with the button down, then `Moved` and `Ended`. A canvas
+    /// with `on_drag` doesn't start [`draggable`](Self::draggable)'s drag out.
+    pub fn on_drag(mut self, f: impl Fn(CanvasDrag) + 'static) -> Self {
+        self.moved = Some(Rc::new(f));
+        self
+    }
+
     /// Called with the pointer's position as it moves over the canvas, and
     /// `None` when it leaves (while the app is active).
     pub fn on_hover(mut self, f: impl Fn(Option<(f64, f64)>) + 'static) -> Self {
@@ -587,7 +641,7 @@ impl Canvas {
 /// # let _ = meter;
 /// ```
 pub fn canvas(draw: impl Fn(&mut Painter) + 'static) -> Canvas {
-    Canvas { draw: Rc::new(draw), hover: None, click: None, double_click: None, scroll: None, magnify: None, description: None, min: Size { w: 200.0, h: 120.0 }, drag: None, export: None, grows: (true, true) }
+    Canvas { draw: Rc::new(draw), hover: None, click: None, double_click: None, scroll: None, magnify: None, description: None, min: Size { w: 200.0, h: 120.0 }, drag: None, moved: None, export: None, grows: (true, true) }
 }
 
 impl View for Canvas {
@@ -603,6 +657,8 @@ impl View for Canvas {
             scroll: RefCell::new(self.scroll),
             magnify: RefCell::new(self.magnify),
             drag: RefCell::new(self.drag),
+            moved: RefCell::new(self.moved),
+            dragging: Cell::new(false),
             down: Cell::new(None),
             opaque: Cell::new(false),
             pointer: Cell::new(None),
@@ -743,4 +799,18 @@ pub(crate) fn describe(view: &NSView) -> Option<Vec<String>> {
             })
             .collect(),
     )
+}
+
+/// A drag inside a canvas from `from` to `to`, as its `on_drag` gets one
+/// (for checks); false without `on_drag`.
+pub(crate) fn move_on(view: &NSView, from: (f64, f64), to: (f64, f64)) -> bool {
+    let Some(canvas) = view.downcast_ref::<CanvasView>() else { return false };
+    let moved = canvas.ivars().moved.borrow().clone();
+    let Some(f) = moved else { return false };
+    let mid = ((from.0 + to.0) / 2.0, (from.1 + to.1) / 2.0);
+    f(CanvasDrag::Began(from.0, from.1));
+    f(CanvasDrag::Moved(mid.0, mid.1));
+    f(CanvasDrag::Moved(to.0, to.1));
+    f(CanvasDrag::Ended(to.0, to.1));
+    true
 }

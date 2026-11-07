@@ -622,6 +622,12 @@ pub fn canvas_drag(view: &objc2_app_kit::NSView) -> Option<crate::DragItem> {
     crate::canvas::drag_item(view)
 }
 
+/// Drags inside a canvas from `from` to `to` (its coordinates), as a user's
+/// drag reaches its [`on_drag`](crate::Canvas::on_drag); false without one.
+pub fn canvas_move(view: &objc2_app_kit::NSView, from: (f64, f64), to: (f64, f64)) -> bool {
+    crate::canvas::move_on(view, from, to)
+}
+
 /// Writes a promised file into `dir` as a drop there would; the path.
 pub fn fulfil(item: &crate::DragItem, dir: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
     crate::transfer::fulfil(item, dir)

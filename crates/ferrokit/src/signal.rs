@@ -464,6 +464,8 @@ impl<T: 'static> Signal<T> {
 /// [`Signal`].
 pub struct Memo<T> {
     signal: Signal<T>,
+    /// Its effect's slot in `MEMO_EFFECTS`, to bring it up to date on read.
+    slot: u32,
 }
 
 impl<T> Clone for Memo<T> {
@@ -477,6 +479,29 @@ impl<T> Copy for Memo<T> {}
 thread_local! {
     /// Effects of memos made outside any owner: they live as long as the app.
     static ROOT_EFFECTS: UiCell<Vec<Effect>> = const { UiCell::new(Vec::new()) };
+    /// Every memo's effect (weakly), by slot: a memo read while its inputs
+    /// have changed in the current batch recomputes first.
+    static MEMO_EFFECTS: UiCell<(Vec<Weak<EffectInner>>, Vec<u32>)> = const { UiCell::new((Vec::new(), Vec::new())) };
+}
+
+/// A slot for a memo's effect, reusing a freed one.
+fn memo_slot(effect: &Rc<EffectInner>) -> u32 {
+    MEMO_EFFECTS.with_borrow_mut(|(slots, free)| {
+        // Now and then, collect the slots of memos that are gone.
+        if free.is_empty() && slots.len() >= 64 && slots.len().is_power_of_two() {
+            free.extend(slots.iter().enumerate().filter(|(_, w)| w.strong_count() == 0).map(|(i, _)| i as u32));
+        }
+        match free.pop() {
+            Some(i) => {
+                slots[i as usize] = Rc::downgrade(effect);
+                i
+            }
+            None => {
+                slots.push(Rc::downgrade(effect));
+                (slots.len() - 1) as u32
+            }
+        }
+    })
 }
 
 /// Keeps `effect` running for as long as the current owner (or the app,
@@ -501,27 +526,44 @@ impl<T: PartialEq + Clone + 'static> Memo<T> {
             }
         });
         let signal = cell.get().expect("memo computed");
+        let slot = memo_slot(&effect.0);
         keep_with_owner(effect);
-        Memo { signal }
+        Memo { signal, slot }
+    }
+
+    /// Recomputes now if an input changed in the batch under way (its
+    /// effect is waiting for the batch to end): a memo read after setting
+    /// what it depends on gives the new value, even inside an action.
+    fn refresh(&self) {
+        let effect = MEMO_EFFECTS.with_borrow(|(slots, _)| slots.get(self.slot as usize).and_then(Weak::upgrade));
+        if let Some(e) = effect.filter(|e| e.queued.get()) {
+            PENDING.with_borrow_mut(|p| p.retain(|x| !Rc::ptr_eq(x, &e)));
+            e.queued.set(false);
+            e.run();
+        }
     }
 
     /// The current value, subscribing the running effect.
     pub fn get(&self) -> T {
+        self.refresh();
         self.signal.get()
     }
 
     /// Reads the value through `f`, subscribing the running effect.
     pub fn with<R>(&self, f: impl FnOnce(&T) -> R) -> R {
+        self.refresh();
         self.signal.with(f)
     }
 
     /// The current value, without subscribing.
     pub fn get_untracked(&self) -> T {
+        self.refresh();
         self.signal.get_untracked()
     }
 
     /// Reads the value through `f` without subscribing.
     pub fn with_untracked<R>(&self, f: impl FnOnce(&T) -> R) -> R {
+        self.refresh();
         self.signal.with_untracked(f)
     }
 }
@@ -553,6 +595,25 @@ mod tests {
         })
         .join();
         assert!(exited.is_ok());
+    }
+
+    /// Inside a batch (an action), a memo read after setting its input has
+    /// the new value, not the one from before the batch.
+    #[test]
+    fn memo_is_current_inside_a_batch() {
+        let (seen, n) = (Signal::new(1), Rc::new(Cell::new(0)));
+        let runs = n.clone();
+        let doubled = Memo::new(move || {
+            runs.set(runs.get() + 1);
+            seen.get() * 2
+        });
+        let inside = batch(|| {
+            seen.set(5);
+            doubled.get_untracked()
+        });
+        assert_eq!(inside, 10);
+        assert_eq!(doubled.get_untracked(), 10);
+        assert_eq!(n.get(), 2, "computed once at first, once for the change: not again when the batch ended");
     }
 
     #[test]

@@ -362,6 +362,12 @@ let meter = canvas(move |p| {
 # let _ = meter;
 ```
 
+`.on_drag(|d| ..)` moves things the canvas draws (a card on a diagram):
+`CanvasDrag::Began(x, y)` once the pointer has moved a few points with the
+button down, then `Moved(x, y)` as it goes and `Ended(x, y)` when it's
+released. Keep the positions in a signal and the canvas redraws as they
+change.
+
 VoiceOver sees a canvas as an image. `.description(…)` is what it reads,
 kept current; a canvas without one is decoration (a tinted circle behind
 a symbol) and VoiceOver skips it.
