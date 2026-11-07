@@ -458,7 +458,7 @@ pub fn ax_elements(window: &objc2_app_kit::NSWindow) -> Vec<AxElement> {
     fn string(obj: &AnyObject, sel: objc2::runtime::Sel, name: &str) -> String {
         attribute(obj, sel, name).and_then(|v| v.downcast::<NSString>().ok()).map(|s| s.to_string()).unwrap_or_default()
     }
-    fn walk(obj: &AnyObject, depth: usize, parent: &str, out: &mut Vec<AxElement>) {
+    fn walk(obj: &AnyObject, depth: usize, parent: &str, parent_name: &str, out: &mut Vec<AxElement>) {
         let label = string(obj, objc2::sel!(accessibilityLabel), "AXDescription");
         let title = string(obj, objc2::sel!(accessibilityTitle), "AXTitle");
         let linked = if responds(obj, objc2::sel!(accessibilityTitleUIElement)) {
@@ -474,6 +474,9 @@ pub fn ax_elements(window: &objc2_app_kit::NSWindow) -> Vec<AxElement> {
         // of a list's items (a column browser's) are read by their value.
         let read_by_value = role == "AXStaticText" || (role == "AXTextField" && ["AXList", "AXRow", "AXCell"].contains(&parent));
         let text = if read_by_value { string(obj, objc2::sel!(accessibilityValue), "AXValue") } else { String::new() };
+        // An empty field in a table's cell is read by the cell's name (its
+        // column's title).
+        let text = if read_by_value && text.trim().is_empty() && parent == "AXCell" { parent_name.to_string() } else { text };
         let name = [&label, &title, &linked, &placeholder, &text].into_iter().find(|s| !s.trim().is_empty()).cloned().unwrap_or_default();
         out.push(AxElement {
             depth,
@@ -494,14 +497,14 @@ pub fn ax_elements(window: &objc2_app_kit::NSWindow) -> Vec<AxElement> {
             _ => attribute(obj, objc2::sel!(accessibilityChildren), "AXChildren"),
         }
         .and_then(|k| k.downcast::<objc2_foundation::NSArray>().ok());
-        let role = out.last().map(|e| e.role.clone()).unwrap_or_default();
+        let (role, name) = out.last().map(|e| (e.role.clone(), e.name.clone())).unwrap_or_default();
         for k in kids.iter().flat_map(|k| k.iter()) {
-            walk(&k, depth + 1, &role, out);
+            walk(&k, depth + 1, &role, &name, out);
         }
     }
     let mut out = Vec::new();
     if let Some(content) = window.contentView() {
-        walk(&content, 0, "", &mut out);
+        walk(&content, 0, "", "", &mut out);
     }
     out
 }

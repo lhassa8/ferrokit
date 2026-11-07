@@ -804,7 +804,8 @@ impl Source {
             Some(c) => c,
             None => {
                 self.ivars().created.set(self.ivars().created.get() + 1);
-                let c = NSTableCellView::new(mtm);
+                // Sized to hold the bar, which resizes with it (as icon cells).
+                let c = NSTableCellView::initWithFrame(NSTableCellView::alloc(mtm), objc2_foundation::NSRect::new(objc2_foundation::NSPoint::new(0.0, 0.0), objc2_foundation::NSSize::new(100.0, 17.0)));
                 c.setIdentifier(Some(ident));
                 let bar = NSProgressIndicator::new(mtm);
                 bar.setStyle(NSProgressIndicatorStyle::Bar);
@@ -895,6 +896,10 @@ impl Source {
                         f.setTarget(Some(self));
                         f.setAction(Some(sel!(edit:)));
                     }
+                    // A field VoiceOver can name while it's empty: its
+                    // cell reads as its column's title ("Default").
+                    let title = column.title();
+                    let () = unsafe { msg_send![&*f, setAccessibilityLabel: &*title] };
                 }
                 f
             }
@@ -953,11 +958,16 @@ fn show_text(field: &NSTextField, text: &str, style: Option<&CellStyle>) {
             Some(c) => c,
             None => {
                 self.ivars().created.set(self.ivars().created.get() + 1);
-                let c = NSTableCellView::new(mtm);
+                // Sized to hold its subviews: they resize with it from
+                // here (from a zero frame, the text would grow a column's
+                // width past the cell, and right-aligned numbers with it).
+                let c = NSTableCellView::initWithFrame(NSTableCellView::alloc(mtm), objc2_foundation::NSRect::new(objc2_foundation::NSPoint::new(0.0, 0.0), objc2_foundation::NSSize::new(124.0, 17.0)));
                 c.setIdentifier(Some(ident));
                 let image = NSImageView::new(mtm);
-                image.setFrame(objc2_foundation::NSRect::new(objc2_foundation::NSPoint::new(2.0, 0.0), objc2_foundation::NSSize::new(16.0, 16.0)));
-                image.setAutoresizingMask(objc2_app_kit::NSAutoresizingMaskOptions::ViewMinYMargin | objc2_app_kit::NSAutoresizingMaskOptions::ViewMaxYMargin);
+                // Image and text keep to the top, where plain cells draw their
+                // text: a row's text shares one baseline, icon or not.
+                image.setFrame(objc2_foundation::NSRect::new(objc2_foundation::NSPoint::new(2.0, 0.5), objc2_foundation::NSSize::new(16.0, 16.0)));
+                image.setAutoresizingMask(objc2_app_kit::NSAutoresizingMaskOptions::ViewMinYMargin);
                 // The icon is decoration: the text names the row. (macOS 15
                 // and 26 otherwise read an unnamed image in every row.) The
                 // view's cell answers for it there, so hide both.
@@ -971,7 +981,7 @@ fn show_text(field: &NSTextField, text: &str, style: Option<&CellStyle>) {
                 let text = NSTextField::labelWithString(&NSString::new(), mtm);
                 text.setLineBreakMode(NSLineBreakMode::ByTruncatingTail);
                 text.setFrame(objc2_foundation::NSRect::new(objc2_foundation::NSPoint::new(22.0, 0.0), objc2_foundation::NSSize::new(100.0, 17.0)));
-                text.setAutoresizingMask(objc2_app_kit::NSAutoresizingMaskOptions::ViewWidthSizable | objc2_app_kit::NSAutoresizingMaskOptions::ViewMinYMargin | objc2_app_kit::NSAutoresizingMaskOptions::ViewMaxYMargin);
+                text.setAutoresizingMask(objc2_app_kit::NSAutoresizingMaskOptions::ViewWidthSizable | objc2_app_kit::NSAutoresizingMaskOptions::ViewMinYMargin);
                 if let Kind::Number { .. } = kind {
                     text.setAlignment(NSTextAlignment::Right);
                 }

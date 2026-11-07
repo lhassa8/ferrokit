@@ -3602,10 +3602,23 @@ fn rich_table_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         let tasks_now = model2.rows().clone();
         let bar_ok = bar.as_ref().is_some_and(|b| (b.doubleValue() - tasks_now[m].done).abs() < 1e-9 && !b.isIndeterminate());
         let name_width = tv.tableColumnWithIdentifier(&NSString::from_str("name")).map_or(0.0, |c| c.width());
+        // The text and the bar end inside their cells (they once grew a
+        // column's width past them, putting right-aligned numbers in the
+        // next column).
+        // SAFETY: the cell's view hierarchy, on the main thread.
+        let overhang = |sub: Option<Retained<NSView>>| sub.and_then(|v| unsafe { v.superview() }.map(|c| v.frame().origin.x + v.frame().size.width - c.frame().size.width)).unwrap_or(f64::MAX);
+        let text_over = overhang(cell.as_ref().and_then(|c| unsafe { c.textField() }).map(Retained::into_super).map(Retained::into_super));
+        let bar_over = overhang(bar.clone().map(Retained::into_super));
+        // And the icon cell's text shares its row's baseline: its top is a
+        // plain cell's (the Size column's) top.
+        let top = |v: Option<Retained<NSView>>| v.map_or(f64::MAX, |v| v.convertRect_toView(v.bounds(), Some(&tv)).origin.y);
+        let icon_text = top(cell.as_ref().and_then(|c| unsafe { c.textField() }).map(Retained::into_super).map(Retained::into_super));
+        let plain_text = top(tv.viewAtColumn_row_makeIfNecessary(2, view_row as isize, true));
+        let baseline_off = (icon_text - plain_text).abs();
         check(
             "table-cell-kinds",
-            has_image && icon_hidden && text == tasks_now[m].name && bar_ok && name_width > 250.0 && name_width < 420.0,
-            format!("icon cell: image {has_image} (hidden from VoiceOver {icon_hidden}), text {text:?}; progress cell at {:?}; fitted Name column {name_width:.0} pt (longest name)", bar.map(|b| b.doubleValue())),
+            has_image && icon_hidden && text == tasks_now[m].name && bar_ok && name_width > 250.0 && name_width < 420.0 && text_over <= 0.5 && bar_over <= 0.5 && baseline_off <= 0.5,
+            format!("icon cell: image {has_image} (hidden from VoiceOver {icon_hidden}), text {text:?} ending {text_over:.0} pt past the cell, {baseline_off:.1} pt off its row's baseline; progress cell at {:?}, ending {bar_over:.0} pt past it; fitted Name column {name_width:.0} pt (longest name)", bar.as_ref().map(|b| b.doubleValue())),
         );
 
         // Copying the selection: rows only, never headers.
@@ -4969,6 +4982,28 @@ fn dynamic_hidden_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     });
 }
 
+/// An empty editable table cell is named after its column, so VoiceOver
+/// can read it (ax_audit finds nothing unnamed).
+fn empty_cell_ax_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let model = Rc::new(TableModel::new(ViewId(9200), vec![Column::text("note", "Note", |s: &String| s.clone()).editable(true)]));
+    model.set_rows(vec![String::new(), "kept".to_string()]);
+    let w = open(Window::new("Empty Cells").size(300.0, 160.0).view(table(&model).accessibility_label("Notes")));
+    let w2 = w.clone();
+    after_events(move || {
+        let problems = ferrokit::testing::ax_audit(&w2);
+        // The elements, when it fails, to see what went unnamed.
+        let note = if problems.is_empty() {
+            "the empty field reads as its column".to_string()
+        } else {
+            let elements: Vec<String> = ferrokit::testing::ax_elements(&w2).iter().map(|e| format!("{}{} {:?}", " ".repeat(e.depth), e.role, e.name)).collect();
+            format!("{problems:?} in {elements:?}")
+        };
+        check("table-empty-cell-ax", problems.is_empty(), note);
+        ferrokit::close_window(&w2);
+        table_teardown(events.clone());
+    });
+}
+
 /// `App::about`: About {app} shows the credits; a "Help" menu fills the
 /// standard Help menu (one Help menu, with the app's item).
 fn about_help_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
@@ -4996,7 +5031,7 @@ fn about_help_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         if let Some(p) = panel {
             p.close();
         }
-        table_teardown(events.clone());
+        empty_cell_ax_checks(events.clone());
     });
 }
 

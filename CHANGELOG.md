@@ -20,6 +20,8 @@ Found by Rowboat, the SQLite app being built on Ferrokit for the Mac App Store (
 - **Changed: a number column shows `f64::NAN` as nothing** (a database's NULL), not "NaN".
 - **Added: `App::about(credits, link)`**: About {app} shows the app's credits and a link under its name, icon and version (`testing::about_shown`).
 - **Changed: an app's `.menu("Help", …)` fills the standard Help menu** (with AppKit's search field) instead of adding a second one.
+- **Fixed: an empty editable table cell had no name for VoiceOver.** Its field now reads as its column's title, and `testing::ax_audit` reads an empty field inside a named cell by the cell's name (Rowboat's Edit Table sheet, `table-empty-cell-ax`).
+- **Fixed: icon and progress cells spilled into the next column.** They were made with no size, so their text field (and bar) grew a whole column's width past the cell: a right-aligned number in an icon column showed in the column after it. They also sat 3 pt below the row's other text; an icon cell's image and text now keep to the top, on the row's baseline (`table-cell-kinds`).
 - **Changed: an app item on ⌘W in the File menu** (Close Tab, as in Safari) makes the standard Close "Close Window" on ⇧⌘W.
 
 ## 0.5.0 (2026-11-06): custom views and shipping
