@@ -4860,7 +4860,83 @@ fn live_segments_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
             );
             check("stored-direct", read.as_deref() == Some("kept") && gone.is_none(), format!("read {read:?}; after removing {gone:?}"));
             ferrokit::close_window(&w);
-            table_teardown(events.clone());
+            completion_checks(events.clone());
+        });
+    });
+}
+
+/// A key-down for the text view (Return, Escape…), sent to it directly.
+fn key_down(view: &objc2_app_kit::NSTextView, chars: &str, code: u16) {
+    let w = view.window().unwrap();
+    let e = objc2_app_kit::NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+        objc2_app_kit::NSEventType::KeyDown,
+        objc2_foundation::NSPoint::new(0.0, 0.0),
+        NSEventModifierFlags::empty(),
+        0.0,
+        w.windowNumber(),
+        None,
+        &NSString::from_str(chars),
+        &NSString::from_str(chars),
+        false,
+        code,
+    )
+    .unwrap();
+    view.keyDown(&e);
+}
+
+/// `TextModel::set_completer`: typing opens AppKit's completion list with
+/// the completer's words, typing on filters them, Escape keeps what was
+/// typed, Return puts the word in.
+fn completion_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let model = TextModel::new(ViewId(9100), "");
+    const WORDS: [&str; 4] = ["select", "serial", "set", "update"];
+    model.set_completer(Some(|text: &str, caret: usize| {
+        let start = text[..caret].rfind(|c: char| !c.is_alphanumeric()).map_or(0, |i| i + 1);
+        let word = &text[start..caret];
+        let items: Vec<String> = WORDS.iter().filter(|w| !word.is_empty() && w.starts_with(word) && **w != word).map(|w| w.to_string()).collect();
+        Some(ferrokit::Completion { range: start..caret, items })
+    }));
+    let w = open(Window::new("Completion").size(360.0, 160.0).view(text_editor(&model).accessibility_label("Code")));
+    w.makeKeyAndOrderFront(None);
+    let tv = model.text_view();
+    w.makeFirstResponder(Some(&tv));
+    let typed = |t: &str| unsafe { tv.insertText_replacementRange(&NSString::from_str(t), objc2_foundation::NSRange::new(usize::MAX >> 1, 0)) };
+    typed("s");
+    typed("e");
+    let (m, w2) = (model.clone(), w.clone());
+    after_events(move || {
+        let first = m.offered_completions();
+        let tv = m.text_view();
+        unsafe { tv.insertText_replacementRange(&NSString::from_str("r"), objc2_foundation::NSRange::new(usize::MAX >> 1, 0)) };
+        let (m, w2, first) = (m.clone(), w2.clone(), first.clone());
+        let events = events.clone();
+        after_events(move || {
+            let filtered = m.offered_completions();
+            let tv = m.text_view();
+            // Escape: the list goes, the text stays as typed.
+            key_down(&tv, "\u{1b}", 53);
+            let kept = m.text();
+            // What AppKit's list sends (an inactive window's list takes no
+            // keys in unattended runs): moving through it and typing on
+            // leave the text as typed; Return puts the word in.
+            let word = NSString::from_str("serial");
+            let partial = objc2_foundation::NSRange::new(0, 3);
+            tv.insertCompletion_forPartialWordRange_movement_isFinal(&word, partial, 0x10, false);
+            tv.insertCompletion_forPartialWordRange_movement_isFinal(&word, partial, 0, true);
+            let moving = m.text();
+            tv.insertCompletion_forPartialWordRange_movement_isFinal(&word, partial, 0x10, true);
+            let (m, w2, first, filtered) = (m.clone(), w2.clone(), first.clone(), filtered.clone());
+            let events = events.clone();
+            after_events(move || {
+                let chosen = m.text();
+                check(
+                    "text-completion",
+                    first == ["select", "serial", "set"] && filtered == ["serial"] && kept == "ser" && moving == "ser" && chosen == "serial",
+                    format!("offered {first:?}, then after r {filtered:?}; Escape kept {kept:?}; moving and typing on kept {moving:?}; Return gave {chosen:?}"),
+                );
+                ferrokit::close_window(&w2);
+                table_teardown(events.clone());
+            });
         });
     });
 }

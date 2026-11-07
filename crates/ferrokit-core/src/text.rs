@@ -20,6 +20,7 @@
 //! [`TextModel::html`] read it out, [`TextModel::set_rtf`] and
 //! [`TextModel::set_html`] load it.
 
+use objc2_foundation::NSArray;
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::ops::Range;
@@ -49,11 +50,34 @@ pub enum TextEvent {
     Composition(Option<String>),
 }
 
+/// What a completer offers at the caret: the text it completes (a byte
+/// range ending at the caret, such as the partial word) and the words that
+/// would replace it, best first. See [`TextModel::set_completer`].
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Completion {
+    /// The text the chosen word replaces (UTF-8 bytes, ending at the caret).
+    pub range: Range<usize>,
+    /// The words offered, in order.
+    pub items: Vec<String>,
+}
+
+type Completer = dyn Fn(&str, usize) -> Option<Completion>;
+
+// NSTextView's completion movements (NSText.h).
+const RETURN_MOVEMENT: isize = 0x10;
+const TAB_MOVEMENT: isize = 0x11;
+const OTHER_MOVEMENT: isize = 0;
+
 trait Data {
     fn push(&self, event: TextEvent);
+    /// The completer's offer at the caret (UTF-16 range), if it has one.
+    fn complete(&self) -> Option<(NSRange, Vec<String>)>;
+    fn has_completer(&self) -> bool;
     fn quiet(&self) -> bool;
     fn composing(&self) -> bool;
     fn undo_manager(&self) -> Retained<NSUndoManager>;
+    /// Records the words the completion list shows (for checks).
+    fn offered(&self, items: &[String]);
     /// Restyles; inside an edit (`edited`), true when the rest of the
     /// region is left for [`Data::finish_highlight`] just after it.
     fn highlight(&self, edited: Option<NSRange>) -> bool;
@@ -90,6 +114,46 @@ define_class!(
         fn insert_text(&self, string: &AnyObject, replacement: NSRange) {
             let () = unsafe { msg_send![super(self), insertText: string, replacementRange: replacement] };
             self.composition_changed();
+            // A typed word character (or a dot) opens the completer's list.
+            let typed = string.downcast_ref::<NSString>().map(|s| s.to_string()).unwrap_or_default();
+            let mut chars = typed.chars();
+            if let (Some(c), None) = (chars.next(), chars.next())
+                && (c.is_alphanumeric() || c == '_' || c == '.')
+                && !self.hasMarkedText()
+                && self.data().is_some_and(|d| d.has_completer())
+            {
+                self.complete_soon();
+            }
+        }
+
+        // The completer's partial word (after a dot, it may be empty).
+        #[unsafe(method(rangeForUserCompletion))]
+        fn range_for_user_completion(&self) -> NSRange {
+            if let Some((range, _)) = self.data().and_then(|d| d.complete()) {
+                return range;
+            }
+            unsafe { msg_send![super(self), rangeForUserCompletion] }
+        }
+
+        // With a completer, a word goes in only when it's chosen (Return,
+        // Tab, a click): not tentatively while moving through the list,
+        // and not when typing goes on or Escape closes it.
+        #[unsafe(method(insertCompletion:forPartialWordRange:movement:isFinal:))]
+        fn insert_completion(&self, word: &NSString, range: NSRange, movement: isize, is_final: bool) {
+            if self.data().is_some_and(|d| d.has_completer()) {
+                let clicked = || {
+                    let mtm = MainThreadMarker::from(self);
+                    objc2_app_kit::NSApplication::sharedApplication(mtm).currentEvent().is_some_and(|e| {
+                        use objc2_app_kit::NSEventType as T;
+                        matches!(e.r#type(), T::LeftMouseDown | T::LeftMouseUp)
+                    })
+                };
+                let chosen = is_final && (movement == RETURN_MOVEMENT || movement == TAB_MOVEMENT || (movement == OTHER_MOVEMENT && clicked()));
+                if !chosen {
+                    return;
+                }
+            }
+            let () = unsafe { msg_send![super(self), insertCompletion: word, forPartialWordRange: range, movement: movement, isFinal: is_final] };
         }
     }
 );
@@ -97,6 +161,24 @@ define_class!(
 impl HostTextView {
     fn data(&self) -> Option<Rc<dyn Data>> {
         self.ivars().data.borrow().as_ref().and_then(Weak::upgrade)
+    }
+
+    /// Opens the completion list after this event (when there's something
+    /// to offer), as AppKit's own complete: does.
+    fn complete_soon(&self) {
+        let view = objc2::rc::Weak::from(self);
+        let block = block2::RcBlock::new(move || {
+            let Some(v) = view.load() else { return };
+            if v.hasMarkedText() || v.data().is_none_or(|d| d.complete().is_none_or(|(_, items)| items.is_empty())) {
+                return;
+            }
+            // SAFETY: AppKit's completion, on the main thread.
+            objc2::rc::autoreleasepool(|_| unsafe { v.complete(None) });
+        });
+        let main = objc2_core_foundation::CFRunLoop::main().expect("main run loop");
+        // SAFETY: the main run loop; the block touches main-thread state only.
+        unsafe { main.perform_block(objc2_core_foundation::kCFRunLoopDefaultMode.map(|m| m.as_ref()), Some(&block)) };
+        main.wake_up();
     }
 
     /// Emits `Composition` when marked text appears, changes or goes away.
@@ -192,6 +274,12 @@ define_class!(
             data.push(TextEvent::Selection(utf16_to_bytes(&text, r.location, r.length)));
         }
 
+        // The completer's words (or AppKit's own, for an editor without one).
+        #[unsafe(method_id(textView:completions:forPartialWordRange:indexOfSelectedItem:))]
+        fn completions(&self, _view: &NSTextView, words: &NSArray<NSString>, _range: NSRange, index: *mut isize) -> Option<Retained<NSArray<NSString>>> {
+            Some(self.completion_words(words, index))
+        }
+
         // Each editor keeps its own undo history, instead of sharing the
         // window's (where ⌘Z in one view could undo another view's edit).
         #[unsafe(method_id(undoManagerForTextView:))]
@@ -204,6 +292,18 @@ define_class!(
 impl Delegate {
     fn data(&self) -> Option<Rc<dyn Data>> {
         self.ivars().data.borrow().as_ref().and_then(Weak::upgrade)
+    }
+
+    fn completion_words(&self, words: &NSArray<NSString>, index: *mut isize) -> Retained<NSArray<NSString>> {
+        let Some(data) = self.data().filter(|d| d.has_completer()) else { return words.retain() };
+        let items = data.complete().map(|(_, items)| items).unwrap_or_default();
+        if !index.is_null() {
+            // SAFETY: AppKit's out-parameter.
+            unsafe { *index = if items.is_empty() { -1 } else { 0 } };
+        }
+        data.offered(&items);
+        let items: Vec<Retained<NSString>> = items.iter().map(|w| NSString::from_str(w)).collect();
+        NSArray::from_retained_slice(&items)
     }
 }
 
@@ -256,6 +356,9 @@ struct Inner {
     /// The font unstyled text uses (`set_font`).
     font: RefCell<Retained<NSFont>>,
     highlighter: RefCell<Option<Rc<Highlighter>>>,
+    completer: RefCell<Option<Rc<Completer>>>,
+    /// The words the completion list last showed.
+    offered: RefCell<Vec<String>>,
     /// Set while styles are applied (they re-enter the storage delegate).
     styling: Cell<bool>,
     /// The runs last applied and the text's length then, to restyle only
@@ -668,6 +771,25 @@ impl Data for Inner {
         self.quiet.get()
     }
 
+    fn complete(&self) -> Option<(NSRange, Vec<String>)> {
+        let f = self.completer.borrow().clone()?;
+        let text = self.view.string().to_string();
+        let sel = self.view.selectedRange();
+        let caret = utf16_to_bytes(&text, sel.location + sel.length, 0).start;
+        let c = f(&text, caret)?;
+        let start = c.range.start.min(caret);
+        let (location, length) = bytes_to_utf16(&text, start..caret);
+        Some((NSRange::new(location, length), c.items))
+    }
+
+    fn has_completer(&self) -> bool {
+        self.completer.borrow().is_some()
+    }
+
+    fn offered(&self, items: &[String]) {
+        *self.offered.borrow_mut() = items.to_vec();
+    }
+
     fn composing(&self) -> bool {
         self.view.hasMarkedText()
     }
@@ -788,6 +910,8 @@ impl TextModel {
             _delegate: delegate.clone(),
             font: RefCell::new(NSFont::systemFontOfSize(13.0)),
             highlighter: RefCell::new(None),
+            completer: RefCell::new(None),
+            offered: RefCell::new(Vec::new()),
             styling: Cell::new(false),
             shown: RefCell::new(None),
             deferred: Cell::new(None),
@@ -926,6 +1050,27 @@ impl TextModel {
             *self.inner.font.borrow_mut() = font;
             self.inner.highlight(None);
         }
+    }
+
+    /// Completes as the user types, in AppKit's completion list: `f` gets
+    /// the text and the caret (a byte offset) and says what it completes
+    /// there and with which words ([`Completion`]), or `None`. Typing a
+    /// word character or a dot opens the list (⌥⎋ or F5 open it too);
+    /// typing on filters it (`f` is asked again), ↑ and ↓ move, Return or
+    /// Tab or a click puts the word in, and Escape closes it.
+    pub fn set_completer(&self, f: Option<impl Fn(&str, usize) -> Option<Completion> + 'static>) {
+        *self.inner.completer.borrow_mut() = f.map(|f| Rc::new(f) as Rc<Completer>);
+    }
+
+    /// Opens the completion list at the caret now (as ⌥⎋ does).
+    pub fn complete(&self) {
+        // SAFETY: AppKit's completion, on the main thread.
+        unsafe { self.inner.view.complete(None) };
+    }
+
+    /// The words the completion list showed last (for checks).
+    pub fn offered_completions(&self) -> Vec<String> {
+        self.inner.offered.borrow().clone()
     }
 
     /// Styles the text with `f`: given the text, it returns runs (UTF-8

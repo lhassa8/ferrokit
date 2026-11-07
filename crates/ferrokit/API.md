@@ -741,6 +741,13 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn ns(self) -> Retained<NSColor>`: The `NSColor` (dynamic for the named colours).
 - `pub fn from_ns(color: &NSColor) -> Option<Color>`: The colour an `NSColor` is: a named one if it's one of those, else its sRGB components.
 
+### `Completion`
+
+`pub struct Completion`: What a completer offers at the caret: the text it completes (a byte range ending at the caret, such as the partial word) and the words that would replace it, best first. See `TextModel::set_completer`.
+
+- `pub range: Range<usize>`: The text the chosen word replaces (UTF-8 bytes, ending at the caret).
+- `pub items: Vec<String>`: The words offered, in order.
+
 ### `TextModel`
 
 `pub struct TextModel`: A native plain-text editor. Cheap to clone (a handle); main thread only.
@@ -759,6 +766,9 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn set_editable(&self, editable: bool)`: Read-only (`false`) or editable. Read-only text can still be selected and copied.
 - `pub fn is_editable(&self) -> bool`: Whether the user can edit the text.
 - `pub fn set_font(&self, name: Option<&str>, size: f64)`: Font: `None` for the system font, else a family or PostScript name.
+- `pub fn set_completer(&self, f: Option<impl Fn(&str, usize) -> Option<Completion> + 'static>)`: Completes as the user types, in AppKit's completion list: `f` gets the text and the caret (a byte offset) and says what it completes there and with which words (`Completion`), or `None`. Typing a word character or a dot opens the list (⌥⎋ or F5 open it too); typing on filters it (`f` is asked again), ↑ and ↓ move, Return or Tab or a click puts the word in, and Escape closes it.
+- `pub fn complete(&self)`: Opens the completion list at the caret now (as ⌥⎋ does).
+- `pub fn offered_completions(&self) -> Vec<String>`: The words the completion list showed last (for checks).
 - `pub fn set_highlighter(&self, f: Option<impl Fn(&str) -> Vec<(Range<usize>, TextStyle)> + 'static>)`: Styles the text with `f`: given the text, it returns runs (UTF-8 byte ranges) and their styles; the rest is plain. It runs now and after every edit (typing, paste, undo, `set_text`), before the edit is drawn, so keep it fast: it sees the whole text each time. `None` makes the text plain again.
 - `pub fn restyle(&self)`: Runs the highlighter again, for when what it depends on changed other than the text (a search term, a theme).
 - `pub fn style_at(&self, offset: usize) -> TextStyle`: The style of the character at byte `offset`, as shown (for checks).

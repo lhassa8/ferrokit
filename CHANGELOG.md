@@ -12,6 +12,7 @@ Found by Rowboat, the SQLite app being built on Ferrokit for the Mac App Store (
 - **Added: `TextField::on_commit`**: runs whenever editing ends (Return, Tab, or a click elsewhere), so an edit isn't lost by leaving the field.
 - **Added: `segmented_with(&value, || options)`**: a segmented control whose segments come from signals, added, removed and retitled in place (a tab bar of queries or documents).
 - **Added: `read_stored`, `write_stored`, `remove_stored`**: user-defaults values without a signal, for values kept per document or item (a database's tabs). A `stored` signal lives as long as the app, so one per document piled up.
+- **Added: `TextModel::set_completer(|text, caret| Some(Completion { range, items }))`**: completion as you type in AppKit's own completion list (a word character or a dot opens it, typing on filters it, Return, Tab or a click puts the word in, Escape closes it; ⌥⎋ and `TextModel::complete()` open it). Without a completer the editor keeps AppKit's dictionary completion. `offered_completions()` for checks.
 - **Changed: an app item on ⌘W in the File menu** (Close Tab, as in Safari) makes the standard Close "Close Window" on ⇧⌘W.
 
 ## 0.5.0 (2026-11-06): custom views and shipping
