@@ -684,6 +684,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 
 `pub struct Outline<T: Identifiable + 'static>`: A native outline view over a tree (see the module docs).
 
+- `pub fn expanded(mut self) -> Self`: Every item shown expanded, each time the tree changes (a plan, a document's outline: trees read whole).
 - `pub fn icon(mut self, f: impl Fn(&T) -> Option<String> + 'static) -> Self`: An SF Symbol per item (or `None`).
 - `pub fn icon_color(mut self, f: impl Fn(&T) -> Option<crate::Color> + 'static) -> Self`: A colour per item's icon (or `None` for the sidebar's own), as Mail's mailboxes and Reminders' lists show theirs.
 - `pub fn selection(mut self, selected: &Signal<Option<T::Id>>) -> Self`: Two-way selection by item id.

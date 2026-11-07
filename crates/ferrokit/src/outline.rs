@@ -265,9 +265,17 @@ pub struct Outline<T: Identifiable + 'static> {
     tint: Option<Rc<TintFn<T>>>,
     selection: Option<Signal<Option<T::Id>>>,
     sidebar: bool,
+    expanded: bool,
 }
 
 impl<T: Identifiable + 'static> Outline<T> {
+    /// Every item shown expanded, each time the tree changes (a plan, a
+    /// document's outline: trees read whole).
+    pub fn expanded(mut self) -> Self {
+        self.expanded = true;
+        self
+    }
+
     /// An SF Symbol per item (or `None`).
     pub fn icon(mut self, f: impl Fn(&T) -> Option<String> + 'static) -> Self {
         self.icon = Some(Rc::new(f));
@@ -362,7 +370,7 @@ impl<T: Identifiable + 'static> View for Outline<T> {
         };
 
         // Rebuild when the tree's signals change; keep item objects by id.
-        let (roots_fn, title, sidebar) = (self.roots, self.title, self.sidebar);
+        let (roots_fn, title, sidebar, expanded) = (self.roots, self.title, self.sidebar, self.expanded);
         let tint = self.tint;
         let icon: Option<Rc<LookFn<T>>> = self.icon.map(|f| Rc::new(move |v: &T| f(v).map(|name| (name, tint.as_ref().and_then(|t| t(v))))) as Rc<LookFn<T>>);
         let (st, ids2, ov2, restore2) = (state.clone(), ids.clone(), ov.clone(), restore.clone());
@@ -409,7 +417,10 @@ impl<T: Identifiable + 'static> View for Outline<T> {
                 s.quiet = true;
                 drop(s);
                 ov2.reloadData();
-                if sidebar {
+                if expanded {
+                    // SAFETY: nil expands every root, with its children.
+                    unsafe { ov2.expandItem_expandChildren(None, true) };
+                } else if sidebar {
                     // Sections start expanded.
                     let roots: Vec<_> = st.borrow().roots.iter().map(|&i| st.borrow().items[i].clone()).collect();
                     for r in roots {
@@ -438,7 +449,7 @@ pub fn outline<T: Identifiable + 'static>(
     roots: impl Fn() -> Vec<TreeNode<T>> + 'static,
     title: impl Fn(&T) -> String + 'static,
 ) -> Outline<T> {
-    Outline { roots: Box::new(roots), title: Rc::new(title), icon: None, tint: None, selection: None, sidebar: false }
+    Outline { roots: Box::new(roots), title: Rc::new(title), icon: None, tint: None, selection: None, sidebar: false, expanded: false }
 }
 
 /// A Mac sidebar: an outline in the source-list style whose top-level items

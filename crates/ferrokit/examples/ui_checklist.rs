@@ -4935,9 +4935,42 @@ fn completion_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                     format!("offered {first:?}, then after r {filtered:?}; Escape kept {kept:?}; moving and typing on kept {moving:?}; Return gave {chosen:?}"),
                 );
                 ferrokit::close_window(&w2);
-                table_teardown(events.clone());
+                outline_expanded_checks(events.clone());
             });
         });
+    });
+}
+
+#[derive(Clone)]
+struct Step(String);
+
+impl Identifiable for Step {
+    type Id = String;
+    fn id(&self) -> String {
+        self.0.clone()
+    }
+}
+
+/// `Outline::expanded`: every level open, and again when the tree changes.
+fn outline_expanded_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let deep = Signal::new(false);
+    let tree = move || {
+        let leaf = |s: &str| TreeNode::leaf(Step(s.into()));
+        let mut inner = vec![leaf("c1"), leaf("c2")];
+        if deep.get() {
+            inner.push(TreeNode::branch(Step("c3".into()), vec![leaf("d1")]));
+        }
+        vec![TreeNode::branch(Step("a".into()), vec![TreeNode::branch(Step("b".into()), inner)]), leaf("e")]
+    };
+    let w = open(Window::new("Plan").size(300.0, 300.0).view(outline(tree, |s: &Step| s.0.clone()).expanded().accessibility_label("Plan")));
+    let ov = all_views(&w.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSOutlineView>().ok()).unwrap();
+    let rows = ov.numberOfRows();
+    batch(|| deep.set(true));
+    after_events(move || {
+        let after = ov.numberOfRows();
+        check("outline-expanded", rows == 5 && after == 7, format!("{rows} rows shown of 5; after the tree grew {after} of 7"));
+        ferrokit::close_window(&w);
+        table_teardown(events.clone());
     });
 }
 
