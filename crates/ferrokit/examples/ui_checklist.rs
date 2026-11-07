@@ -4941,6 +4941,34 @@ fn completion_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     });
 }
 
+/// A `dynamic` inside a hidden view, rebuilt while hidden: its new views
+/// stay hidden (they showed through), and show when the view does.
+fn dynamic_hidden_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let (hide, which) = (Signal::new(true), Signal::new(1));
+    let w = open(Window::new("Hidden").size(300.0, 120.0).view(
+        vstack((dynamic(move || button(format!("Branch {}", which.get()), || {})).hidden(move || hide.get()), text("Always"))).padding(12.0),
+    ));
+    let buttons = |w: &objc2_app_kit::NSWindow| all_views(&w.contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).collect::<Vec<_>>();
+    batch(|| which.set(2));
+    let w2 = w.clone();
+    after_events(move || {
+        let rebuilt: Vec<(String, bool)> = buttons(&w2).iter().map(|b| (b.title().to_string(), b.isHiddenOrHasHiddenAncestor())).collect();
+        batch(|| hide.set(false));
+        let (w3, rebuilt) = (w2.clone(), rebuilt.clone());
+        let events = events.clone();
+        after_events(move || {
+            let shown: Vec<(String, bool)> = buttons(&w3).iter().map(|b| (b.title().to_string(), b.isHiddenOrHasHiddenAncestor())).collect();
+            check(
+                "dynamic-hidden",
+                rebuilt == [("Branch 2".to_string(), true)] && shown == [("Branch 2".to_string(), false)],
+                format!("rebuilt while hidden {rebuilt:?}; shown {shown:?}"),
+            );
+            ferrokit::close_window(&w3);
+            table_teardown(events.clone());
+        });
+    });
+}
+
 #[derive(Clone)]
 struct Step(String);
 
@@ -4970,7 +4998,7 @@ fn outline_expanded_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         let after = ov.numberOfRows();
         check("outline-expanded", rows == 5 && after == 7, format!("{rows} rows shown of 5; after the tree grew {after} of 7"));
         ferrokit::close_window(&w);
-        table_teardown(events.clone());
+        dynamic_hidden_checks(events.clone());
     });
 }
 

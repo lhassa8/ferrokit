@@ -16,6 +16,8 @@ Found by Rowboat, the SQLite app being built on Ferrokit for the Mac App Store (
 - **Added: `Outline::expanded()`**: every level open, and again whenever the tree changes (a query plan, a document's outline).
 - **Fixed: an effect could run after its window closed.** A batch that changed a document and then closed its window (Save As… and close) ran the window's queued effects at its end, reading signals freed with the window. An effect whose owner has gone now stops instead.
 - **Added: `role = "viewer"`** for a document type in `cargo ferrokit` (`CFBundleTypeRole` Viewer): files the app opens but doesn't save as themselves (a CSV opened as a table).
+- **Fixed: a `dynamic` rebuilt inside a hidden view showed through.** Its new views were made visible while the view around them was hidden (Rowboat's filter bar drew over the table it hid above). They now start hidden and show with the view.
+- **Changed: a number column shows `f64::NAN` as nothing** (a database's NULL), not "NaN".
 - **Changed: an app item on ⌘W in the File menu** (Close Tab, as in Safari) makes the standard Close "Close Window" on ⇧⌘W.
 
 ## 0.5.0 (2026-11-06): custom views and shipping

@@ -596,7 +596,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 `pub struct Column<T>`: A column: an id (stable, used for sorting and saved state), a title, and how to get the cell value from a row.
 
 - `pub fn text(id: &str, title: &str, value: impl Fn(&T) -> String + 'static) -> Self`: A text column.
-- `pub fn number(id: &str, title: &str, value: impl Fn(&T) -> f64 + 'static) -> Self`: A right-aligned number column, sorted numerically.
+- `pub fn number(id: &str, title: &str, value: impl Fn(&T) -> f64 + 'static) -> Self`: A right-aligned number column, sorted numerically. `f64::NAN` is no value (a database's NULL, say): shown as nothing.
 - `pub fn check(id: &str, title: &str, value: impl Fn(&T) -> bool + 'static) -> Self`: A checkbox column. Clicking a checkbox emits `TableEvent::Toggle`; the model doesn't change the row itself.
 - `pub fn progress(id: &str, title: &str, value: impl Fn(&T) -> f64 + 'static) -> Self`: A progress bar from 0 to 1 (values outside are clamped). Sorted and copied as the number; VoiceOver reads it as a percentage.
 - `pub fn date(id: &str, title: &str, value: impl Fn(&T) -> Option<std::time::SystemTime> + 'static) -> Self`: A date column: shown in the user's format and language ("12 Mar 2024", "Today", "Yesterday"), sorted by date, oldest first; `None` shows nothing and sorts before every date. Copied as shown. `with_time` adds the time.

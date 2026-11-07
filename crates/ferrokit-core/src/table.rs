@@ -113,7 +113,8 @@ impl<T> Column<T> {
         Self::new(id, title, Kind::Text, Box::new(move |row| Value::Text(value(row))))
     }
 
-    /// A right-aligned number column, sorted numerically.
+    /// A right-aligned number column, sorted numerically. `f64::NAN` is no
+    /// value (a database's NULL, say): shown as nothing.
     pub fn number(id: &str, title: &str, value: impl Fn(&T) -> f64 + 'static) -> Self {
         Self::new(id, title, Kind::Number { decimals: 0 }, Box::new(move |row| Value::Number(value(row))))
     }
@@ -221,6 +222,8 @@ fn display(kind: Kind, value: &Value) -> String {
     match (kind, value) {
         (_, Value::Text(s)) => s.clone(),
         (Kind::Date { time }, Value::Number(n)) => format_date(*n, time),
+        // NaN is no value (a database's NULL): shown as nothing.
+        (Kind::Number { .. }, Value::Number(n)) if n.is_nan() => String::new(),
         (Kind::Number { decimals }, Value::Number(n)) => format!("{n:.decimals$}"),
         (_, Value::Number(n)) => n.to_string(),
         (_, Value::Bool(b)) => if *b { "Yes".into() } else { "No".into() },
@@ -1830,5 +1833,16 @@ mod tests {
         assert_eq!(natural_cmp("apple", "Banana"), Less);
         assert_eq!(natural_cmp("a2b", "a02b"), Equal);
         assert_eq!(natural_cmp("x", "x1"), Less);
+    }
+}
+
+#[cfg(test)]
+mod number_cells {
+    use super::*;
+
+    #[test]
+    fn nan_is_no_value() {
+        assert_eq!(display(Kind::Number { decimals: 2 }, &Value::Number(f64::NAN)), "");
+        assert_eq!(display(Kind::Number { decimals: 2 }, &Value::Number(1.5)), "1.50");
     }
 }

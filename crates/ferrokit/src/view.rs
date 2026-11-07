@@ -1451,6 +1451,18 @@ impl View for Dynamic {
                 let mut new = owner.with(|| view.build_node(&mut Cx::new(container.clone())));
                 new.owner = Some(owner);
                 new.meta.set_parent(&meta);
+                // Inside a hidden view, the new branch starts hidden too, and
+                // shows with it (built while hidden, it showed through).
+                let mut up = Some(meta.clone());
+                while let Some(m) = up {
+                    if m.hidden.get() {
+                        let views: Vec<NativeView> = new.all_views().into_iter().filter(|v| !v.isHidden()).collect();
+                        views.iter().for_each(|v| v.setHidden(true));
+                        m.hid.borrow_mut().extend(views);
+                        break;
+                    }
+                    up = m.parent();
+                }
                 // The old node (and its subtree) is dropped here: teardown.
                 *children.borrow_mut() = vec![new];
                 meta.mark();
