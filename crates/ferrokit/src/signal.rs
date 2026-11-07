@@ -144,7 +144,20 @@ impl EffectInner {
         let prev = OBSERVER.with_borrow_mut(|o| o.replace(self.clone()));
         // The effect's own owner is current (none for app-level effects),
         // whatever was current where the batch flushed.
-        let owner = self.owner.as_ref().and_then(Weak::upgrade);
+        let owner = match &self.owner {
+            None => None,
+            Some(weak) => match weak.upgrade() {
+                Some(owner) => Some(owner),
+                // Its owner (a closed window or document) is gone, and the
+                // signals it reads with it: it doesn't run again. (Queued
+                // in a batch that closed its window, a text's effect read
+                // a freed signal.)
+                None => {
+                    self.stopped.set(true);
+                    return;
+                }
+            },
+        };
         let prev_owner = OWNER.with_borrow_mut(|c| std::mem::replace(c, owner));
         // Put back even if the effect unwinds (a failure caught further out).
         struct Restore(Option<Rc<EffectInner>>, Option<Rc<OwnerInner>>);
@@ -818,6 +831,30 @@ mod tests {
         let b = Signal::new(7);
         assert!(!a.is_alive());
         assert_eq!(b.get(), 7);
+    }
+
+    #[test]
+    fn an_effect_whose_owner_is_gone_does_not_run() {
+        let trigger = Signal::new(0);
+        let owner = Owner::new();
+        let runs = Rc::new(Cell::new(0));
+        let r = runs.clone();
+        let effect = owner.with(|| {
+            let own = Signal::new(1);
+            Effect::new(move || {
+                trigger.get();
+                r.set(r.get() + own.get());
+            })
+        });
+        assert_eq!(runs.get(), 1);
+        // Queued in a batch, then its owner freed (a window closed) before
+        // the batch ends: it would read a freed signal.
+        batch(|| {
+            trigger.set(1);
+            drop(owner);
+        });
+        assert_eq!(runs.get(), 1);
+        drop(effect);
     }
 
     #[test]

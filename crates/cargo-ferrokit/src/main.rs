@@ -71,6 +71,7 @@ Settings, in the app's Cargo.toml:
     [[package.metadata.ferrokit.documents]]
     name = \"Text\"
     extensions = [\"txt\", \"md\"]
+    role = \"viewer\"          # only reads these (default: editor)
     related = [\"-journal\"]     # files beside a document it opens too (a
                                 # database's journal), reached in the sandbox
                                 # through ferrokit's related_files
@@ -89,6 +90,9 @@ struct DocType {
     /// Suffixes of files beside a document that it opens too, such as a
     /// database's `-wal` and `-journal`.
     related: Vec<String>,
+    /// "Editor" (the default) or "Viewer": an app that only reads these
+    /// files (a data file opened as a table) says so.
+    role: String,
 }
 
 fn main() -> ExitCode {
@@ -337,7 +341,12 @@ impl Project {
             .flatten()
             .map(|d| {
                 let list = |key: &str| d[key].as_array().into_iter().flatten().filter_map(|e| e.as_str().map(String::from)).collect();
-                DocType { name: d["name"].as_str().unwrap_or("Document").to_string(), extensions: list("extensions"), related: list("related") }
+                DocType {
+                    name: d["name"].as_str().unwrap_or("Document").to_string(),
+                    extensions: list("extensions"),
+                    related: list("related"),
+                    role: if d["role"].as_str().is_some_and(|r| r.eq_ignore_ascii_case("viewer")) { "Viewer".into() } else { "Editor".into() },
+                }
             })
             .collect();
         let updates = Updates::from_metadata(&m["updates"], &dir)?;
@@ -680,8 +689,9 @@ fn info_plist(p: &Project, icon: bool, build: Option<&str>, sparkle: bool) -> St
         for d in &p.documents {
             let exts: String = d.extensions.iter().map(|e| format!("<string>{}</string>", xml(e))).collect();
             s += &format!(
-                "    <dict><key>CFBundleTypeName</key><string>{}</string><key>CFBundleTypeRole</key><string>Editor</string><key>LSHandlerRank</key><string>Alternate</string><key>CFBundleTypeExtensions</key><array>{exts}</array></dict>\n",
-                xml(&d.name)
+                "    <dict><key>CFBundleTypeName</key><string>{}</string><key>CFBundleTypeRole</key><string>{}</string><key>LSHandlerRank</key><string>Alternate</string><key>CFBundleTypeExtensions</key><array>{exts}</array></dict>\n",
+                xml(&d.name),
+                xml(&d.role)
             );
             // Files beside a document that the app may open with it (a
             // database's journal): the sandbox lets the app reach them
@@ -1079,7 +1089,7 @@ mod tests {
             icon: None,
             min_macos: "15.0".into(),
             category: None,
-            documents: vec![DocType { name: "Text".into(), extensions: vec!["txt".into(), "md".into()], related: vec![] }],
+            documents: vec![DocType { name: "Text".into(), extensions: vec!["txt".into(), "md".into()], related: vec![], role: "Editor".into() }],
             languages: vec!["de".into()],
             sign: None,
             notary_profile: None,
@@ -1100,9 +1110,14 @@ mod tests {
         assert!(!plist.contains("NSIsRelatedItemType"), "no related files declared");
         // Related files: their extensions, declared as related items.
         let mut p = p;
-        p.documents = vec![DocType { name: "Database".into(), extensions: vec!["sqlite".into(), "db".into()], related: vec!["-wal".into(), "-journal".into()] }];
+        p.documents = vec![
+            DocType { name: "Database".into(), extensions: vec!["sqlite".into(), "db".into()], related: vec!["-wal".into(), "-journal".into()], role: "Editor".into() },
+            DocType { name: "Data File".into(), extensions: vec!["csv".into()], related: vec![], role: "Viewer".into() },
+        ];
         let plist = info_plist(&p, true, None, false);
         assert!(plist.contains("<key>CFBundleTypeName</key><string>Database (related)</string>"), "{plist}");
+        // A viewer's role.
+        assert!(plist.contains("<key>CFBundleTypeName</key><string>Data File</string><key>CFBundleTypeRole</key><string>Viewer</string>"), "{plist}");
         assert!(plist.contains("<key>NSIsRelatedItemType</key><true/><key>CFBundleTypeExtensions</key><array><string>sqlite-wal</string><string>sqlite-journal</string><string>db-wal</string><string>db-journal</string></array>"), "{plist}");
     }
 

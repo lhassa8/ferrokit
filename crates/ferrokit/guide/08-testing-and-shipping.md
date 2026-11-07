@@ -295,6 +295,10 @@ extensions = ["sqlite", "db"]
 related = ["-journal", "-wal", "-shm"]
 ```
 
+Files the app opens but never saves as themselves (a CSV it shows as a
+table, saved with Save As… as a database) are a viewer's: say so with
+`role = "viewer"` in their document type.
+
 `check-all` runs the `notes` example sandboxed. A file outside the app's
 container can only be granted by the user choosing it, so try Open Recent
 on one by hand once.

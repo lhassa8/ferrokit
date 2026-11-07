@@ -14,6 +14,8 @@ Found by Rowboat, the SQLite app being built on Ferrokit for the Mac App Store (
 - **Added: `read_stored`, `write_stored`, `remove_stored`**: user-defaults values without a signal, for values kept per document or item (a database's tabs). A `stored` signal lives as long as the app, so one per document piled up.
 - **Added: `TextModel::set_completer(|text, caret| Some(Completion { range, items }))`**: completion as you type in AppKit's own completion list (a word character or a dot opens it, typing on filters it, Return, Tab or a click puts the word in, Escape closes it; ⌥⎋ and `TextModel::complete()` open it). Without a completer the editor keeps AppKit's dictionary completion. `offered_completions()` for checks.
 - **Added: `Outline::expanded()`**: every level open, and again whenever the tree changes (a query plan, a document's outline).
+- **Fixed: an effect could run after its window closed.** A batch that changed a document and then closed its window (Save As… and close) ran the window's queued effects at its end, reading signals freed with the window. An effect whose owner has gone now stops instead.
+- **Added: `role = "viewer"`** for a document type in `cargo ferrokit` (`CFBundleTypeRole` Viewer): files the app opens but doesn't save as themselves (a CSV opened as a table).
 - **Changed: an app item on ⌘W in the File menu** (Close Tab, as in Safari) makes the standard Close "Close Window" on ⇧⌘W.
 
 ## 0.5.0 (2026-11-06): custom views and shipping
