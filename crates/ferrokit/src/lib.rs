@@ -132,7 +132,7 @@ pub use controls::{
 pub use chrome::{MenuItem, Modifier, Split, customize_toolbar_item, dynamic_submenu, format_menu, submenu, ToolbarItem, menu_item, menu_separator, split, toolbar_button, toolbar_fixed_space, toolbar_group, toolbar_picker, toolbar_search, toolbar_space};
 pub use dialogs::{Alert, OpenOptions, SheetHandle, alert, open_panel, save_panel, sheet, sheet_with};
 pub use documents::{
-    Document, DocumentType, choose_documents, document_edited, new_document, open_document, recent_documents, revert_document, save_document, save_document_as, show_welcome, welcome_window,
+    Document, DocumentType, choose_documents, document_edited, new_document, open_document, recent_documents, regain_access, remember_access, revert_document, save_document, save_document_as, show_welcome, welcome_window,
 };
 pub use layout::layout_stats;
 pub use models::{Table, TextEditor, table, text_editor};
@@ -156,7 +156,7 @@ pub use quicklook::{Thumbnail, close_quick_look, is_quick_look_open, quick_look,
 pub use services::{FileDates, Notification, SentNotification, ShareButton, ShareItem, cancel_notification, file_dates, move_to_trash, notifications_supported, notify, pdf_data, print, reveal_in_finder, save_pdf, share_button};
 pub use status::MenuBarExtra;
 pub use motion::{Animation, Keyframes, Transition, animate, animated, animated_with, keyframes, reduce_motion, stop_animation};
-pub use popover::Edge;
+pub use popover::{Edge, toolbar_popover};
 pub use canvas::{Canvas, CanvasDrag, Painter, canvas};
 pub use native::{NativeView, native};
 pub use related::{RelatedFiles, related_files};
@@ -1556,6 +1556,75 @@ pub fn spawn<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static, then:
             }
         }));
     });
+}
+
+thread_local! {
+    /// The progress signal of each job started by [`spawn_with_progress`].
+    static PROGRESS: UiCell<HashMap<u64, Signal<Option<f64>>>> = UiCell::new(HashMap::new());
+}
+
+/// What a job started by [`spawn_with_progress`] reports its progress
+/// through, from its background thread.
+pub struct Reporter {
+    id: u64,
+    /// The latest fraction's bits, and whether an update is on its way to
+    /// the main thread (so a job reporting often posts only now and then).
+    latest: std::sync::Arc<(std::sync::atomic::AtomicU64, std::sync::atomic::AtomicBool)>,
+}
+
+impl Reporter {
+    /// How far the job is, from 0 to 1 (clamped). Cheap to call often: the
+    /// signal gets the latest value on the main thread's next pass.
+    pub fn report(&self, fraction: f64) {
+        use std::sync::atomic::Ordering;
+        let (latest, pending) = &*self.latest;
+        latest.store(fraction.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+        if pending.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let (id, shared) = (self.id, self.latest.clone());
+        Native::on_main(Box::new(move || {
+            let (latest, pending) = &*shared;
+            pending.store(false, Ordering::Release);
+            let value = f64::from_bits(latest.load(Ordering::Relaxed));
+            if let Some(signal) = PROGRESS.with_borrow(|p| p.get(&id).copied()) {
+                batch(|| signal.set_if_changed(Some(value)));
+            }
+        }));
+    }
+}
+
+/// [`spawn`] for a long job that reports how far it is: `progress` reads
+/// `Some(0.0)` at once, the fractions `work` reports through its
+/// [`Reporter`] as it goes, and `None` once it's done (just before `then`
+/// runs). Show it with [`progress`]:
+///
+/// ```no_run
+/// # use ferrokit::*;
+/// let done = Signal::new(None);
+/// spawn_with_progress(&done, |r| {
+///     for i in 0..100 {
+///         // … a hundredth of the work …
+///         r.report((i + 1) as f64 / 100.0);
+///     }
+///     42
+/// }, |answer| println!("{answer}"));
+/// let bar = progress(move || done.get());
+/// ```
+pub fn spawn_with_progress<T: Send + 'static>(progress: &Signal<Option<f64>>, work: impl FnOnce(&Reporter) -> T + Send + 'static, then: impl FnOnce(T) + 'static) {
+    let id = NEXT_TASK.with(|n| n.replace(n.get() + 1));
+    PROGRESS.with_borrow_mut(|p| p.insert(id, *progress));
+    progress.set(Some(0.0));
+    let reporter = Reporter { id, latest: std::sync::Arc::new((std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicBool::new(false))) };
+    let signal = *progress;
+    spawn(
+        move || work(&reporter),
+        move |result| {
+            PROGRESS.with_borrow_mut(|p| p.remove(&id));
+            signal.set(None);
+            then(result);
+        },
+    );
 }
 
 /// The guide: how to build an app with Ferrokit, chapter by chapter. Its

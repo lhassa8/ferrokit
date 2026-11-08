@@ -1903,6 +1903,7 @@ struct TransferState {
     model: Rc<TableModel<Item2>>,
     moves: Signal<Vec<(Vec<usize>, Option<usize>)>>,
     files: Signal<Vec<(Vec<std::path::PathBuf>, Option<usize>)>>,
+    urls: Signal<Vec<(Vec<String>, Option<usize>)>>,
     pastes: Signal<u32>,
 }
 
@@ -2779,6 +2780,7 @@ fn toolbar_kind_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                 toolbar_fixed_space(),
                 toolbar_picker("mode", "View", &mode, vec![("List", "list.bullet", Mode::List), ("Grid", "square.grid.2x2", Mode::Grid)]),
                 toolbar_space(),
+                ferrokit::toolbar_popover("about", "About", "info.circle", || text("Shown from the toolbar").padding(12.0)),
                 toolbar_button("share", "Share", "square.and.arrow.up", move || shared.update(|n| *n += 1)).optional(),
             ])
             .customizable_toolbar("checklist-tools")
@@ -2817,6 +2819,22 @@ fn toolbar_kind_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         first == 0 && followed == 1 && mode.get_untracked() == Mode::List && picker.selectionMode() == NSToolbarItemGroupSelectionMode::SelectOne,
         format!("shows {first}; Grid → segment {followed}; choosing List → {:?}", mode.get_untracked()),
     );
+
+    // A toolbar popover: pressing the item opens its content in a popover
+    // (pointing at the item); pressing again closes it.
+    let about = tb.items().iter().find(|i| i.itemIdentifier().to_string() == "about").unwrap();
+    let press = |i: &objc2_app_kit::NSToolbarItem| unsafe { app.sendAction_to_from(i.action().unwrap(), i.target().as_deref(), Some(i)) };
+    let popover_text = || {
+        app.windows().iter().filter(|x| x.isVisible() && x.class().name().to_string_lossy().contains("Popover")).find_map(|x| {
+            let cv = x.contentView()?;
+            all_views(&cv).into_iter().filter_map(|v| v.downcast::<NSTextField>().ok()).map(|f| f.stringValue().to_string()).find(|t| t == "Shown from the toolbar")
+        })
+    };
+    press(&about);
+    let opened = popover_text();
+    press(&about);
+    let closed = popover_text().is_none();
+    check("toolbar-popover", opened.is_some() && closed, format!("pressed: {opened:?}; pressed again, closed {closed}"));
 
     // Customisable: the optional item is offered, not shown; adding it (as
     // the sheet does) makes a live item, and the layout is remembered.
@@ -3648,13 +3666,13 @@ fn rich_table_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 /// are used (never the clipboard), and drops go through the table's own
 /// data-source methods (no mouse).
 fn transfer_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
-    use ferrokit_core::testing::{drag_rows, drop_on_table, files_pasteboard, pasteboard_text, private_pasteboard, release_pasteboard, set_pasteboard_text};
+    use ferrokit_core::testing::{drag_rows, drop_on_table, files_pasteboard, urls_pasteboard, pasteboard_text, private_pasteboard, release_pasteboard, set_pasteboard_text};
     let model = Rc::new(TableModel::new(
         ViewId(960),
         vec![Column::text("name", "Name", |r: &Item2| r.name.clone()), Column::number("n", "N", |r: &Item2| r.n), Column::check("big", "Big", |r: &Item2| r.n >= 5.0)],
     ));
     model.set_rows((0..10).map(|i| Item2 { name: format!("Item {i}"), n: i as f64 }).collect());
-    let s = TransferState { model: model.clone(), moves: Signal::new(vec![]), files: Signal::new(vec![]), pastes: Signal::new(0) };
+    let s = TransferState { model: model.clone(), moves: Signal::new(vec![]), files: Signal::new(vec![]), urls: Signal::new(vec![]), pastes: Signal::new(0) };
     let (m1, m2, m3) = (s.clone(), s.clone(), s.clone());
     let _ = open(
         Window::new("Transfer").size(420.0, 360.0).view(
@@ -3664,6 +3682,7 @@ fn transfer_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                     m1.model.move_rows(&rows, before);
                 })
                 .on_files_dropped(&["csv"], move |paths, before| m2.files.update(|v| v.push((paths, before))))
+                .on_urls_dropped(move |urls, before| m2.urls.update(|v| v.push((urls, before))))
                 .on_paste(move |text| {
                     m3.pastes.update(|n| *n += 1);
                     for line in text.lines() {
@@ -3781,7 +3800,11 @@ fn transfer_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
             let txt_refused = !drop_on_table(&m.table_view(), &txt, 1, false);
             // Rows from another table aren't a reorder here.
             let foreign = !drop_on_table(&m.table_view(), &drag_rows(&m.table_view(), &[0]).unwrap(), 1, false);
-            [csvs, txt].iter().for_each(|p| release_pasteboard(p));
+            // A link dragged from a browser: its address, above the row; a
+            // file drop still goes to the files.
+            let link = urls_pasteboard(&["https://example.com/report"]);
+            let url_dropped = drop_on_table(&m.table_view(), &link, 2, false);
+            [csvs, txt, link].iter().for_each(|p| release_pasteboard(p));
             let s4 = s.clone();
             let events = events.clone();
             after_events(move || {
@@ -3791,6 +3814,12 @@ fn transfer_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                     "table-file-drop",
                     dropped && txt_refused && foreign && files == want,
                     format!("csv drop: {dropped} → {files:?}; .txt refused: {txt_refused}; rows without the table as source refused: {foreign}"),
+                );
+                let urls = s4.urls.get_untracked();
+                check(
+                    "table-url-drop",
+                    url_dropped && urls == vec![(vec!["https://example.com/report".to_string()], s4.model.row_at(2))] && files.len() == 1,
+                    format!("link drop: {url_dropped} → {urls:?}; files still {}", files.len()),
                 );
                 let w = windows().into_iter().find(|w| w.title().to_string() == "Transfer").unwrap();
                 ferrokit::close_window(&w);
@@ -5003,7 +5032,7 @@ fn dynamic_hidden_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 fn empty_cell_ax_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let model = Rc::new(TableModel::new(ViewId(9200), vec![Column::text("note", "Note", |s: &String| s.clone()).editable(true)]));
     model.set_rows(vec![String::new(), "kept".to_string()]);
-    let w = open(Window::new("Empty Cells").size(300.0, 160.0).view(table(&model).alternating_rows(false).column_lines().accessibility_label("Notes")));
+    let w = open(Window::new("Empty Cells").size(300.0, 160.0).view(table(&model).alternating_rows(false).column_lines().animated().accessibility_label("Notes")));
     let w2 = w.clone();
     let tv = model.table_view();
     after_events(move || {
@@ -5014,6 +5043,21 @@ fn empty_cell_ax_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
             "table-plain-style",
             !striped && lines == objc2_app_kit::NSTableViewGridLineStyle::SolidVerticalGridLineMask,
             format!("alternating rows {striped}; grid {lines:?}"),
+        );
+        // Animated: a row inserted and removed one at a time slides in and
+        // out; the row above keeps its cell (no reload).
+        let first = |tv: &objc2_app_kit::NSTableView, make: bool| tv.viewAtColumn_row_makeIfNecessary(0, 0, make).map(|v| Retained::as_ptr(&v) as usize);
+        // (Drawn first, so the first row has its cell.)
+        w2.displayIfNeeded();
+        let before = first(&tv, false);
+        model.insert(1, "added".to_string());
+        let (inserted, kept_in) = (tv.numberOfRows(), first(&tv, false) == before);
+        model.remove(1);
+        let (removed, kept_out) = (tv.numberOfRows(), first(&tv, false) == before);
+        check(
+            "table-row-animation",
+            before.is_some() && inserted == 3 && removed == 2 && kept_in && kept_out,
+            format!("rows 2 → {inserted} → {removed}; the first row's cell kept: {kept_in}, {kept_out}"),
         );
         let problems = ferrokit::testing::ax_audit(&w2);
         // The elements, when it fails, to see what went unnamed.
@@ -5089,8 +5133,90 @@ fn outline_expanded_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         let after = ov.numberOfRows();
         check("outline-expanded", rows == 5 && after == 7, format!("{rows} rows shown of 5; after the tree grew {after} of 7"));
         ferrokit::close_window(&w);
-        dynamic_hidden_checks(events.clone());
+        outline_lazy_checks(events.clone());
     });
+}
+
+/// `Outline::lazy_children` and `Outline::column`: a folder whose
+/// children load when it's expanded (and it stays expanded when they
+/// arrive), and a Size column beside the tree, as the Finder's list view.
+fn outline_lazy_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let (loaded, kids) = (Signal::new(Vec::<String>::new()), Signal::new(Vec::<String>::new()));
+    let tree = move || {
+        let inside = kids.get().into_iter().map(|k| TreeNode::leaf(Step(k))).collect();
+        vec![TreeNode::branch(Step("Folder".into()), inside), TreeNode::leaf(Step("notes.txt".into()))]
+    };
+    let size = |s: &Step| if s.0 == "notes.txt" { "12 KB".to_string() } else { "--".to_string() };
+    let files = outline(tree, |s: &Step| s.0.clone())
+        .number_column("Size", 80.0, size)
+        .lazy_children(|s: &Step| s.0 == "Folder", move |id: String| {
+            loaded.update(|l| l.push(id));
+            kids.set(vec!["a.txt".into(), "b.txt".into()]);
+        })
+        .accessibility_label("Files");
+    let w = open(Window::new("Files").size(360.0, 240.0).view(files));
+    let ov = all_views(&w.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSOutlineView>().ok()).unwrap();
+    let header = ov.headerView().is_some() && ov.tableColumns().count() == 2;
+    let text_at = |ov: &objc2_app_kit::NSOutlineView, col: isize, row: isize| {
+        ov.viewAtColumn_row_makeIfNecessary(col, row, true).and_then(|v| v.downcast::<objc2_app_kit::NSTableCellView>().ok()).and_then(|c| unsafe { c.textField() }).map(|f| f.stringValue().to_string())
+    };
+    let size_cell = text_at(&ov, 1, 1);
+    let folder = ov.itemAtRow(0).unwrap();
+    let expandable = unsafe { ov.isExpandable(Some(&folder)) };
+    let rows_before = ov.numberOfRows();
+    unsafe { ov.expandItem(Some(&folder)) };
+    // The load runs on the next pass, then the tree is rebuilt.
+    after_events(move || {
+        let (ov, w, size_cell, events) = (ov.clone(), w.clone(), size_cell.clone(), events.clone());
+        after_events(move || {
+            let folder = ov.itemAtRow(0).unwrap();
+            let open_ = unsafe { ov.isItemExpanded(Some(&folder)) };
+            let names: Vec<String> = (0..ov.numberOfRows()).filter_map(|r| text_at(&ov, 0, r)).collect();
+            check(
+                "outline-columns",
+                header && size_cell.as_deref() == Some("12 KB"),
+                format!("header with 2 columns: {header}; notes.txt's Size {size_cell:?}"),
+            );
+            check(
+                "outline-lazy-children",
+                expandable && rows_before == 2 && loaded.get_untracked() == ["Folder"] && open_ && names == ["Folder", "a.txt", "b.txt", "notes.txt"],
+                format!("Folder expandable with no children: {expandable}; expanding loaded {:?}; still open {open_}; rows {names:?}", loaded.get_untracked()),
+            );
+            ferrokit::close_window(&w);
+            progress_job_checks(events.clone());
+        });
+    });
+}
+
+/// `spawn_with_progress`: a background job's fractions reach a signal on
+/// the main thread as it goes, then it reads `None` and the result arrives.
+fn progress_job_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let progress = Signal::new(None::<f64>);
+    let seen: Rc<RefCell<Vec<Option<f64>>>> = Rc::default();
+    let s2 = seen.clone();
+    let watch = Effect::new(move || s2.borrow_mut().push(progress.get()));
+    ferrokit::spawn_with_progress(
+        &progress,
+        |r| {
+            for i in 1..=10 {
+                std::thread::sleep(std::time::Duration::from_millis(30));
+                r.report(i as f64 / 10.0);
+            }
+            "done"
+        },
+        move |answer| {
+            let seen = seen.borrow().clone();
+            let between = seen.iter().flatten().filter(|f| **f > 0.0 && **f < 1.0).count();
+            let rising = seen.iter().flatten().collect::<Vec<_>>().windows(2).all(|w| w[0] <= w[1]);
+            check(
+                "progress-job",
+                answer == "done" && seen.first() == Some(&None) && seen.get(1) == Some(&Some(0.0)) && between >= 2 && rising && progress.get_untracked().is_none(),
+                format!("seen {seen:?}; then {answer:?}, progress {:?}", progress.get_untracked()),
+            );
+            drop(watch);
+            dynamic_hidden_checks(events.clone());
+        },
+    );
 }
 
 fn table_teardown(events: Rc<RefCell<Vec<AppEvent>>>) {

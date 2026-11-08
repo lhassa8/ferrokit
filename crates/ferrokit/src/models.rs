@@ -63,6 +63,7 @@ pub struct Table<T: 'static> {
     on_move: Callback<(Vec<usize>, Option<usize>)>,
     on_files: Callback<(Vec<PathBuf>, Option<usize>)>,
     file_types: Vec<String>,
+    on_urls: Callback<(Vec<String>, Option<usize>)>,
     on_paste: Callback<String>,
     row_drag: bool,
     alternating: Option<bool>,
@@ -167,6 +168,21 @@ impl<T: 'static> Table<T> {
         self
     }
 
+    /// Rows the model inserts and removes one at a time fade and slide in
+    /// and out (see [`TableModel::set_animates`]).
+    pub fn animated(self) -> Self {
+        self.model.set_animates(true);
+        self
+    }
+
+    /// Web addresses dragged from a browser (a link, or the address bar's
+    /// icon) can be dropped on the table: `f` gets them (`https://…`) and
+    /// the row they were dropped above. Files go to [`Table::on_files_dropped`].
+    pub fn on_urls_dropped(mut self, f: impl Fn(Vec<String>, Option<usize>) + 'static) -> Self {
+        self.on_urls = Some(Box::new(move |(urls, before)| f(urls, before)));
+        self
+    }
+
     /// ⌘V on the table: `f` gets the pasted text (rows copied from a table
     /// arrive as tab-separated lines).
     pub fn on_paste(mut self, f: impl Fn(String) + 'static) -> Self {
@@ -224,6 +240,9 @@ impl<T: 'static> View for Table<T> {
         if self.on_move.is_some() {
             self.model.set_reorderable(true);
         }
+        if self.on_urls.is_some() {
+            self.model.set_url_drop(true);
+        }
         if self.on_files.is_some() {
             let types: Vec<&str> = self.file_types.iter().map(String::as_str).collect();
             self.model.set_file_drop(Some(&types));
@@ -250,7 +269,7 @@ impl<T: 'static> View for Table<T> {
                 });
             }));
         }
-        let Table { on_select, on_activate, on_sort, on_toggle, on_edit, on_columns, on_move, on_files, on_paste, selection, keys, .. } = self;
+        let Table { on_select, on_activate, on_sort, on_toggle, on_edit, on_columns, on_move, on_files, on_urls, on_paste, selection, keys, .. } = self;
         let drain: Drain = Rc::new(move || {
             for event in model.drain_events() {
                 match event {
@@ -267,6 +286,7 @@ impl<T: 'static> View for Table<T> {
                     TableEvent::ColumnsChanged => on_columns.iter().for_each(|f| f(model.column_state())),
                     TableEvent::RowsMoved { rows, before } => on_move.iter().for_each(|f| f((rows.clone(), before))),
                     TableEvent::FilesDropped { paths, before } => on_files.iter().for_each(|f| f((paths.clone(), before))),
+                    TableEvent::UrlsDropped { urls, before } => on_urls.iter().for_each(|f| f((urls.clone(), before))),
                     TableEvent::Paste(text) => on_paste.iter().for_each(|f| f(text.clone())),
                     TableEvent::Key { key, rows } => keys.iter().filter(|(k, _)| *k == key).for_each(|(_, f)| f(rows.clone())),
                     _ => {}
@@ -304,6 +324,7 @@ pub fn table<T: 'static>(model: &Rc<TableModel<T>>) -> Table<T> {
         on_columns: None,
         on_move: None,
         on_files: None,
+        on_urls: None,
         file_types: Vec::new(),
         on_paste: None,
         row_drag: false,

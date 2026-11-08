@@ -183,22 +183,7 @@ fn show(p: &Rc<Popover>, anchor: &Retained<NSView>, content: &dyn Fn() -> AnyVie
         });
         return;
     }
-    // The last opening's content, if it's still animating out.
-    if let Some(old) = p.delegate.ivars().root.borrow_mut().take() {
-        crate::drop_hosted(&old);
-    }
-    let (root, size) = crate::host_view(content());
-    let mtm = crate::mtm();
-    let popover = NSPopover::new(mtm);
-    popover.setBehavior(NSPopoverBehavior::Transient);
-    popover.setAnimates(true);
-    popover.setDelegate(Some(ProtocolObject::from_ref(&*p.delegate)));
-    let controller = NSViewController::new(mtm);
-    controller.setView(&root);
-    popover.setContentViewController(Some(&controller));
-    popover.setContentSize(size);
-    *p.delegate.ivars().root.borrow_mut() = Some(root);
-    *p.delegate.ivars().current.borrow_mut() = Some(popover.clone());
+    let popover = present(&p.delegate, content);
     let flipped = anchor.isFlipped();
     let side = match (edge, flipped) {
         (Edge::Below, false) | (Edge::Above, true) => NSRectEdge::MinY,
@@ -207,4 +192,56 @@ fn show(p: &Rc<Popover>, anchor: &Retained<NSView>, content: &dyn Fn() -> AnyVie
         (Edge::Trailing, _) => NSRectEdge::MaxX,
     };
     popover.showRelativeToRect_ofView_preferredEdge(anchor.bounds(), anchor, side);
+}
+
+/// A new popover holding `content`, its delegate `delegate`, not shown yet.
+fn present(delegate: &Retained<Delegate>, content: &dyn Fn() -> AnyView) -> Retained<NSPopover> {
+    // The last opening's content, if it's still animating out.
+    if let Some(old) = delegate.ivars().root.borrow_mut().take() {
+        crate::drop_hosted(&old);
+    }
+    let (root, size) = crate::host_view(content());
+    let mtm = crate::mtm();
+    let popover = NSPopover::new(mtm);
+    popover.setBehavior(NSPopoverBehavior::Transient);
+    popover.setAnimates(true);
+    popover.setDelegate(Some(ProtocolObject::from_ref(&**delegate)));
+    let controller = NSViewController::new(mtm);
+    controller.setView(&root);
+    popover.setContentViewController(Some(&controller));
+    popover.setContentSize(size);
+    *delegate.ivars().root.borrow_mut() = Some(root);
+    *delegate.ivars().current.borrow_mut() = Some(popover.clone());
+    popover
+}
+
+/// A toolbar button that shows `content` in a popover pointing at the
+/// button, as Safari's and Mail's toolbar popovers do; a second press, a
+/// click outside or Escape closes it. The content is made each time it
+/// opens. `.disabled(..)` and `.optional()` work as on [`toolbar_button`](crate::toolbar_button).
+///
+/// ```no_run
+/// # use ferrokit::*;
+/// let item = toolbar_popover("info", "Info", "info.circle", || text("12 rows").padding(12.0));
+/// ```
+pub fn toolbar_popover<V: crate::View>(id: &str, label: &str, symbol: &str, content: impl Fn() -> V + 'static) -> crate::ToolbarItem {
+    let mtm = crate::mtm();
+    let delegate = Delegate::alloc(mtm).set_ivars(State { shown: Signal::new(false), current: RefCell::new(None), root: RefCell::new(None) });
+    // SAFETY: NSObject's designated initialiser.
+    let delegate: Retained<Delegate> = unsafe { msg_send![super(delegate), init] };
+    let content = move || AnyView::new(content());
+    let item_id = id.to_string();
+    crate::toolbar_button(id, label, symbol, move || {
+        let open = delegate.ivars().current.borrow().clone();
+        if let Some(popover) = open {
+            delegate.ivars().closed();
+            popover.close();
+            return;
+        }
+        // The item in the window this press acts in.
+        let item = crate::focused_window().and_then(|w| w.toolbar()).and_then(|t| t.items().iter().find(|i| i.itemIdentifier().to_string() == item_id));
+        if let Some(item) = item {
+            present(&delegate, &content).showRelativeToToolbarItem(&item);
+        }
+    })
 }

@@ -23,7 +23,7 @@ use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSButton, NSControl, NSControlStateValueOff, NSControlStateValueOn, NSControlTextEditingDelegate, NSDragOperation,
-    NSDraggingInfo, NSEvent, NSLineBreakMode, NSMenuItem, NSPasteboard, NSPasteboardItem, NSPasteboardTypeFileURL,
+    NSDraggingInfo, NSEvent, NSLineBreakMode, NSMenuItem, NSPasteboard, NSPasteboardItem, NSPasteboardTypeFileURL, NSPasteboardTypeURL,
     NSPasteboardTypeString, NSPasteboardTypeTabularText, NSPasteboardWriting, NSResponder, NSScrollView, NSTableColumn,
     NSTableColumnResizingOptions, NSTableView, NSTableViewDataSource, NSTableViewDelegate, NSTableViewDropOperation,
     NSTableViewStyle, NSTextAlignment, NSTextField, NSUserInterfaceItemIdentification, NSView,
@@ -269,6 +269,11 @@ fn format_date(secs: f64, time: bool) -> String {
     formatter.stringFromDate(&NSDate::dateWithTimeIntervalSince1970(secs)).to_string()
 }
 
+/// How rows animate in and out (see [`TableModel::set_animates`]): a fade
+/// with a slide, as Mail's message list does.
+const ANIMATION: objc2_app_kit::NSTableViewAnimationOptions =
+    objc2_app_kit::NSTableViewAnimationOptions(objc2_app_kit::NSTableViewAnimationOptions::EffectFade.0 | objc2_app_kit::NSTableViewAnimationOptions::SlideDown.0);
+
 /// Group header slots in `order` carry this bit (and the group's index).
 const HEADER: usize = 1 << (usize::BITS - 1);
 
@@ -341,6 +346,14 @@ pub enum TableEvent {
         /// The row they were dropped above (model index), or `None` for the end.
         before: Option<usize>,
     },
+    /// Web addresses were dropped on the table, dragged from a browser (see
+    /// [`TableModel::set_url_drop`]).
+    UrlsDropped {
+        /// The addresses, as text (`https://…`).
+        urls: Vec<String>,
+        /// The row they were dropped above (model index), or `None` for the end.
+        before: Option<usize>,
+    },
     /// The user pasted (⌘V) text (see [`TableModel::set_pastes`]); rows
     /// copied from a table arrive as tab-separated lines.
     Paste(String),
@@ -364,6 +377,8 @@ struct Transfer {
     keys: Vec<TableKey>,
     /// File drops: `None` off; `Some(extensions)`, any file if empty.
     files: Option<Vec<String>>,
+    /// Web addresses dragged from a browser (`http`, `https` and others).
+    urls: bool,
     pastes: bool,
 }
 
@@ -445,7 +460,7 @@ define_class!(
         ) -> NSDragOperation {
             let operation = match self.dropped(table, info) {
                 Some(Dropped::Rows(_)) => NSDragOperation::Move,
-                Some(Dropped::Files(_)) => NSDragOperation::Copy,
+                Some(Dropped::Files(_) | Dropped::Urls(_)) => NSDragOperation::Copy,
                 None => return NSDragOperation::None,
             };
             // Between rows, never onto one.
@@ -587,6 +602,7 @@ impl TableKey {
 enum Dropped {
     Rows(Vec<usize>),
     Files(Vec<std::path::PathBuf>),
+    Urls(Vec<String>),
 }
 
 define_class!(
@@ -755,6 +771,7 @@ impl Source {
         match self.dropped(table, info) {
             Some(Dropped::Rows(rows)) => data.push(TableEvent::RowsMoved { rows, before }),
             Some(Dropped::Files(paths)) => data.push(TableEvent::FilesDropped { paths, before }),
+            Some(Dropped::Urls(urls)) => data.push(TableEvent::UrlsDropped { urls, before }),
             None => return false,
         }
         true
@@ -774,6 +791,17 @@ impl Source {
             }
             let rows: Vec<usize> = items.iter().filter_map(|i| i.stringForType(&row_type())?.to_string().parse().ok()).collect();
             return (!rows.is_empty()).then_some(Dropped::Rows(rows));
+        }
+        // Web addresses (a link or the address bar dragged from a browser),
+        // not files: those go to the file drop.
+        let urls: Vec<String> = items
+            .iter()
+            .filter(|i| i.stringForType(unsafe { NSPasteboardTypeFileURL }).is_none())
+            // SAFETY: AppKit's pasteboard type constant.
+            .filter_map(|i| i.stringForType(unsafe { NSPasteboardTypeURL }).map(|u| u.to_string()))
+            .collect();
+        if transfer.urls && !urls.is_empty() {
+            return Some(Dropped::Urls(urls));
         }
         let extensions = transfer.files?;
         let paths: Vec<std::path::PathBuf> = items
@@ -1037,6 +1065,8 @@ struct Inner<T: 'static> {
     group_by: RefCell<Option<GroupKey<T>>>,
     sort: RefCell<Option<Sort>>,
     sorts_in_place: Cell<bool>,
+    /// `insert` and `remove` animate the row in and out (see `set_animates`).
+    animates: Cell<bool>,
     events: RefCell<VecDeque<TableEvent>>,
     /// Set while the model changes the selection itself (no event).
     quiet: Cell<bool>,
@@ -1255,6 +1285,15 @@ impl<T: 'static> Inner<T> {
         self.quiet.set(false);
     }
 
+    /// Where model row `index` is shown, when changes to it animate (on,
+    /// mounted, not grouped: a group's header would move too).
+    fn animated_position(&self, index: usize) -> Option<usize> {
+        if !self.animates.get() || self.group_by.borrow().is_some() || !self.mounted.get() {
+            return None;
+        }
+        self.order.borrow().iter().position(|&m| m == index)
+    }
+
     fn resort_keeping_selection(&self) {
         let selected = self.selection_model_rows();
         self.compute_order();
@@ -1412,6 +1451,7 @@ impl<T: 'static> TableModel<T> {
             columns: RefCell::new(columns),
             rows: RefCell::new(Vec::new()),
             order: RefCell::new(Vec::new()),
+            animates: Cell::new(false),
             groups: RefCell::new(Vec::new()),
             group_by: RefCell::new(None),
             sort: RefCell::new(None),
@@ -1523,7 +1563,11 @@ impl<T: 'static> TableModel<T> {
         self.inner.rows.borrow_mut().insert(index, row);
         let selected: Vec<usize> = selected.into_iter().map(|r| if r >= index { r + 1 } else { r }).collect();
         self.inner.compute_order();
-        self.inner.table.reloadData();
+        match self.inner.animated_position(index) {
+            // AppKit slides the new row in and keeps the others' views.
+            Some(at) => self.inner.table.insertRowsAtIndexes_withAnimation(&NSIndexSet::indexSetWithIndex(at), ANIMATION),
+            None => self.inner.table.reloadData(),
+        }
         self.inner.select_model_rows(&selected);
     }
 
@@ -1576,11 +1620,15 @@ impl<T: 'static> TableModel<T> {
             return None;
         }
         let selected = self.inner.selection_model_rows();
+        let at = self.inner.animated_position(index);
         let row = self.inner.rows.borrow_mut().remove(index);
         let selected: Vec<usize> =
             selected.into_iter().filter(|&r| r != index).map(|r| if r > index { r - 1 } else { r }).collect();
         self.inner.compute_order();
-        self.inner.table.reloadData();
+        match at {
+            Some(at) => self.inner.table.removeRowsAtIndexes_withAnimation(&NSIndexSet::indexSetWithIndex(at), ANIMATION),
+            None => self.inner.table.reloadData(),
+        }
         self.inner.select_model_rows(&selected);
         Some(row)
     }
@@ -1644,6 +1692,23 @@ impl<T: 'static> TableModel<T> {
         self.register_drag_types();
     }
 
+    /// Rows added by [`insert`](Self::insert) and [`push`](Self::push), and
+    /// removed by [`remove`](Self::remove), fade and slide in and out
+    /// instead of appearing at once; the other rows keep their cells. Not
+    /// in a grouped table, and not for [`set_rows`](Self::set_rows) or
+    /// [`append`](Self::append) (whole lists and live feeds). Off by default.
+    pub fn set_animates(&self, on: bool) {
+        self.inner.animates.set(on);
+    }
+
+    /// Accepts web addresses dragged from a browser (a link, or the address
+    /// bar's icon). Each drop is reported as [`TableEvent::UrlsDropped`].
+    /// Off by default.
+    pub fn set_url_drop(&self, on: bool) {
+        self.inner.transfer.borrow_mut().urls = on;
+        self.register_drag_types();
+    }
+
     /// Reports ⌘V on the table as [`TableEvent::Paste`] (and enables Paste
     /// in the Edit menu while there is text to paste). Off by default.
     pub fn set_pastes(&self, on: bool) {
@@ -1666,6 +1731,10 @@ impl<T: 'static> TableModel<T> {
         if t.files.is_some() {
             // SAFETY: AppKit's pasteboard type constant.
             types.push(NSString::from_str(&unsafe { NSPasteboardTypeFileURL }.to_string()));
+        }
+        if t.urls {
+            // SAFETY: AppKit's pasteboard type constant.
+            types.push(NSString::from_str(&unsafe { NSPasteboardTypeURL }.to_string()));
         }
         self.inner.table.unregisterDraggedTypes();
         if !types.is_empty() {

@@ -623,6 +623,26 @@ pub(crate) fn reach(path: &Path) -> bool {
     true
 }
 
+/// Keeps the app's access to `path` (a folder or file the user chose in an
+/// Open panel, or dropped) for later launches: in the App Sandbox the app
+/// reaches it only while it runs, and this keeps a security-scoped bookmark
+/// to it in the app's defaults. Call [`regain_access`] for it after a
+/// relaunch, before reading it. Does nothing outside the sandbox (or for a
+/// path the app can't reach now). Documents opened through
+/// [`DocumentType`](crate::DocumentType) are kept already.
+pub fn remember_access(path: &Path) {
+    remember_bookmark(path);
+}
+
+/// Reaches `path` again in the App Sandbox through the bookmark
+/// [`remember_access`] kept, until the app quits (a folder's contents
+/// too). Whether the app can reach it: `true` outside the sandbox, `false`
+/// when no bookmark was kept or it no longer resolves (the folder was
+/// deleted): ask the user to choose it again.
+pub fn regain_access(path: &Path) -> bool {
+    reach(path)
+}
+
 fn clear_recents() {
     set_recents(&[]);
 }

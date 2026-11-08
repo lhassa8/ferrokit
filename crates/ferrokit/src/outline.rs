@@ -49,6 +49,8 @@ struct Entry {
     icon: Option<(String, Option<crate::Color>)>,
     /// A count or short word at the row's end.
     badge: Option<String>,
+    /// The text of each extra column (see `Outline::column`).
+    columns: Vec<String>,
     children: Vec<usize>,
     expandable: bool,
 }
@@ -63,6 +65,9 @@ struct State {
     by_key: HashMap<u64, Retained<OutlineItem>>,
     group_roots: bool,
     on_select: Option<Box<dyn Fn(Option<usize>)>>,
+    /// An item whose children load on demand was expanded (see
+    /// `Outline::lazy_children`).
+    on_expand: Option<Rc<dyn Fn(usize)>>,
     /// Set while the outline changes selection itself (no callback).
     quiet: bool,
 }
@@ -123,24 +128,46 @@ define_class!(
 
     unsafe impl NSOutlineViewDelegate for Source {
         #[unsafe(method_id(outlineView:viewForTableColumn:item:))]
-        fn view_for(&self, ov: &NSOutlineView, _column: Option<&NSTableColumn>, item: &AnyObject) -> Option<Retained<NSView>> {
-            let found = self.with(|s| {
-                index_of(Some(item)).and_then(|i| {
-                    s.entries.get(i).map(|e| (e.title.clone(), e.icon.clone(), e.badge.clone(), s.group_roots && s.roots.contains(&i)))
-                })
+        fn view_for(&self, ov: &NSOutlineView, column: Option<&NSTableColumn>, item: &AnyObject) -> Option<Retained<NSView>> {
+            // An extra column's cell: its text ("column.2", "column-right.3").
+            let extra = column.and_then(|c| {
+                let id = c.identifier().to_string();
+                let (kind, n) = id.split_once('.')?;
+                Some((kind == "column-right", n.parse::<usize>().ok()?))
             });
-            found.map(|(title, icon, badge, group)| cell(ov, &title, icon.as_ref().map(|(n, c)| (n.as_str(), *c)), badge.as_deref(), group))
+            if let Some((right, n)) = extra {
+                let text = self.with(|s| index_of(Some(item)).and_then(|i| s.entries.get(i)).and_then(|e| e.columns.get(n).cloned()));
+                text.map(|t| column_cell(ov, &t, right))
+            } else {
+                self.tree_cell(ov, item)
+            }
         }
 
         #[unsafe(method(outlineView:isGroupItem:))]
         fn is_group(&self, _ov: &NSOutlineView, item: &AnyObject) -> bool {
             self.with(|s| s.group_roots && index_of(Some(item)).is_some_and(|i| s.roots.contains(&i)))
         }
-
         #[unsafe(method(outlineView:shouldSelectItem:))]
         fn should_select(&self, _ov: &NSOutlineView, item: &AnyObject) -> bool {
             // Section headers of a sidebar aren't selectable.
             !self.with(|s| s.group_roots && index_of(Some(item)).is_some_and(|i| s.roots.contains(&i)))
+        }
+
+        #[unsafe(method(outlineViewItemWillExpand:))]
+        fn will_expand(&self, notification: &NSNotification) {
+            let item = notification.userInfo().and_then(|u| u.objectForKey(&NSString::from_str("NSObject")));
+            let Some(index) = index_of(item.as_deref()) else { return };
+            let Some(state) = self.ivars().borrow().upgrade() else { return };
+            let s = state.borrow();
+            // Only an item that has no children yet: load them, after
+            // AppKit has expanded it (the tree is rebuilt when they arrive,
+            // and stays expanded).
+            if s.quiet || s.entries.get(index).is_none_or(|e| !e.children.is_empty()) {
+                return;
+            }
+            if let Some(load) = s.on_expand.clone() {
+                crate::later(move || crate::failure::entry("an outline's children", (), || crate::batch(|| load(index))));
+            }
         }
 
         #[unsafe(method(outlineViewSelectionDidChange:))]
@@ -170,6 +197,15 @@ impl Source {
         let this = Self::alloc(mtm).set_ivars(RefCell::new(Rc::downgrade(state)));
         // SAFETY: NSObject's designated initialiser.
         unsafe { msg_send![super(this), init] }
+    }
+
+    fn tree_cell(&self, ov: &NSOutlineView, item: &AnyObject) -> Option<Retained<NSView>> {
+        let found = self.with(|s| {
+            index_of(Some(item)).and_then(|i| {
+                s.entries.get(i).map(|e| (e.title.clone(), e.icon.clone(), e.badge.clone(), s.group_roots && s.roots.contains(&i)))
+            })
+        });
+        found.map(|(title, icon, badge, group)| cell(ov, &title, icon.as_ref().map(|(n, c)| (n.as_str(), *c)), badge.as_deref(), group))
     }
 
     fn with<R: Default>(&self, f: impl FnOnce(&State) -> R) -> R {
@@ -268,6 +304,40 @@ fn cell(ov: &NSOutlineView, title: &str, icon: Option<(&str, Option<crate::Color
     Retained::into_super(view)
 }
 
+/// An extra column's cell: its text, secondary, right-aligned with digits
+/// all one width for numbers (as the Finder's Size column).
+fn column_cell(ov: &NSOutlineView, text: &str, right: bool) -> Retained<NSView> {
+    let mtm = MainThreadMarker::from(ov);
+    let ident = NSString::from_str(if right { "column-right" } else { "column" });
+    // SAFETY: reuse lookup by identifier; owner may be nil.
+    let reused = unsafe { ov.makeViewWithIdentifier_owner(&ident, None) }.and_then(|v| v.downcast::<NSTableCellView>().ok());
+    let view = reused.unwrap_or_else(|| {
+        let v = NSTableCellView::new(mtm);
+        v.setIdentifier(Some(&ident));
+        let field = NSTextField::labelWithString(&NSString::new(), mtm);
+        field.setLineBreakMode(objc2_app_kit::NSLineBreakMode::ByTruncatingTail);
+        field.setTextColor(Some(&objc2_app_kit::NSColor::secondaryLabelColor()));
+        if right {
+            field.setAlignment(objc2_app_kit::NSTextAlignment::Right);
+            field.setFont(Some(&objc2_app_kit::NSFont::monospacedDigitSystemFontOfSize_weight(objc2_app_kit::NSFont::systemFontSize(), 0.0)));
+        }
+        v.addSubview(&field);
+        // SAFETY: the cell view keeps its subviews; this is a weak convenience.
+        unsafe { v.setTextField(Some(&field)) };
+        field.setTranslatesAutoresizingMaskIntoConstraints(false);
+        field.centerYAnchor().constraintEqualToAnchor(&v.centerYAnchor()).setActive(true);
+        field.leadingAnchor().constraintEqualToAnchor_constant(&v.leadingAnchor(), 2.0).setActive(true);
+        field.trailingAnchor().constraintEqualToAnchor_constant(&v.trailingAnchor(), -2.0).setActive(true);
+        field.setContentCompressionResistancePriority_forOrientation(250.0, objc2_app_kit::NSLayoutConstraintOrientation::Horizontal);
+        v
+    });
+    // SAFETY: reading the cell's outlet on the main thread.
+    if let Some(t) = unsafe { view.textField() } {
+        t.setStringValue(&NSString::from_str(text));
+    }
+    Retained::into_super(view)
+}
+
 fn key_of<K: Hash>(id: &K) -> u64 {
     let mut h = DefaultHasher::new();
     id.hash(&mut h);
@@ -281,6 +351,12 @@ type IconFn<T> = dyn Fn(&T) -> Option<String>;
 type TintFn<T> = dyn Fn(&T) -> Option<crate::Color>;
 /// An item's badge, if any.
 type BadgeFn<T> = dyn Fn(&T) -> Option<String>;
+/// An extra column's text for an item.
+type TextFn<T> = dyn Fn(&T) -> String;
+/// Whether an item has children not read yet.
+type HasFn<T> = dyn Fn(&T) -> bool;
+/// Lazy children: which items have them, and what loads them.
+type Lazy<T> = (Rc<HasFn<T>>, Rc<dyn Fn(<T as Identifiable>::Id)>);
 /// An item's symbol and colour.
 type LookFn<T> = dyn Fn(&T) -> Option<(String, Option<crate::Color>)>;
 
@@ -291,9 +367,19 @@ pub struct Outline<T: Identifiable + 'static> {
     icon: Option<Rc<IconFn<T>>>,
     tint: Option<Rc<TintFn<T>>>,
     badge: Option<Rc<BadgeFn<T>>>,
+    columns: Vec<OutlineColumn<T>>,
+    lazy: Option<Lazy<T>>,
     selection: Option<Signal<Option<T::Id>>>,
     sidebar: bool,
     expanded: bool,
+}
+
+/// An extra column of an outline (see [`Outline::column`]).
+struct OutlineColumn<T> {
+    title: String,
+    width: f64,
+    right: bool,
+    value: Rc<TextFn<T>>,
 }
 
 impl<T: Identifiable + 'static> Outline<T> {
@@ -325,6 +411,32 @@ impl<T: Identifiable + 'static> Outline<T> {
         self
     }
 
+    /// A column beside the tree, as the Finder's list view has (Date
+    /// Modified, Kind): its title, width and each item's text. With columns
+    /// the outline shows a header, and the tree's own column is titled
+    /// "Name".
+    pub fn column(mut self, title: &str, width: f64, value: impl Fn(&T) -> String + 'static) -> Self {
+        self.columns.push(OutlineColumn { title: title.into(), width, right: false, value: Rc::new(value) });
+        self
+    }
+
+    /// A column of numbers or sizes: as [`Outline::column`], right-aligned
+    /// with digits all one width (the Finder's Size).
+    pub fn number_column(mut self, title: &str, width: f64, value: impl Fn(&T) -> String + 'static) -> Self {
+        self.columns.push(OutlineColumn { title: title.into(), width, right: true, value: Rc::new(value) });
+        self
+    }
+
+    /// Items for which `has_children` is true are expandable before their
+    /// children are known (a folder not read yet): expanding one calls
+    /// `load` with its id, which reads them and puts them in the tree the
+    /// outline shows (setting a signal it reads). Expanded items stay
+    /// expanded when the tree changes.
+    pub fn lazy_children(mut self, has_children: impl Fn(&T) -> bool + 'static, load: impl Fn(T::Id) + 'static) -> Self {
+        self.lazy = Some((Rc::new(has_children), Rc::new(load)));
+        self
+    }
+
     /// Two-way selection by item id.
     pub fn selection(mut self, selected: &Signal<Option<T::Id>>) -> Self {
         self.selection = Some(*selected);
@@ -340,7 +452,22 @@ impl<T: Identifiable + 'static> View for Outline<T> {
         ov.addTableColumn(&column);
         // SAFETY: the column was just added to this outline.
         unsafe { ov.setOutlineTableColumn(Some(&column)) };
-        ov.setHeaderView(None);
+        if self.columns.is_empty() {
+            ov.setHeaderView(None);
+        } else {
+            column.setTitle(&NSString::from_str(&crate::t("Name")));
+            column.setWidth(220.0);
+            column.setMinWidth(80.0);
+            for (n, c) in self.columns.iter().enumerate() {
+                let kind = if c.right { "column-right" } else { "column" };
+                let extra = NSTableColumn::initWithIdentifier(NSTableColumn::alloc(mtm), &NSString::from_str(&format!("{kind}.{n}")));
+                extra.setTitle(&NSString::from_str(&c.title));
+                extra.setWidth(c.width);
+                extra.setMinWidth(40.0);
+                ov.addTableColumn(&extra);
+            }
+            ov.setColumnAutoresizingStyle(objc2_app_kit::NSTableViewColumnAutoresizingStyle::FirstColumnOnlyAutoresizingStyle);
+        }
         if self.sidebar {
             ov.setStyle(NSTableViewStyle::SourceList);
             ov.setFloatsGroupRows(false);
@@ -373,6 +500,16 @@ impl<T: Identifiable + 'static> View for Outline<T> {
             }));
         }
 
+        let lazy = self.lazy.clone();
+        if let Some((_, load)) = &self.lazy {
+            let (load, ids) = (load.clone(), ids.clone());
+            state.borrow_mut().on_expand = Some(Rc::new(move |i| {
+                let id = ids.borrow().get(i).cloned();
+                if let Some(id) = id {
+                    load(id);
+                }
+            }));
+        }
         let (mut node, _) = Node::leaf(cx, Retained::into_super(scroll), (true, true), Size { w: 160.0, h: 120.0 });
         if let Kind::Leaf(l) = &node.kind {
             l.content.set(Some(Size { w: 160.0, h: 120.0 }));
@@ -409,39 +546,55 @@ impl<T: Identifiable + 'static> View for Outline<T> {
         let (roots_fn, title, sidebar, expanded) = (self.roots, self.title, self.sidebar, self.expanded);
         let tint = self.tint;
         let badge = self.badge;
+        let columns: Vec<Rc<TextFn<T>>> = self.columns.iter().map(|c| c.value.clone()).collect();
+        let has_children: Option<Rc<HasFn<T>>> = lazy.map(|(h, _)| h);
         let icon: Option<Rc<LookFn<T>>> = self.icon.map(|f| Rc::new(move |v: &T| f(v).map(|name| (name, tint.as_ref().and_then(|t| t(v))))) as Rc<LookFn<T>>);
         let (st, ids2, ov2, restore2) = (state.clone(), ids.clone(), ov.clone(), restore.clone());
         node.own(Effect::new(move || {
             let roots = roots_fn();
             untrack(|| {
+                // What the user has expanded, kept through the reload. (Asked
+                // before the state is borrowed: AppKit may ask the data
+                // source while it answers.)
+                let shown: Vec<(u64, Retained<OutlineItem>)> = {
+                    let s = st.borrow();
+                    s.entries.iter().zip(&s.items).map(|(e, it)| (e.key, it.clone())).collect()
+                };
+                let open: std::collections::HashSet<u64> = shown
+                    .into_iter()
+                    // SAFETY: an item object this outline returned.
+                    .filter(|(_, it)| unsafe { ov2.isItemExpanded(Some(it)) })
+                    .map(|(key, _)| key)
+                    .collect();
                 let mut s = st.borrow_mut();
                 let old = std::mem::take(&mut s.by_key);
                 let (mut entries, mut items, mut keys, mut typed) = (Vec::new(), Vec::new(), HashMap::new(), Vec::new());
-                fn walk<T: Identifiable>(
-                    n: TreeNode<T>,
-                    out: &mut Vec<Entry>,
-                    typed: &mut Vec<T::Id>,
-                    title: &dyn Fn(&T) -> String,
-                    icon: Option<&LookFn<T>>,
-                    badge: Option<&BadgeFn<T>>,
-                ) -> usize {
+                struct Look<'a, T> {
+                    title: &'a dyn Fn(&T) -> String,
+                    icon: Option<&'a LookFn<T>>,
+                    badge: Option<&'a BadgeFn<T>>,
+                    columns: &'a [Rc<TextFn<T>>],
+                    has_children: Option<&'a HasFn<T>>,
+                }
+                fn walk<T: Identifiable>(n: TreeNode<T>, out: &mut Vec<Entry>, typed: &mut Vec<T::Id>, look: &Look<T>) -> usize {
                     let index = out.len();
                     let id = n.value.id();
                     out.push(Entry {
                         key: key_of(&id),
-                        title: title(&n.value),
-                        icon: icon.and_then(|f| f(&n.value)),
-                        badge: badge.and_then(|f| f(&n.value)),
+                        title: (look.title)(&n.value),
+                        icon: look.icon.and_then(|f| f(&n.value)),
+                        badge: look.badge.and_then(|f| f(&n.value)),
+                        columns: look.columns.iter().map(|f| f(&n.value)).collect(),
                         children: Vec::new(),
-                        expandable: !n.children.is_empty(),
+                        expandable: !n.children.is_empty() || look.has_children.is_some_and(|f| f(&n.value)),
                     });
                     typed.push(id);
-                    let kids: Vec<usize> = n.children.into_iter().map(|c| walk(c, out, typed, title, icon, badge)).collect();
+                    let kids: Vec<usize> = n.children.into_iter().map(|c| walk(c, out, typed, look)).collect();
                     out[index].children = kids;
                     index
                 }
-                let root_idx: Vec<usize> =
-                    roots.into_iter().map(|r| walk(r, &mut entries, &mut typed, &*title, icon.as_deref(), badge.as_deref())).collect();
+                let look = Look { title: &*title, icon: icon.as_deref(), badge: badge.as_deref(), columns: &columns, has_children: has_children.as_deref() };
+                let root_idx: Vec<usize> = roots.into_iter().map(|r| walk(r, &mut entries, &mut typed, &look)).collect();
                 for (i, e) in entries.iter().enumerate() {
                     let item = old.get(&e.key).cloned().unwrap_or_else(|| OutlineItem::new(mtm, i));
                     item.ivars().set(i);
@@ -456,6 +609,16 @@ impl<T: Identifiable + 'static> View for Outline<T> {
                 s.quiet = true;
                 drop(s);
                 ov2.reloadData();
+                // Parents come before their children (the entries are in
+                // tree order), so each is expanded inside an expanded one.
+                let again: Vec<_> = {
+                    let s = st.borrow();
+                    s.entries.iter().zip(&s.items).filter(|(e, _)| open.contains(&e.key)).map(|(_, it)| it.clone()).collect()
+                };
+                for it in again {
+                    // SAFETY: an item object this outline returned.
+                    unsafe { ov2.expandItem(Some(&it)) };
+                }
                 if expanded {
                     // SAFETY: nil expands every root, with its children.
                     unsafe { ov2.expandItem_expandChildren(None, true) };
@@ -488,7 +651,7 @@ pub fn outline<T: Identifiable + 'static>(
     roots: impl Fn() -> Vec<TreeNode<T>> + 'static,
     title: impl Fn(&T) -> String + 'static,
 ) -> Outline<T> {
-    Outline { roots: Box::new(roots), title: Rc::new(title), icon: None, tint: None, badge: None, selection: None, sidebar: false, expanded: false }
+    Outline { roots: Box::new(roots), title: Rc::new(title), icon: None, tint: None, badge: None, columns: Vec::new(), lazy: None, selection: None, sidebar: false, expanded: false }
 }
 
 /// A Mac sidebar: an outline in the source-list style whose top-level items

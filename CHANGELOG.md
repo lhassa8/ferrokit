@@ -4,6 +4,12 @@
 
 Found by Rowboat, the SQLite app being built on Ferrokit for the Mac App Store (L1).
 
+- **Added: toolbar popovers.** `toolbar_popover(id, label, symbol, || content)` is a toolbar button whose popover points at the button (AppKit's `showRelativeToToolbarItem`); pressing it again, a click outside or Escape closes it.
+- **Added: URLs dropped on a table.** `Table::on_urls_dropped(|urls, row| …)` (`TableModel::set_url_drop`, `TableEvent::UrlsDropped`) takes links and addresses dragged from a browser; files still go to `on_files_dropped`. `testing::urls_pasteboard` makes such a drag in checks.
+- **Added: animated table rows.** `Table::animated()` (`TableModel::set_animates`): rows added with `insert`/`push` and taken away with `remove` fade and slide in and out, and the other rows keep their cells.
+- **Added: outline columns and children loaded on demand.** `Outline::column` and `Outline::number_column` put columns beside the tree, with a header, as the Finder's list view; `Outline::lazy_children(has_children, load)` makes an item expandable before its children are read and calls `load` with its id when it's expanded. Rows the user expanded now stay expanded when the tree changes.
+- **Added: `remember_access(path)` and `regain_access(path)`**: a folder or file the user chose, reachable again after a relaunch in the App Sandbox (a security-scoped bookmark), as documents already were.
+- **Added: `spawn_with_progress(&signal, |reporter| …, then)`**: a background job reports how far it is (`Reporter::report`), the signal follows on the main thread (`Some(0.0)` … `None` when done), ready for a `progress(..)` bar.
 - Table number columns with decimals use the region's decimal separator (78,4 in Germany); still no grouping, so years and ids read as before.
 - **Fixed: a row a `for_each` adds inside a hidden view showed through,** as a `dynamic`'s rebuild did (fixed earlier in this release): both now start hidden and show with the view (checks `dynamic-hidden`, `foreach-hidden`). Reported from an app on 0.5.0.
 - **Added: sidebar badges.** `Outline::badge(|item| Option<String>)` puts a count or short word at the end of an item's row, in secondary text with digits all one width, as Mail's unread counts are; the title stops short of it.

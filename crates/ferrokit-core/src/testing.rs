@@ -398,6 +398,25 @@ pub fn files_pasteboard(paths: &[&std::path::Path]) -> Retained<NSPasteboard> {
     pasteboard
 }
 
+/// A private pasteboard holding web addresses, as a link dragged from a
+/// browser carries them (the address, and its text).
+pub fn urls_pasteboard(urls: &[&str]) -> Retained<NSPasteboard> {
+    let pasteboard = private_pasteboard();
+    pasteboard.clearContents();
+    let items: Vec<Retained<ProtocolObject<dyn NSPasteboardWriting>>> = urls
+        .iter()
+        .map(|u| {
+            let item = NSPasteboardItem::new();
+            // SAFETY: AppKit's pasteboard type constants.
+            item.setString_forType(&NSString::from_str(u), unsafe { objc2_app_kit::NSPasteboardTypeURL });
+            item.setString_forType(&NSString::from_str(u), unsafe { NSPasteboardTypeString });
+            ProtocolObject::from_retained(item)
+        })
+        .collect();
+    pasteboard.writeObjects(&NSArray::from_retained_slice(&items));
+    pasteboard
+}
+
 /// The plain text on `pasteboard`.
 pub fn pasteboard_text(pasteboard: &NSPasteboard) -> Option<String> {
     // SAFETY: AppKit's pasteboard type constant.

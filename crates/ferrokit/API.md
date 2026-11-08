@@ -27,6 +27,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn set_appearance(appearance: Appearance)`: Sets the app's appearance; every native view follows, and an `AppEvent::AppearanceChanged` is delivered.
 - `pub fn quit()`: Ends the app (as ⌘Q does), on the next pass of the run loop. Quitting can wait for answers (a document app asks about unsaved changes) inside a nested run loop; starting it outside the caller's batch keeps the UI updating meanwhile.
 - `pub fn spawn<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static, then: impl FnOnce(T) + 'static)`: Runs `work` on a background thread, then `then` with its result on the main thread, inside a `batch`. Call from the main thread.
+- `pub fn spawn_with_progress<T: Send + 'static>(progress: &Signal<Option<f64>>, work: impl FnOnce(&Reporter) -> T + Send + 'static, then: impl FnOnce(T) + 'static)`: `spawn` for a long job that reports how far it is: `progress` reads `Some(0.0)` at once, the fractions `work` reports through its `Reporter` as it goes, and `None` once it's done (just before `then` runs). Show it with `progress`:
 
 ### `Window`
 
@@ -115,6 +116,12 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `System`: Follow the system setting.
 - `Light`: Always light.
 - `Dark`: Always dark.
+
+### `Reporter`
+
+`pub struct Reporter`: What a job started by `spawn_with_progress` reports its progress through, from its background thread.
+
+- `pub fn report(&self, fraction: f64)`: How far the job is, from 0 to 1 (clamped). Cheap to call often: the signal gets the latest value on the main thread's next pass.
 
 ## signal
 
@@ -556,6 +563,8 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn column_lines(mut self) -> Self`: Hairlines between the columns, as in Numbers and data browsers.
 - `pub fn reorderable(mut self, f: impl Fn(Vec<usize>, Option<usize>) + 'static) -> Self`: The user can drag rows to a new place: `f` gets the dragged rows and the row they were dropped above (`None`: the end), as model indices. Apply it with `TableModel::move_rows`. Not while the table is sorted.
 - `pub fn on_files_dropped(mut self, extensions: &[&str], f: impl Fn(Vec<PathBuf>, Option<usize>) + 'static) -> Self`: Files with these extensions (any file if empty) can be dropped on the table: `f` gets their paths and the row they were dropped above.
+- `pub fn animated(self) -> Self`: Rows the model inserts and removes one at a time fade and slide in and out (see `TableModel::set_animates`).
+- `pub fn on_urls_dropped(mut self, f: impl Fn(Vec<String>, Option<usize>) + 'static) -> Self`: Web addresses dragged from a browser (a link, or the address bar's icon) can be dropped on the table: `f` gets them (`https://…`) and the row they were dropped above. Files go to `Table::on_files_dropped`.
 - `pub fn on_paste(mut self, f: impl Fn(String) + 'static) -> Self`: ⌘V on the table: `f` gets the pasted text (rows copied from a table arrive as tab-separated lines).
 - `pub fn on_columns_changed(mut self, f: impl Fn(Vec<ColumnState>) + 'static) -> Self`: Columns were moved or resized (save them to restore later).
 
@@ -657,6 +666,8 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn set_row_drag(&self, on: bool)`: Lets rows be dragged out: each carries its cells as tab-separated text (for other apps), and its model index for `set_reorderable`. Off by default (a drag then extends the selection).
 - `pub fn set_reorderable(&self, on: bool)`: Lets the user drag rows to a new place (also turns on `set_row_drag`); each drop is reported as `TableEvent::RowsMoved`. Refused while the table is sorted.
 - `pub fn set_file_drop(&self, extensions: Option<&[&str]>)`: Accepts files dropped from the Finder: `Some(&["csv", "txt"])` for those extensions, `Some(&[])` for any file, `None` to stop. Each drop is reported as `TableEvent::FilesDropped`.
+- `pub fn set_animates(&self, on: bool)`: Rows added by `insert` and `push`, and removed by `remove`, fade and slide in and out instead of appearing at once; the other rows keep their cells. Not in a grouped table, and not for `set_rows` or `append` (whole lists and live feeds). Off by default.
+- `pub fn set_url_drop(&self, on: bool)`: Accepts web addresses dragged from a browser (a link, or the address bar's icon). Each drop is reported as `TableEvent::UrlsDropped`. Off by default.
 - `pub fn set_pastes(&self, on: bool)`: Reports ⌘V on the table as `TableEvent::Paste` (and enables Paste in the Edit menu while there is text to paste). Off by default.
 - `pub fn set_keys(&self, keys: &[TableKey])`: Reports these keys, pressed without ⌘, ⌥ or ⌃ while rows are selected, as `TableEvent::Key` instead of AppKit's handling (Space would type-select, Delete beep). None by default.
 - `pub fn selected_text(&self) -> String`: The selected rows as tab-separated text (columns in their current order, one line per row, as ⌘C copies them).
@@ -691,6 +702,9 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn icon(mut self, f: impl Fn(&T) -> Option<String> + 'static) -> Self`: An SF Symbol per item (or `None`).
 - `pub fn icon_color(mut self, f: impl Fn(&T) -> Option<crate::Color> + 'static) -> Self`: A colour per item's icon (or `None` for the sidebar's own), as Mail's mailboxes and Reminders' lists show theirs.
 - `pub fn badge(mut self, f: impl Fn(&T) -> Option<String> + 'static) -> Self`: A badge per item (or `None`): a count or a short word at the end of its row, in secondary text, as Mail's unread counts are. It's read when the tree is, so a signal the tree reads updates it.
+- `pub fn column(mut self, title: &str, width: f64, value: impl Fn(&T) -> String + 'static) -> Self`: A column beside the tree, as the Finder's list view has (Date Modified, Kind): its title, width and each item's text. With columns the outline shows a header, and the tree's own column is titled "Name".
+- `pub fn number_column(mut self, title: &str, width: f64, value: impl Fn(&T) -> String + 'static) -> Self`: A column of numbers or sizes: as `Outline::column`, right-aligned with digits all one width (the Finder's Size).
+- `pub fn lazy_children(mut self, has_children: impl Fn(&T) -> bool + 'static, load: impl Fn(T::Id) + 'static) -> Self`: Items for which `has_children` is true are expandable before their children are known (a folder not read yet): expanding one calls `load` with its id, which reads them and puts them in the tree the outline shows (setting a signal it reads). Expanded items stay expanded when the tree changes.
 - `pub fn selection(mut self, selected: &Signal<Option<T::Id>>) -> Self`: Two-way selection by item id.
 
 ### `TreeNode`
@@ -999,6 +1013,8 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn new_document() -> Option<Retained<NSWindow>>`: Opens a new, empty document. `None` if the app has no document type.
 - `pub fn open_document(path: &Path) -> std::io::Result<Retained<NSWindow>>`: Opens the document at `path`, or brings its window to the front if it's already open.
 - `pub fn recent_documents() -> Vec<PathBuf>`: The recently opened or saved documents, newest first (that still exist).
+- `pub fn regain_access(path: &Path) -> bool`: Reaches `path` again in the App Sandbox through the bookmark `remember_access` kept, until the app quits (a folder's contents too). Whether the app can reach it: `true` outside the sandbox, `false` when no bookmark was kept or it no longer resolves (the folder was deleted): ask the user to choose it again.
+- `pub fn remember_access(path: &Path)`: Keeps the app's access to `path` (a folder or file the user chose in an Open panel, or dropped) for later launches: in the App Sandbox the app reaches it only while it runs, and this keeps a security-scoped bookmark to it in the app's defaults. Call `regain_access` for it after a relaunch, before reading it. Does nothing outside the sandbox (or for a path the app can't reach now). Documents opened through `DocumentType` are kept already.
 - `pub fn revert_document(window: &NSWindow) -> std::io::Result<()>`: Reads the document in `window` back from its file, dropping its changes.
 - `pub fn save_document(window: &NSWindow) -> std::io::Result<()>`: Saves the document in `window` to its file. An error if it has none yet (use `save_document_as`, or the Save menu item, which asks).
 - `pub fn save_document_as(window: &NSWindow, path: &Path) -> std::io::Result<()>`: Saves the document in `window` to `path` (Save As… without the panel); it then belongs to that file.
@@ -1563,6 +1579,8 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `Slide(Edge)`: Fades while sliding a short way in from the edge, and back out to it. With Reduce Motion on, it only fades.
 
 ## popover
+
+- `pub fn toolbar_popover<V: crate::View>(id: &str, label: &str, symbol: &str, content: impl Fn() -> V + 'static) -> crate::ToolbarItem`: A toolbar button that shows `content` in a popover pointing at the button, as Safari's and Mail's toolbar popovers do; a second press, a click outside or Escape closes it. The content is made each time it opens. `.disabled(..)` and `.optional()` work as on `toolbar_button`.
 
 ### `Edge`
 
