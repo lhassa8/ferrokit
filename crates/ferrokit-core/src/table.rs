@@ -224,7 +224,8 @@ fn display(kind: Kind, value: &Value) -> String {
         (Kind::Date { time }, Value::Number(n)) => format_date(*n, time),
         // NaN is no value (a database's NULL): shown as nothing.
         (Kind::Number { .. }, Value::Number(n)) if n.is_nan() => String::new(),
-        (Kind::Number { decimals }, Value::Number(n)) => format!("{n:.decimals$}"),
+        (Kind::Number { decimals: 0 }, Value::Number(n)) => format!("{n:.0}"),
+        (Kind::Number { decimals }, Value::Number(n)) => format!("{n:.decimals$}").replacen('.', &decimal_separator(), 1),
         (_, Value::Number(n)) => n.to_string(),
         (_, Value::Bool(b)) => if *b { "Yes".into() } else { "No".into() },
     }
@@ -234,6 +235,17 @@ thread_local! {
     /// The date formatters (date only, date and time), made once: making
     /// one is slow, and a table formats every visible cell.
     static DATE_FORMATS: UiCell<[Option<Retained<objc2_foundation::NSDateFormatter>>; 2]> = const { UiCell::new([None, None]) };
+}
+
+thread_local! {
+    /// The user's decimal separator ("." or ","), read once.
+    static DECIMAL: UiCell<Option<String>> = const { UiCell::new(None) };
+}
+
+/// The user's region's decimal separator: number columns show 78,4 in
+/// Germany. (No grouping: a column of years or ids would read 2,026.)
+fn decimal_separator() -> String {
+    DECIMAL.with_borrow_mut(|d| d.get_or_insert_with(|| objc2_foundation::NSLocale::currentLocale().decimalSeparator().to_string()).clone())
 }
 
 /// `secs` since 1970 in the user's date format, relative where it can be
@@ -1853,6 +1865,8 @@ mod number_cells {
     #[test]
     fn nan_is_no_value() {
         assert_eq!(display(Kind::Number { decimals: 2 }, &Value::Number(f64::NAN)), "");
-        assert_eq!(display(Kind::Number { decimals: 2 }, &Value::Number(1.5)), "1.50");
+        // The region's decimal separator (78,4 in Germany), no grouping.
+        assert_eq!(display(Kind::Number { decimals: 2 }, &Value::Number(1.5)), format!("1{}50", decimal_separator()));
+        assert_eq!(display(Kind::Number { decimals: 0 }, &Value::Number(2026.0)), "2026");
     }
 }

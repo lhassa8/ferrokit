@@ -4,6 +4,7 @@
 
 Found by Rowboat, the SQLite app being built on Ferrokit for the Mac App Store (L1).
 
+- Table number columns with decimals use the region's decimal separator (78,4 in Germany); still no grouping, so years and ids read as before.
 - **Fixed: a row a `for_each` adds inside a hidden view showed through,** as a `dynamic`'s rebuild did (fixed earlier in this release): both now start hidden and show with the view (checks `dynamic-hidden`, `foreach-hidden`). Reported from an app on 0.5.0.
 - **Added: sidebar badges.** `Outline::badge(|item| Option<String>)` puts a count or short word at the end of an item's row, in secondary text with digits all one width, as Mail's unread counts are; the title stops short of it.
 - **Added: plain tables.** `Table::alternating_rows(false)` leaves the rows on the content background (no stripes), and `Table::column_lines()` draws hairlines between the columns, as data browsers do.
