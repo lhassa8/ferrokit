@@ -1286,9 +1286,9 @@ impl<T: 'static> Inner<T> {
     }
 
     /// Where model row `index` is shown, when changes to it animate (on,
-    /// mounted, not grouped: a group's header would move too).
+    /// in a window, not grouped: a group's header would move too).
     fn animated_position(&self, index: usize) -> Option<usize> {
-        if !self.animates.get() || self.group_by.borrow().is_some() || !self.mounted.get() {
+        if !self.animates.get() || self.group_by.borrow().is_some() || self.table.window().is_none() {
             return None;
         }
         self.order.borrow().iter().position(|&m| m == index)
