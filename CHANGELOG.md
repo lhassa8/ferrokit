@@ -4,6 +4,8 @@
 
 Found by Rowboat, the SQLite app being built on Ferrokit for the Mac App Store (L1).
 
+- **Added: sidebar badges.** `Outline::badge(|item| Option<String>)` puts a count or short word at the end of an item's row, in secondary text with digits all one width, as Mail's unread counts are; the title stops short of it.
+- **Added: plain tables.** `Table::alternating_rows(false)` leaves the rows on the content background (no stripes), and `Table::column_lines()` draws hairlines between the columns, as data browsers do.
 - **Fixed: databases in the App Sandbox.** A sandboxed app gets the file the user opened, not the files beside it, so SQLite couldn't write its journal (every change failed with "unable to open database file") or read a WAL database at all. **Added:** `related_files(path, suffixes)` (`RelatedFiles`), which claims the files beside a document through a file presenter each (Apple's related items), and `DocumentType::related(&["-journal", "-wal", "-shm"])`, which holds them while the document is open, from before it's read and after Save As…; `cargo ferrokit` declares them with `related = [...]` in a document type (`NSIsRelatedItemType`).
 - **Added: `Column::style(|row| CellStyle { .. })`**: a text or number cell's colour, background tint, italic or struck-through text, from its row (a changed value tinted, NULL in grey, a row to be deleted struck through). Reused cells take the plain look back.
 - **Added: `DocumentType::write_returning`**: for documents whose content changes when saved (a database with staged changes: saving commits them and leaves none), the writer returns what the document holds afterwards, which becomes its saved state.

@@ -65,6 +65,8 @@ pub struct Table<T: 'static> {
     file_types: Vec<String>,
     on_paste: Callback<String>,
     row_drag: bool,
+    alternating: Option<bool>,
+    column_lines: bool,
     row_menu: Vec<RowAction>,
     selection: Option<Signal<Vec<usize>>>,
     keys: Vec<KeyAction>,
@@ -135,6 +137,20 @@ impl<T: 'static> Table<T> {
         self
     }
 
+    /// Rows in alternating colours (`true`, the default) or all on the
+    /// content background (`false`): a data grid reads better striped, a
+    /// short list in a modern window plainer.
+    pub fn alternating_rows(mut self, on: bool) -> Self {
+        self.alternating = Some(on);
+        self
+    }
+
+    /// Hairlines between the columns, as in Numbers and data browsers.
+    pub fn column_lines(mut self) -> Self {
+        self.column_lines = true;
+        self
+    }
+
     /// The user can drag rows to a new place: `f` gets the dragged rows and
     /// the row they were dropped above (`None`: the end), as model indices.
     /// Apply it with [`TableModel::move_rows`]. Not while the table is sorted.
@@ -195,6 +211,15 @@ impl<T: 'static> View for Table<T> {
         }
         if self.row_drag {
             self.model.set_row_drag(true);
+        }
+        if self.alternating.is_some() || self.column_lines {
+            let tv = self.model.table_view();
+            if let Some(on) = self.alternating {
+                tv.setUsesAlternatingRowBackgroundColors(on);
+            }
+            if self.column_lines {
+                tv.setGridStyleMask(objc2_app_kit::NSTableViewGridLineStyle::SolidVerticalGridLineMask);
+            }
         }
         if self.on_move.is_some() {
             self.model.set_reorderable(true);
@@ -282,6 +307,8 @@ pub fn table<T: 'static>(model: &Rc<TableModel<T>>) -> Table<T> {
         file_types: Vec::new(),
         on_paste: None,
         row_drag: false,
+        alternating: None,
+        column_lines: false,
         row_menu: Vec::new(),
         selection: None,
         keys: Vec::new(),

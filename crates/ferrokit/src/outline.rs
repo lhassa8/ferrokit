@@ -47,6 +47,8 @@ struct Entry {
     title: String,
     /// An SF Symbol and its colour.
     icon: Option<(String, Option<crate::Color>)>,
+    /// A count or short word at the row's end.
+    badge: Option<String>,
     children: Vec<usize>,
     expandable: bool,
 }
@@ -124,10 +126,10 @@ define_class!(
         fn view_for(&self, ov: &NSOutlineView, _column: Option<&NSTableColumn>, item: &AnyObject) -> Option<Retained<NSView>> {
             let found = self.with(|s| {
                 index_of(Some(item)).and_then(|i| {
-                    s.entries.get(i).map(|e| (e.title.clone(), e.icon.clone(), s.group_roots && s.roots.contains(&i)))
+                    s.entries.get(i).map(|e| (e.title.clone(), e.icon.clone(), e.badge.clone(), s.group_roots && s.roots.contains(&i)))
                 })
             });
-            found.map(|(title, icon, group)| cell(ov, &title, icon.as_ref().map(|(n, c)| (n.as_str(), *c)), group))
+            found.map(|(title, icon, badge, group)| cell(ov, &title, icon.as_ref().map(|(n, c)| (n.as_str(), *c)), badge.as_deref(), group))
         }
 
         #[unsafe(method(outlineView:isGroupItem:))]
@@ -179,8 +181,11 @@ fn index_of(item: Option<&AnyObject>) -> Option<usize> {
     item.and_then(|i| i.downcast_ref::<OutlineItem>()).map(|i| i.ivars().get())
 }
 
-/// A row: optional SF Symbol and a title (reused by identifier).
-fn cell(ov: &NSOutlineView, title: &str, icon: Option<(&str, Option<crate::Color>)>, group: bool) -> Retained<NSView> {
+/// The badge's label in a cell (its tag).
+const BADGE_TAG: isize = 0x0bad6e;
+
+/// A row: optional SF Symbol, a title and a badge (reused by identifier).
+fn cell(ov: &NSOutlineView, title: &str, icon: Option<(&str, Option<crate::Color>)>, badge: Option<&str>, group: bool) -> Retained<NSView> {
     let mtm = MainThreadMarker::from(ov);
     let ident = NSString::from_str(if group { "group" } else if icon.is_some() { "icon" } else { "plain" });
     // SAFETY: reuse lookup by identifier; owner may be nil.
@@ -206,7 +211,23 @@ fn cell(ov: &NSOutlineView, title: &str, icon: Option<(&str, Option<crate::Color
             sub.centerYAnchor().constraintEqualToAnchor(&v.centerYAnchor()).setActive(true);
         };
         center(&text);
-        text.trailingAnchor().constraintLessThanOrEqualToAnchor_constant(&v.trailingAnchor(), -2.0).setActive(true);
+        if group {
+            text.trailingAnchor().constraintLessThanOrEqualToAnchor_constant(&v.trailingAnchor(), -2.0).setActive(true);
+        } else {
+            // The badge: secondary, its digits all one width, at the end
+            // (hidden while there's none).
+            let badge = NSTextField::labelWithString(&NSString::new(), mtm);
+            badge.setTag(BADGE_TAG);
+            badge.setFont(Some(&objc2_app_kit::NSFont::monospacedDigitSystemFontOfSize_weight(objc2_app_kit::NSFont::smallSystemFontSize(), 0.0)));
+            badge.setTextColor(Some(&objc2_app_kit::NSColor::secondaryLabelColor()));
+            badge.setAlignment(objc2_app_kit::NSTextAlignment::Right);
+            badge.setHidden(true);
+            v.addSubview(&badge);
+            center(&badge);
+            badge.trailingAnchor().constraintEqualToAnchor_constant(&v.trailingAnchor(), -6.0).setActive(true);
+            badge.setContentCompressionResistancePriority_forOrientation(750.0, objc2_app_kit::NSLayoutConstraintOrientation::Horizontal);
+            text.trailingAnchor().constraintLessThanOrEqualToAnchor_constant(&badge.leadingAnchor(), -6.0).setActive(true);
+        }
         // (Lower priority than the outline's own width.)
         text.setContentCompressionResistancePriority_forOrientation(250.0, objc2_app_kit::NSLayoutConstraintOrientation::Horizontal);
         if icon.is_some() {
@@ -235,6 +256,10 @@ fn cell(ov: &NSOutlineView, title: &str, icon: Option<(&str, Option<crate::Color
     if let Some(t) = unsafe { view.textField() } {
         t.setStringValue(&NSString::from_str(title));
     }
+    if let Some(b) = view.viewWithTag(BADGE_TAG).and_then(|b| b.downcast::<NSTextField>().ok()) {
+        b.setStringValue(&NSString::from_str(badge.unwrap_or_default()));
+        b.setHidden(badge.is_none_or(str::is_empty));
+    }
     if let (Some((name, tint)), Some(iv)) = (icon, unsafe { view.imageView() }) {
         iv.setImage(NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str(name), None).as_deref());
         // A reused cell keeps its last tint unless it's set every time.
@@ -254,6 +279,8 @@ type Roots<T> = Box<dyn Fn() -> Vec<TreeNode<T>>>;
 type IconFn<T> = dyn Fn(&T) -> Option<String>;
 /// An item's icon colour, if it has its own.
 type TintFn<T> = dyn Fn(&T) -> Option<crate::Color>;
+/// An item's badge, if any.
+type BadgeFn<T> = dyn Fn(&T) -> Option<String>;
 /// An item's symbol and colour.
 type LookFn<T> = dyn Fn(&T) -> Option<(String, Option<crate::Color>)>;
 
@@ -263,6 +290,7 @@ pub struct Outline<T: Identifiable + 'static> {
     title: Rc<dyn Fn(&T) -> String>,
     icon: Option<Rc<IconFn<T>>>,
     tint: Option<Rc<TintFn<T>>>,
+    badge: Option<Rc<BadgeFn<T>>>,
     selection: Option<Signal<Option<T::Id>>>,
     sidebar: bool,
     expanded: bool,
@@ -286,6 +314,14 @@ impl<T: Identifiable + 'static> Outline<T> {
     /// Mail's mailboxes and Reminders' lists show theirs.
     pub fn icon_color(mut self, f: impl Fn(&T) -> Option<crate::Color> + 'static) -> Self {
         self.tint = Some(Rc::new(f));
+        self
+    }
+
+    /// A badge per item (or `None`): a count or a short word at the end of
+    /// its row, in secondary text, as Mail's unread counts are. It's read
+    /// when the tree is, so a signal the tree reads updates it.
+    pub fn badge(mut self, f: impl Fn(&T) -> Option<String> + 'static) -> Self {
+        self.badge = Some(Rc::new(f));
         self
     }
 
@@ -372,6 +408,7 @@ impl<T: Identifiable + 'static> View for Outline<T> {
         // Rebuild when the tree's signals change; keep item objects by id.
         let (roots_fn, title, sidebar, expanded) = (self.roots, self.title, self.sidebar, self.expanded);
         let tint = self.tint;
+        let badge = self.badge;
         let icon: Option<Rc<LookFn<T>>> = self.icon.map(|f| Rc::new(move |v: &T| f(v).map(|name| (name, tint.as_ref().and_then(|t| t(v))))) as Rc<LookFn<T>>);
         let (st, ids2, ov2, restore2) = (state.clone(), ids.clone(), ov.clone(), restore.clone());
         node.own(Effect::new(move || {
@@ -386,6 +423,7 @@ impl<T: Identifiable + 'static> View for Outline<T> {
                     typed: &mut Vec<T::Id>,
                     title: &dyn Fn(&T) -> String,
                     icon: Option<&LookFn<T>>,
+                    badge: Option<&BadgeFn<T>>,
                 ) -> usize {
                     let index = out.len();
                     let id = n.value.id();
@@ -393,16 +431,17 @@ impl<T: Identifiable + 'static> View for Outline<T> {
                         key: key_of(&id),
                         title: title(&n.value),
                         icon: icon.and_then(|f| f(&n.value)),
+                        badge: badge.and_then(|f| f(&n.value)),
                         children: Vec::new(),
                         expandable: !n.children.is_empty(),
                     });
                     typed.push(id);
-                    let kids: Vec<usize> = n.children.into_iter().map(|c| walk(c, out, typed, title, icon)).collect();
+                    let kids: Vec<usize> = n.children.into_iter().map(|c| walk(c, out, typed, title, icon, badge)).collect();
                     out[index].children = kids;
                     index
                 }
                 let root_idx: Vec<usize> =
-                    roots.into_iter().map(|r| walk(r, &mut entries, &mut typed, &*title, icon.as_deref())).collect();
+                    roots.into_iter().map(|r| walk(r, &mut entries, &mut typed, &*title, icon.as_deref(), badge.as_deref())).collect();
                 for (i, e) in entries.iter().enumerate() {
                     let item = old.get(&e.key).cloned().unwrap_or_else(|| OutlineItem::new(mtm, i));
                     item.ivars().set(i);
@@ -449,7 +488,7 @@ pub fn outline<T: Identifiable + 'static>(
     roots: impl Fn() -> Vec<TreeNode<T>> + 'static,
     title: impl Fn(&T) -> String + 'static,
 ) -> Outline<T> {
-    Outline { roots: Box::new(roots), title: Rc::new(title), icon: None, tint: None, selection: None, sidebar: false, expanded: false }
+    Outline { roots: Box::new(roots), title: Rc::new(title), icon: None, tint: None, badge: None, selection: None, sidebar: false, expanded: false }
 }
 
 /// A Mac sidebar: an outline in the source-list style whose top-level items

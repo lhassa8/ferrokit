@@ -4987,9 +4987,18 @@ fn dynamic_hidden_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 fn empty_cell_ax_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let model = Rc::new(TableModel::new(ViewId(9200), vec![Column::text("note", "Note", |s: &String| s.clone()).editable(true)]));
     model.set_rows(vec![String::new(), "kept".to_string()]);
-    let w = open(Window::new("Empty Cells").size(300.0, 160.0).view(table(&model).accessibility_label("Notes")));
+    let w = open(Window::new("Empty Cells").size(300.0, 160.0).view(table(&model).alternating_rows(false).column_lines().accessibility_label("Notes")));
     let w2 = w.clone();
+    let tv = model.table_view();
     after_events(move || {
+        // A plain table: no stripes, hairlines between the columns.
+        let striped = tv.usesAlternatingRowBackgroundColors();
+        let lines = tv.gridStyleMask();
+        check(
+            "table-plain-style",
+            !striped && lines == objc2_app_kit::NSTableViewGridLineStyle::SolidVerticalGridLineMask,
+            format!("alternating rows {striped}; grid {lines:?}"),
+        );
         let problems = ferrokit::testing::ax_audit(&w2);
         // The elements, when it fails, to see what went unnamed.
         let note = if problems.is_empty() {
@@ -5168,6 +5177,7 @@ fn outline_window() -> impl View {
     hstack((
         sidebar(move || sections.get(), |p: &Place| p.name.clone())
             .icon(|p: &Place| p.symbol.map(String::from))
+            .badge(|p: &Place| (p.id == 12).then(|| "3".to_string()))
             .selection(&o.place)
             .width(180.0),
         dynamic(move || {
@@ -5228,6 +5238,23 @@ fn outline_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         side.style() == objc2_app_kit::NSTableViewStyle::SourceList && side.numberOfRows() == 6 && group && icon && icon_hidden,
         format!("style source list: {}; {} rows (2 sections + 4 items); section expanded: {group}; icon: {icon} (hidden from VoiceOver {icon_hidden})", side.style() == objc2_app_kit::NSTableViewStyle::SourceList, side.numberOfRows()),
     );
+
+    // A badge at the end of Downloads' row, none on Documents'; the title
+    // stops short of it, and the badge inside the row.
+    let badge_of = |row: isize| {
+        side.viewAtColumn_row_makeIfNecessary(0, row, true).and_then(|c| {
+            let badge = c.viewWithTag(0x0bad6e).and_then(|b| b.downcast::<objc2_app_kit::NSTextField>().ok())?;
+            let title = c.downcast_ref::<objc2_app_kit::NSTableCellView>().and_then(|c| unsafe { c.textField() })?;
+            c.layoutSubtreeIfNeeded();
+            Some((badge.isHidden(), badge.stringValue().to_string(), title.frame(), badge.frame(), c.frame().size.width))
+        })
+    };
+    let (docs, downloads) = (badge_of(1), badge_of(2));
+    let shown = downloads.as_ref().is_some_and(|(hidden, text, title, badge, width)| {
+        !hidden && text == "3" && title.origin.x + title.size.width <= badge.origin.x && badge.origin.x + badge.size.width <= *width
+    });
+    let none = docs.as_ref().is_some_and(|(hidden, ..)| *hidden);
+    check("sidebar-badge", shown && none, format!("Downloads {downloads:?}; Documents {docs:?}"));
 
     // Sidebar selection both ways.
     side.selectRowIndexes_byExtendingSelection(&objc2_foundation::NSIndexSet::indexSetWithIndex(2), false);

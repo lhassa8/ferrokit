@@ -552,6 +552,8 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn on_toggle(mut self, f: impl Fn(usize, String, bool) + 'static) -> Self`: A checkbox cell was clicked: (row, column id, new value).
 - `pub fn on_edit(mut self, f: impl Fn(usize, String, String) + 'static) -> Self`: An editable cell was edited: (row, column id, new text). Apply it to the row with `TableModel::update_row`.
 - `pub fn row_drag(mut self) -> Self`: Rows can be dragged to other apps (as tab-separated text). ⌘C copies the selected rows the same way, always.
+- `pub fn alternating_rows(mut self, on: bool) -> Self`: Rows in alternating colours (`true`, the default) or all on the content background (`false`): a data grid reads better striped, a short list in a modern window plainer.
+- `pub fn column_lines(mut self) -> Self`: Hairlines between the columns, as in Numbers and data browsers.
 - `pub fn reorderable(mut self, f: impl Fn(Vec<usize>, Option<usize>) + 'static) -> Self`: The user can drag rows to a new place: `f` gets the dragged rows and the row they were dropped above (`None`: the end), as model indices. Apply it with `TableModel::move_rows`. Not while the table is sorted.
 - `pub fn on_files_dropped(mut self, extensions: &[&str], f: impl Fn(Vec<PathBuf>, Option<usize>) + 'static) -> Self`: Files with these extensions (any file if empty) can be dropped on the table: `f` gets their paths and the row they were dropped above.
 - `pub fn on_paste(mut self, f: impl Fn(String) + 'static) -> Self`: ⌘V on the table: `f` gets the pasted text (rows copied from a table arrive as tab-separated lines).
@@ -688,6 +690,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn expanded(mut self) -> Self`: Every item shown expanded, each time the tree changes (a plan, a document's outline: trees read whole).
 - `pub fn icon(mut self, f: impl Fn(&T) -> Option<String> + 'static) -> Self`: An SF Symbol per item (or `None`).
 - `pub fn icon_color(mut self, f: impl Fn(&T) -> Option<crate::Color> + 'static) -> Self`: A colour per item's icon (or `None` for the sidebar's own), as Mail's mailboxes and Reminders' lists show theirs.
+- `pub fn badge(mut self, f: impl Fn(&T) -> Option<String> + 'static) -> Self`: A badge per item (or `None`): a count or a short word at the end of its row, in secondary text, as Mail's unread counts are. It's read when the tree is, so a signal the tree reads updates it.
 - `pub fn selection(mut self, selected: &Signal<Option<T::Id>>) -> Self`: Two-way selection by item id.
 
 ### `TreeNode`
