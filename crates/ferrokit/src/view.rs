@@ -1152,6 +1152,22 @@ fn hide_when(node: Node, when: crate::Value<bool>) -> Node {
     group
 }
 
+/// A branch built into `parent` while it (or a view above it) is hidden
+/// starts hidden too, and shows with that view: built while hidden, a
+/// `dynamic`'s new branch or a `for_each`'s new row showed through.
+fn hide_under_hidden(parent: &Rc<Meta>, new: &Node) {
+    let mut up = Some(parent.clone());
+    while let Some(m) = up {
+        if m.hidden.get() {
+            let views: Vec<NativeView> = new.all_views().into_iter().filter(|v| !v.isHidden()).collect();
+            views.iter().for_each(|v| v.setHidden(true));
+            m.hid.borrow_mut().extend(views);
+            return;
+        }
+        up = m.parent();
+    }
+}
+
 fn set_hidden(meta: &Rc<Meta>, children: &RefCell<Vec<Node>>, hide: bool) {
     meta.hidden.set(hide);
     if hide {
@@ -1451,18 +1467,7 @@ impl View for Dynamic {
                 let mut new = owner.with(|| view.build_node(&mut Cx::new(container.clone())));
                 new.owner = Some(owner);
                 new.meta.set_parent(&meta);
-                // Inside a hidden view, the new branch starts hidden too, and
-                // shows with it (built while hidden, it showed through).
-                let mut up = Some(meta.clone());
-                while let Some(m) = up {
-                    if m.hidden.get() {
-                        let views: Vec<NativeView> = new.all_views().into_iter().filter(|v| !v.isHidden()).collect();
-                        views.iter().for_each(|v| v.setHidden(true));
-                        m.hid.borrow_mut().extend(views);
-                        break;
-                    }
-                    up = m.parent();
-                }
+                hide_under_hidden(&meta, &new);
                 // The old node (and its subtree) is dropped here: teardown.
                 *children.borrow_mut() = vec![new];
                 meta.mark();
@@ -1530,6 +1535,7 @@ where
                         None => {
                             let n = Node::build_owned(AnyView::new(row(item)), &mut Cx::new(container.clone()));
                             n.meta.set_parent(&meta);
+                            hide_under_hidden(&meta, &n);
                             n
                         }
                     };

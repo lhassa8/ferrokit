@@ -4955,17 +4955,30 @@ fn completion_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 }
 
 /// A `dynamic` inside a hidden view, rebuilt while hidden: its new views
-/// stay hidden (they showed through), and show when the view does.
+/// stay hidden (they showed through), and show when the view does. The
+/// same for a row a `for_each` adds there (found by an app on 0.5.0).
 fn dynamic_hidden_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let (hide, which) = (Signal::new(true), Signal::new(1));
-    let w = open(Window::new("Hidden").size(300.0, 120.0).view(
-        vstack((dynamic(move || button(format!("Branch {}", which.get()), || {})).hidden(move || hide.get()), text("Always"))).padding(12.0),
+    let rows = Signal::new(vec![place(1, "Row 1", None)]);
+    let w = open(Window::new("Hidden").size(300.0, 160.0).view(
+        vstack((
+            dynamic(move || button(format!("Branch {}", which.get()), || {})).hidden(move || hide.get()),
+            vstack((text("Rows"), for_each(move || rows.get(), |p: Place| button(&p.name, || {})))).hidden(move || hide.get()),
+            text("Always"),
+        ))
+        .padding(12.0),
     ));
-    let buttons = |w: &objc2_app_kit::NSWindow| all_views(&w.contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).collect::<Vec<_>>();
-    batch(|| which.set(2));
+    let all_buttons = |w: &objc2_app_kit::NSWindow| all_views(&w.contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).collect::<Vec<_>>();
+    let buttons = move |w: &objc2_app_kit::NSWindow| all_buttons(w).into_iter().filter(|b| b.title().to_string().starts_with("Branch")).collect::<Vec<_>>();
+    let row_buttons = move |w: &objc2_app_kit::NSWindow| all_buttons(w).into_iter().filter(|b| b.title().to_string().starts_with("Row")).map(|b| (b.title().to_string(), b.isHiddenOrHasHiddenAncestor())).collect::<Vec<_>>();
+    batch(|| {
+        which.set(2);
+        rows.update(|r| r.push(place(2, "Row 2", None)));
+    });
     let w2 = w.clone();
     after_events(move || {
         let rebuilt: Vec<(String, bool)> = buttons(&w2).iter().map(|b| (b.title().to_string(), b.isHiddenOrHasHiddenAncestor())).collect();
+        let rows_hidden = row_buttons(&w2);
         batch(|| hide.set(false));
         let (w3, rebuilt) = (w2.clone(), rebuilt.clone());
         let events = events.clone();
@@ -4976,6 +4989,9 @@ fn dynamic_hidden_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                 rebuilt == [("Branch 2".to_string(), true)] && shown == [("Branch 2".to_string(), false)],
                 format!("rebuilt while hidden {rebuilt:?}; shown {shown:?}"),
             );
+            let rows_shown = row_buttons(&w3);
+            let pair = |a: bool, b: bool| vec![("Row 1".to_string(), a), ("Row 2".to_string(), b)];
+            check("foreach-hidden", rows_hidden == pair(true, true) && rows_shown == pair(false, false), format!("added while hidden {rows_hidden:?}; shown {rows_shown:?}"));
             ferrokit::close_window(&w3);
             about_help_checks(events.clone());
         });
