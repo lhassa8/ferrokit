@@ -405,10 +405,39 @@ mod self_checks {
         });
     }
 
+    /// A mono 16-bit WAV file of `seconds` of a 440 Hz tone, fading in and out.
+    fn tone_wav(seconds: f64) -> Vec<u8> {
+        let rate = 22_050u32;
+        let n = (seconds * f64::from(rate)) as u32;
+        let mut out = Vec::with_capacity(44 + 2 * n as usize);
+        let data = 2 * n;
+        out.extend_from_slice(b"RIFF");
+        out.extend_from_slice(&(36 + data).to_le_bytes());
+        out.extend_from_slice(b"WAVEfmt ");
+        out.extend_from_slice(&16u32.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        out.extend_from_slice(&1u16.to_le_bytes()); // mono
+        out.extend_from_slice(&rate.to_le_bytes());
+        out.extend_from_slice(&(rate * 2).to_le_bytes());
+        out.extend_from_slice(&2u16.to_le_bytes());
+        out.extend_from_slice(&16u16.to_le_bytes());
+        out.extend_from_slice(b"data");
+        out.extend_from_slice(&data.to_le_bytes());
+        for i in 0..n {
+            let t = f64::from(i) / f64::from(rate);
+            let fade = (t / 0.2).min((seconds - t) / 0.2).clamp(0.0, 1.0);
+            let v = (t * 440.0 * std::f64::consts::TAU).sin() * 0.2 * fade;
+            out.extend_from_slice(&((v * f64::from(i16::MAX)) as i16).to_le_bytes());
+        }
+        out
+    }
+
     fn clip_phase(w: Retained<NSWindow>, s: State, days_left: Signal<i32>, check: Check, failed: Rc<Cell<u32>>) {
-        // A sound file made with `say`: AVKit plays sound as it plays video.
-        let path = std::env::temp_dir().join(format!("ferrokit-media-{}.aiff", std::process::id()));
-        let made = std::process::Command::new("say").arg("-o").arg(&path).arg("Welcome to Lofoten. The ferry leaves at half past three.").status().is_ok_and(|s| s.success());
+        // A sound file (AVKit plays sound as it plays video): three seconds
+        // of a soft tone, written here so it doesn't depend on the machine's
+        // voices (`say` on CI runners can make an empty file).
+        let path = std::env::temp_dir().join(format!("ferrokit-media-{}.wav", std::process::id()));
+        let made = std::fs::write(&path, tone_wav(3.0)).is_ok();
         s.tab.set(2);
         s.muted.set(true);
         s.clip.set(made.then(|| path.clone()));

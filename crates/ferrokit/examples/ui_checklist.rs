@@ -637,7 +637,8 @@ fn popover_teardown_check(events: Rc<RefCell<Vec<AppEvent>>>) {
         let shown = popovers();
         let inside = ferrokit::live_signals() > before;
         show_anchor.set(false);
-        wait(300, move || {
+        // It closes with an animation, slower on a busy machine (CI runners).
+        until(move || popovers() == 0, 3000, move || {
             let closed = popovers() == 0;
             let freed = ferrokit::live_signals() <= before;
             check(
