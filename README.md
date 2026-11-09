@@ -170,7 +170,9 @@ Until 0.4 the crates were called `appkit-ui` (now `ferrokit`) and `appkit-host` 
 
 ## Working on Ferrokit
 
-`scripts/check-all.sh` runs every check: build, clippy, tests, docs, and each example app's unattended self-checks.
+Contributions are very welcome, small ones included: see [CONTRIBUTING.md](CONTRIBUTING.md) for how to build and check it, issues labelled [`good first issue`](https://github.com/lhassa8/ferrokit/labels/good%20first%20issue) for a place to start, [Discussions](https://github.com/lhassa8/ferrokit/discussions) for questions, and [ROADMAP.md](ROADMAP.md) for where it's going. `scripts/check-all.sh` runs every check: build, clippy, tests, docs, and each example app's unattended self-checks.
+
+**How it's made and maintained:** Ferrokit is developed by one person, Lars Tray, with a lot of help from an AI coding assistant. Every behaviour has a self-check that runs the real app, and CI runs them on two macOS versions. The full development history is in this repository. I build my own apps on it (Rowboat, a SQLite editor, is the first), so it gets fixed when AppKit changes. Being one person is a real limit, and more maintainers would make it a safer bet; if you'd like to help, say hello in Discussions.
 
 ## License
 

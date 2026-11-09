@@ -1,1 +1,5 @@
 blank_issues_enabled: true
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/lhassa8/ferrokit/discussions
+    about: Not sure it's a bug, or want to know how to do something? Ask in Discussions.

@@ -1,4 +1,4 @@
-# Runs on GitHub's macOS runners once the repository is pushed (not yet).
+# Runs on GitHub's macOS runners for every push and pull request.
 # The suites drive real windows; hosted runners have a logged-in GUI
 # session, but posted-event and timing checks are unverified there, so they
 # don't fail the build yet.
