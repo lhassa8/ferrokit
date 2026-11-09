@@ -13,6 +13,8 @@ permissions:
 
 jobs:
   welcome:
+    # Not for the maintainer's own issues and pull requests.
+    if: github.actor != github.repository_owner
     runs-on: ubuntu-latest
     steps:
       - uses: actions/first-interaction@v1
