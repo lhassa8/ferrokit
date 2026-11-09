@@ -717,7 +717,10 @@ impl Window {
             }
         }
         window.center();
-        if let Some(name) = &self.autosave {
+        // In a preview (`cargo ferrokit preview`), every window keeps its
+        // place and size across restarts, by its title.
+        let preview_name = (self.autosave.is_none() && preview_mode()).then(|| format!("ferrokit preview {}", self.title));
+        if let Some(name) = self.autosave.as_ref().or(preview_name.as_ref()) {
             let name = NSString::from_str(name);
             // Restore first: setting the name alone doesn't move the window.
             window.setFrameUsingName(&name);
@@ -1249,8 +1252,14 @@ impl App {
         if start_welcome && restored == 0 {
             objc2::rc::autoreleasepool(|_| show_welcome());
         }
-        #[allow(deprecated)]
-        app.activateIgnoringOtherApps(true);
+        if preview_mode() {
+            // A preview restarts on every save: show the windows above the
+            // others without taking the keyboard from the editor.
+            WINDOWS.with_borrow(|ws| ws.iter().for_each(|w| w.orderFrontRegardless()));
+        } else {
+            #[allow(deprecated)]
+            app.activateIgnoringOtherApps(true);
+        }
         if let Some(f) = self.on_launch {
             let f = RefCell::new(Some(f));
             later(move || {
@@ -1682,4 +1691,27 @@ pub mod guide {
     pub mod ch13_web_pdf_video_and_services {}
     #[doc = include_str!("../guide/14-custom-native-views.md")]
     pub mod ch14_custom_native_views {}
+}
+
+thread_local! {
+    /// Preview mode, overridden by checks (`testing::set_preview_mode`).
+    static PREVIEW: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// Whether the app runs under `cargo ferrokit preview` (`FERROKIT_PREVIEW=1`):
+/// windows keep their frames across restarts and launches don't take the
+/// focus.
+pub(crate) fn preview_mode() -> bool {
+    PREVIEW.with(|p| match p.get() {
+        Some(on) => on,
+        None => {
+            let on = std::env::var("FERROKIT_PREVIEW").is_ok_and(|v| v == "1");
+            p.set(Some(on));
+            on
+        }
+    })
+}
+
+pub(crate) fn set_preview_mode(on: bool) {
+    PREVIEW.with(|p| p.set(Some(on)));
 }

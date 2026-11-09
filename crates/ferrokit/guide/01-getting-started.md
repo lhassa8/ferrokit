@@ -18,6 +18,16 @@ cargo ferrokit new my-app
 cd my-app && cargo ferrokit run
 ```
 
+While you work on it, `cargo ferrokit preview` runs it the same way and
+then rebuilds and restarts it every time you save a file: its windows
+open where you left them, the app doesn't take the focus from your
+editor, and a build that fails leaves the running app as it was. Values
+kept with `stored` survive the restart; other state starts afresh.
+
+```bash
+cargo ferrokit preview
+```
+
 `--document` makes a document app instead (New, Open…, Save, Recent,
 one window per file). [Testing and shipping](https://docs.rs/ferrokit/latest/ferrokit/guide/ch08_testing_and_shipping/)
 covers `check`, `bundle` and `notarize`.

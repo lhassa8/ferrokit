@@ -161,6 +161,46 @@ else
     fi
   done
 fi
+# Live preview: a save rebuilds and restarts the app (a new process); a save
+# that breaks the build leaves the running app alone, and fixing it
+# restarts it again.
+cargo ferrokit new e2e-preview --ferrokit-path "$root/crates/ferrokit" >/dev/null
+(cd e2e-preview && exec cargo ferrokit preview) >"$dir/preview.log" 2>&1 &
+previewer=$!
+# Waits up to $2 seconds for line number $1 of a pattern ($3) in the log, and prints its pid.
+pid_of() {
+  n=0
+  while [ "$n" -lt "$2" ]; do
+    p=$(grep -E "$3" "$dir/preview.log" | sed -n "$1s/.*(pid \([0-9]*\)).*/\1/p")
+    [ -n "$p" ] && { echo "$p"; return 0; }
+    sleep 1
+    n=$((n + 1))
+  done
+  return 1
+}
+first=$(pid_of 1 240 'Previewing') || first=
+sleep 2
+printf '\n// edited by the preview check\n' >>e2e-preview/src/main.rs
+second=$(pid_of 1 180 'Restarted') || second=
+first_gone=no
+[ -n "$first" ] && ! kill -0 "$first" 2>/dev/null && first_gone=yes
+cp e2e-preview/src/main.rs "$dir/main.rs.good"
+printf '\nfn broken( {\n' >>e2e-preview/src/main.rs
+n=0
+while [ "$n" -lt 120 ] && ! grep -q 'build failed' "$dir/preview.log"; do sleep 1; n=$((n + 1)); done
+kept=no
+[ -n "$second" ] && grep -q 'build failed' "$dir/preview.log" && kill -0 "$second" 2>/dev/null && kept=yes
+cp "$dir/main.rs.good" e2e-preview/src/main.rs
+third=$(pid_of 2 180 'Restarted') || third=
+kill "$previewer" 2>/dev/null || true
+for p in $first $second $third; do kill "$p" 2>/dev/null || true; done
+if [ -n "$first" ] && [ -n "$second" ] && [ "$first_gone" = yes ] && [ "$kept" = yes ] && [ -n "$third" ] && [ "$third" != "$second" ]; then
+  echo "[check] preview-restarts PASS pid $first, restarted as $second after a save; a broken build kept $second running; fixed, restarted as $third"
+else
+  echo "[check] preview-restarts FAIL first '$first' (gone $first_gone), after a save '$second', kept on a broken build $kept, after the fix '$third'"
+  tail -30 "$dir/preview.log"
+  failed=$((failed + 1))
+fi
 # A failing app: multi-word check names are counted, and a panic that stops
 # the checks ends the run in seconds, not at the timeout.
 cargo ferrokit new e2e-fails --ferrokit-path "$root/crates/ferrokit" >/dev/null

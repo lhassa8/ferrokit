@@ -5,6 +5,7 @@
 ## Commands
 
 - `cargo ferrokit run`: build, bundle and run the app (with its name and icon).
+- `cargo ferrokit preview`: the same, then rebuild and restart on every save (for the developer at their screen; an agent checks with `cargo ferrokit check`).
 - `cargo ferrokit check`: clippy (warnings are errors), tests, a bundle, then the app's self-checks (`CHECK=all`). Run it after every change.
 - `cargo ferrokit bundle` / `notarize`: a signed `.app`; settings in `[package.metadata.ferrokit]` in `Cargo.toml`.
 

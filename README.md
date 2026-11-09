@@ -110,6 +110,7 @@ cargo ferrokit new my-app && cd my-app && cargo ferrokit run
 | Command | What it does |
 | --- | --- |
 | `run` | Builds a real `.app` bundle, with its name, icon and identity, and runs it |
+| `preview` | Runs it, then rebuilds and restarts it every time you save, with its windows where you left them |
 | `check` | Clippy, tests, a bundle, and your app's own self-checks |
 | `bundle` | A signed `.app` with the hardened runtime, universal on request |
 | `notarize` | Developer ID signing, Apple's notary service and stapling, then a zip ready to send |

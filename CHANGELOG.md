@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Added: `cargo ferrokit preview`**: runs the app, then rebuilds and restarts it every time a file in the package is saved. Under it (`FERROKIT_PREVIEW=1`) every window keeps its place and size across restarts, by its title, and the app comes to the front without taking the focus from the editor; a build that fails leaves the running app as it was. `testing::set_preview_mode` for checks (`preview-keeps-window-frames`, `preview-restarts`).
+
 ## 0.6.0 (2026-11-09): what a real app needed
 
 Found by building Rowboat, a SQLite editor made with Ferrokit and now in Mac App Review, and by another app built on 0.5. Tables grew most: cell focus, styled cells, animated rows, URL drops, outline columns. No API was removed or renamed. Four behaviours changed (marked **Changed** below): a `min_width` on truncating text lets it shrink to that width, a number column shows NaN as nothing, `.menu("Help", …)` fills the standard Help menu, and an app's own ⌘W item moves Close to ⇧⌘W.

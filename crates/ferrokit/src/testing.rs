@@ -285,6 +285,14 @@ pub fn shortcut(window: &objc2_app_kit::NSWindow, chars: &str, shift: bool) -> b
     window.firstResponder().is_some_and(|r| unsafe { r.tryToPerform_with(action, None) })
 }
 
+/// Turns preview mode on or off for windows opened from now on, as
+/// `cargo ferrokit preview` does with `FERROKIT_PREVIEW=1`: a window
+/// without [`remember_frame`](crate::Window::remember_frame) keeps its frame
+/// under its title.
+pub fn set_preview_mode(on: bool) {
+    crate::set_preview_mode(on);
+}
+
 /// From now on, [`reveal_in_finder`](crate::reveal_in_finder) records what
 /// it's asked to show instead of opening Finder windows (`false` stops).
 pub fn capture_reveals(on: bool) {

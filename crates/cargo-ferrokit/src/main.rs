@@ -21,6 +21,12 @@ USAGE:
         Builds, bundles (so the app has its name, icon and identity) and runs
         it, with its output in the terminal.
 
+    cargo ferrokit preview [--release] [--bin <name>] [-- <args>…]
+        Runs the app like `run`, then rebuilds and restarts it each time you
+        save a file in the package. Windows open where you left them and the
+        app doesn't take the focus from your editor; a build that fails
+        leaves the running app as it was. ⌃C stops.
+
     cargo ferrokit bundle [--debug] [--bin <name>] [--universal] [--sign <identity>]
                           [--zip] [--out <dir>]
         Makes <name>.app (release by default), signed with the hardened
@@ -105,6 +111,7 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("new") => new(rest),
         Some("run") => run(rest),
+        Some("preview") => preview(rest),
         Some("bundle") => bundle_command(rest),
         Some("check") => check(rest),
         Some("notarize") => notarize(rest),
@@ -850,6 +857,78 @@ fn run(args: &[String]) -> Result<()> {
     // and its output stays in this terminal.
     let status = Command::new(app.join("Contents/MacOS").join(&project.bin)).args(&a.rest).status().map_err(|e| e.to_string())?;
     if status.success() { Ok(()) } else { Err(format!("{} exited with {status}", project.display)) }
+}
+
+// ---- preview ----
+
+fn preview(args: &[String]) -> Result<()> {
+    let a = Args::parse(args, &["--bin"], &["--release"])?;
+    let project = Project::load(a.value("--bin"))?;
+    let options = BundleOptions { release: a.flag("--release"), universal: false, sign: "-".into(), out: None, store: None };
+    // FERROKIT_PREVIEW: windows keep their frames across restarts, and the
+    // app doesn't take the focus at launch.
+    let launch = |app: &Path| {
+        Command::new(app.join("Contents/MacOS").join(&project.bin)).args(&a.rest).env("FERROKIT_PREVIEW", "1").spawn().map_err(|e| e.to_string())
+    };
+    let mut child = Some(launch(&bundle(&project, &options)?)?);
+    step(&format!("Previewing {} (pid {}): save a file to rebuild and restart it; ⌃C stops", project.display, child.as_ref().map_or(0, |c| c.id())));
+    let mut seen = sources(&project);
+    loop {
+        std::thread::sleep(Duration::from_millis(300));
+        if let Some(c) = child.as_mut()
+            && let Ok(Some(status)) = c.try_wait()
+        {
+            eprintln!("{} quit ({status}); save a file to start it again", project.display);
+            child = None;
+        }
+        if sources(&project) == seen {
+            continue;
+        }
+        // An editor can write a save in steps: let it finish.
+        std::thread::sleep(Duration::from_millis(200));
+        seen = sources(&project);
+        step("Rebuilding");
+        match bundle(&project, &options) {
+            Err(e) => eprintln!("\x1b[31mbuild failed\x1b[0m: {e}\n{} keeps running; fix it and save again", project.display),
+            Ok(app) => {
+                if let Some(mut old) = child.take() {
+                    let _ = old.kill();
+                    let _ = old.wait();
+                }
+                match launch(&app) {
+                    Ok(c) => {
+                        step(&format!("Restarted {} (pid {})", project.display, c.id()));
+                        child = Some(c);
+                    }
+                    Err(e) => eprintln!("couldn't start {}: {e}", project.display),
+                }
+            }
+        }
+    }
+}
+
+/// The package's files and when each last changed, leaving out build
+/// output, version control and hidden folders.
+fn sources(project: &Project) -> std::collections::BTreeMap<PathBuf, std::time::SystemTime> {
+    fn walk(dir: &Path, skip: &Path, out: &mut std::collections::BTreeMap<PathBuf, std::time::SystemTime>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            let hidden = name.to_string_lossy().starts_with('.');
+            let Ok(meta) = entry.metadata() else { continue };
+            if meta.is_dir() {
+                if !hidden && name != "target" && name != "updates" && path != skip {
+                    walk(&path, skip, out);
+                }
+            } else if !hidden && let Ok(modified) = meta.modified() {
+                out.insert(path, modified);
+            }
+        }
+    }
+    let mut out = std::collections::BTreeMap::new();
+    walk(&project.dir, &project.target_dir, &mut out);
+    out
 }
 
 // ---- check ----

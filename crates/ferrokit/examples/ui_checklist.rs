@@ -2802,12 +2802,47 @@ fn table_focus_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                             }
                             ferrokit::close_window(&w);
                             let events = events.clone();
-                            after_events(move || tabs_and_dock_checks(events.clone()));
+                            after_events(move || preview_checks(events.clone()));
                         });
                     });
                 });
             });
         });
+    });
+}
+
+/// Preview mode (`cargo ferrokit preview`): a window keeps its frame across
+/// restarts by its title, without `remember_frame`.
+fn preview_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use objc2_foundation::{NSPoint, NSRect, NSSize, NSUserDefaults};
+    let key = NSString::from_str("NSWindow Frame ferrokit preview Preview Frame");
+    let defaults = NSUserDefaults::standardUserDefaults();
+    defaults.removeObjectForKey(&key);
+    ferrokit::testing::set_preview_mode(true);
+    let first = open(Window::new("Preview Frame").size(300.0, 160.0).view(text("Where it was")));
+    let moved = NSRect::new(NSPoint::new(140.0, 180.0), NSSize::new(420.0, 260.0));
+    first.setFrame_display(moved, true);
+    let moved = first.frame();
+    ferrokit::close_window(&first);
+    after_events(move || {
+        // The app restarts: the same window opens where it was left.
+        let again = open(Window::new("Preview Frame").size(300.0, 160.0).view(text("Where it was")));
+        let back = again.frame();
+        ferrokit::close_window(&again);
+        // Outside a preview, a window without `remember_frame` opens centred at its size.
+        ferrokit::testing::set_preview_mode(false);
+        let plain = open(Window::new("Preview Frame").size(300.0, 160.0).view(text("Where it was")));
+        let plain_size = plain.contentRectForFrameRect(plain.frame()).size;
+        ferrokit::close_window(&plain);
+        NSUserDefaults::standardUserDefaults().removeObjectForKey(&NSString::from_str("NSWindow Frame ferrokit preview Preview Frame"));
+        let same = |a: NSRect, b: NSRect| (a.origin.x - b.origin.x).abs() < 1.0 && (a.origin.y - b.origin.y).abs() < 1.0 && (a.size.width - b.size.width).abs() < 1.0 && (a.size.height - b.size.height).abs() < 1.0;
+        check(
+            "preview-keeps-window-frames",
+            same(moved, back) && (plain_size.width - 300.0).abs() < 1.0,
+            format!("moved to {moved:?}; reopened at {back:?}; outside a preview {:.0}×{:.0}", plain_size.width, plain_size.height),
+        );
+        let events = events.clone();
+        after_events(move || tabs_and_dock_checks(events.clone()));
     });
 }
 

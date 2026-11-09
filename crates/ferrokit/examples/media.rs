@@ -445,7 +445,9 @@ mod self_checks {
         later_ms(300, move || {
             check("video-duration", made && length.get() > 1.0, format!("made {made}; {:.2} s", length.get()));
             playing.set(true);
-            later_ms(900, move || {
+            // The clock starts in its own time (late on CI runners without
+            // a sound output): wait for it to pass 0.2 s, up to 4 s.
+            wait_for(4000, move || time.get() > 0.2, move |_| {
                 snap(&w, "clip");
                 let player = player_views(&w).into_iter().next();
                 let rate = player.as_ref().and_then(|p| unsafe { p.player() }).map(|p| unsafe { p.rate() });
