@@ -195,7 +195,9 @@ impl Text {
     }
 
     /// On one line, shortened with "…" when there isn't room for it all,
-    /// instead of pushing past its row (a file's path, a long value).
+    /// instead of pushing past its row (a file's path, a long value). With
+    /// `.min_width(w)` it shrinks to `w` and no further, so a status line
+    /// beside a fixed-width row stays readable.
     pub fn truncate(mut self) -> Self {
         self.truncates = true;
         self

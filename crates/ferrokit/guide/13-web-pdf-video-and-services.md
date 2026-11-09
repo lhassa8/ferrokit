@@ -253,6 +253,42 @@ if let Ok(trashed) = move_to_trash(path) {
 reveal_in_finder(&["/tmp"]);
 ```
 
+### Walking the disk
+
+macOS asks the user before an app reads some folders: Desktop,
+Documents, Downloads, `~/Library`, other volumes, and the media
+libraries. A file call waiting for that answer can't be cancelled, and a
+walk that reaches many at once can stall the whole Mac until the app
+quits. So an app that walks folders asks first:
+
+- **`has_full_disk_access()`** says whether the user allowed this app to
+  read everything (it never prompts). Read it once, at launch or before a
+  walk; access takes effect after a relaunch.
+- **`asks_before_reading(path, access)`** says whether reading a folder may
+  stop to ask. Skip those, and show them as not scanned. The media
+  libraries ask even with Full Disk Access. A folder the user chose in an
+  Open panel is readable whatever it says.
+- **`open_url(FULL_DISK_ACCESS_SETTINGS)`** opens the System Settings pane
+  where the user allows it; `open_url` opens any URL in its app.
+
+```rust,no_run
+use ferrokit::*;
+
+let access = has_full_disk_access();
+let mut skipped = Vec::new();
+for entry in std::fs::read_dir("/Users").into_iter().flatten().flatten() {
+    let path = entry.path();
+    if asks_before_reading(&path, access) {
+        skipped.push(path);
+        continue;
+    }
+    // … read it
+}
+if !skipped.is_empty() && !access {
+    open_url(FULL_DISK_ACCESS_SETTINGS);
+}
+```
+
 ## Testing
 
 `testing::capture_reveals(true)` makes `reveal_in_finder` record what it's

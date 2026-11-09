@@ -34,6 +34,8 @@ let page = vstack((toolbar, divider(), text("Content").fill_width())).padding(16
 - `text(..).truncate()`: one line, shortened with "…" when its row is short
   of room (a long path, a long name), instead of pushing past the row's
   edge. A row holding truncating text gives up room before overflowing.
+  Add `.min_width(w)` to keep it readable: it shrinks to `w` and no
+  further, and the row's other truncating text gives up the rest.
 - A stack takes a tuple of views, a `Vec<AnyView>`, or one view alone:
   `vstack(for_each(..))`.
 - `zstack` puts views on top of one another, such as text over a picture

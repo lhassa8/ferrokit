@@ -2707,7 +2707,103 @@ fn table_selection_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                     check("table-bare-keys", keys == ["delete [5]", "delete [5]", "space [5]"], format!("{keys:?} (⌘⌫ not among them)"));
                     ferrokit::close_window(&w);
                     let events = events.clone();
-                    after_events(move || tabs_and_dock_checks(events.clone()));
+                    after_events(move || table_focus_checks(events.clone()));
+                });
+            });
+        });
+    });
+}
+
+/// Cell focus: ← → move the focused column, the selected row outlines it,
+/// a signal holds it both ways, and a click focuses the clicked column.
+fn table_focus_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    let model = Rc::new(TableModel::new(
+        ViewId(962),
+        vec![Column::text("a", "A", |n: &u32| format!("a{n}")), Column::text("b", "B", |n: &u32| format!("b{n}")), Column::number("c", "C", |n: &u32| f64::from(*n))],
+    ));
+    model.set_rows((0..5).collect());
+    let focus = Signal::new(None::<String>);
+    let w = open(Window::new("Cell Focus").size(360.0, 220.0).view(table(&model).cell_focus(&focus)));
+    let m = model.clone();
+    after_events(move || {
+        m.select(&[1]);
+        let tv = m.table_view();
+        let key = |code: u16, flags: NSEventModifierFlags| {
+            let chars = if code == 123 { "\u{f702}" } else { "\u{f703}" };
+            let e = objc2_app_kit::NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+                objc2_app_kit::NSEventType::KeyDown,
+                objc2_foundation::NSPoint::new(0.0, 0.0),
+                flags | NSEventModifierFlags::Function | NSEventModifierFlags::NumericPad,
+                0.0,
+                w.windowNumber(),
+                None,
+                &NSString::from_str(chars),
+                &NSString::from_str(chars),
+                false,
+                code,
+            )
+            .unwrap();
+            let _: () = unsafe { objc2::msg_send![&*tv, keyDown: &*e] };
+        };
+        // → from nothing focuses the first column; → → reaches the last and
+        // stays; ← goes back one; ⇧→ is AppKit's, not a move.
+        let mut seen = Vec::new();
+        for (code, flags) in [(124, NSEventModifierFlags::empty()), (124, NSEventModifierFlags::empty()), (124, NSEventModifierFlags::empty()), (124, NSEventModifierFlags::empty()), (123, NSEventModifierFlags::empty()), (124, NSEventModifierFlags::Shift)] {
+            key(code, flags);
+            seen.push(m.focused_column().unwrap_or_default());
+        }
+        let (m, w, events, tv) = (m.clone(), w.clone(), events.clone(), tv.clone());
+        after_events(move || {
+            let from_keys = focus.get_untracked();
+            tv.displayIfNeeded();
+            let ring = m.focus_ring(1);
+            let col_b = tv.rectOfColumn(1);
+            let ring_on_b = ring.is_some_and(|(x, _, width, _)| (x - col_b.origin.x - 1.5).abs() < 1.0 && (width - (col_b.size.width - 3.0)).abs() < 1.0);
+            let no_ring_unselected = m.focus_ring(2).is_none();
+            check(
+                "table-cell-focus-keys",
+                seen == ["a", "b", "c", "c", "b", "b"] && from_keys.as_deref() == Some("b") && ring_on_b && no_ring_unselected,
+                format!("after → → → → ← ⇧→: {seen:?}; signal {from_keys:?}; ring {ring:?} on column B ({:.0}, {:.0} wide) {ring_on_b}; unselected row has none {no_ring_unselected}", col_b.origin.x, col_b.size.width),
+            );
+            // The signal moves the focus; replacing the columns without it clears it.
+            focus.set(Some("c".into()));
+            let (m, w, events, tv) = (m.clone(), w.clone(), events.clone(), tv.clone());
+            after_events(move || {
+                let from_signal = m.focused_column();
+                m.set_columns(vec![Column::text("a", "A", |n: &u32| format!("a{n}")), Column::text("b", "B", |n: &u32| format!("b{n}"))]);
+                let (m, w, events, tv) = (m.clone(), w.clone(), events.clone(), tv.clone());
+                after_events(move || {
+                    let cleared = (m.focused_column(), focus.get_untracked());
+                    check(
+                        "table-cell-focus-signal",
+                        from_signal.as_deref() == Some("c") && cleared == (None, None),
+                        format!("signal c → table {from_signal:?}; after its column is removed: table and signal {cleared:?}"),
+                    );
+                    // A real click on a cell in column A focuses it (needs the
+                    // app in front to take posted clicks; `ready` can take a turn).
+                    ferrokit::testing::input::ready(&w);
+                    let (m, w, events, tv) = (m.clone(), w.clone(), events.clone(), tv.clone());
+                    wait(300, move || {
+                        let clicked = ferrokit::testing::input::ready(&w);
+                        if clicked {
+                            let r = tv.frameOfCellAtColumn_row(0, 3);
+                            let view: &objc2_app_kit::NSView = &tv;
+                            ferrokit::testing::input::click_at(view, r.origin.x + 10.0, r.origin.y + r.size.height / 2.0);
+                        }
+                        // Posted clicks arrive in their own time.
+                        let (m, w, events) = (m.clone(), w.clone(), events.clone());
+                        wait(300, move || {
+                            if clicked {
+                                let got = (m.focused_column(), focus.get_untracked(), m.selection());
+                                check("table-cell-focus-click", got == (Some("a".into()), Some("a".into()), vec![3]), format!("click on row 3, column A: table, signal, selection {got:?}"));
+                            } else {
+                                eprintln!("[check] table-cell-focus-click SKIP the app isn't in front, so posted clicks don't arrive");
+                            }
+                            ferrokit::close_window(&w);
+                            let events = events.clone();
+                            after_events(move || tabs_and_dock_checks(events.clone()));
+                        });
+                    });
                 });
             });
         });

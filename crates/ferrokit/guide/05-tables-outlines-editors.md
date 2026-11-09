@@ -58,6 +58,12 @@ let view = table(&model)
   model indices, both ways: clicking rows sets it, and setting it selects
   them. `set_rows` clears the selection and the signal with it, so set the
   signal after replacing the rows to select again.
+- `.cell_focus(&column)` gives the table a focused column, as in a
+  spreadsheet: clicking a cell focuses its column, ← and → move it, and
+  the focused cell of each selected row is outlined. `column` is a
+  `Signal<Option<String>>` of the column id, both ways. An action on "the
+  cell" reads the selection and `column`: a menu item such as Set to NULL
+  on ⌥⌫.
 
 ### Groups, icons, progress bars, fitted columns
 

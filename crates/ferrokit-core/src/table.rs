@@ -26,10 +26,10 @@ use objc2_app_kit::{
     NSDraggingInfo, NSEvent, NSLineBreakMode, NSMenuItem, NSPasteboard, NSPasteboardItem, NSPasteboardTypeFileURL, NSPasteboardTypeURL,
     NSPasteboardTypeString, NSPasteboardTypeTabularText, NSPasteboardWriting, NSResponder, NSScrollView, NSTableColumn,
     NSTableColumnResizingOptions, NSTableView, NSTableViewDataSource, NSTableViewDelegate, NSTableViewDropOperation,
-    NSTableViewStyle, NSTextAlignment, NSTextField, NSUserInterfaceItemIdentification, NSView,
+    NSTableViewStyle, NSTextAlignment, NSTextField, NSUserInterfaceItemIdentification, NSView, NSBezierPath, NSColor, NSTableRowView,
 };
 use objc2_foundation::{
-    NSArray, NSIndexSet, NSInteger, NSMutableIndexSet, NSNotification, NSSortDescriptor, NSString, NSURL,
+    NSArray, NSIndexSet, NSInteger, NSMutableIndexSet, NSNotification, NSRect, NSSortDescriptor, NSString, NSURL,
 };
 
 use crate::ViewId;
@@ -365,6 +365,9 @@ pub enum TableEvent {
         /// The selected rows (model indices).
         rows: Vec<usize>,
     },
+    /// The focused column changed (see [`TableModel::set_cell_focus`]): the
+    /// user clicked a cell in another column, or pressed ← or →.
+    FocusedColumn(Option<String>),
 }
 
 /// Which transfers a table takes part in (see the `set_…` methods on
@@ -380,6 +383,8 @@ struct Transfer {
     /// Web addresses dragged from a browser (`http`, `https` and others).
     urls: bool,
     pastes: bool,
+    /// A focused column, moved by clicks and ← →, drawn in the selected rows.
+    cell_focus: bool,
 }
 
 /// The pasteboard type carrying a dragged row's model index (only read back
@@ -410,6 +415,10 @@ trait Data {
     fn has_icon(&self, column: &str) -> bool;
     /// The cell's style (a [`Column::style`] column).
     fn style(&self, view_row: usize, column: &str) -> Option<CellStyle>;
+    /// The focused column's id (see [`TableModel::set_cell_focus`]).
+    fn focus(&self) -> Option<String>;
+    /// Focuses `column`, reporting it as an event when `report`.
+    fn set_focus(&self, column: Option<String>, report: bool);
 }
 
 struct SourceIvars {
@@ -481,6 +490,12 @@ define_class!(
     }
 
     unsafe impl NSTableViewDelegate for Source {
+        #[unsafe(method_id(tableView:rowViewForRow:))]
+        fn row_view_for(&self, table: &NSTableView, _row: NSInteger) -> Option<Retained<NSTableRowView>> {
+            // With cell focus, rows that draw the focused cell; otherwise AppKit's own.
+            self.focus_row(table)
+        }
+
         #[unsafe(method_id(tableView:viewForTableColumn:row:))]
         fn view_for(&self, table: &NSTableView, column: Option<&NSTableColumn>, row: NSInteger) -> Option<Retained<NSView>> {
             match column {
@@ -633,6 +648,10 @@ define_class!(
                     return;
                 }
             }
+            // ← and → move the focused column, with cell focus on.
+            if matches!(event.keyCode(), 123 | 124) && self.move_focus(event) {
+                return;
+            }
             // A bare key the app handles, with rows selected.
             if let Some(key) = TableKey::of(event)
                 && let Some(data) = self.source().and_then(|s| s.data())
@@ -645,6 +664,22 @@ define_class!(
                 }
             }
             let () = unsafe { msg_send![super(self), keyDown: event] };
+        }
+
+        #[unsafe(method(mouseDown:))]
+        fn mouse_down(&self, event: &NSEvent) {
+            // With cell focus, a click focuses the clicked cell's column.
+            if let Some(data) = self.source().and_then(|s| s.data())
+                && data.transfer().cell_focus
+            {
+                let point = self.convertPoint_fromView(event.locationInWindow(), None);
+                let column = self.columnAtPoint(point);
+                if column >= 0 && self.rowAtPoint(point) >= 0 {
+                    let id = self.tableColumns().objectAtIndex(column as usize).identifier().to_string();
+                    data.set_focus(Some(id), true);
+                }
+            }
+            let () = unsafe { msg_send![super(self), mouseDown: event] };
         }
 
         #[unsafe(method(copy:))]
@@ -674,6 +709,29 @@ define_class!(
 );
 
 impl HostTableView {
+    /// Moves the focused column one to the left or right (← or →, no
+    /// modifier but Fn), scrolling it into view. Whether it was handled.
+    fn move_focus(&self, event: &NSEvent) -> bool {
+        use objc2_app_kit::NSEventModifierFlags as F;
+        let Some(data) = self.source().and_then(|s| s.data()) else { return false };
+        if !data.transfer().cell_focus || event.modifierFlags().intersects(F::Command | F::Option | F::Control | F::Shift) {
+            return false;
+        }
+        let ids = column_ids(self);
+        if ids.is_empty() {
+            return false;
+        }
+        let now = data.focus().and_then(|f| ids.iter().position(|i| *i == f));
+        let next = match (now, event.keyCode()) {
+            (None, _) => 0,
+            (Some(i), 123) => i.saturating_sub(1),
+            (Some(i), _) => (i + 1).min(ids.len() - 1),
+        };
+        self.scrollColumnToVisible(next as NSInteger);
+        data.set_focus(Some(ids[next].clone()), true);
+        true
+    }
+
     fn source(&self) -> Option<Retained<Source>> {
         let source = unsafe { self.dataSource() }?;
         let any: &AnyObject = source.as_ref();
@@ -708,6 +766,77 @@ impl HostTableView {
                 true
             }
             _ => false,
+        }
+    }
+}
+
+define_class!(
+    // A row that draws the focused cell over its selection (cell focus).
+    #[unsafe(super(NSTableRowView, NSView, NSResponder, NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "FerrokitFocusRowView"]
+    struct FocusRowView;
+
+    impl FocusRowView {
+        #[unsafe(method(drawSelectionInRect:))]
+        fn draw_selection(&self, rect: NSRect) {
+            let () = unsafe { msg_send![super(self), drawSelectionInRect: rect] };
+            let Some(cell) = self.focus_rect() else { return };
+            let path = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(cell, 4.0, 4.0);
+            path.setLineWidth(1.5);
+            if self.isEmphasized() {
+                NSColor::whiteColor().colorWithAlphaComponent(0.18).setFill();
+                path.fill();
+                NSColor::whiteColor().setStroke();
+            } else {
+                NSColor::controlAccentColor().setStroke();
+            }
+            path.stroke();
+        }
+    }
+);
+
+impl FocusRowView {
+    /// The focused cell's rectangle in this row, if a column is focused.
+    fn focus_rect(&self) -> Option<NSRect> {
+        // SAFETY: a row view's superview is its table (or nothing).
+        let table = unsafe { self.superview() }?.downcast::<HostTableView>().ok()?;
+        let focus = table.source()?.data()?.focus()?;
+        let column = table.columnWithIdentifier(&NSString::from_str(&focus));
+        if column < 0 {
+            return None;
+        }
+        let c = table.rectOfColumn(column);
+        let x = c.origin.x - self.frame().origin.x;
+        let h = self.bounds().size.height;
+        Some(NSRect::new(objc2_foundation::NSPoint::new(x + 1.5, 1.5), objc2_foundation::NSSize::new((c.size.width - 3.0).max(0.0), (h - 3.0).max(0.0))))
+    }
+}
+
+impl Source {
+    /// A focus row view for `table`, reused when one is free, if the table
+    /// has cell focus.
+    fn focus_row(&self, table: &NSTableView) -> Option<Retained<NSTableRowView>> {
+        if !self.data().is_some_and(|d| d.transfer().cell_focus) {
+            return None;
+        }
+        let id = NSString::from_str("FerrokitFocusRow");
+        // SAFETY: views under this identifier are focus rows made below.
+        let reused = unsafe { table.makeViewWithIdentifier_owner(&id, None) }.and_then(|v| v.downcast::<NSTableRowView>().ok());
+        Some(reused.unwrap_or_else(|| {
+            // SAFETY: plain NSTableRowView init.
+            let row: Retained<FocusRowView> = unsafe { msg_send![FocusRowView::alloc(mtm()), init] };
+            row.setIdentifier(Some(&id));
+            Retained::into_super(row)
+        }))
+    }
+}
+
+/// Redraws the selected rows' row views (the focused cell moved).
+fn redraw_selected_rows(table: &NSTableView) {
+    for row in indexes(&table.selectedRowIndexes()) {
+        if let Some(view) = table.rowViewAtRow_makeIfNecessary(row as NSInteger, false) {
+            view.setNeedsDisplay(true);
         }
     }
 }
@@ -1072,6 +1201,8 @@ struct Inner<T: 'static> {
     quiet: Cell<bool>,
     mounted: Cell<bool>,
     transfer: RefCell<Transfer>,
+    /// The focused column's id (cell focus).
+    focus: RefCell<Option<String>>,
     scroll: Retained<NSScrollView>,
     table: Retained<HostTableView>,
     _source: Retained<Source>,
@@ -1154,6 +1285,21 @@ impl<T: 'static> Data for Inner<T> {
 
     fn transfer(&self) -> Transfer {
         self.transfer.borrow().clone()
+    }
+
+    fn focus(&self) -> Option<String> {
+        self.focus.borrow().clone()
+    }
+
+    fn set_focus(&self, column: Option<String>, report: bool) {
+        if *self.focus.borrow() == column {
+            return;
+        }
+        *self.focus.borrow_mut() = column.clone();
+        redraw_selected_rows(&self.table);
+        if report {
+            self.push(TableEvent::FocusedColumn(column));
+        }
     }
 
     fn sorted(&self) -> bool {
@@ -1460,6 +1606,7 @@ impl<T: 'static> TableModel<T> {
             quiet: Cell::new(false),
             mounted: Cell::new(false),
             transfer: RefCell::new(Transfer::default()),
+            focus: RefCell::new(None),
             scroll,
             table: table.clone(),
             _source: source.clone(),
@@ -1506,10 +1653,14 @@ impl<T: 'static> TableModel<T> {
             table.removeTableColumn(&column);
         }
         add_columns(table, &columns);
+        let gone = self.inner.focus().is_some_and(|f| !columns.iter().any(|c| c.id == f));
         *self.inner.columns.borrow_mut() = columns;
         self.inner.compute_order();
         table.reloadData();
         self.inner.quiet.set(false);
+        if gone {
+            self.inner.set_focus(None, true);
+        }
     }
 
     /// Replaces all rows (the current sort is applied). Clears the selection.
@@ -1720,6 +1871,52 @@ impl<T: 'static> TableModel<T> {
     /// (Space would type-select, Delete beep). None by default.
     pub fn set_keys(&self, keys: &[TableKey]) {
         self.inner.transfer.borrow_mut().keys = keys.to_vec();
+    }
+
+    /// Cell focus, as in a spreadsheet: the table keeps a focused column,
+    /// which a click on a cell moves to its column and ← and → move one
+    /// column at a time ([`TableEvent::FocusedColumn`]). The focused cell of
+    /// each selected row is outlined. With the selection it names the cells
+    /// an action applies to (Set to NULL, Copy Cell). Off by default.
+    pub fn set_cell_focus(&self, on: bool) {
+        if self.inner.transfer.borrow().cell_focus == on {
+            return;
+        }
+        self.inner.transfer.borrow_mut().cell_focus = on;
+        if !on {
+            *self.inner.focus.borrow_mut() = None;
+        }
+        // Row views are made again, as focus rows or AppKit's own.
+        self.inner.table.reloadData();
+    }
+
+    /// The focused column's id (see [`set_cell_focus`](Self::set_cell_focus)).
+    pub fn focused_column(&self) -> Option<String> {
+        self.inner.focus()
+    }
+
+    /// Focuses a column by id (`None`: no column), scrolling it into view.
+    /// Doesn't report an event.
+    pub fn set_focused_column(&self, column: Option<&str>) {
+        let index = column.map(|c| self.inner.table.columnWithIdentifier(&NSString::from_str(c))).unwrap_or(-1);
+        if index >= 0 {
+            self.inner.table.scrollColumnToVisible(index);
+        }
+        self.inner.set_focus(column.filter(|_| index >= 0).map(str::to_string), false);
+    }
+
+    /// The focused cell's outline in row `view_row` (a view position), in
+    /// the row's coordinates, if the row is shown, selected and a column is
+    /// focused. For checks.
+    pub fn focus_ring(&self, view_row: usize) -> Option<(f64, f64, f64, f64)> {
+        let table = &self.inner.table;
+        if !table.isRowSelected(view_row as NSInteger) {
+            return None;
+        }
+        let row = table.rowViewAtRow_makeIfNecessary(view_row as NSInteger, false)?;
+        let row = row.downcast::<FocusRowView>().ok()?;
+        let r = row.focus_rect()?;
+        Some((r.origin.x, r.origin.y, r.size.width, r.size.height))
     }
 
     fn register_drag_types(&self) {

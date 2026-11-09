@@ -438,16 +438,11 @@ fn place_stack(children: &[Node], axis: Axis, spacing: f64, align: Option<Align>
     } else if len < used {
         // Short of room: children that can shrink (truncating text, or rows
         // holding it) give it up, in proportion to their length.
+        // A minimum length (`min_width`) is a floor: such a child shrinks
+        // to it and no further, and the others give up the rest.
         let can: Vec<bool> = kids.iter().map(|c| shrinkable(c, axis)).collect();
-        let total: f64 = lengths.iter().zip(&can).filter(|(_, c)| **c).map(|(l, _)| *l).sum();
-        if total > 0.0 {
-            let cut = (used - len).min(total);
-            for (l, c) in lengths.iter_mut().zip(&can) {
-                if *c {
-                    *l = (*l - cut * *l / total).max(0.0);
-                }
-            }
-        }
+        let floors: Vec<f64> = kids.iter().map(|c| min_along(c, axis)).collect();
+        shrink(&mut lengths, &can, &floors, used - len);
     }
     let align = align.unwrap_or(if axis == Axis::Horizontal { Align::Center } else { Align::Start });
     let mut pos = 0.0;
@@ -467,11 +462,37 @@ fn place_stack(children: &[Node], axis: Axis, spacing: f64, align: Option<Align>
     }
 }
 
+/// Takes `cut` from the lengths that can shrink, in proportion to each, but
+/// none below its floor; what a floored one can't give, the others do.
+fn shrink(lengths: &mut [f64], can: &[bool], floors: &[f64], mut cut: f64) {
+    for _ in 0..lengths.len() {
+        let total: f64 = lengths.iter().zip(can).zip(floors).filter(|((l, c), f)| **c && **l > **f).map(|((l, _), _)| *l).sum();
+        if total <= 0.0 || cut <= 0.01 {
+            return;
+        }
+        let step = cut.min(total);
+        for ((l, c), f) in lengths.iter_mut().zip(can).zip(floors) {
+            if *c && *l > *f {
+                let new = (*l - step * *l / total).max(*f).max(0.0);
+                cut -= *l - new;
+                *l = new;
+            }
+        }
+    }
+}
+
+/// The minimum length set on `node` along `axis` (`min_width` /
+/// `min_height`), or zero.
+fn min_along(node: &Node, axis: Axis) -> f64 {
+    let min = if axis == Axis::Horizontal { node.min.0 } else { node.min.1 };
+    min.unwrap_or(0.0)
+}
+
 /// Whether `node` can be shorter than its ideal length along `axis`: a
-/// truncating text, or a stack or box holding one, with no fixed or minimum
-/// length that way.
+/// truncating text, or a stack or box holding one, with no fixed length that
+/// way. A minimum length doesn't stop it; it shrinks down to it.
 fn shrinkable(node: &Node, axis: Axis) -> bool {
-    let fixed = if axis == Axis::Horizontal { node.fixed.0.or(node.min.0) } else { node.fixed.1.or(node.min.1) };
+    let fixed = if axis == Axis::Horizontal { node.fixed.0 } else { node.fixed.1 };
     if fixed.is_some() {
         return false;
     }
@@ -515,5 +536,26 @@ fn place_grid(rows: &[Vec<Node>], spacing: (f64, f64), align: &[Align], r: [f64;
             cx += cw + spacing.0;
         }
         cy += rh + spacing.1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shrink;
+
+    #[test]
+    fn shrink_stops_at_a_floor_and_the_others_give_the_rest() {
+        // 300 + 300 into 220: the first stops at 110, the second takes the rest.
+        let mut l = [300.0, 300.0];
+        shrink(&mut l, &[true, true], &[110.0, 0.0], 380.0);
+        assert!((l[0] - 110.0).abs() < 0.02 && (l[1] - 110.0).abs() < 0.02, "{l:?}");
+        // Without floors, in proportion.
+        let mut l = [300.0, 100.0];
+        shrink(&mut l, &[true, true], &[0.0, 0.0], 200.0);
+        assert!((l[0] - 150.0).abs() < 0.02 && (l[1] - 50.0).abs() < 0.02, "{l:?}");
+        // A child that can't shrink keeps its length.
+        let mut l = [300.0, 100.0];
+        shrink(&mut l, &[true, false], &[0.0, 0.0], 100.0);
+        assert_eq!(l, [200.0, 100.0]);
     }
 }

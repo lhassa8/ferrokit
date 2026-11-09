@@ -48,6 +48,8 @@ fn main() {
         text("Styled after padding").padding(4.0).font(Font::headline()).color(Color::Orange),
         // Truncating text in a narrow row.
         hstack((text("A very long name that cannot fit in this narrow row at all").truncate(), text("end"))).width(160.0).accessibility_label("Narrow row"),
+        // Two truncating texts sharing a narrow row; the first keeps its minimum.
+        hstack((text("Status: 12,909 rows in orders, sorted by total").truncate().min_width(110.0), text("Another long neighbour that wants the room too").truncate())).width(220.0),
         // A minimum width.
         text("Min").min_width(120.0).background(Color::QuaternaryFill),
         // A button whose title and symbol follow a signal, and one disabled.
@@ -65,7 +67,7 @@ fn main() {
     .alignment(Align::Start)
     .padding(20.0);
     App::new("Values")
-        .window(Window::new("Values").size(420.0, 520.0).view(view))
+        .window(Window::new("Values").size(420.0, 560.0).view(view))
         .menu("Count", vec![menu_item(move || format!("Reset {}", count.get()), move || count.set(0)).disabled(move || count.get() == 0).checked(move || count.get() > 0)])
         .on_launch(move || {
             if checks {
@@ -138,6 +140,9 @@ mod self_checks {
         let end = field(&w, "end").unwrap();
         let fits = long.frame().size.width + end.frame().size.width <= 161.0 && long.lineBreakMode() == objc2_app_kit::NSLineBreakMode::ByTruncatingTail;
         c("truncate", fits, format!("long {:.0} + end {:.0} in 160", long.frame().size.width, end.frame().size.width));
+        let status = field(&w, "Status: 12,909").unwrap().frame().size.width;
+        let other = field(&w, "Another long neighbour").unwrap().frame().size.width;
+        c("truncate-min-width", (110.0..=111.0).contains(&status) && other > 50.0 && status + other <= 221.0, format!("status {status:.0} (minimum 110), neighbour {other:.0}, in 220"));
         let min = field(&w, "Min").unwrap();
         let min_bg = surface_behind(&w, &min).map(|v| v.frame().size.width);
         c("min-width", min_bg.is_some_and(|wd| wd >= 119.5), format!("{min_bg:?}"));

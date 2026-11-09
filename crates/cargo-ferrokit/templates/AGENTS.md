@@ -107,6 +107,8 @@ fn as_undo_steps(window: &NSWindow, steps: &[&dyn Fn()]) {
 - **A table row's menu:** `table(&model).row_menu("Delete", move |row| …)`; each call adds an item. Number columns: `Column::number(…).decimals(2)`.
 - **A date column:** `Column::date("modified", "Date Modified", |r: &Row| Some(r.modified))` (a `SystemTime`): sorted by date, shown in the user's format ("Today", "12 Mar 2024"); `.with_time()` adds the time.
 - **Delete and Space on a table:** `table(&model).on_key(TableKey::Delete, |rows| …)` (⌫ or ⌦, no ⌘) and `TableKey::Space` (Quick Look); keep a menu item for the same action.
+- **Acting on one cell (Set to NULL, Copy Value):** `table(&model).cell_focus(&column)` with a `Signal<Option<String>>`: a click or ← → focuses a column, and the action reads the selected rows and `column.get()`; put it in a menu with a shortcut (⌥⌫).
+- **Walking the disk:** read `has_full_disk_access()` once, then skip every folder where `asks_before_reading(path, access)` is true (show it as not scanned): a read that waits for the user's consent can't be cancelled and can stall the Mac. `open_url(FULL_DISK_ACCESS_SETTINGS)` opens the pane where the user allows it.
 - **A table's selection in a signal:** `table(&model).selection(&selected)` binds a `Signal<Vec<usize>>` of model indices both ways.
 - **A filtered table that keeps its selection:** keep the selected item's id in a signal (set it from the bound selection), and in the `watch` that calls `set_rows`, find that id's new model index and set the bound signal to it (`set_rows` clears the selection).
 - **Delete with ⌘⌫:** handle it with `.on_command(DELETE, …)` on the table, not the window: then it doesn't fire while the focus is in a text field or editor, where ⌘⌫ deletes text.

@@ -474,6 +474,85 @@ pub fn move_to_trash(path: impl AsRef<Path>) -> std::io::Result<PathBuf> {
     result.and_then(|u| u.path()).map(|p| PathBuf::from(p.to_string())).ok_or_else(|| std::io::Error::other("the Trash didn't say where the item went"))
 }
 
+/// Opens `url` in the app that handles it: a web page in the browser, a
+/// `mailto:` in Mail, a System Settings pane (such as
+/// [`FULL_DISK_ACCESS_SETTINGS`]). False if no app handles it.
+pub fn open_url(url: &str) -> bool {
+    match NSURL::URLWithString(&NSString::from_str(url)) {
+        Some(url) => objc2_app_kit::NSWorkspace::sharedWorkspace().openURL(&url),
+        None => false,
+    }
+}
+
+/// System Settings ▸ Privacy & Security ▸ Full Disk Access, for
+/// [`open_url`]: where the user allows an app to read every folder.
+pub const FULL_DISK_ACCESS_SETTINGS: &str = "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles";
+
+/// Whether this app has Full Disk Access. It never prompts (it tries to
+/// read the privacy database, which only apps with access can). An app
+/// gets access after a relaunch, so read it at launch or before a walk.
+pub fn has_full_disk_access() -> bool {
+    real_home().is_some_and(|h| std::fs::File::open(h.join("Library/Application Support/com.apple.TCC/TCC.db")).is_ok())
+}
+
+/// Whether reading the folder at `path` may stop to ask the user's
+/// consent, so an app walking the disk should stay out of it (show it as
+/// "not scanned" instead). `full_disk_access` is what
+/// [`has_full_disk_access`] says; read it once per walk.
+///
+/// A file call that waits for consent can't be cancelled, and many at once
+/// (a parallel walk) tie up the system's sandbox checks until the app
+/// quits, which can make the whole Mac stall. Without Full Disk Access
+/// these ask: Desktop, Documents, Downloads, the Trash and `~/Library` in
+/// the home folder (other apps' data, iCloud Drive, cloud storage), and
+/// other volumes (`/Volumes/…`: removable and network ones). The media
+/// libraries ask for their own consent even with it: `~/Music/Music`,
+/// `~/Music/iTunes`, `~/Music/GarageBand`, `~/Movies/TV`, `~/Pictures/Photo
+/// Booth Library`, and packages ending in `.photoslibrary`,
+/// `.photolibrary`, `.musiclibrary` or `.tvlibrary`.
+///
+/// A folder the user chose in an Open panel can be read whatever this
+/// says: choosing it gave consent.
+pub fn asks_before_reading(path: impl AsRef<Path>, full_disk_access: bool) -> bool {
+    real_home().is_some_and(|home| asks(path.as_ref(), &home, full_disk_access))
+}
+
+fn asks(path: &Path, home: &Path, full_disk_access: bool) -> bool {
+    const MEDIA: [&str; 5] = ["Music/Music", "Music/iTunes", "Music/GarageBand", "Movies/TV", "Pictures/Photo Booth Library"];
+    const LIBRARIES: [&str; 4] = ["photoslibrary", "photolibrary", "musiclibrary", "tvlibrary"];
+    if MEDIA.iter().any(|m| path.starts_with(home.join(m))) || path.components().any(|c| Path::new(c.as_os_str()).extension().is_some_and(|e| LIBRARIES.iter().any(|l| e.eq_ignore_ascii_case(l)))) {
+        return true;
+    }
+    if full_disk_access {
+        return false;
+    }
+    const PROTECTED: [&str; 5] = ["Desktop", "Documents", "Downloads", ".Trash", "Library"];
+    PROTECTED.iter().any(|p| path.starts_with(home.join(p))) || (path.starts_with("/Volumes") && path.components().count() > 2 && !is_boot_volume(path))
+}
+
+/// Whether `path` is under the startup disk's own entry in `/Volumes` (a
+/// link to `/`).
+fn is_boot_volume(path: &Path) -> bool {
+    let volume: PathBuf = path.components().take(3).collect();
+    std::fs::canonicalize(&volume).is_ok_and(|v| v == Path::new("/"))
+}
+
+/// The user's real home folder, also in the App Sandbox (where `HOME` is
+/// the app's container).
+fn real_home() -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+    // SAFETY: getpwuid_r fills `pw` with pointers into `buf`, which outlives their use.
+    unsafe {
+        let mut pw: libc::passwd = std::mem::zeroed();
+        let mut buf = vec![0 as libc::c_char; 4096];
+        let mut out: *mut libc::passwd = std::ptr::null_mut();
+        if libc::getpwuid_r(libc::getuid(), &mut pw, buf.as_mut_ptr(), buf.len(), &mut out) != 0 || out.is_null() || pw.pw_dir.is_null() {
+            return None;
+        }
+        Some(PathBuf::from(std::ffi::OsStr::from_bytes(std::ffi::CStr::from_ptr(pw.pw_dir).to_bytes())))
+    }
+}
+
 /// A file's dates (see [`file_dates`]); `None` where the file system
 /// doesn't keep one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -581,5 +660,32 @@ mod file_tests {
     #[test]
     fn trashing_a_missing_file_fails() {
         assert_eq!(move_to_trash("/nonexistent/ferrokit-nothing").unwrap_err().kind(), std::io::ErrorKind::NotFound);
+    }
+}
+
+#[cfg(test)]
+mod access_tests {
+    use super::*;
+
+    #[test]
+    fn folders_that_ask() {
+        let home = Path::new("/Users/someone");
+        let asks = |p: &str, fda: bool| asks(Path::new(p), home, fda);
+        // Without Full Disk Access.
+        for p in ["/Users/someone/Documents", "/Users/someone/Desktop/a", "/Users/someone/Downloads", "/Users/someone/.Trash", "/Users/someone/Library/Containers/x", "/Volumes/Backup/photos"] {
+            assert!(asks(p, false), "{p} asks without access");
+            assert!(!asks(p, true), "{p} is readable with access");
+        }
+        for p in ["/Users/someone", "/Users/someone/Projects/app", "/Users/someone/DocumentsOld", "/Applications", "/Library/Fonts", "/Volumes"] {
+            assert!(!asks(p, false), "{p} doesn't ask");
+        }
+        // The media libraries ask even with access.
+        for p in ["/Users/someone/Music/Music", "/Users/someone/Music/GarageBand/x", "/Users/someone/Movies/TV", "/Users/someone/Pictures/Photo Booth Library", "/Users/someone/Pictures/Photos Library.photoslibrary", "/Users/someone/Projects/Old.PhotosLibrary/masters"] {
+            assert!(asks(p, true), "{p} asks even with access");
+        }
+        assert!(!asks("/Users/someone/Music/Loops", true));
+        // The real home and the access check run without prompting.
+        assert!(real_home().is_some_and(|h| h.is_absolute()));
+        let _ = has_full_disk_access();
     }
 }

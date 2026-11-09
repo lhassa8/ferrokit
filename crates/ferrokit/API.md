@@ -422,7 +422,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn font(mut self, font: crate::Font) -> Self`: Its font: a text style (`Font::title()`, `Font::caption()`) or a custom one.
 - `pub fn color(mut self, color: impl crate::IntoValue<crate::Color>) -> Self`: Its colour (`Color::Secondary` for less prominent text), or a closure computing it from signals (a balance red when it's negative).
 - `pub fn color_when(self, f: impl Fn() -> crate::Color + 'static) -> Self`: A colour computed from signals (now `color` takes a closure).
-- `pub fn truncate(mut self) -> Self`: On one line, shortened with "…" when there isn't room for it all, instead of pushing past its row (a file's path, a long value).
+- `pub fn truncate(mut self) -> Self`: On one line, shortened with "…" when there isn't room for it all, instead of pushing past its row (a file's path, a long value). With `.min_width(w)` it shrinks to `w` and no further, so a status line beside a fixed-width row stays readable.
 
 ## controls
 
@@ -552,6 +552,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 
 - `pub fn on_key(mut self, key: TableKey, f: impl Fn(Vec<usize>) + 'static) -> Self`: A bare key on the table, without ⌘: `f` gets the selected rows (model indices) when the user presses `key` with rows selected. `TableKey::Delete` (⌫ or ⌦) to remove them, `TableKey::Space` to Quick Look them, as in the Finder. Put the same action in a menu too (Edit ▸ Delete, File ▸ Quick Look), where people look for it.
 - `pub fn selection(mut self, rows: &Signal<Vec<usize>>) -> Self`: Binds the selection (model indices) to `rows`, both ways: the user selecting rows sets it, and setting it selects them (scrolling the first into view). `TableModel::set_rows` clears the selection, and `rows` follows; set it after replacing the rows to select again.
+- `pub fn cell_focus(mut self, column: &Signal<Option<String>>) -> Self`: Cell focus, as in a spreadsheet: `column` holds the focused column's id, both ways. Clicking a cell focuses its column, ← and → move it, and the focused cell of each selected row is outlined. An action on "the cell" (Set to NULL, Copy Value) reads the selection and `column`; give it a menu item with a shortcut, such as ⌥⌫.
 - `pub fn row_menu(mut self, title: &str, action: impl Fn(usize) + 'static) -> Self`: A right-click menu for rows: each action gets the clicked row (model index), or the selected row when invoked another way.
 - `pub fn on_select(mut self, f: impl Fn(Vec<usize>) + 'static) -> Self`: The selected rows (model indices) changed.
 - `pub fn on_activate(mut self, f: impl Fn(usize) + 'static) -> Self`: A row was double-clicked, or Return pressed on it.
@@ -670,6 +671,10 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn set_url_drop(&self, on: bool)`: Accepts web addresses dragged from a browser (a link, or the address bar's icon). Each drop is reported as `TableEvent::UrlsDropped`. Off by default.
 - `pub fn set_pastes(&self, on: bool)`: Reports ⌘V on the table as `TableEvent::Paste` (and enables Paste in the Edit menu while there is text to paste). Off by default.
 - `pub fn set_keys(&self, keys: &[TableKey])`: Reports these keys, pressed without ⌘, ⌥ or ⌃ while rows are selected, as `TableEvent::Key` instead of AppKit's handling (Space would type-select, Delete beep). None by default.
+- `pub fn set_cell_focus(&self, on: bool)`: Cell focus, as in a spreadsheet: the table keeps a focused column, which a click on a cell moves to its column and ← and → move one column at a time (`TableEvent::FocusedColumn`). The focused cell of each selected row is outlined. With the selection it names the cells an action applies to (Set to NULL, Copy Cell). Off by default.
+- `pub fn focused_column(&self) -> Option<String>`: The focused column's id (see `set_cell_focus`).
+- `pub fn set_focused_column(&self, column: Option<&str>)`: Focuses a column by id (`None`: no column), scrolling it into view. Doesn't report an event.
+- `pub fn focus_ring(&self, view_row: usize) -> Option<(f64, f64, f64, f64)>`: The focused cell's outline in row `view_row` (a view position), in the row's coordinates, if the row is shown, selected and a column is focused. For checks.
 - `pub fn selected_text(&self) -> String`: The selected rows as tab-separated text (columns in their current order, one line per row, as ⌘C copies them).
 - `pub fn copy_to(&self, pasteboard: &NSPasteboard) -> bool`: Copies the selected rows to `pasteboard` (what ⌘C does with the general pasteboard). False if nothing is selected.
 - `pub fn paste_from(&self, pasteboard: &NSPasteboard) -> bool`: Pastes `pasteboard`'s text (what ⌘V does with the general pasteboard): queues `TableEvent::Paste` if the table takes pastes.
@@ -1466,11 +1471,15 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 
 ## services
 
+- `pub const FULL_DISK_ACCESS_SETTINGS: &str = "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"`: System Settings ▸ Privacy & Security ▸ Full Disk Access, for `open_url`: where the user allows an app to read every folder.
+- `pub fn asks_before_reading(path: impl AsRef<Path>, full_disk_access: bool) -> bool`: Whether reading the folder at `path` may stop to ask the user's consent, so an app walking the disk should stay out of it (show it as "not scanned" instead). `full_disk_access` is what `has_full_disk_access` says; read it once per walk.
 - `pub fn cancel_notification(id: &str)`: Removes the notification `id`: a daily one stops repeating, and one already shown leaves Notification Center.
 - `pub fn file_dates(path: impl AsRef<Path>) -> std::io::Result<FileDates>`: The dates of the file or folder at `path` (not following a symbolic link): for "last opened" lists, "date added" columns and the like. Reading them is cheap (no Spotlight query): a few thousand files take a few milliseconds.
+- `pub fn has_full_disk_access() -> bool`: Whether this app has Full Disk Access. It never prompts (it tries to read the privacy database, which only apps with access can). An app gets access after a relaunch, so read it at launch or before a walk.
 - `pub fn move_to_trash(path: impl AsRef<Path>) -> std::io::Result<PathBuf>`: Moves `path` (a file or a folder) to the Trash of its volume, as the Finder's Move to Trash does, and returns where it is now: keep it to put the item back (undo) with `std::fs::rename` to the old path. The name in the Trash can differ from the old one when the Trash already has an item with that name.
 - `pub fn notifications_supported() -> bool`: Whether this app can post notifications: it must run from an app bundle with a bundle identifier (a plain `cargo run` binary can't).
 - `pub fn notify(notification: Notification)`: Posts `notification` through Notification Center. The first time, macOS asks the user whether to allow the app's notifications; while the app is in front they show as banners too. Without an app bundle (`notifications_supported`) it does nothing.
+- `pub fn open_url(url: &str) -> bool`: Opens `url` in the app that handles it: a web page in the browser, a `mailto:` in Mail, a System Settings pane (such as `FULL_DISK_ACCESS_SETTINGS`). False if no app handles it.
 - `pub fn pdf_data(view: impl View) -> Vec<u8>`: `view` as a PDF (see `save_pdf`).
 - `pub fn print(window: &NSWindow, title: &str, view: impl View)`: Prints `view` laid out at the page's width, across as many pages as it needs, with the Print sheet on `window` (printer, copies, Save as PDF).
 - `pub fn reveal_in_finder<P: AsRef<Path>>(paths: &[P])`: Shows `paths` selected in the Finder (File ▸ Show in Finder, ⌘R in many apps): one Finder window per folder, the items selected, the Finder brought to the front.

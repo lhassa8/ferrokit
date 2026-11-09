@@ -70,6 +70,7 @@ pub struct Table<T: 'static> {
     column_lines: bool,
     row_menu: Vec<RowAction>,
     selection: Option<Signal<Vec<usize>>>,
+    focus: Option<Signal<Option<String>>>,
     keys: Vec<KeyAction>,
 }
 
@@ -90,6 +91,16 @@ impl<T: 'static> Table<T> {
     /// `rows` follows; set it after replacing the rows to select again.
     pub fn selection(mut self, rows: &Signal<Vec<usize>>) -> Self {
         self.selection = Some(*rows);
+        self
+    }
+
+    /// Cell focus, as in a spreadsheet: `column` holds the focused column's
+    /// id, both ways. Clicking a cell focuses its column, ← and → move it,
+    /// and the focused cell of each selected row is outlined. An action on
+    /// "the cell" (Set to NULL, Copy Value) reads the selection and
+    /// `column`; give it a menu item with a shortcut, such as ⌥⌫.
+    pub fn cell_focus(mut self, column: &Signal<Option<String>>) -> Self {
+        self.focus = Some(*column);
         self
     }
 
@@ -269,7 +280,19 @@ impl<T: 'static> View for Table<T> {
                 });
             }));
         }
-        let Table { on_select, on_activate, on_sort, on_toggle, on_edit, on_columns, on_move, on_files, on_urls, on_paste, selection, keys, .. } = self;
+        if let Some(bound) = self.focus {
+            model.set_cell_focus(true);
+            let m = model.clone();
+            node.own(Effect::new(move || {
+                let want = bound.get();
+                untrack(|| {
+                    if m.focused_column() != want {
+                        m.set_focused_column(want.as_deref());
+                    }
+                });
+            }));
+        }
+        let Table { on_select, on_activate, on_sort, on_toggle, on_edit, on_columns, on_move, on_files, on_urls, on_paste, selection, focus, keys, .. } = self;
         let drain: Drain = Rc::new(move || {
             for event in model.drain_events() {
                 match event {
@@ -289,6 +312,11 @@ impl<T: 'static> View for Table<T> {
                     TableEvent::UrlsDropped { urls, before } => on_urls.iter().for_each(|f| f((urls.clone(), before))),
                     TableEvent::Paste(text) => on_paste.iter().for_each(|f| f(text.clone())),
                     TableEvent::Key { key, rows } => keys.iter().filter(|(k, _)| *k == key).for_each(|(_, f)| f(rows.clone())),
+                    TableEvent::FocusedColumn(column) => {
+                        if let Some(bound) = focus {
+                            bound.set_if_changed(column);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -332,6 +360,7 @@ pub fn table<T: 'static>(model: &Rc<TableModel<T>>) -> Table<T> {
         column_lines: false,
         row_menu: Vec::new(),
         selection: None,
+        focus: None,
         keys: Vec::new(),
     }
 }
