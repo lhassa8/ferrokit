@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 (2026-11-09): what a real app needed
 
-Found by Rowboat, the SQLite app being built on Ferrokit for the Mac App Store (L1).
+Found by building Rowboat, a SQLite editor made with Ferrokit and now in Mac App Review, and by another app built on 0.5. Tables grew most: cell focus, styled cells, animated rows, URL drops, outline columns. No API was removed or renamed. Four behaviours changed (marked **Changed** below): a `min_width` on truncating text lets it shrink to that width, a number column shows NaN as nothing, `.menu("Help", …)` fills the standard Help menu, and an app's own ⌘W item moves Close to ⇧⌘W.
 
 - **Added: cell focus in tables.** `Table::cell_focus(&column)` (`TableModel::set_cell_focus`, `focused_column`, `set_focused_column`, `TableEvent::FocusedColumn`): a focused column, as in a spreadsheet, moved by a click on a cell and by ← and →, outlined in the selected rows, held in a `Signal<Option<String>>` both ways. With the selection it names the cells an action applies to (Rowboat's Set to NULL on ⌥⌫). Checks `table-cell-focus-keys`, `-signal`, `-click`.
 - **Added: `has_full_disk_access()`, `asks_before_reading(path, access)`, `open_url(url)` and `FULL_DISK_ACCESS_SETTINGS`**, so an app that walks the disk stays out of the folders macOS stops to ask about (a walk into them hung the Mac while Sift was being built): Desktop, Documents, Downloads, `~/Library` and other volumes without Full Disk Access, and the media libraries always.

@@ -4664,22 +4664,31 @@ fn teardown_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let per_form = count(&w.contentView().unwrap()) - 1;
     let (n0, v0, f0, s0) = (live_nodes(), w.contentView().unwrap().subviews().len(), footprint_mb(), ferrokit::live_signals());
     let t = std::time::Instant::now();
-    for _ in 0..300 {
-        batch(|| show.set(false));
-        batch(|| show.set(true));
-    }
+    let cycles = || {
+        for _ in 0..300 {
+            batch(|| show.set(false));
+            batch(|| show.set(true));
+        }
+    };
+    cycles();
     let ms = t.elapsed().as_secs_f64() * 1e3;
+    // Two batches, the smaller growth counted: the first can be refilling
+    // memory the allocator kept free from earlier checks (the baseline
+    // moves with them), while a cost per view shows in both.
+    let f_mid = footprint_mb();
+    cycles();
     later(move || {
         let w = windows().into_iter().find(|w| w.title().to_string() == "Teardown").unwrap();
         let (n1, v1, f1, s1) = (live_nodes(), w.contentView().unwrap().subviews().len(), footprint_mb(), ferrokit::live_signals());
         let gone = weak.load().is_none();
         // AppKit keeps ~1 KB per view ever measured and added to a window
         // (plain AppKit, same form: 7.5 MB per 300 cycles); more is ours.
-        let kb_per_view = (f1 - f0) * 1024.0 / (300.0 * per_form as f64);
+        let per = |mb: f64| mb * 1024.0 / (300.0 * per_form as f64);
+        let kb_per_view = per(f_mid - f0).min(per(f1 - f_mid));
         check(
             "controls-teardown",
             n1 == n0 && v1 == v0 && s1 == s0 && gone && kb_per_view < 1.5,
-            format!("300 × a 15-control form ({per_form} views) in {ms:.0} ms; nodes {n0} → {n1}; subviews {v0} → {v1}; signals {s0} → {s1}; first switch deallocated: {gone}; footprint {f0:.0} → {f1:.0} MB = {kb_per_view:.2} KB per view created (AppKit's floor ≈ 1)"),
+            format!("2 × 300 × a 15-control form ({per_form} views), the first in {ms:.0} ms; nodes {n0} → {n1}; subviews {v0} → {v1}; signals {s0} → {s1}; first switch deallocated: {gone}; footprint {f0:.0} → {f_mid:.0} → {f1:.0} MB = {:.2} then {:.2} KB per view created, {kb_per_view:.2} counted (AppKit's floor ≈ 1)", per(f_mid - f0), per(f1 - f_mid)),
         );
         table_checks(events.clone());
     });

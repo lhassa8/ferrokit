@@ -433,7 +433,7 @@ fn new(args: &[String]) -> Result<()> {
 }
 
 /// The ferrokit that new apps depend on.
-const FERROKIT_VERSION: &str = "0.5";
+const FERROKIT_VERSION: &str = "0.6";
 
 // ---- bundle ----
 
