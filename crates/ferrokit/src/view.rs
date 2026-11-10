@@ -15,6 +15,8 @@ use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::{Rc, Weak};
 
+use objc2::rc::Retained;
+
 use crate::platform::{MainThread, Native, NativeObject, NativeScroll, NativeSplit, NativeView, Platform};
 use crate::signal::{Effect, Owner, Signal, untrack};
 
@@ -87,6 +89,9 @@ pub(crate) fn invalidate_layout() {
     LAYOUT_DIRTY.with(|d| d.set(true));
 }
 
+/// Applies a modifier's look to a branch built later (see `Meta::inherit`).
+type Inherit = Rc<dyn Fn(&Node)>;
+
 /// Per-node layout state, shared with the effects that change the node.
 #[derive(Default)]
 pub(crate) struct Meta {
@@ -110,6 +115,10 @@ pub(crate) struct Meta {
     /// Disabled by [`ViewExt::disabled`], or by the control itself: its
     /// controls, and those of the views inside it, are disabled.
     pub(crate) disabled: Cell<bool>,
+    /// What this node's modifiers give the views inside it (a font, a
+    /// colour, an opacity, a tooltip): applied to a branch built into it
+    /// later, as it was to the views there when the node was built.
+    inherit: RefCell<Vec<Inherit>>,
 }
 
 impl Meta {
@@ -125,6 +134,11 @@ impl Meta {
     /// Whether this node or a view above it is disabled.
     pub(crate) fn disabled_here(self: &Rc<Self>) -> bool {
         self.any_up(|m| m.disabled.get())
+    }
+
+    /// Has `apply` run on every branch built into this node from now on.
+    fn on_new_branch(&self, apply: Inherit) {
+        self.inherit.borrow_mut().push(apply);
     }
 
     fn any_up(self: &Rc<Self>, f: impl Fn(&Meta) -> bool) -> bool {
@@ -1059,16 +1073,29 @@ impl<V: View> View for Modified<V> {
             follow_background(&mut node, look_when);
         }
         if let Some(alpha) = self.opacity {
-            for v in node.all_views() {
-                v.setAlphaValue(alpha);
-            }
+            let apply: Inherit = Rc::new(move |n| n.all_views().iter().for_each(|v| v.setAlphaValue(alpha)));
+            apply(&node);
+            node.meta.on_new_branch(apply);
         }
         if let Some(f) = self.opacity_when {
-            let views = node.all_views();
+            // The views it applies to: those here now, and branches built
+            // in later (held weakly: a replaced branch's views go).
+            let views: Rc<RefCell<Vec<objc2::rc::Weak<objc2_app_kit::NSView>>>> = Rc::default();
+            let now = Rc::new(Cell::new(1.0));
+            let (list, alpha) = (views.clone(), now.clone());
+            let add: Inherit = Rc::new(move |n| {
+                for v in n.all_views() {
+                    v.setAlphaValue(alpha.get());
+                    list.borrow_mut().push(objc2::rc::Weak::from_retained(&v));
+                }
+            });
+            add(&node);
+            node.meta.on_new_branch(add);
             let first = Cell::new(true);
             node.own(Effect::new(move || {
                 let alpha = f();
-                let views = views.clone();
+                now.set(alpha);
+                let views = live(&views);
                 let set = move || views.iter().for_each(|v| v.setAlphaValue(alpha));
                 if first.replace(false) { set() } else { crate::motion::apply(set) }
             }));
@@ -1090,28 +1117,50 @@ impl<V: View> View for Modified<V> {
         if let Some(font) = &self.font {
             // Text inside takes the font, and is measured again.
             let ns = font.ns();
-            node.each_leaf(&mut |v, content, meta| {
-                if let Some(field) = v.downcast_ref::<objc2_app_kit::NSTextField>() {
-                    field.setFont(Some(&ns));
-                    content.set(None);
-                    meta.mark();
-                }
+            let apply: Inherit = Rc::new(move |n| {
+                n.each_leaf(&mut |v, content, meta| {
+                    if let Some(field) = v.downcast_ref::<objc2_app_kit::NSTextField>() {
+                        field.setFont(Some(&ns));
+                        content.set(None);
+                        meta.mark();
+                    }
+                });
             });
+            apply(&node);
+            node.meta.on_new_branch(apply);
         }
         if let Some(color) = self.color {
-            let mut fields = Vec::new();
-            let mut symbols = Vec::new();
-            node.each_leaf(&mut |v, _, _| {
-                if let Ok(f) = v.clone().downcast::<objc2_app_kit::NSTextField>() {
-                    fields.push(f);
-                } else if let Ok(i) = v.clone().downcast::<objc2_app_kit::NSImageView>() {
-                    symbols.push(i);
-                }
-            });
-            let set = move |c: crate::Color| {
+            // Text and symbols inside: those here now, and branches built
+            // in later.
+            let fields: Rc<RefCell<Vec<objc2::rc::Weak<objc2_app_kit::NSTextField>>>> = Rc::default();
+            let symbols: Rc<RefCell<Vec<objc2::rc::Weak<objc2_app_kit::NSImageView>>>> = Rc::default();
+            let now: Rc<Cell<Option<crate::Color>>> = Rc::default();
+            let paint = |c: crate::Color, fields: &[Retained<objc2_app_kit::NSTextField>], symbols: &[Retained<objc2_app_kit::NSImageView>]| {
                 let ns = c.ns();
                 fields.iter().for_each(|f| f.setTextColor(Some(&ns)));
                 symbols.iter().for_each(|i| i.setContentTintColor(Some(&ns)));
+            };
+            let (fs, ss, current) = (fields.clone(), symbols.clone(), now.clone());
+            let add: Inherit = Rc::new(move |n| {
+                let (mut new_fields, mut new_symbols) = (Vec::new(), Vec::new());
+                n.each_leaf(&mut |v, _, _| {
+                    if let Ok(f) = v.clone().downcast::<objc2_app_kit::NSTextField>() {
+                        new_fields.push(f);
+                    } else if let Ok(i) = v.clone().downcast::<objc2_app_kit::NSImageView>() {
+                        new_symbols.push(i);
+                    }
+                });
+                if let Some(c) = current.get() {
+                    paint(c, &new_fields, &new_symbols);
+                }
+                fs.borrow_mut().extend(new_fields.iter().map(objc2::rc::Weak::from_retained));
+                ss.borrow_mut().extend(new_symbols.iter().map(objc2::rc::Weak::from_retained));
+            });
+            add(&node);
+            node.meta.on_new_branch(add);
+            let set = move |c: crate::Color| {
+                now.set(Some(c));
+                paint(c, &live(&fields), &live(&symbols));
             };
             match color {
                 crate::Value::Fixed(c) => set(c),
@@ -1140,6 +1189,11 @@ impl<V: View> View for Modified<V> {
             for v in leaves.iter().chain(node.decor.iter().filter(|d| d.class().name().to_string_lossy() == "FerrokitInteraction")) {
                 v.setToolTip(Some(&tip));
             }
+            node.meta.on_new_branch(Rc::new(move |n| {
+                let mut leaves = Vec::new();
+                n.leaf_views(&mut leaves);
+                leaves.iter().for_each(|v| v.setToolTip(Some(&tip)));
+            }));
         }
         if let Some(id) = self.matched {
             crate::motion::matched_entering(&id, node.all_views());
@@ -1254,6 +1308,22 @@ fn inherit_state(parent: &Rc<Meta>, new: &Node) {
     if parent.disabled_here() {
         new.apply_disabled(true);
     }
+    // Fonts, colours, opacity and tooltips set on the views above: the
+    // nearest first and the outermost last, the order they were applied in
+    // when those views were built (an outer one is applied after an inner).
+    let mut up = Some(parent.clone());
+    while let Some(m) = up {
+        let appliers = m.inherit.borrow().clone();
+        appliers.iter().for_each(|apply| apply(new));
+        up = m.parent();
+    }
+}
+
+/// The views in `list` that are still there (those gone are dropped from it).
+fn live<V: objc2::Message>(list: &RefCell<Vec<objc2::rc::Weak<V>>>) -> Vec<Retained<V>> {
+    let mut list = list.borrow_mut();
+    list.retain(|w| w.load().is_some());
+    list.iter().filter_map(objc2::rc::Weak::load).collect()
 }
 
 fn set_hidden(meta: &Rc<Meta>, children: &RefCell<Vec<Node>>, hide: bool) {

@@ -5319,6 +5319,44 @@ fn tree_state_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         check("image-unknown-symbol", reported && shown, format!("an unknown SF Symbol: reported {reported}, a placeholder shown {shown}"));
         ferrokit::close_window(&pw);
     }
+    // A font, a colour, an opacity and a tooltip reach a branch and a row
+    // built after the view they're set on.
+    {
+        use ferrokit::{Color, Font};
+        let (step, warm) = (Signal::new(0), Signal::new(false));
+        let lines = Signal::new(vec![place(1, "Look row 1", None)]);
+        let lw = open(Window::new("Look").size(260.0, 140.0).view(
+            vstack((dynamic(move || text(format!("Look branch {}", step.get()))), for_each(move || lines.get(), |p: Place| text(&p.name))))
+                .font(Font::headline())
+                .color(move || if warm.get() { Color::Orange } else { Color::Blue })
+                .opacity(0.5)
+                .tooltip("Look tip")
+                .padding(12.0),
+        ));
+        batch(|| {
+            step.set(1);
+            lines.update(|l| l.push(place(2, "Look row 2", None)));
+        });
+        batch(|| warm.set(true));
+        let looks: Vec<(String, bool, Option<Color>, f64, String)> = all_views(&lw.contentView().unwrap())
+            .into_iter()
+            .filter_map(|v| v.downcast::<NSTextField>().ok())
+            .filter(|f| f.stringValue().to_string().starts_with("Look"))
+            .map(|f| {
+                let bold = f.font().is_some_and(|font| font.fontDescriptor().symbolicTraits().contains(objc2_app_kit::NSFontDescriptorSymbolicTraits::TraitBold));
+                (f.stringValue().to_string(), bold, f.textColor().and_then(|c| Color::from_ns(&c)), f.alphaValue(), f.toolTip().map(|t| t.to_string()).unwrap_or_default())
+            })
+            .collect();
+        // (In the order the views were added, not the order shown.)
+        let mut names: Vec<&str> = looks.iter().map(|l| l.0.as_str()).collect();
+        names.sort_unstable();
+        check(
+            "modifiers-reach-new-branches",
+            names == ["Look branch 1", "Look row 1", "Look row 2"] && looks.iter().all(|(_, bold, color, alpha, tip)| *bold && *color == Some(Color::Orange) && (*alpha - 0.5).abs() < 0.01 && tip == "Look tip"),
+            format!("(text, bold, colour, opacity, tooltip) after a rebuilt branch, an added row and a colour change: {looks:?}"),
+        );
+        ferrokit::close_window(&lw);
+    }
     // The inner view is hidden while the outer one already is; showing the
     // outer one mustn't show it.
     batch(|| inner.set(true));
