@@ -3567,7 +3567,7 @@ fn failure_boundary_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
             // After this task's batch: the button's action below runs in a
             // batch of its own, as a click's does.
             let (w2, cell_made) = (w2.clone(), cell.is_some());
-            let (ran, load, events) = (ran.clone(), load.clone(), events.clone());
+            let (ran, events) = (ran.clone(), events.clone());
             after_events(move || {
                 let caught: Vec<ferrokit::Failure> = failures().into_iter().skip(before).collect();
                 let places: Vec<&str> = caught.iter().map(|f| f.place).collect();
