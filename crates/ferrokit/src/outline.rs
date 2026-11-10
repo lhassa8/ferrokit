@@ -113,13 +113,21 @@ define_class!(
 
         #[unsafe(method_id(outlineView:child:ofItem:))]
         fn child(&self, _ov: &NSOutlineView, index: NSInteger, item: Option<&AnyObject>) -> Retained<AnyObject> {
-            let state = self.ivars().borrow().upgrade().expect("outline state outlives its view");
-            let s = state.borrow();
-            let list = match index_of(item) {
-                None => &s.roots,
-                Some(i) => &s.entries[i].children,
-            };
-            Retained::into_super(Retained::into_super(s.items[list[index as usize]].clone()))
+            // An item AppKit asks for that isn't there (the tree changed
+            // under it) is an empty one, not a panic inside AppKit.
+            let found = crate::failure::guard("an outline (child)", None, || {
+                let state = self.ivars().borrow().upgrade()?;
+                let s = state.borrow();
+                let list = match index_of(item) {
+                    None => &s.roots,
+                    Some(i) => &s.entries.get(i)?.children,
+                };
+                s.items.get(*list.get(index as usize)?).cloned()
+            });
+            match found {
+                Some(item) => Retained::into_super(Retained::into_super(item)),
+                None => Retained::into_super(NSObject::new()),
+            }
         }
 
         #[unsafe(method(outlineView:isItemExpandable:))]
@@ -176,7 +184,15 @@ define_class!(
                 return;
             }
             if let Some(load) = s.on_expand.clone() {
-                crate::later(move || crate::failure::entry("an outline's children", (), || crate::batch(|| load(index))));
+                // By its key: the tree may be rebuilt before this runs, and
+                // the same place in it be another item's.
+                let (key, state) = (s.entries[index].key, state.clone());
+                crate::later(move || {
+                    let index = state.borrow().entries.iter().position(|e| e.key == key);
+                    if let Some(index) = index {
+                        crate::failure::entry("an outline's children", (), || crate::batch(|| load(index)));
+                    }
+                });
             }
         }
 

@@ -22,6 +22,27 @@ Fixes from a review of the whole framework (two independent reviews, 2026-11-09)
 - **Fixed: `cargo ferrokit check` could pass a run that checked nothing.** An app that exited cleanly without a passing check, or after a caught panic or exception, was reported as passed; both fail now, skipped checks are counted, and a helper the app started that keeps its output open can't hold the run past its timeout.
 - **Fixed: `cargo ferrokit preview`** didn't watch a folder named `updates` or `target` inside `src`, and restarted twice when a build rewrote `Cargo.lock`.
 - **Fixed: a soak's seed** (`SOAK_SEED`) was read as a decimal number, so a run seeded from the clock couldn't be repeated from the seed it printed.
+- **Changed: `DocumentType::write` saves safely.** The writer is given a new file in a temporary folder, which replaces the document's file once it has returned `Ok`; a write that fails or is cut short leaves the old file whole, where it used to be left half written. `write_returning` (databases, written in place by their engine) is as before.
+- **Changed: `.links_open_in_browser()` sends out only what the user clicked, and only `http`, `https` and `mailto`.** Any scheme went to the system, also for windows a page opened by script; a link within the page (`#section`) went to the browser instead of scrolling.
+- **Fixed: `asks_before_reading` knew the folders that ask by one spelling only.** The same folders under `/System/Volumes/Data`, under the startup disk's entry in `/Volumes`, in another case of the letters, or behind a symbolic link read as safe to walk into.
+- **Fixed: layout ran outside a batch when a resize drove it,** so a signal set while views were being placed (a canvas told its size, a split view its panes') ran effects inside the pass; they now run after it.
+- **Fixed: a truncating text's `min_width` didn't hold inside a padded or backgrounded box, and a row inside a row** could shrink below its fixed parts and overlap its neighbour: a container's floor is what its contents need (check `truncate-nested-floors`).
+- **Fixed, charts:** a date axis with a very long span, or values that aren't seconds, counted through years one decade at a time and froze the app; a line chart could draw an earlier data set's lines after the data was replaced.
+- **Fixed, smaller:**
+  - `stop_animation` called from inside an animation frame didn't stop it.
+  - An alert sheet dismissed without a button answered as its first button; it answers as Cancel, or not at all.
+  - An app with translations showed one of them, not English, to a user who had none of its languages.
+  - `t_with` filled placeholders inside the values it had just put in.
+  - Two `stored` signals with one key didn't follow each other, and one made in a window went with the window: there's one per key now, for the app's life.
+  - `Window::on_drop_files` did nothing in a window with a sidebar or an inspector (document windows among them).
+  - The welcome window kept its signals each time it was reopened.
+  - A reminder scheduled in an earlier run showed no banner and ran no click until the app's first `notify`.
+  - PDF highlights weren't made again for a new document.
+  - A video stream's `duration` blocked the main thread while it loaded; Picture in Picture, promised in the docs, wasn't on.
+  - Restoring a selection in a large collection took items × selected steps (⌘A in 100,000 items).
+  - `TableModel::insert` past the end panicked; an outline could load the wrong item's children; overlapping text styles (a search match over a keyword) left stale colour behind.
+- **Added, `cargo ferrokit`: `[package.metadata.ferrokit.entitlements]` and `[package.metadata.ferrokit.plist]`**, for entitlements and Info.plist keys the app needs beyond the built-in ones (printing from the sandbox, usage descriptions, export compliance).
+- **Changed, `cargo ferrokit`: an unknown setting, or one of the wrong type, is an error** (`sandbox = "true"` shipped an app without the sandbox). An option can't take the next option as its value (`--sign --zip`). Extended attributes are stripped from the bundle before signing (a quarantine mark on a downloaded provisioning profile or icon).
 - CI: each run's page lists the suites and marks the ones that failed, since the suites' steps are allowed to fail.
 
 ## 0.6.0 (2026-11-09): what a real app needed

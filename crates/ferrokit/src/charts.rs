@@ -411,6 +411,12 @@ fn civil_from_days(z: i64) -> (i64, i64) {
 pub(crate) fn date_ticks(min: f64, max: f64, target: usize, offset: &dyn Fn(f64) -> f64) -> (Vec<f64>, &'static str) {
     const H: f64 = 3600.0;
     const D: f64 = 86_400.0;
+    // Not dates in seconds (milliseconds, say, or not finite): no ticks,
+    // where reading them as dates would count through millions of years.
+    const LIMIT: f64 = 400_000.0 * 365.25 * D;
+    if !(min.is_finite() && max.is_finite()) || min.abs() > LIMIT || max.abs() > LIMIT {
+        return (Vec::new(), "y");
+    }
     let span = (max - min).max(1.0);
     let target = target.max(1) as f64;
     // Local midnight starting day `d` (days since 1970, local), in UTC.
@@ -435,7 +441,14 @@ pub(crate) fn date_ticks(min: f64, max: f64, target: usize, offset: &dyn Fn(f64)
         return (ticks, "MMMd");
     }
     // Months (1, 3 or 6 at a time) or years: on the first of the month.
-    let months = [1, 3, 6, 12, 24, 60, 120].into_iter().find(|m| span / (*m as f64 * 30.44 * D) <= target).unwrap_or(120);
+    // Past ten years a tick, a round number of years (20, 50, 100…), so a
+    // long span still has about `target` ticks.
+    let months = [1, 3, 6, 12, 24, 60, 120].into_iter().find(|m| span / (*m as f64 * 30.44 * D) <= target).unwrap_or_else(|| {
+        let years = span / (365.25 * D) / target;
+        let unit = 10f64.powf(years.log10().floor());
+        let round = [1.0, 2.0, 5.0, 10.0].into_iter().map(|m| m * unit).find(|y| *y >= years).unwrap_or(10.0 * unit);
+        (round as i64).max(10) * 12
+    });
     let (y0, m0) = civil_from_days(first_day);
     let mut index = y0 * 12 + (m0 - 1);
     index += (months - index.rem_euclid(months)) % months;
@@ -1060,7 +1073,9 @@ fn lines(series: Box<dyn Fn() -> Vec<Series>>, mark: Mark, o: Rc<Options>) -> Ca
     });
     let hover = Signal::new(None::<(f64, f64)>);
     // The decimated lines, for the data, plot width and x range they were made for.
-    type Cache = Option<((usize, i64, u64, u64), Rc<Vec<Vec<(f64, f64)>>>)>;
+    // (The data itself is kept with them: its address alone could be a
+    // later value's, once this one is freed.)
+    type Cache = Option<((Rc<Vec<Prepared>>, i64, u64, u64), Rc<Vec<Vec<(f64, f64)>>>)>;
     let cache: Rc<RefCell<Cache>> = Rc::default();
     let layout: Rc<std::cell::Cell<Layout>> = Rc::default();
     let o2 = o.clone();
@@ -1108,11 +1123,11 @@ fn lines(series: Box<dyn Fn() -> Vec<Series>>, mark: Mark, o: Rc<Options>) -> Ca
             p.text(to_x(*t), plot.y + plot.h + 4.0, label, FONT, Color::Secondary, Align::Center);
         }
         // Lines, decimated once per data, width and range.
-        let key = (Rc::as_ptr(&all) as usize, plot.w.round() as i64, x0.to_bits(), x1.to_bits());
+        let key = (all.clone(), plot.w.round() as i64, x0.to_bits(), x1.to_bits());
         let lines = {
             let mut c = cache.borrow_mut();
             match c.as_ref() {
-                Some((k, lines)) if *k == key => lines.clone(),
+                Some((k, lines)) if Rc::ptr_eq(&k.0, &key.0) && (k.1, k.2, k.3) == (key.1, key.2, key.3) => lines.clone(),
                 _ => {
                     let lines = Rc::new((0..all.len()).map(|i| decimate(series_points(i), x0, x1 + span * 1e-9, plot.w.ceil() as usize)).collect::<Vec<_>>());
                     *c = Some((key, lines.clone()));
@@ -1680,6 +1695,11 @@ mod tests {
         let (t, _) = date_ticks(20_490.0 * D, 20_510.0 * D, 10, &dst);
         assert!(t.iter().all(|t| (t + dst(*t)) % D == 0.0) && t.len() >= 8, "{t:?}");
         // Hours.
+        // A century, and values that aren't seconds: a handful of ticks, or none.
+        let (t, template) = date_ticks(start, start + 36_525.0 * D, 6, &|_| 0.0);
+        assert!((3..=8).contains(&t.len()) && template == "y", "{} ticks", t.len());
+        let (t, _) = date_ticks(start * 1e9, (start + D) * 1e9, 6, &|_| 0.0);
+        assert!(t.len() <= 12, "{} ticks for nanoseconds", t.len());
         let (t, template) = date_ticks(start, start + 6.0 * 3_600.0, 6, &|_| 0.0);
         assert!(t.iter().all(|t| t % 3_600.0 == 0.0) && template == "jm", "{t:?}");
     }

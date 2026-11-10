@@ -311,12 +311,14 @@ define_class!(
         #[unsafe(method_id(collectionView:itemForRepresentedObjectAtIndexPath:))]
         fn item(&self, cv: &NSCollectionView, path: &NSIndexPath) -> Retained<NSCollectionViewItem> {
             let made = cv.makeItemWithIdentifier_forIndexPath(&NSString::from_str(CELL_ID), path);
-            if let (Ok(cell), Some(state)) = (made.clone().downcast::<GridCell>(), self.ivars().upgrade()) {
-                let index = path.item() as usize;
-                if let Some(entry) = state.borrow().entries.get(index) {
-                    cell.fill(entry, index, self.ivars());
+            crate::failure::guard("a collection (item)", (), || {
+                if let (Ok(cell), Some(state)) = (made.clone().downcast::<GridCell>(), self.ivars().upgrade()) {
+                    let index = path.item() as usize;
+                    if let Some(entry) = state.borrow().entries.get(index) {
+                        cell.fill(entry, index, self.ivars());
+                    }
                 }
-            }
+            });
             made
         }
     }
@@ -461,7 +463,10 @@ impl<T: Identifiable + Clone + 'static> View for Collection<T> {
                 let Some(sel) = &sel else { return };
                 let want = sel.get();
                 untrack(|| {
-                    let rows: Vec<usize> = values.borrow().iter().enumerate().filter(|(_, v)| want.contains(&v.id())).map(|(i, _)| i).collect();
+                    // Looked up in a set: by scanning, selecting everything
+                    // in a large collection took items × selected steps.
+                    let wanted: std::collections::HashSet<&T::Id> = want.iter().collect();
+                    let rows: Vec<usize> = values.borrow().iter().enumerate().filter(|(_, v)| wanted.contains(&v.id())).map(|(i, _)| i).collect();
                     let mut now: Vec<usize> = cv.selectionIndexPaths().iter().map(|p| p.item() as usize).collect();
                     now.sort_unstable();
                     if now != rows {

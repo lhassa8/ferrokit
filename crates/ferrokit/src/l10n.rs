@@ -104,8 +104,12 @@ fn preferred(available: &[String]) -> Option<String> {
     let array = NSArray::from_retained_slice(&candidates.iter().map(|l| NSString::from_str(l)).collect::<Vec<_>>());
     // The user's languages given explicitly: without them an app that isn't
     // bundled (no localizations of its own) always gets English.
-    let chosen = NSBundle::preferredLocalizationsFromArray_forPreferences(&array, Some(&NSLocale::preferredLanguages()));
-    chosen.firstObject().map(|l| l.to_string()).filter(|l| l != "en")
+    let wanted = NSLocale::preferredLanguages();
+    let chosen = NSBundle::preferredLocalizationsFromArray_forPreferences(&array, Some(&wanted));
+    // One of the user's languages only: with none of them available, AppKit
+    // may answer with any of the candidates, and the app stays in English.
+    let base = |l: &str| l.split(['-', '_']).next().unwrap_or_default().to_ascii_lowercase();
+    chosen.firstObject().map(|l| l.to_string()).filter(|l| l != "en" && wanted.iter().any(|w| base(&w.to_string()) == base(l)))
 }
 
 /// The language the app's strings are in: a code like `"de"` or `"pt-BR"`,
@@ -179,11 +183,30 @@ pub fn t(key: &str) -> String {
 /// [`t`] with `{name}` placeholders filled in: `t_with("Open “{file}”",
 /// &[("file", &name)])`. Translations can put them in any order.
 pub fn t_with(key: &str, args: &[(&str, &dyn std::fmt::Display)]) -> String {
-    let mut s = t(key);
-    for (name, value) in args {
-        s = s.replace(&format!("{{{name}}}"), &value.to_string());
+    fill(&t(key), args)
+}
+
+/// `template` with each `{name}` replaced by its value, in one pass: a
+/// value that itself holds `{other}` (a file named so) is left as it is.
+fn fill(template: &str, args: &[(&str, &dyn std::fmt::Display)]) -> String {
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        out.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        match after.find('}').and_then(|close| args.iter().find(|(name, _)| *name == &after[..close]).map(|(_, value)| (close, value))) {
+            Some((close, value)) => {
+                out.push_str(&value.to_string());
+                rest = &after[close + 1..];
+            }
+            None => {
+                out.push('{');
+                rest = after;
+            }
+        }
     }
-    s
+    out.push_str(rest);
+    out
 }
 
 /// The plural category of `n` in `language` (CLDR's rules for integers):
@@ -305,6 +328,13 @@ fn format_number_in(value: f64, decimals: usize, locale: &NSLocale) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn placeholders_are_filled_in_one_pass() {
+        let (file, count) = ("{count}.txt", 3);
+        assert_eq!(fill("Open “{file}” ({count})", &[("file", &file), ("count", &count)]), "Open “{count}.txt” (3)");
+        assert_eq!(fill("{b} then {a}, {unknown} and a { brace", &[("a", &1), ("b", &2)]), "2 then 1, {unknown} and a { brace");
+    }
 
     #[test]
     fn local_days() {

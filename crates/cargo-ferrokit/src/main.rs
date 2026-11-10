@@ -159,7 +159,8 @@ impl Args {
             if let Some((name, value)) = a.split_once('=').filter(|(n, _)| valued.contains(n)) {
                 parsed.values.push((name.into(), value.into()));
             } else if valued.contains(&a.as_str()) {
-                let value = it.next().ok_or_else(|| format!("{a} needs a value"))?;
+                // Not the next option taken as its value (`--sign --zip`).
+                let value = it.next().filter(|v| !v.starts_with("--")).ok_or_else(|| format!("{a} needs a value"))?;
                 parsed.values.push((a.clone(), value.clone()));
             } else if allowed.contains(&a.as_str()) {
                 parsed.flags.push(a.clone());
@@ -258,6 +259,85 @@ struct Project {
     provisioning_profile: Option<PathBuf>,
     /// Updates through Sparkle (`[package.metadata.ferrokit.updates]`).
     updates: Option<Updates>,
+    /// More entitlements and Info.plist keys, as written under
+    /// `[package.metadata.ferrokit.entitlements]` and `….plist]`.
+    entitlements: Vec<(String, Extra)>,
+    plist: Vec<(String, Extra)>,
+}
+
+/// A value of an extra entitlement or Info.plist key.
+#[derive(Debug, Clone, PartialEq)]
+enum Extra {
+    Bool(bool),
+    Text(String),
+    List(Vec<String>),
+}
+
+impl Extra {
+    /// The keys and values of the table `name` in the settings.
+    fn table(m: &serde_json::Value, name: &str) -> Result<Vec<(String, Extra)>> {
+        let Some(table) = m[name].as_object() else {
+            return if m[name].is_null() { Ok(Vec::new()) } else { Err(format!("[package.metadata.ferrokit] `{name}` must be a table of keys and values")) };
+        };
+        table
+            .iter()
+            .map(|(k, v)| {
+                let list = v.as_array().map(|a| a.iter().map(|e| e.as_str().map(String::from)).collect::<Option<Vec<_>>>());
+                let value = match (v.as_bool(), v.as_str(), list) {
+                    (Some(b), ..) => Extra::Bool(b),
+                    (_, Some(s), _) => Extra::Text(s.into()),
+                    (_, _, Some(Some(l))) => Extra::List(l),
+                    _ => return Err(format!("[package.metadata.ferrokit.{name}] `{k}` must be true or false, a string, or a list of strings")),
+                };
+                Ok((k.clone(), value))
+            })
+            .collect()
+    }
+
+    /// As a property list's key and value.
+    fn xml(key: &str, value: &Extra) -> String {
+        let value = match value {
+            Extra::Bool(b) => format!("<{b}/>"),
+            Extra::Text(s) => format!("<string>{}</string>", xml(s)),
+            Extra::List(l) => format!("<array>{}</array>", l.iter().map(|s| format!("<string>{}</string>", xml(s))).collect::<String>()),
+        };
+        format!("    <key>{}</key>\n    {value}\n", xml(key))
+    }
+}
+
+/// Fails on a setting `cargo ferrokit` doesn't know or one of the wrong
+/// type: a misspelt `sandbox` would otherwise ship an app without it.
+fn check_settings(m: &serde_json::Value) -> Result<()> {
+    let Some(table) = m.as_object() else { return Ok(()) };
+    const TEXT: [&str; 10] = ["name", "id", "icon", "min-macos", "category", "sign", "notary-profile", "app-store-sign", "installer-sign", "provisioning-profile"];
+    const BOOL: [&str; 2] = ["sandbox", "network"];
+    const OTHER: [&str; 5] = ["documents", "languages", "updates", "entitlements", "plist"];
+    let unknown = |section: &str, key: &str, known: &[&str]| format!("[package.metadata.ferrokit{section}] has no setting `{key}` (it has: {})", known.join(", "));
+    for (key, value) in table {
+        if TEXT.contains(&key.as_str()) {
+            if !value.is_string() {
+                return Err(format!("[package.metadata.ferrokit] `{key}` must be a string, in quotes"));
+            }
+        } else if BOOL.contains(&key.as_str()) {
+            if !value.is_boolean() {
+                return Err(format!("[package.metadata.ferrokit] `{key}` must be true or false, without quotes"));
+            }
+        } else if !OTHER.contains(&key.as_str()) {
+            let known: Vec<&str> = TEXT.iter().chain(&BOOL).chain(&OTHER).copied().collect();
+            return Err(unknown("", key, &known));
+        }
+    }
+    for d in m["documents"].as_array().into_iter().flatten() {
+        const KEYS: [&str; 4] = ["name", "extensions", "related", "role"];
+        if let Some(key) = d.as_object().into_iter().flat_map(|o| o.keys()).find(|k| !KEYS.contains(&k.as_str())) {
+            return Err(unknown(".documents", key, &KEYS));
+        }
+    }
+    const UPDATES: [&str; 3] = ["feed", "public-key", "sparkle"];
+    if let Some(key) = m["updates"].as_object().into_iter().flat_map(|o| o.keys()).find(|k| !UPDATES.contains(&k.as_str())) {
+        return Err(unknown(".updates", key, &UPDATES));
+    }
+    Ok(())
 }
 
 /// Where the app's updates come from and the key that checks them.
@@ -340,6 +420,7 @@ impl Project {
         };
         let name = package["name"].as_str().unwrap_or_default().to_string();
         let m = &package["metadata"]["ferrokit"];
+        check_settings(m)?;
         let text = |key: &str| m[key].as_str().map(String::from);
         let dir = dir_of(package);
         let documents = m["documents"]
@@ -376,6 +457,8 @@ impl Project {
             provisioning_profile: text("provisioning-profile").map(|p| dir.join(p)),
             updates,
             documents,
+            entitlements: Extra::table(m, "entitlements")?,
+            plist: Extra::table(m, "plist")?,
             package: name,
             dir,
             bin,
@@ -568,6 +651,10 @@ fn bundle(p: &Project, o: &BundleOptions) -> Result<PathBuf> {
 
     step(if o.sign == "-" { "Signing (ad hoc)" } else { "Signing" });
     let app_s = app.to_string_lossy().into_owned();
+    // Nothing copied in keeps its extended attributes: a provisioning
+    // profile or an icon downloaded with a browser carries a quarantine
+    // mark, which the App Store refuses inside an app.
+    let _ = Command::new("xattr").args(["-cr", &app_s]).status();
     let entitlements = out.join(format!("{}.entitlements", p.bin));
     let entitlements_s = entitlements.to_string_lossy().into_owned();
     // The hardened runtime is for Developer ID; the App Store's sandbox
@@ -604,12 +691,15 @@ fn bundle(p: &Project, o: &BundleOptions) -> Result<PathBuf> {
         // ID, the app and Sparkle share the team and need no exception.
         trues.push("com.apple.security.cs.disable-library-validation");
     }
-    if !trues.is_empty() {
+    if !trues.is_empty() || !p.entitlements.is_empty() {
         let extra: Vec<(&str, &str)> = o.store.iter().flat_map(|s| s.entitlements.iter().map(|(k, v)| (k.as_str(), v.as_str()))).collect();
         // A sandboxed app reaches Sparkle's installer through these services.
         let services: Vec<String> = if sparkle.is_some() && p.sandbox { vec![format!("{}-spks", p.id), format!("{}-spki", p.id)] } else { vec![] };
         let arrays: Vec<(&str, &[String])> = if services.is_empty() { vec![] } else { vec![("com.apple.security.temporary-exception.mach-lookup.global-name", &services)] };
-        std::fs::write(&entitlements, entitlements_plist(&trues, &extra, &arrays)).map_err(|e| e.to_string())?;
+        // The app's own entitlements last (printing, a usage it declares).
+        let own: String = p.entitlements.iter().map(|(k, v)| Extra::xml(k, v)).collect();
+        let file = entitlements_plist(&trues, &extra, &arrays).replace("</dict>\n</plist>\n", &format!("{own}</dict>\n</plist>\n"));
+        std::fs::write(&entitlements, file).map_err(|e| e.to_string())?;
         args.extend(["--entitlements", &entitlements_s]);
     }
     if o.sign != "-" {
@@ -712,6 +802,10 @@ fn info_plist(p: &Project, icon: bool, build: Option<&str>, sparkle: bool) -> St
             }
         }
         s += "  </array>\n";
+    }
+    // The app's own keys last (a usage description, export compliance).
+    for (k, v) in &p.plist {
+        s += &Extra::xml(k, v);
     }
     s += "</dict></plist>\n";
     s
@@ -1247,6 +1341,21 @@ mod tests {
     }
 
     #[test]
+    fn settings_are_checked() {
+        let ok = serde_json::json!({ "name": "A", "sandbox": true, "documents": [{ "name": "Text", "extensions": ["txt"] }], "updates": { "feed": "https://x", "public-key": "k" }, "plist": { "ITSAppUsesNonExemptEncryption": false, "LSUIElement": true, "CFBundleURLSchemes": ["a"] } });
+        assert_eq!(check_settings(&ok), Ok(()));
+        assert_eq!(Extra::table(&ok, "plist").unwrap().len(), 3);
+        assert!(Extra::table(&ok, "entitlements").unwrap().is_empty());
+        // A quoted true, another spelling, a key in the wrong table.
+        for wrong in [serde_json::json!({ "sandbox": "true" }), serde_json::json!({ "Sandbox": true }), serde_json::json!({ "min_macos": "15.0" }), serde_json::json!({ "documents": [{ "name": "Text", "sandbox": true }] }), serde_json::json!({ "updates": { "feed": "https://x", "public-key": "k", "sandbox": true } })] {
+            assert!(check_settings(&wrong).is_err(), "{wrong}");
+        }
+        assert!(Extra::table(&serde_json::json!({ "plist": { "a": 3 } }), "plist").is_err());
+        assert!(Args::parse(&s(&["--sign", "--zip"]), &["--sign"], &["--zip"]).is_err(), "an option isn't a value");
+        assert!(Args::parse(&s(&["--sign", "-"]), &["--sign"], &[]).is_ok(), "ad hoc is");
+    }
+
+    #[test]
     fn plist() {
         let p = Project {
             package: "notes".into(),
@@ -1269,6 +1378,8 @@ mod tests {
             installer_sign: None,
             provisioning_profile: None,
             updates: None,
+            entitlements: vec![("com.apple.security.print".into(), Extra::Bool(true))],
+            plist: vec![("ITSAppUsesNonExemptEncryption".into(), Extra::Bool(false)), ("NSHumanReadableCopyright".into(), Extra::Text("© 2026 A & B".into()))],
         };
         let plist = info_plist(&p, true, None, false);
         assert!(info_plist(&p, true, Some("42"), false).contains("<key>CFBundleVersion</key><string>42</string>"));
@@ -1278,6 +1389,10 @@ mod tests {
         assert!(plist.contains("<key>CFBundleIconFile</key><string>AppIcon</string>"));
         assert!(plist.contains("<key>CFBundleLocalizations</key><array><string>en</string><string>de</string></array>"));
         assert!(!plist.contains("NSIsRelatedItemType"), "no related files declared");
+        // The app's own keys, by type.
+        assert!(plist.contains("<key>ITSAppUsesNonExemptEncryption</key>\n    <false/>"), "{plist}");
+        assert!(plist.contains("<key>NSHumanReadableCopyright</key>\n    <string>© 2026 A &amp; B</string>"));
+        assert_eq!(Extra::xml("com.apple.security.print", &p.entitlements[0].1), "    <key>com.apple.security.print</key>\n    <true/>\n");
         // Related files: their extensions, declared as related items.
         let mut p = p;
         p.documents = vec![

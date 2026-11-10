@@ -1759,6 +1759,8 @@ impl<T: 'static> TableModel<T> {
     /// Inserts a row at a model index (the selection is kept).
     pub fn insert(&self, index: usize, row: T) {
         let selected = self.inner.selection_model_rows();
+        // Past the end is the end (an index from before a row went).
+        let index = index.min(self.inner.rows.borrow().len());
         self.inner.rows.borrow_mut().insert(index, row);
         let selected: Vec<usize> = selected.into_iter().map(|r| if r >= index { r + 1 } else { r }).collect();
         self.inner.compute_order();

@@ -121,6 +121,19 @@ impl Arena {
     }
 }
 
+/// Runs `f` with no owner: what it makes lives as long as the app.
+pub(crate) fn unowned<R>(f: impl FnOnce() -> R) -> R {
+    struct Restore(Option<Rc<OwnerInner>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let prev = self.0.take();
+            let _ = OWNER.try_with(|o| *o.borrow_mut() = prev);
+        }
+    }
+    let _restore = Restore(OWNER.with_borrow_mut(Option::take));
+    f()
+}
+
 /// `f`, run with the owner current now (for callbacks registered while
 /// building: signals a button's action makes, say for a sheet's form,
 /// belong to the button's view tree rather than living for the app).

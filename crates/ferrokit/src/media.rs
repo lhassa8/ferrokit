@@ -288,7 +288,22 @@ define_class!(
                 let link = kind == WKNavigationType::LinkActivated || frame.is_none();
                 if link && let Some(url) = url {
                     if self.ivars().links_outside && !url.isFileURL() {
-                        NSWorkspace::sharedWorkspace().openURL(&url);
+                        let text = url.absoluteString().map(|s| s.to_string()).unwrap_or_default();
+                        // A link within the page (`#section`) scrolls here.
+                        let page = |u: &str| u.split('#').next().unwrap_or_default().to_string();
+                        // SAFETY: reading the view's URL on the main thread.
+                        let here = unsafe { view.URL() }.and_then(|u| u.absoluteString()).map(|s| page(&s.to_string()));
+                        if text.contains('#') && here.as_deref() == Some(&page(&text)) {
+                            handler.call((WKNavigationActionPolicy::Allow,));
+                            return;
+                        }
+                        // Only what the user clicked, and only web and mail
+                        // addresses: a page mustn't make the system open
+                        // another app's URL scheme, or anything by script.
+                        let scheme = url.scheme().map(|s| s.to_string().to_ascii_lowercase()).unwrap_or_default();
+                        if kind == WKNavigationType::LinkActivated && matches!(scheme.as_str(), "http" | "https" | "mailto") {
+                            NSWorkspace::sharedWorkspace().openURL(&url);
+                        }
                         handler.call((WKNavigationActionPolicy::Cancel,));
                         return;
                     }
@@ -375,6 +390,9 @@ pub struct WebView {
 impl WebView {
     /// Opens links the user clicks in their web browser instead of in the
     /// view: for help pages, previews and HTML the app made itself.
+    /// Only web and mail links go out (`http`, `https`, `mailto`), and only
+    /// on a click; other schemes and windows a page opens by script are
+    /// dropped, and a link within the page (`#section`) scrolls in place.
     pub fn links_open_in_browser(mut self) -> Self {
         self.links_outside = true;
         self
@@ -476,6 +494,8 @@ impl View for PdfView {
         // The document, reloaded when the source's signals change.
         let v = view.clone();
         let source = self.source;
+        // Counts the documents shown: the highlights are made again for each.
+        let loaded = Signal::new(0u32);
         node.own(Effect::new(move || {
             let doc = match &source {
                 // SAFETY: PDFKit's initialisers; None when unreadable.
@@ -485,6 +505,7 @@ impl View for PdfView {
             untrack(|| {
                 // SAFETY: setting the view's document on the main thread.
                 unsafe { v.setDocument(doc.as_deref()) };
+                loaded.update(|n| *n += 1);
                 if let Some(c) = pages {
                     c.set_if_changed(doc.as_ref().map_or(0, |d| unsafe { d.pageCount() }));
                 }
@@ -527,6 +548,7 @@ impl View for PdfView {
             let v = view.clone();
             node.own(Effect::new(move || {
                 let q = find();
+                loaded.get();
                 // SAFETY: PDFKit's search on the main thread.
                 unsafe {
                     let Some(d) = v.document() else { return };
@@ -703,6 +725,7 @@ impl View for VideoPlayer {
                 VideoControls::Hidden => AVPlayerViewControlsStyle::None,
             });
             view.setShowsFullScreenToggleButton(true);
+            view.setAllowsPictureInPicturePlayback(true);
         }
         let (mut node, _) = Node::leaf(cx, as_view(&view), (true, true), Size { w: 160.0, h: 90.0 });
         let (playing, time, duration, loops) = (self.playing, self.time, self.duration, self.loops);
@@ -734,11 +757,15 @@ impl View for VideoPlayer {
             let url = source();
             untrack(|| {
                 // SAFETY: AVFoundation's player item on the main thread.
+                let local = url.as_ref().is_some_and(|u| u.isFileURL());
                 let item = url.map(|u| unsafe { AVPlayerItem::playerItemWithURL(&u, mtm) });
                 unsafe { p.replaceCurrentItemWithPlayerItem(item.as_deref()) };
                 if let Some(d) = duration {
-                    // A local file's length is known at once.
-                    let length = item.as_ref().and_then(|i| unsafe { seconds(i.asset().duration()) });
+                    // A local file's length is known at once. A stream's
+                    // isn't asked for here (the answer waits for the
+                    // network, on the main thread): it arrives with the
+                    // first time callbacks.
+                    let length = item.as_ref().filter(|_| local).and_then(|i| unsafe { seconds(i.asset().duration()) });
                     d.set_if_changed(length.unwrap_or(0.0));
                 }
                 if let Some(w) = w.upgrade() {

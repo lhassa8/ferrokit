@@ -220,8 +220,11 @@ fn mark_placed(view: &NSView) -> bool {
         return false;
     }
     PLACED.with_borrow_mut(|p| {
-        if p.len() > 4096 {
+        // Swept when it has doubled since the last sweep, not on every
+        // insert past a fixed size (thousands of live views are normal).
+        if p.len() >= SWEEP_AT.with(Cell::get) {
             p.retain(|_, w| w.load().is_some());
+            SWEEP_AT.with(|s| s.set((p.len() * 2).max(4096)));
         }
         p.insert(key(view), objc2::rc::Weak::from(view));
     });
@@ -445,6 +448,10 @@ type Step = Box<dyn FnMut(f64) -> bool>;
 
 thread_local! {
     static JOBS: UiCell<Vec<(u64, f64, Step)>> = const { UiCell::new(Vec::new()) };
+    /// Jobs stopped since the current frame began (see [`stop_animation`]).
+    static STOPPED: UiCell<Vec<u64>> = const { UiCell::new(Vec::new()) };
+    /// The size of `PLACED` at which it is next swept.
+    static SWEEP_AT: Cell<usize> = const { Cell::new(4096) };
     static TIMER: UiCell<Option<Retained<AnyObject>>> = const { UiCell::new(None) };
     /// Time added to the clock by [`step`], for checks.
     static SKEW: Cell<f64> = const { Cell::new(0.0) };
@@ -502,6 +509,7 @@ fn every_frame(key: u64, step: Step) {
 fn tick() {
     let t = now();
     let running = JOBS.with_borrow_mut(std::mem::take);
+    STOPPED.with_borrow_mut(Vec::clear);
     let mut kept = Vec::new();
     crate::failure::entry("an animation frame", (), || {
         for (key, start, mut step) in running {
@@ -512,7 +520,8 @@ fn tick() {
     });
     JOBS.with_borrow_mut(|j| {
         // Work added during this frame replaces what it was keyed with.
-        kept.retain(|(k, ..)| !j.iter().any(|(n, ..)| n == k));
+        let stopped = STOPPED.with_borrow_mut(std::mem::take);
+        kept.retain(|(k, ..)| !j.iter().any(|(n, ..)| n == k) && !stopped.contains(k));
         j.extend(kept);
         if j.is_empty() {
             TIMER.with_borrow_mut(|timer| {
@@ -654,6 +663,9 @@ pub fn keyframes(value: &Signal<f64>, frames: Keyframes) {
 pub fn stop_animation(value: &Signal<f64>) {
     let key = value.key();
     JOBS.with_borrow_mut(|j| j.retain(|(k, ..)| *k != key));
+    // Called from inside a frame (an effect watching the value), the job
+    // is out of the list while it runs: noted, so it isn't put back.
+    STOPPED.with_borrow_mut(|s| s.push(key));
 }
 
 fn without_animation(f: impl FnOnce()) {

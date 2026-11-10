@@ -59,26 +59,40 @@ impl Stored for String {
 thread_local! {
     /// The write-back effects of stored signals (they live as long as the app).
     static WRITERS: UiCell<Vec<Effect>> = const { UiCell::new(Vec::new()) };
+    /// The stored signal of each key (a `Signal<T>`).
+    static SIGNALS: UiCell<std::collections::HashMap<String, Box<dyn std::any::Any>>> = UiCell::new(std::collections::HashMap::new());
 }
 
 /// A signal holding the user-defaults value under `key` (or `default` when
 /// there is none yet); every change is written back. Bind it to a control
-/// in a Settings window and read it anywhere.
+/// in a Settings window and read it anywhere: it lives as long as the app,
+/// and every `stored` with the same key (and type) gives the same signal.
 pub fn stored<T: Stored>(key: &str, default: T) -> Signal<T> {
+    // One signal per key, for the app's life whoever asks first (a window
+    // being built, an action): a second `stored` with the same key is the
+    // same signal, so both follow each other.
+    if let Some(signal) = SIGNALS.with_borrow(|s| s.get(key).and_then(|any| any.downcast_ref::<Signal<T>>().copied())) {
+        return signal;
+    }
+    let name = key.to_string();
     let defaults = NSUserDefaults::standardUserDefaults();
     let key: Retained<NSString> = NSString::from_str(key);
-    let signal = Signal::new(T::read(&defaults, &key).unwrap_or(default));
-    let s = signal;
-    let mut first = true;
-    let writer = Effect::new(move || {
-        let value = s.get();
-        // Nothing to write for the initial value: an untouched setting keeps
-        // following the default.
-        if !std::mem::take(&mut first) {
-            untrack(|| value.write(&defaults, &key));
-        }
+    let signal = crate::signal::unowned(|| {
+        let signal = Signal::new(T::read(&defaults, &key).unwrap_or(default));
+        let s = signal;
+        let mut first = true;
+        let writer = Effect::new(move || {
+            let value = s.get();
+            // Nothing to write for the initial value: an untouched setting keeps
+            // following the default.
+            if !std::mem::take(&mut first) {
+                untrack(|| value.write(&defaults, &key));
+            }
+        });
+        WRITERS.with_borrow_mut(|w| w.push(writer));
+        signal
     });
-    WRITERS.with_borrow_mut(|w| w.push(writer));
+    SIGNALS.with_borrow_mut(|s| s.insert(name, Box::new(signal)));
     signal
 }
 

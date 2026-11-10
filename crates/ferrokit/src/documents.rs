@@ -45,6 +45,8 @@ pub struct DocumentType<T: 'static> {
     size: (f64, f64),
     style: Option<Rc<dyn Fn(Window) -> Window>>,
     related: Vec<String>,
+    /// Saves go to a new file that then replaces the old one.
+    atomic: bool,
 }
 
 impl<T: Clone + PartialEq + 'static> DocumentType<T> {
@@ -64,6 +66,7 @@ impl<T: Clone + PartialEq + 'static> DocumentType<T> {
             size: (640.0, 480.0),
             style: None,
             related: Vec::new(),
+            atomic: false,
         }
     }
 
@@ -75,8 +78,15 @@ impl<T: Clone + PartialEq + 'static> DocumentType<T> {
 
     /// Writes a document's content to a file (Save, Save As…). Without it
     /// documents are read-only (a viewer).
+    ///
+    /// Saving over an existing file is safe: `f` is given a new file of
+    /// the same name in a temporary folder, which replaces the document's
+    /// file once `f` has returned `Ok`. A write that fails, or is cut
+    /// short, leaves the file as it was. (So `f` mustn't count on the
+    /// path's folder; the document's own is [`Document::path`].)
     pub fn write(mut self, f: impl Fn(&T, &Path) -> std::io::Result<()> + 'static) -> Self {
         self.write = Some(Rc::new(move |c, p| f(c, p).map(|()| None)));
+        self.atomic = true;
         self
     }
 
@@ -85,8 +95,13 @@ impl<T: Clone + PartialEq + 'static> DocumentType<T> {
     /// document holds afterwards, which becomes its saved state. A database
     /// with staged changes, say: saving commits them and returns the
     /// database with none staged.
+    ///
+    /// `f` is given the document's own file and changes it in place (a
+    /// database is written by its engine, with its journal beside it),
+    /// where [`write`](Self::write) replaces the file with a new one.
     pub fn write_returning(mut self, f: impl Fn(&T, &Path) -> std::io::Result<T> + 'static) -> Self {
         self.write = Some(Rc::new(move |c, p| f(c, p).map(Some)));
+        self.atomic = false;
         self
     }
 
@@ -221,7 +236,7 @@ impl<T: Clone + PartialEq + 'static> AnyDoc for Document<T> {
         let write = self.0.kind.write.as_ref().ok_or_else(|| std::io::Error::other("this kind of document can't be saved"))?;
         let content = self.0.content.get_untracked();
         let related = self.0.kind.claim(path);
-        let kept = write(&content, path)?;
+        let kept = if self.0.kind.atomic { replacing(path, |to| write(&content, to))? } else { write(&content, path)? };
         if related.is_some() {
             *self.0.related.borrow_mut() = related;
         }
@@ -383,6 +398,32 @@ fn document_of(window: &NSWindow) -> Option<Rc<dyn AnyDoc>> {
     DOCS.with_borrow(|docs| docs.iter().find(|d| d.window().is_some_and(|w| std::ptr::eq(&*w, window))).cloned())
 }
 
+/// Runs `write` on a new file that then takes the place of the one at
+/// `path`, so a failed or interrupted write leaves that one whole. The new
+/// file is made where the system keeps replacements for `path`'s volume
+/// (reachable in the App Sandbox too); where there is no file yet, or no
+/// such place, `write` gets `path` itself.
+fn replacing<R>(path: &Path, write: impl FnOnce(&Path) -> std::io::Result<R>) -> std::io::Result<R> {
+    use objc2_foundation::{NSFileManager, NSFileManagerItemReplacementOptions, NSSearchPathDirectory, NSSearchPathDomainMask};
+    let Some(name) = path.file_name().filter(|_| path.exists()) else { return write(path) };
+    let files = NSFileManager::defaultManager();
+    let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
+    let folder = files.URLForDirectory_inDomain_appropriateForURL_create_error(NSSearchPathDirectory::ItemReplacementDirectory, NSSearchPathDomainMask::UserDomainMask, Some(&url), true);
+    let Some(folder_path) = folder.as_ref().ok().and_then(|f| f.path()).map(|p| PathBuf::from(p.to_string())) else { return write(path) };
+    let new = folder_path.join(name);
+    let result = write(&new).and_then(|kept| {
+        let new_url = NSURL::fileURLWithPath(&NSString::from_str(&new.to_string_lossy()));
+        files
+            .replaceItemAtURL_withItemAtURL_backupItemName_options_resultingItemURL_error(&url, &new_url, None, NSFileManagerItemReplacementOptions::empty(), None)
+            .map(|()| kept)
+            .map_err(|e| std::io::Error::other(e.localizedDescription().to_string()))
+    });
+    if let Ok(folder) = &folder {
+        let _ = files.removeItemAtURL_error(folder);
+    }
+    result
+}
+
 /// The document of the frontmost document window.
 fn current() -> Option<Rc<dyn AnyDoc>> {
     let app = NSApplication::sharedApplication(mtm());
@@ -484,7 +525,8 @@ pub fn show_welcome() -> bool {
         return true;
     }
     let Some(make) = make else { return false };
-    let w = crate::open(make());
+    // (Its builder's signals go with it when it closes.)
+    let w = crate::open_with(move || make());
     w.center();
     w.makeKeyAndOrderFront(None);
     WELCOME.with_borrow_mut(|s| s.1 = Weak::from_retained(&w));

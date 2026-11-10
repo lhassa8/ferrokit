@@ -680,6 +680,13 @@ impl Inner {
                     .count();
                 let lo = if prefix > 0 { runs[prefix - 1].0.end.min(text.len()) } else { 0 };
                 let hi = if suffix > 0 { runs[runs.len() - suffix].0.start.min(text.len()) } else { text.len() };
+                // Runs may overlap or come unsorted (a search match over a
+                // keyword): the span also covers every changed run itself,
+                // old and new, wherever it sits among the others.
+                let clamp = |i: isize| (i.max(0) as usize).min(text.len());
+                let changed_new = runs[prefix..runs.len() - suffix].iter().map(|(r, _)| (r.start.min(text.len()), r.end.min(text.len())));
+                let changed_old = old[prefix..old.len() - suffix].iter().flat_map(|(r, _)| [(clamp(r.start as isize), clamp(r.end as isize)), (clamp(r.start as isize + delta), clamp(r.end as isize + delta))]);
+                let (lo, hi) = changed_new.chain(changed_old).fold((lo, hi.max(lo)), |(lo, hi), (a, b)| (lo.min(a), hi.max(b)));
                 let (lo, hi) = (map[lo].min(edited.location), map[hi.max(lo)].max(edited.location + edited.length).min(len16));
                 lo..hi
             }

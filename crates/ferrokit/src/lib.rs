@@ -676,6 +676,16 @@ impl Window {
                 });
                 cnode.hold(Rc::new(observer));
             }
+            // Files dropped anywhere in the window: on the content, the
+            // sidebar or the inspector.
+            if let Some(drop) = self.drops.take() {
+                let drop = Rc::new(drop);
+                for root in std::iter::once(&croot).chain(roots.iter().map(|(r, _)| r)) {
+                    // SAFETY: AppKit's pasteboard type constant.
+                    root.registerForDraggedTypes(&objc2_foundation::NSArray::from_slice(&[unsafe { objc2_app_kit::NSPasteboardTypeFileURL }]));
+                    DROPS.with_borrow_mut(|d| d.push((Retained::as_ptr(root) as usize, drop.clone())));
+                }
+            }
             SHELL_ROOTS.with_borrow_mut(|s| s.push((Retained::as_ptr(&window) as usize, Retained::into_super(croot.clone()))));
             SHELL_PANES.with_borrow_mut(|p| p.extend(std::iter::once(&croot).chain(roots.iter().map(|(r, _)| r)).map(|r| Retained::as_ptr(r) as usize)));
             ROOTS.with_borrow_mut(|r| {
@@ -823,20 +833,34 @@ fn relayout(root: &RootView) {
     if ROOTS.try_with(|_| ()).is_err() || IN_LAYOUT.try_with(|_| ()).is_err() || LAYOUT_US.try_with(|_| ()).is_err() || LAYOUT_PASSES.try_with(|_| ()).is_err() {
         return;
     }
-    if IN_LAYOUT.with(|l| l.replace(true)) {
+    if IN_LAYOUT.with(Cell::get) {
         return;
     }
     let t = std::time::Instant::now();
-    ROOTS.with_borrow(|roots| {
-        for (view, node) in roots {
-            if std::ptr::eq(&**view, root) {
-                let b = view.bounds().size;
-                let window = view.window();
-                let scale = window.as_ref().map_or(2.0, |w| w.backingScaleFactor());
-                let top = window.as_deref().map_or(0.0, |w| title_bar_inset(w, view));
-                layout::mirrored(right_to_left(), b.width, || layout::place_under_bar(node, b.width, b.height, top, &layout::Snap(scale)));
+    // In a batch: a signal set while views are placed (a canvas told its
+    // new size, a split view its panes') runs its effects once the pass is
+    // over, not inside it, where one could rebuild the views being placed.
+    batch(|| {
+        // Cleared also if the pass unwinds (a failure caught further out).
+        struct Done;
+        impl Drop for Done {
+            fn drop(&mut self) {
+                let _ = IN_LAYOUT.try_with(|l| l.set(false));
             }
         }
+        IN_LAYOUT.with(|l| l.set(true));
+        let _done = Done;
+        ROOTS.with_borrow(|roots| {
+            for (view, node) in roots {
+                if std::ptr::eq(&**view, root) {
+                    let b = view.bounds().size;
+                    let window = view.window();
+                    let scale = window.as_ref().map_or(2.0, |w| w.backingScaleFactor());
+                    let top = window.as_deref().map_or(0.0, |w| title_bar_inset(w, view));
+                    layout::mirrored(right_to_left(), b.width, || layout::place_under_bar(node, b.width, b.height, top, &layout::Snap(scale)));
+                }
+            }
+        });
     });
     LAYOUT_US.with_borrow_mut(|v| {
         // Keep the recent passes only: an app resized for hours mustn't grow.
@@ -846,7 +870,6 @@ fn relayout(root: &RootView) {
         v.push(t.elapsed().as_secs_f64() * 1e6);
     });
     LAYOUT_PASSES.with(|n| n.set(n.get() + 1));
-    IN_LAYOUT.with(|l| l.set(false));
 }
 
 /// How far a window with full-size content has its title bar and toolbar
@@ -1236,6 +1259,7 @@ impl App {
             });
         });
 
+        services::listen_for_notifications();
         ferrokit_core::observe_appearance();
         ferrokit_core::set_event_sink(|event| match event {
             ferrokit_core::Event::AppearanceChanged => emit(AppEvent::AppearanceChanged),

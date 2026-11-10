@@ -79,7 +79,15 @@ pub fn alert(window: &NSWindow, alert: Alert, on_response: impl FnOnce(usize) + 
         }
     }
     let respond = once(on_response);
-    let block = RcBlock::new(move |r: NSModalResponse| respond((r - NSAlertFirstButtonReturn).max(0) as usize));
+    // A sheet ended without a button (its window closing, an abort) answers
+    // as Cancel if there is one, and not at all otherwise: never as the
+    // first button, which may be the one that deletes.
+    let (count, cancel) = (alert.buttons.len(), alert.buttons.iter().position(|b| b == "Cancel" || *b == crate::t("Cancel")));
+    let block = RcBlock::new(move |r: NSModalResponse| {
+        if let Some(index) = usize::try_from(r - NSAlertFirstButtonReturn).ok().filter(|i| *i < count).or(cancel) {
+            respond(index);
+        }
+    });
     a.beginSheetModalForWindow_completionHandler(window, Some(&block));
 }
 

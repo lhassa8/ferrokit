@@ -454,7 +454,7 @@ fn place_stack(children: &[Node], axis: Axis, spacing: f64, align: Option<Align>
         // A minimum length (`min_width`) is a floor: such a child shrinks
         // to it and no further, and the others give up the rest.
         let can: Vec<bool> = kids.iter().map(|c| shrinkable(c, axis)).collect();
-        let floors: Vec<f64> = kids.iter().map(|c| min_along(c, axis)).collect();
+        let floors: Vec<f64> = kids.iter().map(|c| floor_along(c, axis)).collect();
         shrink(&mut lengths, &can, &floors, used - len);
     }
     let align = align.unwrap_or(if axis == Axis::Horizontal { Align::Center } else { Align::Start });
@@ -499,6 +499,32 @@ fn shrink(lengths: &mut [f64], can: &[bool], floors: &[f64], mut cut: f64) {
 fn min_along(node: &Node, axis: Axis) -> f64 {
     let min = if axis == Axis::Horizontal { node.min.0 } else { node.min.1 };
     min.unwrap_or(0.0)
+}
+
+/// The least length `node` can shrink to along `axis`: its own minimum, or
+/// what the views inside it need (those that can't shrink keep their
+/// length, those that can go down to their own floors), whichever is more.
+/// A row holding an icon and a truncating text stops at the icon's width.
+fn floor_along(node: &Node, axis: Axis) -> f64 {
+    let own = min_along(node, axis);
+    if !shrinkable(node, axis) {
+        return along(ideal(node), axis).max(own);
+    }
+    let padding = 2.0 * if axis == Axis::Horizontal { node.padding.0 } else { node.padding.1 };
+    let inner = match &node.kind {
+        Kind::Stack { axis: a, spacing, children, .. } => {
+            let mut floors = Vec::new();
+            each_child(children, false, &mut |c| floors.push(floor_along(c, axis)));
+            if *a == axis { floors.iter().sum::<f64>() + spacing * floors.len().saturating_sub(1) as f64 } else { floors.into_iter().fold(0.0, f64::max) }
+        }
+        Kind::Layers { children, .. } => {
+            let mut most = 0.0_f64;
+            each_child(children, false, &mut |c| most = most.max(floor_along(c, axis)));
+            most
+        }
+        _ => 0.0,
+    };
+    own.max(inner + padding)
 }
 
 /// Whether `node` can be shorter than its ideal length along `axis`: a

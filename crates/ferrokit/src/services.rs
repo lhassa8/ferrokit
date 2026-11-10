@@ -378,15 +378,8 @@ pub fn notify(notification: Notification) {
     if !notifications_supported() {
         return;
     }
+    listen_for_notifications();
     let center = UNUserNotificationCenter::currentNotificationCenter();
-    DELEGATE.with_borrow_mut(|d| {
-        if d.is_none() {
-            // SAFETY: NSObject's designated initialiser.
-            let delegate: Retained<NotificationDelegate> = unsafe { msg_send![NotificationDelegate::alloc(), init] };
-            center.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
-            *d = Some(delegate);
-        }
-    });
     let content = UNMutableNotificationContent::new();
     content.setTitle(&NSString::from_str(&notification.title));
     content.setSubtitle(&NSString::from_str(&notification.subtitle));
@@ -511,23 +504,83 @@ pub fn has_full_disk_access() -> bool {
 /// Booth Library`, and packages ending in `.photoslibrary`,
 /// `.photolibrary`, `.musiclibrary` or `.tvlibrary`.
 ///
+/// The path is read as text, with the startup disk's other names for the
+/// same folders taken into account (`/System/Volumes/Data/…`, its entry in
+/// `/Volumes`, another case of the letters) and a symbolic link followed
+/// one step; nothing here opens the folder.
+///
 /// A folder the user chose in an Open panel can be read whatever this
 /// says: choosing it gave consent.
 pub fn asks_before_reading(path: impl AsRef<Path>, full_disk_access: bool) -> bool {
-    real_home().is_some_and(|home| asks(path.as_ref(), &home, full_disk_access))
+    real_home().is_some_and(|home| asks(&spelled_plainly(path.as_ref()), &home, full_disk_access))
+}
+
+/// `path` as the folders that ask are written: absolute, a symbolic link
+/// followed (a link into Documents asks as Documents does), and without
+/// the startup disk's other names for the same place
+/// (`/System/Volumes/Data/Users/…`, `/Volumes/Macintosh HD/Users/…`).
+fn spelled_plainly(path: &Path) -> PathBuf {
+    let mut path = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir().unwrap_or_default().join(path) };
+    // Reading a link's target doesn't read the folder it points at.
+    if let Ok(target) = std::fs::read_link(&path) {
+        path = path.parent().unwrap_or(Path::new("/")).join(target);
+    }
+    let path = without_dots(&path);
+    let path = without_data_volume(&path);
+    if path.starts_with("/Volumes") && path.components().count() > 2 && is_boot_volume(&path) {
+        return Path::new("/").join(path.components().skip(3).collect::<PathBuf>());
+    }
+    path
+}
+
+/// `path` with `.` and `..` worked out (in the text only).
+fn without_dots(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// `/System/Volumes/Data/x` is `/x`: the data volume, where the home
+/// folders are, under the name a walk from `/` meets it by.
+fn without_data_volume(path: &Path) -> PathBuf {
+    match path.strip_prefix("/System/Volumes/Data") {
+        Ok(rest) => Path::new("/").join(rest),
+        Err(_) => path.to_path_buf(),
+    }
+}
+
+/// Whether `path` is `folder` or inside it, whatever the letters' case (the
+/// startup disk doesn't tell `documents` from `Documents`).
+fn inside(path: &Path, folder: &Path) -> bool {
+    let (mut p, mut f) = (path.components(), folder.components());
+    loop {
+        match (p.next(), f.next()) {
+            (_, None) => return true,
+            (Some(a), Some(b)) if a.as_os_str().eq_ignore_ascii_case(b.as_os_str()) => {}
+            _ => return false,
+        }
+    }
 }
 
 fn asks(path: &Path, home: &Path, full_disk_access: bool) -> bool {
     const MEDIA: [&str; 5] = ["Music/Music", "Music/iTunes", "Music/GarageBand", "Movies/TV", "Pictures/Photo Booth Library"];
     const LIBRARIES: [&str; 4] = ["photoslibrary", "photolibrary", "musiclibrary", "tvlibrary"];
-    if MEDIA.iter().any(|m| path.starts_with(home.join(m))) || path.components().any(|c| Path::new(c.as_os_str()).extension().is_some_and(|e| LIBRARIES.iter().any(|l| e.eq_ignore_ascii_case(l)))) {
+    if MEDIA.iter().any(|m| inside(path, &home.join(m))) || path.components().any(|c| Path::new(c.as_os_str()).extension().is_some_and(|e| LIBRARIES.iter().any(|l| e.eq_ignore_ascii_case(l)))) {
         return true;
     }
     if full_disk_access {
         return false;
     }
     const PROTECTED: [&str; 5] = ["Desktop", "Documents", "Downloads", ".Trash", "Library"];
-    PROTECTED.iter().any(|p| path.starts_with(home.join(p))) || (path.starts_with("/Volumes") && path.components().count() > 2 && !is_boot_volume(path))
+    PROTECTED.iter().any(|p| inside(path, &home.join(p))) || (path.starts_with("/Volumes") && path.components().count() > 2 && !is_boot_volume(path))
 }
 
 /// Whether `path` is under the startup disk's own entry in `/Volumes` (a
@@ -551,6 +604,23 @@ fn real_home() -> Option<PathBuf> {
         }
         Some(PathBuf::from(std::ffi::OsStr::from_bytes(std::ffi::CStr::from_ptr(pw.pw_dir).to_bytes())))
     }
+}
+
+/// Makes the app the one notifications are shown through and clicked in:
+/// at launch (a reminder scheduled in an earlier run arrives while the app
+/// is in front, or is clicked), and before the first [`notify`].
+pub(crate) fn listen_for_notifications() {
+    if !notifications_supported() {
+        return;
+    }
+    DELEGATE.with_borrow_mut(|d| {
+        if d.is_none() {
+            // SAFETY: NSObject's designated initialiser.
+            let delegate: Retained<NotificationDelegate> = unsafe { msg_send![NotificationDelegate::alloc(), init] };
+            UNUserNotificationCenter::currentNotificationCenter().setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+            *d = Some(delegate);
+        }
+    });
 }
 
 /// A file's dates (see [`file_dates`]); `None` where the file system
@@ -684,6 +754,26 @@ mod access_tests {
             assert!(asks(p, true), "{p} asks even with access");
         }
         assert!(!asks("/Users/someone/Music/Loops", true));
+        // Other spellings of the same folders.
+        assert!(asks("/users/someone/documents/x", false), "the startup disk ignores case");
+        assert_eq!(without_data_volume(Path::new("/System/Volumes/Data/Users/someone/Documents")), Path::new("/Users/someone/Documents"));
+        assert_eq!(without_data_volume(Path::new("/System/Volumes/Data")), Path::new("/"));
+        assert_eq!(without_dots(Path::new("/Users/someone/Projects/../Documents/./a")), Path::new("/Users/someone/Documents/a"));
+        let boot = std::fs::read_dir("/Volumes").ok().and_then(|d| d.flatten().map(|e| e.path()).find(|p| is_boot_volume(p)));
+        if let (Some(boot), Some(home)) = (boot, real_home()) {
+            let other = boot.join(home.strip_prefix("/").unwrap()).join("Documents");
+            assert_eq!(spelled_plainly(&other), home.join("Documents"), "the startup disk under /Volumes");
+            assert!(asks_before_reading(&other, false));
+            assert!(asks_before_reading(Path::new("/System/Volumes/Data").join(home.strip_prefix("/").unwrap()).join("Desktop"), false));
+        }
+        // A link into a folder that asks, asks.
+        let link = std::env::temp_dir().join(format!("ferrokit-link-{}", std::process::id()));
+        if let Some(home) = real_home()
+            && std::os::unix::fs::symlink(home.join("Downloads"), &link).is_ok()
+        {
+            assert!(asks_before_reading(&link, false), "a link to Downloads");
+            let _ = std::fs::remove_file(&link);
+        }
         // The real home and the access check run without prompting.
         assert!(real_home().is_some_and(|h| h.is_absolute()));
         let _ = has_full_disk_access();

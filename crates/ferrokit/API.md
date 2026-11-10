@@ -966,7 +966,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 
 - `pub fn read_stored<T: Stored>(key: &str) -> Option<T>`: The user-defaults value under `key`, if there is one: for values kept per document or per item (a database's open tabs, a diagram's layout), where a `stored` signal for each, living as long as the app, would pile up.
 - `pub fn remove_stored(key: &str)`: Removes the user-defaults value under `key`.
-- `pub fn stored<T: Stored>(key: &str, default: T) -> Signal<T>`: A signal holding the user-defaults value under `key` (or `default` when there is none yet); every change is written back. Bind it to a control in a Settings window and read it anywhere.
+- `pub fn stored<T: Stored>(key: &str, default: T) -> Signal<T>`: A signal holding the user-defaults value under `key` (or `default` when there is none yet); every change is written back. Bind it to a control in a Settings window and read it anywhere: it lives as long as the app, and every `stored` with the same key (and type) gives the same signal.
 - `pub fn write_stored<T: Stored>(key: &str, value: &T)`: Writes `value` under `key` in user defaults now (see `read_stored`).
 
 ### `Stored` (trait)
@@ -1300,7 +1300,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 
 `pub struct WebView`: A web view (see `web_view`).
 
-- `pub fn links_open_in_browser(mut self) -> Self`: Opens links the user clicks in their web browser instead of in the view: for help pages, previews and HTML the app made itself.
+- `pub fn links_open_in_browser(mut self) -> Self`: Opens links the user clicks in their web browser instead of in the view: for help pages, previews and HTML the app made itself. Only web and mail links go out (`http`, `https`, `mailto`), and only on a click; other schemes and windows a page opens by script are dropped, and a link within the page (`#section`) scrolls in place.
 
 ## browser
 

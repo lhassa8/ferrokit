@@ -54,7 +54,18 @@ extensions = ["txt", "md"]
 feed = "https://example.com/myapp/appcast.xml"
 public-key = "…"                      # what Sparkle's bin/generate_keys prints
 sparkle = "~/Developer/Sparkle-2.10.1"   # Sparkle's release, unpacked (or FERROKIT_SPARKLE)
+
+[package.metadata.ferrokit.entitlements]   # more entitlements, as Apple names them
+"com.apple.security.print" = true          # printing from the sandbox
+
+[package.metadata.ferrokit.plist]          # more Info.plist keys
+ITSAppUsesNonExemptEncryption = false      # export compliance, for the App Store
+NSHumanReadableCopyright = "© 2026 Your Name"
 ```
+
+A setting it doesn't know, or one of the wrong type (`sandbox = "true"`),
+is an error, so a misspelt key can't quietly leave the sandbox off. The
+extra tables take `true`/`false`, strings and lists of strings.
 
 With `updates` set, `bundle` embeds and signs `Sparkle.framework` and the
 app gets Check for Updates… (see the guide's *Testing and shipping*

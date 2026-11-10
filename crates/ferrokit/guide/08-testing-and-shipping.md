@@ -282,6 +282,20 @@ sandbox = true
 network = true
 ```
 
+What else the sandbox must allow goes in a table of entitlements, under
+Apple's names: an app that prints (`print(..)`) needs
+`com.apple.security.print`. More Info.plist keys (a usage description,
+the App Store's export compliance answer) go in a `plist` table. Both
+take `true`/`false`, strings and lists of strings.
+
+```toml
+[package.metadata.ferrokit.entitlements]
+"com.apple.security.print" = true
+
+[package.metadata.ferrokit.plist]
+ITSAppUsesNonExemptEncryption = false
+```
+
 A document that needs files beside it (a SQLite database's `-journal`,
 `-wal` and `-shm`) gets only the document itself from the user's choice.
 Declare the others as related files, in the document type

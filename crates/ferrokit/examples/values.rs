@@ -50,6 +50,12 @@ fn main() {
         hstack((text("A very long name that cannot fit in this narrow row at all").truncate(), text("end"))).width(160.0).accessibility_label("Narrow row"),
         // Two truncating texts sharing a narrow row; the first keeps its minimum.
         hstack((text("Status: 12,909 rows in orders, sorted by total").truncate().min_width(110.0), text("Another long neighbour that wants the room too").truncate())).width(220.0),
+        // A row inside a row: the inner one's fixed label keeps its width,
+        // and a padded box keeps its text's minimum.
+        vstack((
+            hstack((hstack((text("Fixed label").width(90.0), text("Inner text that is far too long for here").truncate())), text("Outer text that is far too long as well").truncate())).width(220.0),
+            hstack((text("Boxed: a long text in a padded box").truncate().min_width(100.0).background(Color::QuaternaryFill).padding(4.0), text("Beside the box, also much too long").truncate())).width(200.0),
+        )),
         // A minimum width.
         text("Min").min_width(120.0).background(Color::QuaternaryFill),
         // A button whose title and symbol follow a signal, and one disabled.
@@ -67,7 +73,7 @@ fn main() {
     .alignment(Align::Start)
     .padding(20.0);
     App::new("Values")
-        .window(Window::new("Values").size(420.0, 560.0).view(view))
+        .window(Window::new("Values").size(420.0, 620.0).view(view))
         .menu("Count", vec![menu_item(move || format!("Reset {}", count.get()), move || count.set(0)).disabled(move || count.get() == 0).checked(move || count.get() > 0)])
         .on_launch(move || {
             if checks {
@@ -143,6 +149,13 @@ mod self_checks {
         let status = field(&w, "Status: 12,909").unwrap().frame().size.width;
         let other = field(&w, "Another long neighbour").unwrap().frame().size.width;
         c("truncate-min-width", (110.0..=111.0).contains(&status) && other > 50.0 && status + other <= 221.0, format!("status {status:.0} (minimum 110), neighbour {other:.0}, in 220"));
+        let (label, inner, outer) = (field(&w, "Fixed label").unwrap().frame(), field(&w, "Inner text").unwrap().frame(), field(&w, "Outer text").unwrap().frame());
+        let boxed = field(&w, "Boxed:").unwrap().frame().size.width;
+        c(
+            "truncate-nested-floors",
+            (label.size.width - 90.0).abs() < 1.0 && inner.origin.x >= label.origin.x + 89.0 && outer.origin.x >= inner.origin.x + inner.size.width - 0.5 && outer.size.width > 20.0 && (100.0..=101.0).contains(&boxed),
+            format!("label {:.0} wide; inner at {:.0}, {:.0} wide; outer at {:.0}, {:.0} wide; the boxed text {boxed:.0} (minimum 100)", label.size.width, inner.origin.x, inner.size.width, outer.origin.x, outer.size.width),
+        );
         let min = field(&w, "Min").unwrap();
         let min_bg = surface_behind(&w, &min).map(|v| v.frame().size.width);
         c("min-width", min_bg.is_some_and(|wd| wd >= 119.5), format!("{min_bg:?}"));
