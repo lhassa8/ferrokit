@@ -270,59 +270,73 @@ define_class!(
         // (a title arrives once the page has parsed it).
         #[unsafe(method(observeValueForKeyPath:ofObject:change:context:))]
         fn observe(&self, _key: Option<&NSString>, object: Option<&AnyObject>, _change: Option<&AnyObject>, _context: *mut std::ffi::c_void) {
-            if let Some(view) = object.and_then(|o| o.downcast_ref::<WKWebView>()) {
-                self.sync(view);
-            }
+            crate::failure::guard("a web view (observe)", (), || {
+                if let Some(view) = object.and_then(|o| o.downcast_ref::<WKWebView>()) {
+                    self.sync(view);
+                }
+            })
         }
     }
 
     unsafe impl WKNavigationDelegate for WebDelegate {
         #[unsafe(method(webView:decidePolicyForNavigationAction:decisionHandler:))]
         fn decide(&self, view: &WKWebView, action: &WKNavigationAction, handler: &block2::DynBlock<dyn Fn(WKNavigationActionPolicy)>) {
-            // SAFETY: reading the action's properties on the main thread.
-            let (kind, request, frame) = unsafe { (action.navigationType(), action.request(), action.targetFrame()) };
-            let url = request.URL();
-            let link = kind == WKNavigationType::LinkActivated || frame.is_none();
-            if link && let Some(url) = url {
-                if self.ivars().links_outside && !url.isFileURL() {
-                    NSWorkspace::sharedWorkspace().openURL(&url);
-                    handler.call((WKNavigationActionPolicy::Cancel,));
-                    return;
+            crate::failure::guard("a web view (decide)", (), || {
+                // SAFETY: reading the action's properties on the main thread.
+                let (kind, request, frame) = unsafe { (action.navigationType(), action.request(), action.targetFrame()) };
+                let url = request.URL();
+                let link = kind == WKNavigationType::LinkActivated || frame.is_none();
+                if link && let Some(url) = url {
+                    if self.ivars().links_outside && !url.isFileURL() {
+                        NSWorkspace::sharedWorkspace().openURL(&url);
+                        handler.call((WKNavigationActionPolicy::Cancel,));
+                        return;
+                    }
+                    if frame.is_none() {
+                        // A link to a new window (`target="_blank"`): opened here.
+                        // SAFETY: as above.
+                        unsafe { view.loadRequest(&request) };
+                        handler.call((WKNavigationActionPolicy::Cancel,));
+                        return;
+                    }
                 }
-                if frame.is_none() {
-                    // A link to a new window (`target="_blank"`): opened here.
-                    // SAFETY: as above.
-                    unsafe { view.loadRequest(&request) };
-                    handler.call((WKNavigationActionPolicy::Cancel,));
-                    return;
-                }
-            }
-            handler.call((WKNavigationActionPolicy::Allow,));
+                handler.call((WKNavigationActionPolicy::Allow,));
+            })
         }
 
         #[unsafe(method(webView:didStartProvisionalNavigation:))]
         fn started(&self, view: &WKWebView, _n: Option<&WKNavigation>) {
-            self.sync(view);
+            crate::failure::guard("a web view (started)", (), || {
+                self.sync(view);
+            })
         }
 
         #[unsafe(method(webView:didCommitNavigation:))]
         fn committed(&self, view: &WKWebView, _n: Option<&WKNavigation>) {
-            self.sync(view);
+            crate::failure::guard("a web view (committed)", (), || {
+                self.sync(view);
+            })
         }
 
         #[unsafe(method(webView:didFinishNavigation:))]
         fn finished(&self, view: &WKWebView, _n: Option<&WKNavigation>) {
-            self.sync(view);
+            crate::failure::guard("a web view (finished)", (), || {
+                self.sync(view);
+            })
         }
 
         #[unsafe(method(webView:didFailNavigation:withError:))]
         fn failed(&self, view: &WKWebView, _n: Option<&WKNavigation>, _e: &NSError) {
-            self.sync(view);
+            crate::failure::guard("a web view (failed)", (), || {
+                self.sync(view);
+            })
         }
 
         #[unsafe(method(webView:didFailProvisionalNavigation:withError:))]
         fn failed_early(&self, view: &WKWebView, _n: Option<&WKNavigation>, _e: &NSError) {
-            self.sync(view);
+            crate::failure::guard("a web view (failed_early)", (), || {
+                self.sync(view);
+            })
         }
     }
 );
@@ -698,7 +712,7 @@ impl View for VideoPlayer {
         let tick = RcBlock::new(move |now: CMTime| {
             // SAFETY: AVFoundation calls this on the main queue.
             let (rate, length) = unsafe { (p.rate(), p.currentItem().and_then(|i| seconds(i.duration()))) };
-            batch(|| {
+            crate::failure::entry("a video's time", (), || {
                 if let (Some(t), Some(now)) = (time, seconds(now)) {
                     t.set_if_changed(now);
                 }

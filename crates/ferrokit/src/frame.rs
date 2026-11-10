@@ -40,22 +40,26 @@ define_class!(
     impl FrameTarget {
         #[unsafe(method(tick:))]
         fn tick(&self, link: &AnyObject) {
-            // SAFETY: CADisplayLink's targetTimestamp (seconds, media time).
-            let target: f64 = unsafe { msg_send![link, targetTimestamp] };
-            let t = self.ivars();
-            t.last_display.set(unsafe { CACurrentMediaTime() });
-            t.display.set(t.display.get() + 1);
-            self.call(target);
+            crate::failure::guard("a frame callback (tick)", (), || {
+                // SAFETY: CADisplayLink's targetTimestamp (seconds, media time).
+                let target: f64 = unsafe { msg_send![link, targetTimestamp] };
+                let t = self.ivars();
+                t.last_display.set(unsafe { CACurrentMediaTime() });
+                t.display.set(t.display.get() + 1);
+                self.call(target);
+            })
         }
 
         #[unsafe(method(fallback:))]
         fn fallback(&self, _timer: &AnyObject) {
-            let t = self.ivars();
-            let now = unsafe { CACurrentMediaTime() };
-            if now - t.last_display.get() > STALLED_AFTER {
-                t.fallback.set(t.fallback.get() + 1);
-                self.call(now);
-            }
+            crate::failure::guard("a frame callback (fallback)", (), || {
+                let t = self.ivars();
+                let now = unsafe { CACurrentMediaTime() };
+                if now - t.last_display.get() > STALLED_AFTER {
+                    t.fallback.set(t.fallback.get() + 1);
+                    self.call(now);
+                }
+            })
         }
     }
 );

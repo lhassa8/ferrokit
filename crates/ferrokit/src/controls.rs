@@ -28,10 +28,12 @@ define_class!(
     unsafe impl NSControlTextEditingDelegate for FieldDelegate {
         #[unsafe(method(controlTextDidChange:))]
         fn did_change(&self, notification: &NSNotification) {
-            let Some(field) = notification.object().and_then(|o| o.downcast::<NSTextField>().ok()) else { return };
-            let value = field.stringValue().to_string();
-            let signal = *self.ivars();
-            batch(|| signal.set(value));
+            crate::failure::guard("a control (did_change)", (), || {
+                let Some(field) = notification.object().and_then(|o| o.downcast::<NSTextField>().ok()) else { return };
+                let value = field.stringValue().to_string();
+                let signal = *self.ivars();
+                batch(|| signal.set(value));
+            })
         }
     }
 
@@ -258,8 +260,14 @@ pub struct Picker<T> {
 impl<T: PartialEq + Clone + 'static> View for Picker<T> {
     fn build(self, cx: &mut Cx) -> Node {
         let popup = objc2_app_kit::NSPopUpButton::new(cx.mtm);
-        for (title, _) in &self.options {
-            popup.addItemWithTitle(&NSString::from_str(title));
+        // Added to the menu itself: `addItemWithTitle:` removes an earlier
+        // item with the same title, and the options are found by index.
+        if let Some(menu) = popup.menu() {
+            for (title, _) in &self.options {
+                // SAFETY: a plain item; the pop-up button sends its own action.
+                let item = unsafe { objc2_app_kit::NSMenuItem::initWithTitle_action_keyEquivalent(cx.mtm.alloc(), &NSString::from_str(title), None, &NSString::from_str("")) };
+                menu.addItem(&item);
+            }
         }
         let options = std::rc::Rc::new(self.options);
         let (value, opts, p) = (self.value, options.clone(), popup.clone());
@@ -668,8 +676,13 @@ impl View for Image {
         let description = self.description.as_deref().map(NSString::from_str);
         let (view, size): (Retained<NSView>, Option<Size>) = match &self.source {
             ImageSource::Symbol(name) => {
-                let image = NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str(name), description.as_deref())
-                    .unwrap_or_else(|| panic!("no SF Symbol named {name:?}"));
+                // An unknown name (a symbol newer than this macOS, a typo)
+                // is reported and shows a placeholder: the app's views
+                // still build.
+                let image = NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str(name), description.as_deref()).unwrap_or_else(|| {
+                    crate::failure::report(crate::Failure { place: "an image", message: format!("no SF Symbol named {name:?} on this macOS; a placeholder is shown"), exception: false });
+                    NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str("questionmark.square.dashed"), description.as_deref()).unwrap_or_default()
+                });
                 let view = NSImageView::imageViewWithImage(&image, cx.mtm);
                 let look = &self.symbol;
                 let mut config: Option<Retained<NSImageSymbolConfiguration>> = None;
@@ -791,7 +804,9 @@ fn new_image(source: ImageSource) -> Image {
     Image { source, description: None, symbol: SymbolLook::default(), fill: false, radius: 0.0, effects: Vec::new() }
 }
 
-/// An SF Symbol by name (e.g. `"star.fill"`). Panics if the name is unknown.
+/// An SF Symbol by name (e.g. `"star.fill"`). A name this macOS doesn't
+/// have (a newer symbol, a typo) shows a placeholder and is reported as a
+/// failure (see [`App::on_error`](crate::App::on_error)).
 pub fn image(symbol: &str) -> Image {
     new_image(ImageSource::Symbol(symbol.into()))
 }
@@ -1093,10 +1108,12 @@ define_class!(
     unsafe impl NSControlTextEditingDelegate for ComboDelegate {
         #[unsafe(method(controlTextDidChange:))]
         fn did_change(&self, notification: &NSNotification) {
-            let Some(field) = notification.object().and_then(|o| o.downcast::<NSTextField>().ok()) else { return };
-            let value = field.stringValue().to_string();
-            let signal = *self.ivars();
-            batch(|| signal.set_if_changed(value));
+            crate::failure::guard("a control (did_change)", (), || {
+                let Some(field) = notification.object().and_then(|o| o.downcast::<NSTextField>().ok()) else { return };
+                let value = field.stringValue().to_string();
+                let signal = *self.ivars();
+                batch(|| signal.set_if_changed(value));
+            })
         }
     }
 
@@ -1105,14 +1122,16 @@ define_class!(
     unsafe impl NSComboBoxDelegate for ComboDelegate {
         #[unsafe(method(comboBoxSelectionDidChange:))]
         fn selection_did_change(&self, notification: &NSNotification) {
-            let Some(combo) = notification.object().and_then(|o| o.downcast::<objc2_app_kit::NSComboBox>().ok()) else { return };
-            // The field shows the choice only after this notification: read
-            // the chosen item itself.
-            let chosen = combo.objectValueOfSelectedItem().and_then(|o| o.downcast::<NSString>().ok()).map(|s| s.to_string());
-            if let Some(value) = chosen {
-                let signal = *self.ivars();
-                batch(|| signal.set_if_changed(value));
-            }
+            crate::failure::guard("a control (selection_did_change)", (), || {
+                let Some(combo) = notification.object().and_then(|o| o.downcast::<objc2_app_kit::NSComboBox>().ok()) else { return };
+                // The field shows the choice only after this notification: read
+                // the chosen item itself.
+                let chosen = combo.objectValueOfSelectedItem().and_then(|o| o.downcast::<NSString>().ok()).map(|s| s.to_string());
+                if let Some(value) = chosen {
+                    let signal = *self.ivars();
+                    batch(|| signal.set_if_changed(value));
+                }
+            })
         }
     }
 );

@@ -321,25 +321,31 @@ define_class!(
 
         #[unsafe(method(drawRect:))]
         fn draw_rect(&self, _dirty: NSRect) {
-            if self.ivars().opaque.get() {
-                Color::Background.ns().setFill();
-                NSBezierPath::fillRect(self.bounds());
-            }
-            replay(&self.ivars().ops.borrow());
+            crate::failure::guard("a canvas (draw_rect)", (), || {
+                if self.ivars().opaque.get() {
+                    Color::Background.ns().setFill();
+                    NSBezierPath::fillRect(self.bounds());
+                }
+                replay(&self.ivars().ops.borrow());
+            })
         }
 
         #[unsafe(method(setFrameSize:))]
         fn set_frame_size(&self, size: NSSize) {
-            let _: () = unsafe { msg_send![super(self), setFrameSize: size] };
-            if let Some(s) = self.ivars().size.get() {
-                s.set_if_changed((size.width, size.height));
-            }
+            crate::failure::guard("a canvas (set_frame_size)", (), || {
+                let _: () = unsafe { msg_send![super(self), setFrameSize: size] };
+                if let Some(s) = self.ivars().size.get() {
+                    s.set_if_changed((size.width, size.height));
+                }
+            })
         }
 
         #[unsafe(method(viewDidChangeEffectiveAppearance))]
         fn appearance_changed(&self) {
-            // Named colours resolve when drawn: draw again in the new look.
-            self.setNeedsDisplay(true);
+            crate::failure::guard("a canvas (appearance_changed)", (), || {
+                // Named colours resolve when drawn: draw again in the new look.
+                self.setNeedsDisplay(true);
+            })
         }
 
         #[unsafe(method(mouseMoved:))]
@@ -402,7 +408,7 @@ define_class!(
             }
             self.ivars().down.set(None);
             let drag = self.ivars().drag.borrow().clone();
-            if let Some(item) = drag.and_then(|f| f()) {
+            if let Some(item) = drag.and_then(|f| crate::failure::guard("a canvas's drag item", None, || f())) {
                 self.begin_drag(&item, event);
             }
         }

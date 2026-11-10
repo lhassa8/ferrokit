@@ -29,19 +29,25 @@ define_class!(
     unsafe impl NSWindowDelegate for WindowDelegate {
         #[unsafe(method_id(windowWillReturnUndoManager:))]
         fn undo_manager(&self, _window: &NSWindow) -> Option<Retained<NSUndoManager>> {
-            Some(self.ivars().clone())
+            crate::failure::guard("undo (undo_manager)", None, || {
+                Some(self.ivars().clone())
+            })
         }
 
         #[unsafe(method(windowShouldClose:))]
         fn should_close(&self, window: &NSWindow) -> bool {
-            crate::documents::window_should_close(window)
+            crate::failure::guard("undo (should_close)", true, || {
+                crate::documents::window_should_close(window)
+            })
         }
 
         #[unsafe(method(windowWillClose:))]
         fn will_close(&self, notification: &NSNotification) {
-            if let Some(window) = notification.object().and_then(|o| o.downcast::<NSWindow>().ok()) {
-                crate::window_will_close(&window);
-            }
+            crate::failure::guard("undo (will_close)", (), || {
+                if let Some(window) = notification.object().and_then(|o| o.downcast::<NSWindow>().ok()) {
+                    crate::window_will_close(&window);
+                }
+            })
         }
     }
 );
@@ -66,10 +72,16 @@ pub(crate) fn install(mtm: MainThreadMarker, window: &NSWindow) -> (Retained<NSO
 
 /// Runs `f` (building a window's views) with `manager` as the window's.
 pub(crate) fn building<R>(manager: &Retained<NSUndoManager>, f: impl FnOnce() -> R) -> R {
-    let previous = BUILDING.with_borrow_mut(|b| b.replace(manager.clone()));
-    let r = f();
-    BUILDING.with_borrow_mut(|b| *b = previous);
-    r
+    // Put back even if `f` unwinds (a failure caught further out).
+    struct Restore(Option<Retained<NSUndoManager>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let previous = self.0.take();
+            let _ = BUILDING.try_with(|b| *b.borrow_mut() = previous);
+        }
+    }
+    let _restore = Restore(BUILDING.with_borrow_mut(|b| b.replace(manager.clone())));
+    f()
 }
 
 /// The undo manager of the window `view` is in, or is being built for.
@@ -99,13 +111,15 @@ define_class!(
     impl UndoStep {
         #[unsafe(method(apply:))]
         fn apply(&self, _arg: Option<&AnyObject>) {
-            let step = self.ivars();
-            batch(|| (step.back)());
-            // Registered while undoing, this lands on the redo stack (and
-            // vice versa).
-            if let Some(manager) = step.manager.load() {
-                register(&manager, &step.title, step.forth.clone(), step.back.clone());
-            }
+            crate::failure::guard("undo (apply)", (), || {
+                let step = self.ivars();
+                batch(|| (step.back)());
+                // Registered while undoing, this lands on the redo stack (and
+                // vice versa).
+                if let Some(manager) = step.manager.load() {
+                    register(&manager, &step.title, step.forth.clone(), step.back.clone());
+                }
+            })
         }
     }
 );

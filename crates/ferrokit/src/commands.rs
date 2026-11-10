@@ -96,10 +96,17 @@ thread_local! {
 /// its own window, also when the app is inactive (pressed with VoiceOver or
 /// accessibility tools, the app has no key or main window).
 pub(crate) fn acting_in<R>(window: Option<Retained<NSWindow>>, f: impl FnOnce() -> R) -> R {
-    let before = ACTING.with_borrow_mut(|a| std::mem::replace(a, window));
-    let out = f();
-    ACTING.with_borrow_mut(|a| *a = before);
-    out
+    // Put back even if `f` unwinds (a failure caught further out):
+    // otherwise every later command would act in this window.
+    struct Restore(Option<Retained<NSWindow>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let before = self.0.take();
+            let _ = ACTING.try_with(|a| *a.borrow_mut() = before);
+        }
+    }
+    let _restore = Restore(ACTING.with_borrow_mut(|a| std::mem::replace(a, window)));
+    f()
 }
 
 /// The window commands go to: the window of the toolbar button acting, the

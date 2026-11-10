@@ -85,28 +85,30 @@ define_class!(
         // active may never report that it finished.
         #[unsafe(method(popoverWillClose:))]
         fn will_close(&self, notification: &NSNotification) {
-            // Only the open one (a popover closed earlier reports late).
-            let ours = self.ivars().current.borrow().as_ref().is_some_and(|p| {
-                notification.object().is_some_and(|o| std::ptr::eq(&*o as *const _ as *const u8, &**p as *const _ as *const u8))
-            });
-            if ours {
-                self.ivars().closing();
-                // Free the content once it's off screen, unless it has
-                // been freed (its view went) or replaced (opened again).
-                let Some(root) = self.ivars().root.borrow().clone() else { return };
-                let me = self.retain();
-                crate::spawn(
-                    || std::thread::sleep(std::time::Duration::from_millis(500)),
-                    move |()| {
-                        let state = me.ivars();
-                        let same = state.root.borrow().as_ref().is_some_and(|r| Retained::as_ptr(r) == Retained::as_ptr(&root));
-                        if same && state.current.borrow().is_none() {
-                            state.root.borrow_mut().take();
-                            crate::drop_hosted(&root);
-                        }
-                    },
-                );
-            }
+            crate::failure::guard("a popover (will_close)", (), || {
+                // Only the open one (a popover closed earlier reports late).
+                let ours = self.ivars().current.borrow().as_ref().is_some_and(|p| {
+                    notification.object().is_some_and(|o| std::ptr::eq(&*o as *const _ as *const u8, &**p as *const _ as *const u8))
+                });
+                if ours {
+                    self.ivars().closing();
+                    // Free the content once it's off screen, unless it has
+                    // been freed (its view went) or replaced (opened again).
+                    let Some(root) = self.ivars().root.borrow().clone() else { return };
+                    let me = self.retain();
+                    crate::spawn(
+                        || std::thread::sleep(std::time::Duration::from_millis(500)),
+                        move |()| {
+                            let state = me.ivars();
+                            let same = state.root.borrow().as_ref().is_some_and(|r| Retained::as_ptr(r) == Retained::as_ptr(&root));
+                            if same && state.current.borrow().is_none() {
+                                state.root.borrow_mut().take();
+                                crate::drop_hosted(&root);
+                            }
+                        },
+                    );
+                }
+            })
         }
     }
 );

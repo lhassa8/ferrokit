@@ -25,6 +25,8 @@ struct EffectInner {
     /// Bumped on every run; subscriptions from older runs are stale.
     generation: Cell<u64>,
     queued: Cell<bool>,
+    /// A memo's effect: it only computes, so a memo read may run it early.
+    memo: Cell<bool>,
     stopped: Cell<bool>,
     /// The owner current when the effect was made: current again while it
     /// runs, so signals it creates belong there.
@@ -51,10 +53,21 @@ impl Owner {
 
     /// Runs `f` with this owner current.
     pub(crate) fn with<R>(&self, f: impl FnOnce() -> R) -> R {
-        let prev = OWNER.with_borrow_mut(|o| o.replace(self.0.clone()));
-        let r = f();
-        OWNER.with_borrow_mut(|o| *o = prev);
-        r
+        // Put back even if `f` unwinds (a failure caught further out):
+        // otherwise this owner would stay current, kept alive, and take
+        // every signal made afterwards.
+        struct Restore(Option<Rc<OwnerInner>>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                let prev = self.0.take();
+                // The owner that was current is dropped outside the borrow
+                // (its last reference may be this one).
+                let was = OWNER.try_with(|o| std::mem::replace(&mut *o.borrow_mut(), prev));
+                drop(was);
+            }
+        }
+        let _restore = Restore(OWNER.with_borrow_mut(|o| o.replace(self.0.clone())));
+        f()
     }
 }
 
@@ -130,20 +143,30 @@ thread_local! {
     static PENDING: UiCell<Vec<Rc<EffectInner>>> = const { UiCell::new(Vec::new()) };
     static AFTER: UiCell<Vec<Rc<dyn Fn()>>> = const { UiCell::new(Vec::new()) };
     static RUNS: Cell<u64> = const { Cell::new(0) };
+    /// How many of `PENDING` are memos' effects (a memo read looks for them
+    /// only when there are some).
+    static QUEUED_MEMOS: Cell<u32> = const { Cell::new(0) };
     static OWNER: UiCell<Option<Rc<OwnerInner>>> = const { UiCell::new(None) };
     static ARENA: UiCell<Arena> = UiCell::new(Arena::default());
 }
 
 impl EffectInner {
+    /// Taken out of `PENDING`.
+    fn dequeued(&self) {
+        self.queued.set(false);
+        if self.memo.get() {
+            QUEUED_MEMOS.with(|n| n.set(n.get().saturating_sub(1)));
+        }
+    }
+
     fn run(self: &Rc<Self>) {
         if self.stopped.get() {
             return;
         }
-        RUNS.with(|r| r.set(r.get() + 1));
-        self.generation.set(self.generation.get() + 1);
-        let prev = OBSERVER.with_borrow_mut(|o| o.replace(self.clone()));
         // The effect's own owner is current (none for app-level effects),
-        // whatever was current where the batch flushed.
+        // whatever was current where the batch flushed. (Looked up before
+        // anything is changed: an effect that doesn't run leaves the
+        // observer as it was.)
         let owner = match &self.owner {
             None => None,
             Some(weak) => match weak.upgrade() {
@@ -158,6 +181,9 @@ impl EffectInner {
                 }
             },
         };
+        RUNS.with(|r| r.set(r.get() + 1));
+        self.generation.set(self.generation.get() + 1);
+        let prev = OBSERVER.with_borrow_mut(|o| o.replace(self.clone()));
         let prev_owner = OWNER.with_borrow_mut(|c| std::mem::replace(c, owner));
         // Put back even if the effect unwinds (a failure caught further out).
         struct Restore(Option<Rc<EffectInner>>, Option<Rc<OwnerInner>>);
@@ -186,10 +212,13 @@ impl Effect {
             f: RefCell::new(Box::new(f)),
             generation: Cell::new(0),
             queued: Cell::new(false),
+            memo: Cell::new(false),
             stopped: Cell::new(false),
             owner: OWNER.with_borrow(|o| o.as_ref().map(Rc::downgrade)),
         });
-        inner.run();
+        // In a batch: a first run that sets a signal it read runs again
+        // once it has returned, not inside itself.
+        batch(|| inner.run());
         Effect(inner)
     }
 }
@@ -266,7 +295,7 @@ pub fn untrack<R>(f: impl FnOnce() -> R) -> R {
 /// needs a view's drawing recorded before the batch it's called in ends).
 pub(crate) fn run_pending() {
     while let Some(e) = PENDING.with_borrow_mut(|p| (!p.is_empty()).then(|| p.remove(0))) {
-        e.queued.set(false);
+        e.dequeued();
         e.run();
     }
 }
@@ -274,7 +303,7 @@ pub(crate) fn run_pending() {
 fn flush() {
     loop {
         while let Some(e) = PENDING.with_borrow_mut(|p| (!p.is_empty()).then(|| p.remove(0))) {
-            e.queued.set(false);
+            e.dequeued();
             e.run();
         }
         let hooks: Vec<_> = AFTER.with_borrow(|a| a.clone());
@@ -465,6 +494,9 @@ impl<T: 'static> Signal<T> {
                 if let Some(e) = w.upgrade().filter(|e| e.generation.get() == g && !e.stopped.get())
                     && !e.queued.replace(true)
                 {
+                    if e.memo.get() {
+                        QUEUED_MEMOS.with(|n| n.set(n.get() + 1));
+                    }
                     PENDING.with_borrow_mut(|p| p.push(e));
                 }
             }
@@ -477,8 +509,6 @@ impl<T: 'static> Signal<T> {
 /// [`Signal`].
 pub struct Memo<T> {
     signal: Signal<T>,
-    /// Its effect's slot in `MEMO_EFFECTS`, to bring it up to date on read.
-    slot: u32,
 }
 
 impl<T> Clone for Memo<T> {
@@ -492,29 +522,6 @@ impl<T> Copy for Memo<T> {}
 thread_local! {
     /// Effects of memos made outside any owner: they live as long as the app.
     static ROOT_EFFECTS: UiCell<Vec<Effect>> = const { UiCell::new(Vec::new()) };
-    /// Every memo's effect (weakly), by slot: a memo read while its inputs
-    /// have changed in the current batch recomputes first.
-    static MEMO_EFFECTS: UiCell<(Vec<Weak<EffectInner>>, Vec<u32>)> = const { UiCell::new((Vec::new(), Vec::new())) };
-}
-
-/// A slot for a memo's effect, reusing a freed one.
-fn memo_slot(effect: &Rc<EffectInner>) -> u32 {
-    MEMO_EFFECTS.with_borrow_mut(|(slots, free)| {
-        // Now and then, collect the slots of memos that are gone.
-        if free.is_empty() && slots.len() >= 64 && slots.len().is_power_of_two() {
-            free.extend(slots.iter().enumerate().filter(|(_, w)| w.strong_count() == 0).map(|(i, _)| i as u32));
-        }
-        match free.pop() {
-            Some(i) => {
-                slots[i as usize] = Rc::downgrade(effect);
-                i
-            }
-            None => {
-                slots.push(Rc::downgrade(effect));
-                (slots.len() - 1) as u32
-            }
-        }
-    })
 }
 
 /// Keeps `effect` running for as long as the current owner (or the app,
@@ -539,19 +546,23 @@ impl<T: PartialEq + Clone + 'static> Memo<T> {
             }
         });
         let signal = cell.get().expect("memo computed");
-        let slot = memo_slot(&effect.0);
+        effect.0.memo.set(true);
         keep_with_owner(effect);
-        Memo { signal, slot }
+        Memo { signal }
     }
 
-    /// Recomputes now if an input changed in the batch under way (its
-    /// effect is waiting for the batch to end): a memo read after setting
-    /// what it depends on gives the new value, even inside an action.
+    /// Recomputes now if an input changed in the batch under way: a memo
+    /// read after setting what it depends on gives the new value, even
+    /// inside an action. The input may be another memo, itself waiting for
+    /// the batch to end, so every waiting memo runs, in the order queued,
+    /// until none is left (one that runs may queue the next in a chain).
+    /// Memos only compute; ordinary effects still wait for the batch.
     fn refresh(&self) {
-        let effect = MEMO_EFFECTS.with_borrow(|(slots, _)| slots.get(self.slot as usize).and_then(Weak::upgrade));
-        if let Some(e) = effect.filter(|e| e.queued.get()) {
-            PENDING.with_borrow_mut(|p| p.retain(|x| !Rc::ptr_eq(x, &e)));
-            e.queued.set(false);
+        while QUEUED_MEMOS.with(Cell::get) > 0 {
+            // Not one that is computing now (it read this memo).
+            let next = PENDING.with_borrow_mut(|p| p.iter().position(|e| e.memo.get() && e.f.try_borrow_mut().is_ok()).map(|i| p.remove(i)));
+            let Some(e) = next else { break };
+            e.dequeued();
             e.run();
         }
     }
@@ -627,6 +638,84 @@ mod tests {
         assert_eq!(inside, 10);
         assert_eq!(doubled.get_untracked(), 10);
         assert_eq!(n.get(), 2, "computed once at first, once for the change: not again when the batch ended");
+    }
+
+    /// A memo of a memo: setting the first one's input queues only the
+    /// first, and the second must still be current when read.
+    #[test]
+    fn chained_memos_are_current_inside_a_batch() {
+        let source = Signal::new(1);
+        let middle = Memo::new(move || source.get() + 1);
+        let leaf = Memo::new(move || middle.get() * 10);
+        let last = Memo::new(move || leaf.get() + 1);
+        let (runs, bump) = counter();
+        let _e = Effect::new(move || {
+            last.get();
+            bump();
+        });
+        let inside = batch(|| {
+            source.set(2);
+            let first = (leaf.get_untracked(), last.get_untracked());
+            source.set(3);
+            (first, leaf.get_untracked(), last.get_untracked())
+        });
+        assert_eq!(inside, ((30, 31), 40, 41));
+        assert_eq!(runs.get(), 2, "the effect ran once at first and once for the batch");
+        // A diamond: both sides are current, whichever is read first.
+        let (a, b) = (Memo::new(move || source.get() * 2), Memo::new(move || source.get() * 3));
+        let sum = Memo::new(move || a.get() + b.get());
+        assert_eq!(batch(|| { source.set(10); sum.get_untracked() }), 50);
+    }
+
+    #[test]
+    fn the_owner_is_put_back_after_a_panic() {
+        let outer = Owner::new();
+        let before = live_signals();
+        outer.with(|| {
+            let inner = Owner::new();
+            let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                inner.with(|| {
+                    Signal::new(1);
+                    panic!("on purpose");
+                })
+            }));
+            assert!(caught.is_err());
+            // Made after the panic: in `outer`, not in the owner that failed.
+            Signal::new(2);
+            drop(inner);
+            assert_eq!(live_signals(), before + 1, "the failed owner's signal went with it");
+        });
+        assert!(OWNER.with_borrow(Option::is_none));
+        drop(outer);
+        assert_eq!(live_signals(), before);
+    }
+
+    #[test]
+    fn an_effect_that_does_not_run_leaves_the_observer() {
+        let trigger = Signal::new(0);
+        let owner = Owner::new();
+        let effect = owner.with(|| Effect::new(move || { trigger.get(); }));
+        batch(|| {
+            trigger.set(1);
+            drop(owner);
+        });
+        assert!(OBSERVER.with_borrow(Option::is_none), "no observer is left at top level");
+        drop(effect);
+    }
+
+    /// An effect made outside a batch that sets a signal it read: it runs
+    /// again after its first run, not inside it.
+    #[test]
+    fn a_first_run_that_sets_what_it_read_runs_again_after() {
+        let value = Signal::new(150);
+        let (runs, bump) = counter();
+        let _e = Effect::new(move || {
+            bump();
+            if value.get() > 100 {
+                value.set(100);
+            }
+        });
+        assert_eq!((value.get_untracked(), runs.get()), (100, 2));
     }
 
     #[test]

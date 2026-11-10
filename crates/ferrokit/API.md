@@ -27,7 +27,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn set_appearance(appearance: Appearance)`: Sets the app's appearance; every native view follows, and an `AppEvent::AppearanceChanged` is delivered.
 - `pub fn quit()`: Ends the app (as ⌘Q does), on the next pass of the run loop. Quitting can wait for answers (a document app asks about unsaved changes) inside a nested run loop; starting it outside the caller's batch keeps the UI updating meanwhile.
 - `pub fn spawn<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static, then: impl FnOnce(T) + 'static)`: Runs `work` on a background thread, then `then` with its result on the main thread, inside a `batch`. Call from the main thread.
-- `pub fn spawn_with_progress<T: Send + 'static>(progress: &Signal<Option<f64>>, work: impl FnOnce(&Reporter) -> T + Send + 'static, then: impl FnOnce(T) + 'static)`: `spawn` for a long job that reports how far it is: `progress` reads `Some(0.0)` at once, the fractions `work` reports through its `Reporter` as it goes, and `None` once it's done (just before `then` runs). Show it with `progress`:
+- `pub fn spawn_with_progress<T: Send + 'static>(progress: &Signal<Option<f64>>, work: impl FnOnce(&Reporter) -> T + Send + 'static, then: impl FnOnce(T) + 'static)`: `spawn` for a long job that reports how far it is: `progress` reads `Some(0.0)` at once, the fractions `work` reports through its `Reporter` as it goes, and `None` once it's done (just before `then` runs; also if `work` panics, when `then` doesn't run). Show it with `progress`:
 
 ### `Window`
 
@@ -434,7 +434,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn segmented_with<T: PartialEq + Clone + 'static>(value: &Signal<T>, options: impl Fn() -> Vec<(String, T)> + 'static) -> Segmented<T>`: A segmented control whose segments come from `options` (title, value), re-read when the signals it reads change: segments are added, removed and retitled in place (a tab bar of documents or queries). Bound two ways to `value`; no segment is selected while `value` matches none.
 - `pub fn time_picker(value: &Signal<(u32, u32)>) -> TimePicker`: A time-of-day picker bound two ways to `value`, an hour (0–23) and a minute: for a daily reminder or an opening time, which keep their hour and minute whatever the date or time zone. For a moment in time, use `date_picker` with `DatePicker::with_time`.
 - `pub fn checkbox(title: &str, value: &Signal<bool>) -> Checkbox`: A checkbox titled `title`, bound two ways to `value`.
-- `pub fn image(symbol: &str) -> Image`: An SF Symbol by name (e.g. `"star.fill"`). Panics if the name is unknown.
+- `pub fn image(symbol: &str) -> Image`: An SF Symbol by name (e.g. `"star.fill"`). A name this macOS doesn't have (a newer symbol, a typo) shows a placeholder and is reported as a failure (see `App::on_error`).
 - `pub fn image_data(bytes: &[u8]) -> Image`: A picture from bytes in a file format (PNG, JPEG…): one built into the app with `include_bytes!`.
 - `pub fn image_file(path: impl AsRef<std::path::Path>) -> Image`: A picture from a file (PNG, JPEG, HEIC, PDF…), shown at its own size unless given one (`.frame(..)`). An unreadable file shows nothing.
 - `pub fn picker<T: PartialEq + Clone + 'static>(value: &Signal<T>, options: Vec<(&str, T)>) -> Picker<T>`: A pop-up menu bound two ways to `value`, offering `options` (title, value).

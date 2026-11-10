@@ -466,7 +466,9 @@ define_class!(
     impl Ticker {
         #[unsafe(method(tick:))]
         fn tick(&self, _timer: &AnyObject) {
-            tick();
+            crate::failure::guard("an animation frame (tick)", (), || {
+                tick();
+            })
         }
     }
 );

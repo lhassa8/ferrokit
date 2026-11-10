@@ -39,12 +39,16 @@ define_class!(
     unsafe impl NSBrowserDelegate for Delegate {
         #[unsafe(method_id(rootItemForBrowser:))]
         fn root(&self, _browser: &NSBrowser) -> Option<Retained<AnyObject>> {
-            Some(item(0))
+            crate::failure::guard("a browser (root)", None, || {
+                Some(item(0))
+            })
         }
 
         #[unsafe(method(browser:numberOfChildrenOfItem:))]
         fn count(&self, _browser: &NSBrowser, item: Option<&AnyObject>) -> NSInteger {
-            self.ivars().borrow().get(index(item)).map_or(0, |e| e.children.len() as NSInteger)
+            crate::failure::guard("a browser (count)", 0, || {
+                self.ivars().borrow().get(index(item)).map_or(0, |e| e.children.len() as NSInteger)
+            })
         }
 
         #[unsafe(method_id(browser:child:ofItem:))]
@@ -55,27 +59,33 @@ define_class!(
 
         #[unsafe(method(browser:isLeafItem:))]
         fn is_leaf(&self, _browser: &NSBrowser, item: Option<&AnyObject>) -> bool {
-            !self.ivars().borrow().get(index(item)).is_some_and(|e| e.branch)
+            crate::failure::guard("a browser (is_leaf)", true, || {
+                !self.ivars().borrow().get(index(item)).is_some_and(|e| e.branch)
+            })
         }
 
         // The title, after the item's symbol (as a text attachment: the
         // browser's cells on macOS 27 are text cells, with no image).
         #[unsafe(method_id(browser:objectValueForItem:))]
         fn value(&self, _browser: &NSBrowser, item: Option<&AnyObject>) -> Option<Retained<AnyObject>> {
-            let (title, icon) = self.ivars().borrow().get(index(item)).map(|e| (e.title.clone(), e.icon.clone())).unwrap_or_default();
-            Some(match icon.and_then(|i| symbol(&i)) {
-                Some(image) => Retained::into_super(Retained::into_super(titled(&image, &title))),
-                None => Retained::into_super(Retained::into_super(NSString::from_str(&title))),
+            crate::failure::guard("a browser (value)", None, || {
+                let (title, icon) = self.ivars().borrow().get(index(item)).map(|e| (e.title.clone(), e.icon.clone())).unwrap_or_default();
+                Some(match icon.and_then(|i| symbol(&i)) {
+                    Some(image) => Retained::into_super(Retained::into_super(titled(&image, &title))),
+                    None => Retained::into_super(Retained::into_super(NSString::from_str(&title))),
+                })
             })
         }
 
         // Typing selects by title, not by the symbol before it.
         #[unsafe(method_id(browser:typeSelectStringForRow:inColumn:))]
         fn type_select(&self, browser: &NSBrowser, row: NSInteger, column: NSInteger) -> Option<Retained<NSString>> {
-            // SAFETY: NSBrowser's item for a shown row.
-            let item: Option<Retained<AnyObject>> = unsafe { msg_send![browser, itemAtRow: row, inColumn: column] };
-            let title = self.ivars().borrow().get(index(item.as_deref())).map(|e| e.title.clone()).unwrap_or_default();
-            Some(NSString::from_str(&title))
+            crate::failure::guard("a browser (type_select)", None, || {
+                // SAFETY: NSBrowser's item for a shown row.
+                let item: Option<Retained<AnyObject>> = unsafe { msg_send![browser, itemAtRow: row, inColumn: column] };
+                let title = self.ivars().borrow().get(index(item.as_deref())).map(|e| e.title.clone()).unwrap_or_default();
+                Some(NSString::from_str(&title))
+            })
         }
     }
 );

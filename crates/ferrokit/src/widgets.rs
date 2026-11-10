@@ -85,12 +85,14 @@ define_class!(
     unsafe impl NSTabViewDelegate for TabDelegate {
         #[unsafe(method(tabView:didSelectTabViewItem:))]
         fn did_select(&self, tab_view: &NSTabView, item: Option<&NSTabViewItem>) {
-            if let Some(item) = item {
-                let i = tab_view.indexOfTabViewItem(item);
-                if i >= 0 {
-                    batch(|| (self.ivars())(i as usize));
+            crate::failure::guard("a control (did_select)", (), || {
+                if let Some(item) = item {
+                    let i = tab_view.indexOfTabViewItem(item);
+                    if i >= 0 {
+                        batch(|| (self.ivars())(i as usize));
+                    }
                 }
-            }
+            })
         }
     }
 );
@@ -274,13 +276,17 @@ define_class!(
     impl LinkField {
         #[unsafe(method_id(accessibilityRole))]
         fn ax_role(&self) -> Option<Retained<NSString>> {
-            // SAFETY: AppKit's role constant.
-            Some(objc2_foundation::NSCopying::copy(unsafe { objc2_app_kit::NSAccessibilityLinkRole }))
+            crate::failure::guard("a control (ax_role)", None, || {
+                // SAFETY: AppKit's role constant.
+                Some(objc2_foundation::NSCopying::copy(unsafe { objc2_app_kit::NSAccessibilityLinkRole }))
+            })
         }
 
         #[unsafe(method(accessibilityPerformPress))]
         fn ax_press(&self) -> bool {
-            objc2_app_kit::NSWorkspace::sharedWorkspace().openURL(self.ivars())
+            crate::failure::guard("a control (ax_press)", false, || {
+                objc2_app_kit::NSWorkspace::sharedWorkspace().openURL(self.ivars())
+            })
         }
     }
 );
@@ -439,12 +445,16 @@ define_class!(
     unsafe impl NSControlTextEditingDelegate for TokenDelegate {
         #[unsafe(method(controlTextDidChange:))]
         fn did_change(&self, notification: &NSNotification) {
-            self.read(notification);
+            crate::failure::guard("a control (did_change)", (), || {
+                self.read(notification);
+            })
         }
 
         #[unsafe(method(controlTextDidEndEditing:))]
         fn did_end(&self, notification: &NSNotification) {
-            self.read(notification);
+            crate::failure::guard("a control (did_end)", (), || {
+                self.read(notification);
+            })
         }
     }
 
@@ -453,10 +463,12 @@ define_class!(
     unsafe impl NSTokenFieldDelegate for TokenDelegate {
         #[unsafe(method_id(tokenField:completionsForSubstring:indexOfToken:indexOfSelectedItem:))]
         fn completions(&self, _field: &NSTokenField, substring: &NSString, _index: isize, _selected: *mut isize) -> Option<Retained<NSArray>> {
-            let typed = substring.to_string().to_lowercase();
-            let matches: Vec<Retained<NSString>> =
-                self.ivars().suggestions.iter().filter(|s| s.to_lowercase().starts_with(&typed)).map(|s| NSString::from_str(s)).collect();
-            Retained::into_super(NSArray::from_retained_slice(&matches)).downcast().ok()
+            crate::failure::guard("a control (completions)", None, || {
+                let typed = substring.to_string().to_lowercase();
+                let matches: Vec<Retained<NSString>> =
+                    self.ivars().suggestions.iter().filter(|s| s.to_lowercase().starts_with(&typed)).map(|s| NSString::from_str(s)).collect();
+                Retained::into_super(NSArray::from_retained_slice(&matches)).downcast().ok()
+            })
         }
     }
 );

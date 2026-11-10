@@ -70,21 +70,27 @@ define_class!(
     impl Delegate {
         #[unsafe(method(updater:didFindValidUpdate:))]
         fn found(&self, _updater: &AnyObject, item: &AnyObject) {
-            emit(UpdateEvent::Found { version: version_of(item) });
+            crate::failure::guard("the updater (found)", (), || {
+                emit(UpdateEvent::Found { version: version_of(item) });
+            })
         }
 
         #[unsafe(method(updaterDidNotFindUpdate:))]
         fn up_to_date(&self, _updater: &AnyObject) {
-            emit(UpdateEvent::UpToDate);
+            crate::failure::guard("the updater (up_to_date)", (), || {
+                emit(UpdateEvent::UpToDate);
+            })
         }
 
         #[unsafe(method(updater:didAbortWithError:))]
         fn aborted(&self, _updater: &AnyObject, error: &NSError) {
-            // Sparkle reports "no update" as an error here too (after
-            // `updaterDidNotFindUpdate:`).
-            if error.code() != NO_UPDATE {
-                emit(UpdateEvent::Failed { message: error.localizedDescription().to_string() });
-            }
+            crate::failure::guard("the updater (aborted)", (), || {
+                // Sparkle reports "no update" as an error here too (after
+                // `updaterDidNotFindUpdate:`).
+                if error.code() != NO_UPDATE {
+                    emit(UpdateEvent::Failed { message: error.localizedDescription().to_string() });
+                }
+            })
         }
 
         #[unsafe(method(updater:willInstallUpdateOnQuit:immediateInstallationBlock:))]

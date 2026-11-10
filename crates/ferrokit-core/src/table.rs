@@ -441,22 +441,28 @@ define_class!(
     unsafe impl NSTableViewDataSource for Source {
         #[unsafe(method(numberOfRowsInTableView:))]
         fn number_of_rows(&self, _table: &NSTableView) -> NSInteger {
-            self.data().map_or(0, |d| d.count() as NSInteger)
+            crate::boundary::guarded("a table (number_of_rows)", 0, || {
+                self.data().map_or(0, |d| d.count() as NSInteger)
+            })
         }
 
         #[unsafe(method(tableView:sortDescriptorsDidChange:))]
         fn sort_descriptors_did_change(&self, table: &NSTableView, _old: &NSArray<NSSortDescriptor>) {
-            let sort = table.sortDescriptors().firstObject().and_then(|d| {
-                Some(Sort { column: d.key()?.to_string(), ascending: d.ascending() })
-            });
-            if let Some(data) = self.data() {
-                data.sort_changed(sort);
-            }
+            crate::boundary::guarded("a table (sort_descriptors_did_change)", (), || {
+                let sort = table.sortDescriptors().firstObject().and_then(|d| {
+                    Some(Sort { column: d.key()?.to_string(), ascending: d.ascending() })
+                });
+                if let Some(data) = self.data() {
+                    data.sort_changed(sort);
+                }
+            })
         }
 
         #[unsafe(method_id(tableView:pasteboardWriterForRow:))]
         fn writer_for_row(&self, table: &NSTableView, row: NSInteger) -> Option<Retained<ProtocolObject<dyn NSPasteboardWriting>>> {
-            self.row_writer(table, row)
+            crate::boundary::guarded("a table (writer_for_row)", None, || {
+                self.row_writer(table, row)
+            })
         }
 
         #[unsafe(method(tableView:validateDrop:proposedRow:proposedDropOperation:))]
@@ -467,14 +473,16 @@ define_class!(
             row: NSInteger,
             _operation: NSTableViewDropOperation,
         ) -> NSDragOperation {
-            let operation = match self.dropped(table, info) {
-                Some(Dropped::Rows(_)) => NSDragOperation::Move,
-                Some(Dropped::Files(_) | Dropped::Urls(_)) => NSDragOperation::Copy,
-                None => return NSDragOperation::None,
-            };
-            // Between rows, never onto one.
-            table.setDropRow_dropOperation(row, NSTableViewDropOperation::Above);
-            operation
+            crate::boundary::guarded("a table (validate_drop)", NSDragOperation::None, || {
+                let operation = match self.dropped(table, info) {
+                    Some(Dropped::Rows(_)) => NSDragOperation::Move,
+                    Some(Dropped::Files(_) | Dropped::Urls(_)) => NSDragOperation::Copy,
+                    None => return NSDragOperation::None,
+                };
+                // Between rows, never onto one.
+                table.setDropRow_dropOperation(row, NSTableViewDropOperation::Above);
+                operation
+            })
         }
 
         #[unsafe(method(tableView:acceptDrop:row:dropOperation:))]
@@ -485,104 +493,128 @@ define_class!(
             row: NSInteger,
             _operation: NSTableViewDropOperation,
         ) -> bool {
-            self.accept(table, info, row)
+            crate::boundary::guarded("a table (accept_drop)", false, || {
+                self.accept(table, info, row)
+            })
         }
     }
 
     unsafe impl NSTableViewDelegate for Source {
         #[unsafe(method_id(tableView:rowViewForRow:))]
         fn row_view_for(&self, table: &NSTableView, _row: NSInteger) -> Option<Retained<NSTableRowView>> {
-            // With cell focus, rows that draw the focused cell; otherwise AppKit's own.
-            self.focus_row(table)
+            crate::boundary::guarded("a table (row_view_for)", None, || {
+                // With cell focus, rows that draw the focused cell; otherwise AppKit's own.
+                self.focus_row(table)
+            })
         }
 
         #[unsafe(method_id(tableView:viewForTableColumn:row:))]
         fn view_for(&self, table: &NSTableView, column: Option<&NSTableColumn>, row: NSInteger) -> Option<Retained<NSView>> {
-            match column {
-                Some(column) => self.cell_view(table, column, row),
-                // A group row spans the table (no column).
-                None => self.group_view(table, row),
-            }
+            crate::boundary::guarded("a table (view_for)", None, || {
+                match column {
+                    Some(column) => self.cell_view(table, column, row),
+                    // A group row spans the table (no column).
+                    None => self.group_view(table, row),
+                }
+            })
         }
 
         #[unsafe(method(tableView:isGroupRow:))]
         fn is_group_row(&self, _table: &NSTableView, row: NSInteger) -> bool {
-            self.data().is_some_and(|d| d.group_title(row as usize).is_some())
+            crate::boundary::guarded("a table (is_group_row)", false, || {
+                self.data().is_some_and(|d| d.group_title(row as usize).is_some())
+            })
         }
 
         #[unsafe(method(tableView:shouldSelectRow:))]
         fn should_select_row(&self, _table: &NSTableView, row: NSInteger) -> bool {
-            self.data().is_none_or(|d| d.group_title(row as usize).is_none())
+            crate::boundary::guarded("a table (should_select_row)", false, || {
+                self.data().is_none_or(|d| d.group_title(row as usize).is_none())
+            })
         }
 
         #[unsafe(method(tableViewSelectionDidChange:))]
         fn selection_did_change(&self, notification: &NSNotification) {
-            let Some(data) = self.data() else { return };
-            if data.quiet() {
-                return;
-            }
-            let Some(table) = notification.object().and_then(|o| o.downcast::<NSTableView>().ok()) else { return };
-            let rows = indexes(&table.selectedRowIndexes()).into_iter().filter_map(|r| data.model_row(r)).collect();
-            data.push(TableEvent::Selection(rows));
+            crate::boundary::guarded("a table (selection_did_change)", (), || {
+                let Some(data) = self.data() else { return };
+                if data.quiet() {
+                    return;
+                }
+                let Some(table) = notification.object().and_then(|o| o.downcast::<NSTableView>().ok()) else { return };
+                let rows = indexes(&table.selectedRowIndexes()).into_iter().filter_map(|r| data.model_row(r)).collect();
+                data.push(TableEvent::Selection(rows));
+            })
         }
 
         #[unsafe(method_id(tableView:typeSelectStringForTableColumn:row:))]
         fn type_select_string(&self, _table: &NSTableView, column: Option<&NSTableColumn>, row: NSInteger) -> Option<Retained<NSString>> {
-            self.cell_text(column, row)
+            crate::boundary::guarded("a table (type_select_string)", None, || {
+                self.cell_text(column, row)
+            })
         }
 
         #[unsafe(method(tableViewColumnDidMove:))]
         fn column_did_move(&self, _notification: &NSNotification) {
-            if let Some(data) = self.data() {
-                data.push(TableEvent::ColumnsChanged);
-            }
+            crate::boundary::guarded("a table (column_did_move)", (), || {
+                if let Some(data) = self.data() {
+                    data.push(TableEvent::ColumnsChanged);
+                }
+            })
         }
 
         #[unsafe(method(tableViewColumnDidResize:))]
         fn column_did_resize(&self, _notification: &NSNotification) {
-            if let Some(data) = self.data() {
-                data.push(TableEvent::ColumnsChanged);
-            }
+            crate::boundary::guarded("a table (column_did_resize)", (), || {
+                if let Some(data) = self.data() {
+                    data.push(TableEvent::ColumnsChanged);
+                }
+            })
         }
     }
 
     impl Source {
         #[unsafe(method(activate:))]
         fn activate(&self, sender: &NSTableView) {
-            let Some(data) = self.data() else { return };
-            let row = sender.clickedRow();
-            if let Some(row) = (row >= 0).then_some(row as usize).and_then(|r| data.model_row(r)) {
-                data.push(TableEvent::Activate(row));
-            }
+            crate::boundary::guarded("a table (activate)", (), || {
+                let Some(data) = self.data() else { return };
+                let row = sender.clickedRow();
+                if let Some(row) = (row >= 0).then_some(row as usize).and_then(|r| data.model_row(r)) {
+                    data.push(TableEvent::Activate(row));
+                }
+            })
         }
 
         #[unsafe(method(edit:))]
         fn edit(&self, sender: &NSTextField) {
-            let Some(data) = self.data() else { return };
-            let Some(table) = table_of(sender) else { return };
-            let row = table.rowForView(sender);
-            let Some(column) = sender.identifier().map(|i| i.to_string()) else { return };
-            let value = sender.stringValue().to_string();
-            // Editing ends with Return, Tab or the focus moving away; an
-            // edit cancelled with Escape (or left as it was) isn't one.
-            let shown = (row >= 0).then(|| data.cell(row as usize, &column)).flatten().map(|(kind, v)| display(kind, &v));
-            if shown.as_deref() == Some(value.as_str()) {
-                return;
-            }
-            if let Some(row) = (row >= 0).then_some(row as usize).and_then(|r| data.model_row(r)) {
-                data.push(TableEvent::Edit { row, column, value });
-            }
+            crate::boundary::guarded("a table (edit)", (), || {
+                let Some(data) = self.data() else { return };
+                let Some(table) = table_of(sender) else { return };
+                let row = table.rowForView(sender);
+                let Some(column) = sender.identifier().map(|i| i.to_string()) else { return };
+                let value = sender.stringValue().to_string();
+                // Editing ends with Return, Tab or the focus moving away; an
+                // edit cancelled with Escape (or left as it was) isn't one.
+                let shown = (row >= 0).then(|| data.cell(row as usize, &column)).flatten().map(|(kind, v)| display(kind, &v));
+                if shown.as_deref() == Some(value.as_str()) {
+                    return;
+                }
+                if let Some(row) = (row >= 0).then_some(row as usize).and_then(|r| data.model_row(r)) {
+                    data.push(TableEvent::Edit { row, column, value });
+                }
+            })
         }
 
         #[unsafe(method(toggle:))]
         fn toggle(&self, sender: &NSButton) {
-            let Some(data) = self.data() else { return };
-            let Some(table) = table_of(sender) else { return };
-            let row = table.rowForView(sender);
-            let Some(column) = sender.identifier().map(|i| i.to_string()) else { return };
-            if let Some(row) = (row >= 0).then_some(row as usize).and_then(|r| data.model_row(r)) {
-                data.push(TableEvent::Toggle { row, column, value: sender.state() == NSControlStateValueOn });
-            }
+            crate::boundary::guarded("a table (toggle)", (), || {
+                let Some(data) = self.data() else { return };
+                let Some(table) = table_of(sender) else { return };
+                let row = table.rowForView(sender);
+                let Some(column) = sender.identifier().map(|i| i.to_string()) else { return };
+                if let Some(row) = (row >= 0).then_some(row as usize).and_then(|r| data.model_row(r)) {
+                    data.push(TableEvent::Toggle { row, column, value: sender.state() == NSControlStateValueOn });
+                }
+            })
         }
     }
 );
@@ -631,79 +663,89 @@ define_class!(
     impl HostTableView {
         #[unsafe(method(keyDown:))]
         fn key_down(&self, event: &NSEvent) {
-            // 36: Return, 76: keypad Enter.
-            if matches!(event.keyCode(), 36 | 76) {
-                let row = self.selectedRow();
-                let source = unsafe { self.dataSource() };
-                let source = source.and_then(|s| {
-                    let any: &AnyObject = s.as_ref();
-                    any.downcast_ref::<Source>().map(|s| s.retain())
-                });
-                if let (true, Some(source)) = (row >= 0, source) {
-                    if let Some(data) = source.data()
-                        && let Some(row) = data.model_row(row as usize)
-                    {
-                        data.push(TableEvent::Activate(row));
+            crate::boundary::guarded("a table (key_down)", (), || {
+                // 36: Return, 76: keypad Enter.
+                if matches!(event.keyCode(), 36 | 76) {
+                    let row = self.selectedRow();
+                    let source = unsafe { self.dataSource() };
+                    let source = source.and_then(|s| {
+                        let any: &AnyObject = s.as_ref();
+                        any.downcast_ref::<Source>().map(|s| s.retain())
+                    });
+                    if let (true, Some(source)) = (row >= 0, source) {
+                        if let Some(data) = source.data()
+                            && let Some(row) = data.model_row(row as usize)
+                        {
+                            data.push(TableEvent::Activate(row));
+                        }
+                        return;
                     }
+                }
+                // ← and → move the focused column, with cell focus on.
+                if matches!(event.keyCode(), 123 | 124) && self.move_focus(event) {
                     return;
                 }
-            }
-            // ← and → move the focused column, with cell focus on.
-            if matches!(event.keyCode(), 123 | 124) && self.move_focus(event) {
-                return;
-            }
-            // A bare key the app handles, with rows selected.
-            if let Some(key) = TableKey::of(event)
-                && let Some(data) = self.source().and_then(|s| s.data())
-                && data.transfer().keys.contains(&key)
-            {
-                let rows: Vec<usize> = indexes(&self.selectedRowIndexes()).into_iter().filter_map(|r| data.model_row(r)).collect();
-                if !rows.is_empty() {
-                    data.push(TableEvent::Key { key, rows });
-                    return;
+                // A bare key the app handles, with rows selected.
+                if let Some(key) = TableKey::of(event)
+                    && let Some(data) = self.source().and_then(|s| s.data())
+                    && data.transfer().keys.contains(&key)
+                {
+                    let rows: Vec<usize> = indexes(&self.selectedRowIndexes()).into_iter().filter_map(|r| data.model_row(r)).collect();
+                    if !rows.is_empty() {
+                        data.push(TableEvent::Key { key, rows });
+                        return;
+                    }
                 }
-            }
-            let () = unsafe { msg_send![super(self), keyDown: event] };
+                let () = unsafe { msg_send![super(self), keyDown: event] };
+            })
         }
 
         #[unsafe(method(mouseDown:))]
         fn mouse_down(&self, event: &NSEvent) {
-            // With cell focus, a click focuses the clicked cell's column.
-            if let Some(data) = self.source().and_then(|s| s.data())
-                && data.transfer().cell_focus
-            {
-                let point = self.convertPoint_fromView(event.locationInWindow(), None);
-                let column = self.columnAtPoint(point);
-                if column >= 0 && self.rowAtPoint(point) >= 0 {
-                    let id = self.tableColumns().objectAtIndex(column as usize).identifier().to_string();
-                    data.set_focus(Some(id), true);
+            crate::boundary::guarded("a table (mouse_down)", (), || {
+                // With cell focus, a click focuses the clicked cell's column.
+                if let Some(data) = self.source().and_then(|s| s.data())
+                    && data.transfer().cell_focus
+                {
+                    let point = self.convertPoint_fromView(event.locationInWindow(), None);
+                    let column = self.columnAtPoint(point);
+                    if column >= 0 && self.rowAtPoint(point) >= 0 {
+                        let id = self.tableColumns().objectAtIndex(column as usize).identifier().to_string();
+                        data.set_focus(Some(id), true);
+                    }
                 }
-            }
-            let () = unsafe { msg_send![super(self), mouseDown: event] };
+                let () = unsafe { msg_send![super(self), mouseDown: event] };
+            })
         }
 
         #[unsafe(method(copy:))]
         fn copy(&self, _sender: Option<&AnyObject>) {
-            self.copy_rows(&NSPasteboard::generalPasteboard());
+            crate::boundary::guarded("a table (copy)", (), || {
+                self.copy_rows(&NSPasteboard::generalPasteboard());
+            })
         }
 
         #[unsafe(method(paste:))]
         fn paste(&self, _sender: Option<&AnyObject>) {
-            self.paste_text(&NSPasteboard::generalPasteboard());
+            crate::boundary::guarded("a table (paste)", (), || {
+                self.paste_text(&NSPasteboard::generalPasteboard());
+            })
         }
 
         #[unsafe(method(validateMenuItem:))]
         fn validate_menu_item(&self, item: &NSMenuItem) -> bool {
-            let action = item.action();
-            if action == Some(sel!(copy:)) {
-                self.selectedRow() >= 0
-            } else if action == Some(sel!(paste:)) {
-                let pastes = self.source().and_then(|s| s.data()).is_some_and(|d| d.transfer().pastes);
-                // SAFETY: AppKit's pasteboard type constant.
-                pastes && NSPasteboard::generalPasteboard().stringForType(unsafe { NSPasteboardTypeString }).is_some()
-            } else {
-                true
-            }
+            crate::boundary::guarded("a table (validate_menu_item)", false, || {
+                let action = item.action();
+                if action == Some(sel!(copy:)) {
+                    self.selectedRow() >= 0
+                } else if action == Some(sel!(paste:)) {
+                    let pastes = self.source().and_then(|s| s.data()).is_some_and(|d| d.transfer().pastes);
+                    // SAFETY: AppKit's pasteboard type constant.
+                    pastes && NSPasteboard::generalPasteboard().stringForType(unsafe { NSPasteboardTypeString }).is_some()
+                } else {
+                    true
+                }
+            })
         }
     }
 );
@@ -780,18 +822,20 @@ define_class!(
     impl FocusRowView {
         #[unsafe(method(drawSelectionInRect:))]
         fn draw_selection(&self, rect: NSRect) {
-            let () = unsafe { msg_send![super(self), drawSelectionInRect: rect] };
-            let Some(cell) = self.focus_rect() else { return };
-            let path = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(cell, 4.0, 4.0);
-            path.setLineWidth(1.5);
-            if self.isEmphasized() {
-                NSColor::whiteColor().colorWithAlphaComponent(0.18).setFill();
-                path.fill();
-                NSColor::whiteColor().setStroke();
-            } else {
-                NSColor::controlAccentColor().setStroke();
-            }
-            path.stroke();
+            crate::boundary::guarded("a table (draw_selection)", (), || {
+                let () = unsafe { msg_send![super(self), drawSelectionInRect: rect] };
+                let Some(cell) = self.focus_rect() else { return };
+                let path = NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(cell, 4.0, 4.0);
+                path.setLineWidth(1.5);
+                if self.isEmphasized() {
+                    NSColor::whiteColor().colorWithAlphaComponent(0.18).setFill();
+                    path.fill();
+                    NSColor::whiteColor().setStroke();
+                } else {
+                    NSColor::controlAccentColor().setStroke();
+                }
+                path.stroke();
+            })
         }
     }
 );
@@ -1327,7 +1371,10 @@ impl<T: 'static> Inner<T> {
     fn compute_order(&self) {
         let rows = self.rows.borrow();
         let mut order: Vec<usize> = (0..rows.len()).collect();
-        let sort = self.sort.borrow().clone();
+        // Sorted here only with built-in sorting on: otherwise the rows
+        // come in the app's own order (a database's), and the sort is kept
+        // for the header's arrow.
+        let sort = self.sort.borrow().clone().filter(|_| self.sorts_in_place.get());
         let columns = self.columns.borrow();
         if let Some(column) = sort.as_ref().and_then(|s| columns.iter().find(|c| c.id == s.column)) {
             // One key per row, built once: text becomes a natural-order key
@@ -1699,7 +1746,8 @@ impl<T: 'static> TableModel<T> {
         } else {
             return;
         }
-        if self.inner.sort.borrow().is_some() && self.inner.sorts_in_place.get() {
+        // Sorted or grouped: the row may belong elsewhere now.
+        if self.inner.group_by.borrow().is_some() || (self.inner.sort.borrow().is_some() && self.inner.sorts_in_place.get()) {
             self.inner.resort_keeping_selection();
             return;
         }

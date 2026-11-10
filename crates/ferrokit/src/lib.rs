@@ -757,23 +757,31 @@ define_class!(
 
         #[unsafe(method(setFrameSize:))]
         fn set_frame_size(&self, size: NSSize) {
-            let _: () = unsafe { msg_send![super(self), setFrameSize: size] };
-            relayout(self);
+            crate::failure::guard("a window's content view (set_frame_size)", (), || {
+                let _: () = unsafe { msg_send![super(self), setFrameSize: size] };
+                relayout(self);
+            })
         }
 
         #[unsafe(method(draggingEntered:))]
         fn dragging_entered(&self, info: &ProtocolObject<dyn objc2_app_kit::NSDraggingInfo>) -> objc2_app_kit::NSDragOperation {
-            drop_operation(self, info)
+            crate::failure::guard("a window's content view (dragging_entered)", objc2_app_kit::NSDragOperation::None, || {
+                drop_operation(self, info)
+            })
         }
 
         #[unsafe(method(draggingUpdated:))]
         fn dragging_updated(&self, info: &ProtocolObject<dyn objc2_app_kit::NSDraggingInfo>) -> objc2_app_kit::NSDragOperation {
-            drop_operation(self, info)
+            crate::failure::guard("a window's content view (dragging_updated)", objc2_app_kit::NSDragOperation::None, || {
+                drop_operation(self, info)
+            })
         }
 
         #[unsafe(method(performDragOperation:))]
         fn perform_drag(&self, info: &ProtocolObject<dyn objc2_app_kit::NSDraggingInfo>) -> objc2::runtime::Bool {
-            objc2::runtime::Bool::new(perform_drop(self, info))
+            crate::failure::guard("a window's content view (perform_drag)", objc2::runtime::Bool::NO, || {
+                objc2::runtime::Bool::new(perform_drop(self, info))
+            })
         }
 
         // Escape in a popover's content closes it: the popover's window
@@ -781,16 +789,18 @@ define_class!(
         // into it (only text views interpret keys).
         #[unsafe(method(keyDown:))]
         fn key_down(&self, event: &objc2_app_kit::NSEvent) {
-            let window = self.window();
-            let escape = event.keyCode() == 53;
-            match window.filter(|w| escape && popover::is_popover_window(w)) {
-                Some(w) => {
-                    let _: () = unsafe { msg_send![&*w, cancelOperation: Option::<&objc2::runtime::AnyObject>::None] };
+            crate::failure::guard("a window's content view (key_down)", (), || {
+                let window = self.window();
+                let escape = event.keyCode() == 53;
+                match window.filter(|w| escape && popover::is_popover_window(w)) {
+                    Some(w) => {
+                        let _: () = unsafe { msg_send![&*w, cancelOperation: Option::<&objc2::runtime::AnyObject>::None] };
+                    }
+                    None => {
+                        let _: () = unsafe { msg_send![super(self), keyDown: event] };
+                    }
                 }
-                None => {
-                    let _: () = unsafe { msg_send![super(self), keyDown: event] };
-                }
-            }
+            })
         }
     }
 );
@@ -1018,6 +1028,7 @@ pub struct App {
 impl App {
     /// An app called `name` (shown in the menu bar).
     pub fn new(name: &str) -> Self {
+        failure::install();
         App { name: name.into(), windows: Vec::new(), on_launch: None, menus: Vec::new(), settings: None, documents: None, extras: Vec::new(), menu_bar_only: false, welcome: None, dock_menu: None, crash_reports: None, about: None }
     }
 
@@ -1535,7 +1546,7 @@ pub fn quit() {
     later(|| NSApplication::sharedApplication(mtm()).terminate(None));
 }
 
-type Continuation = Box<dyn FnOnce(Box<dyn Any + Send>)>;
+type Continuation = Box<dyn FnOnce(Result<Box<dyn Any + Send>, String>)>;
 
 thread_local! {
     static CONTINUATIONS: UiCell<HashMap<u64, Continuation>> = UiCell::new(HashMap::new());
@@ -1544,24 +1555,44 @@ thread_local! {
 
 /// Runs `work` on a background thread, then `then` with its result on the
 /// main thread, inside a [`batch`]. Call from the main thread.
+///
+/// If `work` panics, `then` doesn't run: the panic is reported like any
+/// other failure (see [`App::on_error`], as "a background task") and the
+/// app goes on. Return a `Result` from `work` for errors you expect.
 pub fn spawn<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static, then: impl FnOnce(T) + 'static) {
+    spawn_outcome(work, move |outcome| {
+        if let Ok(result) = outcome {
+            then(result);
+        }
+    });
+}
+
+/// [`spawn`], with `then` always run: with the result, or with the message
+/// of the panic that ended `work` (already reported).
+pub(crate) fn spawn_outcome<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static, then: impl FnOnce(Result<T, String>) + 'static) {
     let _ = mtm();
     let id = NEXT_TASK.with(|n| n.replace(n.get() + 1));
     CONTINUATIONS.with_borrow_mut(|c| {
         c.insert(
             id,
-            Box::new(move |result: Box<dyn Any + Send>| {
-                then(*result.downcast::<T>().expect("spawned task result type"));
+            Box::new(move |outcome: Result<Box<dyn Any + Send>, String>| {
+                then(outcome.map(|result| *result.downcast::<T>().expect("spawned task result type")));
             }),
         )
     });
     std::thread::spawn(move || {
-        let result: Box<dyn Any + Send> = Box::new(work());
+        // A panic here is caught and reported, not a crash.
+        let outcome: Result<Box<dyn Any + Send>, String> = crash::catching(|| std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)))
+            .map(|result| Box::new(result) as Box<dyn Any + Send>)
+            .map_err(|payload| payload.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| payload.downcast_ref::<String>().cloned()).unwrap_or_else(|| "(no message)".into()));
         // On the main thread the continuation (a main-thread value) is
-        // looked up by id.
+        // looked up by id: it runs, and goes, however the work ended.
         Native::on_main(Box::new(move || {
+            if let Err(message) = &outcome {
+                failure::report(Failure { place: "a background task", message: message.clone(), exception: false });
+            }
             if let Some(then) = CONTINUATIONS.with_borrow_mut(|c| c.remove(&id)) {
-                batch(|| then(result));
+                batch(|| then(outcome));
             }
         }));
     });
@@ -1606,7 +1637,8 @@ impl Reporter {
 /// [`spawn`] for a long job that reports how far it is: `progress` reads
 /// `Some(0.0)` at once, the fractions `work` reports through its
 /// [`Reporter`] as it goes, and `None` once it's done (just before `then`
-/// runs). Show it with [`progress`]:
+/// runs; also if `work` panics, when `then` doesn't run). Show it with
+/// [`progress`]:
 ///
 /// ```no_run
 /// # use ferrokit::*;
@@ -1626,12 +1658,15 @@ pub fn spawn_with_progress<T: Send + 'static>(progress: &Signal<Option<f64>>, wo
     progress.set(Some(0.0));
     let reporter = Reporter { id, latest: std::sync::Arc::new((std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicBool::new(false))) };
     let signal = *progress;
-    spawn(
+    spawn_outcome(
         move || work(&reporter),
-        move |result| {
+        move |outcome| {
+            // Also when the work panicked: the job is over.
             PROGRESS.with_borrow_mut(|p| p.remove(&id));
             signal.set(None);
-            then(result);
+            if let Ok(result) = outcome {
+                then(result);
+            }
         },
     );
 }

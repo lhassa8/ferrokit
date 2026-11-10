@@ -66,7 +66,7 @@ impl CollectionItem {
 struct State {
     entries: Vec<CollectionItem>,
     /// Model indices → (selected now) called with the selected indices.
-    on_select: Option<Box<dyn Fn(Vec<usize>)>>,
+    on_select: Option<Rc<dyn Fn(Vec<usize>)>>,
     on_activate: Option<Box<dyn Fn(usize)>>,
     /// Set while the collection changes its selection itself.
     quiet: bool,
@@ -113,26 +113,30 @@ define_class!(
 
         #[unsafe(method(layout))]
         fn layout(&self) {
-            let p = self.ivars();
-            let b = self.bounds().size;
-            let line = 17.0;
-            let lines = if p.subtitle.isHidden() { 1.0 } else { 2.0 };
-            let image_h = (b.height - 8.0 - lines * line - 4.0).max(0.0);
-            p.highlight.setFrame(NSRect::new(NSPoint::new(0.0, 0.0), b));
-            let art = NSRect::new(NSPoint::new(6.0, 4.0), NSSize::new((b.width - 12.0).max(0.0), image_h));
-            p.image.setFrame(art);
-            p.swatch.setFrame(art);
-            p.title.setFrame(NSRect::new(NSPoint::new(2.0, 4.0 + image_h + 2.0), NSSize::new((b.width - 4.0).max(0.0), line)));
-            p.subtitle.setFrame(NSRect::new(NSPoint::new(2.0, 4.0 + image_h + 2.0 + line), NSSize::new((b.width - 4.0).max(0.0), line)));
+            crate::failure::guard("a collection (layout)", (), || {
+                let p = self.ivars();
+                let b = self.bounds().size;
+                let line = 17.0;
+                let lines = if p.subtitle.isHidden() { 1.0 } else { 2.0 };
+                let image_h = (b.height - 8.0 - lines * line - 4.0).max(0.0);
+                p.highlight.setFrame(NSRect::new(NSPoint::new(0.0, 0.0), b));
+                let art = NSRect::new(NSPoint::new(6.0, 4.0), NSSize::new((b.width - 12.0).max(0.0), image_h));
+                p.image.setFrame(art);
+                p.swatch.setFrame(art);
+                p.title.setFrame(NSRect::new(NSPoint::new(2.0, 4.0 + image_h + 2.0), NSSize::new((b.width - 4.0).max(0.0), line)));
+                p.subtitle.setFrame(NSRect::new(NSPoint::new(2.0, 4.0 + image_h + 2.0 + line), NSSize::new((b.width - 4.0).max(0.0), line)));
+            })
         }
 
         #[unsafe(method(mouseDown:))]
         fn mouse_down(&self, event: &NSEvent) {
-            // SAFETY: the superclass handles the click (selection) first.
-            let () = unsafe { msg_send![super(self), mouseDown: event] };
-            if event.clickCount() == 2 {
-                activate(&self.ivars().state.borrow(), self.ivars().index.get());
-            }
+            crate::failure::guard("a collection (mouse_down)", (), || {
+                // SAFETY: the superclass handles the click (selection) first.
+                let () = unsafe { msg_send![super(self), mouseDown: event] };
+                if event.clickCount() == 2 {
+                    activate(&self.ivars().state.borrow(), self.ivars().index.get());
+                }
+            })
         }
     }
 );
@@ -180,46 +184,50 @@ define_class!(
     impl GridCell {
         #[unsafe(method(loadView))]
         fn load_view(&self) {
-            let mtm = MainThreadMarker::new().expect("main thread");
-            CELLS_MADE.with(|c| c.set(c.get() + 1));
-            let parts = CellParts {
-                highlight: filled_box(mtm, 8.0),
-                swatch: filled_box(mtm, 6.0),
-                image: NSImageView::new(mtm),
-                title: label(mtm, false),
-                subtitle: label(mtm, true),
-                index: Cell::new(0),
-                state: RefCell::new(Weak::new()),
-            };
-            parts.image.setImageScaling(NSImageScaling::ScaleProportionallyUpOrDown);
-            let view = CellView::alloc(mtm).set_ivars(parts);
-            // SAFETY: NSView's designated initialiser.
-            let view: Retained<CellView> = unsafe { msg_send![super(view), initWithFrame: NSRect::ZERO] };
-            let p = view.ivars();
-            for v in [&**p.highlight as &NSView, &p.swatch, &p.image, &p.title, &p.subtitle] {
-                view.addSubview(v);
-            }
-            // VoiceOver reads the cell as one element named by its title.
-            view.setAccessibilityElement(true);
-            view.setAccessibilityRole(Some(unsafe { objc2_app_kit::NSAccessibilityImageRole }));
-            // Its parts are hidden (on their cells too: macOS 27 reads
-            // cell-based controls through the cell).
-            for v in [&**p.image as &NSView, &p.title, &p.subtitle, &p.swatch, &p.highlight] {
-                <crate::platform::Native as crate::platform::Platform>::set_accessibility_element(v, false);
-            }
-            self.setView(&view);
+            crate::failure::guard("a collection (load_view)", (), || {
+                let mtm = MainThreadMarker::new().expect("main thread");
+                CELLS_MADE.with(|c| c.set(c.get() + 1));
+                let parts = CellParts {
+                    highlight: filled_box(mtm, 8.0),
+                    swatch: filled_box(mtm, 6.0),
+                    image: NSImageView::new(mtm),
+                    title: label(mtm, false),
+                    subtitle: label(mtm, true),
+                    index: Cell::new(0),
+                    state: RefCell::new(Weak::new()),
+                };
+                parts.image.setImageScaling(NSImageScaling::ScaleProportionallyUpOrDown);
+                let view = CellView::alloc(mtm).set_ivars(parts);
+                // SAFETY: NSView's designated initialiser.
+                let view: Retained<CellView> = unsafe { msg_send![super(view), initWithFrame: NSRect::ZERO] };
+                let p = view.ivars();
+                for v in [&**p.highlight as &NSView, &p.swatch, &p.image, &p.title, &p.subtitle] {
+                    view.addSubview(v);
+                }
+                // VoiceOver reads the cell as one element named by its title.
+                view.setAccessibilityElement(true);
+                view.setAccessibilityRole(Some(unsafe { objc2_app_kit::NSAccessibilityImageRole }));
+                // Its parts are hidden (on their cells too: macOS 27 reads
+                // cell-based controls through the cell).
+                for v in [&**p.image as &NSView, &p.title, &p.subtitle, &p.swatch, &p.highlight] {
+                    <crate::platform::Native as crate::platform::Platform>::set_accessibility_element(v, false);
+                }
+                self.setView(&view);
+            })
         }
 
         #[unsafe(method(setSelected:))]
         fn set_selected(&self, selected: bool) {
-            // SAFETY: NSCollectionViewItem's own setter first.
-            let () = unsafe { msg_send![super(self), setSelected: selected] };
-            if let Some(v) = self.cell_view() {
-                let fill = if selected { NSColor::selectedContentBackgroundColor() } else { NSColor::clearColor() };
-                v.ivars().highlight.setFillColor(&fill);
-                let text = if selected { NSColor::alternateSelectedControlTextColor() } else { NSColor::labelColor() };
-                v.ivars().title.setTextColor(Some(&text));
-            }
+            crate::failure::guard("a collection (set_selected)", (), || {
+                // SAFETY: NSCollectionViewItem's own setter first.
+                let () = unsafe { msg_send![super(self), setSelected: selected] };
+                if let Some(v) = self.cell_view() {
+                    let fill = if selected { NSColor::selectedContentBackgroundColor() } else { NSColor::clearColor() };
+                    v.ivars().highlight.setFillColor(&fill);
+                    let text = if selected { NSColor::alternateSelectedControlTextColor() } else { NSColor::labelColor() };
+                    v.ivars().title.setTextColor(Some(&text));
+                }
+            })
         }
     }
 );
@@ -269,13 +277,15 @@ define_class!(
     impl GridView {
         #[unsafe(method(keyDown:))]
         fn key_down(&self, event: &NSEvent) {
-            let ret = matches!(event.keyCode(), 36 | 76);
-            let first = self.selectionIndexPaths().iter().map(|p| p.item() as usize).min();
-            match (ret, first) {
-                (true, Some(i)) => activate(&self.ivars().borrow(), i),
-                // SAFETY: the superclass handles every other key (arrows move the selection).
-                _ => unsafe { msg_send![super(self), keyDown: event] },
-            }
+            crate::failure::guard("a collection (key_down)", (), || {
+                let ret = matches!(event.keyCode(), 36 | 76);
+                let first = self.selectionIndexPaths().iter().map(|p| p.item() as usize).min();
+                match (ret, first) {
+                    (true, Some(i)) => activate(&self.ivars().borrow(), i),
+                    // SAFETY: the superclass handles every other key (arrows move the selection).
+                    _ => unsafe { msg_send![super(self), keyDown: event] },
+                }
+            })
         }
     }
 );
@@ -293,7 +303,9 @@ define_class!(
     unsafe impl NSCollectionViewDataSource for GridSource {
         #[unsafe(method(collectionView:numberOfItemsInSection:))]
         fn count(&self, _cv: &NSCollectionView, _section: NSInteger) -> NSInteger {
-            self.ivars().upgrade().map_or(0, |s| s.borrow().entries.len()) as NSInteger
+            crate::failure::guard("a collection (count)", 0, || {
+                self.ivars().upgrade().map_or(0, |s| s.borrow().entries.len()) as NSInteger
+            })
         }
 
         #[unsafe(method_id(collectionView:itemForRepresentedObjectAtIndexPath:))]
@@ -312,12 +324,16 @@ define_class!(
     unsafe impl NSCollectionViewDelegate for GridSource {
         #[unsafe(method(collectionView:didSelectItemsAtIndexPaths:))]
         fn did_select(&self, cv: &NSCollectionView, _paths: &NSSet<NSIndexPath>) {
-            self.selection_changed(cv);
+            crate::failure::guard("a collection (did_select)", (), || {
+                self.selection_changed(cv);
+            })
         }
 
         #[unsafe(method(collectionView:didDeselectItemsAtIndexPaths:))]
         fn did_deselect(&self, cv: &NSCollectionView, _paths: &NSSet<NSIndexPath>) {
-            self.selection_changed(cv);
+            crate::failure::guard("a collection (did_deselect)", (), || {
+                self.selection_changed(cv);
+            })
         }
     }
 );
@@ -330,8 +346,10 @@ impl GridSource {
         }
         let mut rows: Vec<usize> = cv.selectionIndexPaths().iter().map(|p| p.item() as usize).collect();
         rows.sort_unstable();
-        let s = state.borrow();
-        if let Some(f) = &s.on_select {
+        // Taken out first: what it sets may reload the collection, which
+        // borrows the state.
+        let on_select = state.borrow().on_select.clone();
+        if let Some(f) = on_select {
             crate::failure::entry("a collection's selection", (), || f(rows));
         }
     }
@@ -412,9 +430,12 @@ impl<T: Identifiable + Clone + 'static> View for Collection<T> {
         let values: Rc<RefCell<Vec<T>>> = Rc::default();
         if let Some(sel) = &self.selection {
             let (sel, values) = (*sel, values.clone());
-            state.borrow_mut().on_select = Some(Box::new(move |rows| {
-                let v = values.borrow();
-                sel.set(rows.iter().filter_map(|&i| v.get(i).map(Identifiable::id)).collect());
+            state.borrow_mut().on_select = Some(Rc::new(move |rows| {
+                let ids = {
+                    let v = values.borrow();
+                    rows.iter().filter_map(|&i| v.get(i).map(Identifiable::id)).collect()
+                };
+                sel.set(ids);
             }));
         }
         if let Some(f) = self.on_activate.clone() {

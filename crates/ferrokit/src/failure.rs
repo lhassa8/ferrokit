@@ -68,7 +68,13 @@ pub(crate) fn entry<R>(place: &'static str, fallback: R, f: impl FnOnce() -> R) 
     guard(place, fallback, || crate::signal::batch(f))
 }
 
-fn report(failure: Failure) {
+/// Makes `ferrokit-core`'s callbacks from AppKit (a table's data source, a
+/// text view's delegate) run under [`guard`].
+pub(crate) fn install() {
+    ferrokit_core::boundary::set_guard(|place, f| guard(place, (), f));
+}
+
+pub(crate) fn report(failure: Failure) {
     eprintln!("ferrokit: {failure} (the app goes on)");
     let _ = FAILURES.try_with(|f| {
         let mut f = f.borrow_mut();

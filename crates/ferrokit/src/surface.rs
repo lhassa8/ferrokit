@@ -80,15 +80,19 @@ define_class!(
         // changes: the named colours resolve again here.
         #[unsafe(method(updateLayer))]
         fn update_layer(&self) {
-            self.apply();
+            crate::failure::guard("a surface (update_layer)", (), || {
+                self.apply();
+            })
         }
 
         // Printing draws views, not layers: the surface draws itself then.
         #[unsafe(method(drawRect:))]
         fn draw_rect(&self, _dirty: objc2_foundation::NSRect) {
-            if !objc2_app_kit::NSGraphicsContext::currentContextDrawingToScreen() {
-                self.draw_for_print();
-            }
+            crate::failure::guard("a surface (draw_rect)", (), || {
+                if !objc2_app_kit::NSGraphicsContext::currentContextDrawingToScreen() {
+                    self.draw_for_print();
+                }
+            })
         }
 
         #[unsafe(method(hitTest:))]

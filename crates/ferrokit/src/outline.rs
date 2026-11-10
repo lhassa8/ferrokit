@@ -103,10 +103,12 @@ define_class!(
     unsafe impl NSOutlineViewDataSource for Source {
         #[unsafe(method(outlineView:numberOfChildrenOfItem:))]
         fn count(&self, _ov: &NSOutlineView, item: Option<&AnyObject>) -> NSInteger {
-            self.with(|s| match index_of(item) {
-                None => s.roots.len(),
-                Some(i) => s.entries.get(i).map_or(0, |e| e.children.len()),
-            }) as NSInteger
+            crate::failure::guard("an outline (count)", 0, || {
+                self.with(|s| match index_of(item) {
+                    None => s.roots.len(),
+                    Some(i) => s.entries.get(i).map_or(0, |e| e.children.len()),
+                }) as NSInteger
+            })
         }
 
         #[unsafe(method_id(outlineView:child:ofItem:))]
@@ -122,35 +124,43 @@ define_class!(
 
         #[unsafe(method(outlineView:isItemExpandable:))]
         fn expandable(&self, _ov: &NSOutlineView, item: &AnyObject) -> bool {
-            self.with(|s| index_of(Some(item)).and_then(|i| s.entries.get(i)).is_some_and(|e| e.expandable))
+            crate::failure::guard("an outline (expandable)", false, || {
+                self.with(|s| index_of(Some(item)).and_then(|i| s.entries.get(i)).is_some_and(|e| e.expandable))
+            })
         }
     }
 
     unsafe impl NSOutlineViewDelegate for Source {
         #[unsafe(method_id(outlineView:viewForTableColumn:item:))]
         fn view_for(&self, ov: &NSOutlineView, column: Option<&NSTableColumn>, item: &AnyObject) -> Option<Retained<NSView>> {
-            // An extra column's cell: its text ("column.2", "column-right.3").
-            let extra = column.and_then(|c| {
-                let id = c.identifier().to_string();
-                let (kind, n) = id.split_once('.')?;
-                Some((kind == "column-right", n.parse::<usize>().ok()?))
-            });
-            if let Some((right, n)) = extra {
-                let text = self.with(|s| index_of(Some(item)).and_then(|i| s.entries.get(i)).and_then(|e| e.columns.get(n).cloned()));
-                text.map(|t| column_cell(ov, &t, right))
-            } else {
-                self.tree_cell(ov, item)
-            }
+            crate::failure::guard("an outline (view_for)", None, || {
+                // An extra column's cell: its text ("column.2", "column-right.3").
+                let extra = column.and_then(|c| {
+                    let id = c.identifier().to_string();
+                    let (kind, n) = id.split_once('.')?;
+                    Some((kind == "column-right", n.parse::<usize>().ok()?))
+                });
+                if let Some((right, n)) = extra {
+                    let text = self.with(|s| index_of(Some(item)).and_then(|i| s.entries.get(i)).and_then(|e| e.columns.get(n).cloned()));
+                    text.map(|t| column_cell(ov, &t, right))
+                } else {
+                    self.tree_cell(ov, item)
+                }
+            })
         }
 
         #[unsafe(method(outlineView:isGroupItem:))]
         fn is_group(&self, _ov: &NSOutlineView, item: &AnyObject) -> bool {
-            self.with(|s| s.group_roots && index_of(Some(item)).is_some_and(|i| s.roots.contains(&i)))
+            crate::failure::guard("an outline (is_group)", false, || {
+                self.with(|s| s.group_roots && index_of(Some(item)).is_some_and(|i| s.roots.contains(&i)))
+            })
         }
         #[unsafe(method(outlineView:shouldSelectItem:))]
         fn should_select(&self, _ov: &NSOutlineView, item: &AnyObject) -> bool {
-            // Section headers of a sidebar aren't selectable.
-            !self.with(|s| s.group_roots && index_of(Some(item)).is_some_and(|i| s.roots.contains(&i)))
+            crate::failure::guard("an outline (should_select)", false, || {
+                // Section headers of a sidebar aren't selectable.
+                !self.with(|s| s.group_roots && index_of(Some(item)).is_some_and(|i| s.roots.contains(&i)))
+            })
         }
 
         #[unsafe(method(outlineViewItemWillExpand:))]
@@ -623,8 +633,13 @@ impl<T: Identifiable + 'static> View for Outline<T> {
                     // SAFETY: nil expands every root, with its children.
                     unsafe { ov2.expandItem_expandChildren(None, true) };
                 } else if sidebar {
-                    // Sections start expanded.
-                    let roots: Vec<_> = st.borrow().roots.iter().map(|&i| st.borrow().items[i].clone()).collect();
+                    // Sections start expanded: the ones new in this tree.
+                    // One the user closed stays closed when the tree is
+                    // rebuilt (a badge changed).
+                    let roots: Vec<_> = {
+                        let s = st.borrow();
+                        s.roots.iter().filter(|&&i| !old.contains_key(&s.entries[i].key)).map(|&i| s.items[i].clone()).collect()
+                    };
                     for r in roots {
                         // SAFETY: an item object this outline returned.
                         unsafe { ov2.expandItem(Some(&r)) };

@@ -118,14 +118,16 @@ define_class!(
     impl ClipObserver {
         #[unsafe(method(clipChanged:))]
         fn clip_changed(&self, note: &objc2_foundation::NSNotification) {
-            let (Some(clip), Some(doc)) = (note.object().and_then(|o| o.downcast::<NSView>().ok()), self.ivars().doc.load()) else { return };
-            if (clip.frame().size.width - doc.frame().size.width).abs() < 0.25 || crate::in_layout() {
-                return;
-            }
-            if let Some(meta) = self.ivars().meta.upgrade() {
-                meta.mark();
-                crate::later(crate::relayout_now);
-            }
+            crate::failure::guard("a view (clip_changed)", (), || {
+                let (Some(clip), Some(doc)) = (note.object().and_then(|o| o.downcast::<NSView>().ok()), self.ivars().doc.load()) else { return };
+                if (clip.frame().size.width - doc.frame().size.width).abs() < 0.25 || crate::in_layout() {
+                    return;
+                }
+                if let Some(meta) = self.ivars().meta.upgrade() {
+                    meta.mark();
+                    crate::later(crate::relayout_now);
+                }
+            })
         }
     }
 );
@@ -216,18 +218,20 @@ define_class!(
     impl PrintableLabel {
         #[unsafe(method(drawRect:))]
         fn draw_rect(&self, dirty: objc2_foundation::NSRect) {
-            if objc2_app_kit::NSGraphicsContext::currentContextDrawingToScreen() {
-                // SAFETY: NSTextField's own drawing.
-                let _: () = unsafe { msg_send![super(self), drawRect: dirty] };
-                return;
-            }
-            let Some(cell) = self.cell() else { return };
-            let mut r = cell.drawingRectForBounds(self.bounds());
-            // The cell's text container pads each side by 2 points.
-            r.origin.x += 2.0;
-            r.size.width -= 4.0;
-            let options = objc2_app_kit::NSStringDrawingOptions::UsesLineFragmentOrigin | objc2_app_kit::NSStringDrawingOptions::TruncatesLastVisibleLine;
-            objc2_app_kit::NSAttributedStringNSExtendedStringDrawing::drawWithRect_options_context(&*self.attributedStringValue(), r, options, None);
+            crate::failure::guard("a view (draw_rect)", (), || {
+                if objc2_app_kit::NSGraphicsContext::currentContextDrawingToScreen() {
+                    // SAFETY: NSTextField's own drawing.
+                    let _: () = unsafe { msg_send![super(self), drawRect: dirty] };
+                    return;
+                }
+                let Some(cell) = self.cell() else { return };
+                let mut r = cell.drawingRectForBounds(self.bounds());
+                // The cell's text container pads each side by 2 points.
+                r.origin.x += 2.0;
+                r.size.width -= 4.0;
+                let options = objc2_app_kit::NSStringDrawingOptions::UsesLineFragmentOrigin | objc2_app_kit::NSStringDrawingOptions::TruncatesLastVisibleLine;
+                objc2_app_kit::NSAttributedStringNSExtendedStringDrawing::drawWithRect_options_context(&*self.attributedStringValue(), r, options, None);
+            })
         }
     }
 );
@@ -295,6 +299,10 @@ define_class!(
         #[unsafe(method(fire:))]
         fn fire(&self, _sender: Option<&AnyObject>) {
             crate::models::flush();
+            // Kept for the call: an action that closes its own window
+            // drops the node that holds this target, and with it the
+            // closure that is running.
+            let _keep = objc2::Message::retain(self);
             crate::failure::entry("a control's action", (), || (self.ivars())());
         }
     }
@@ -469,10 +477,10 @@ impl View for Button {
                 remeasure(&view, &handle);
             }));
         }
-        match self.disabled {
-            Some(crate::Value::Fixed(d)) => button.setEnabled(!d),
-            Some(disabled) => node.own(Effect::new(move || button.setEnabled(!disabled.get()))),
-            None => {}
+        // Its own state, under that of the views above it.
+        if let Some(disabled) = self.disabled {
+            let (meta, b) = (node.meta.clone(), button.clone());
+            node.own(Effect::new(move || crate::view::set_control_disabled(&meta, &b, disabled.get())));
         }
         node.keep(Retained::into_super(target));
         node
@@ -583,10 +591,10 @@ impl View for MenuButton {
         button.setControlSize(self.size.ns());
         let view: Retained<NSView> = Retained::into_super(Retained::into_super(Retained::into_super(button.clone())));
         let (mut node, _) = Node::leaf(cx, view, (false, false), Size::default());
-        match self.disabled {
-            Some(crate::Value::Fixed(d)) => button.setEnabled(!d),
-            Some(disabled) => node.own(Effect::new(move || button.setEnabled(!disabled.get()))),
-            None => {}
+        // Its own state, under that of the views above it.
+        if let Some(disabled) = self.disabled {
+            let (meta, b) = (node.meta.clone(), button.clone());
+            node.own(Effect::new(move || crate::view::set_control_disabled(&meta, &b, disabled.get())));
         }
         for t in targets {
             node.keep(t);

@@ -95,20 +95,47 @@ pub(crate) struct Meta {
     pub(crate) ideal: Cell<Option<Size>>,
     /// The rectangle the node was last placed in.
     pub(crate) rect: Cell<Option<[f64; 4]>>,
+    /// The width it was mirrored within when last placed, right to left
+    /// (0 left to right).
+    pub(crate) mirror: Cell<f64>,
     /// Something in this subtree changed since the last layout.
     pub(crate) dirty: Cell<bool>,
     /// Commands this node handles and values it publishes to the focus.
     pub(crate) responds: RefCell<crate::commands::Responds>,
     /// Hidden by [`ViewExt::hidden`]: left out of layout, its views hidden.
     pub(crate) hidden: Cell<bool>,
-    /// The views it hid (and those hidden views inside it showed while it
-    /// was hidden), shown again when it is.
-    hid: RefCell<Vec<NativeView>>,
+    /// This node's own views are hidden because it, or a view above it,
+    /// is: shown again when none is. (A view the app hid itself stays so.)
+    hides: Cell<bool>,
+    /// Disabled by [`ViewExt::disabled`], or by the control itself: its
+    /// controls, and those of the views inside it, are disabled.
+    pub(crate) disabled: Cell<bool>,
 }
 
 impl Meta {
     pub(crate) fn parent(&self) -> Option<Rc<Meta>> {
         self.parent.borrow().upgrade()
+    }
+
+    /// Whether this node or a view above it is hidden.
+    pub(crate) fn hidden_here(self: &Rc<Self>) -> bool {
+        self.any_up(|m| m.hidden.get())
+    }
+
+    /// Whether this node or a view above it is disabled.
+    pub(crate) fn disabled_here(self: &Rc<Self>) -> bool {
+        self.any_up(|m| m.disabled.get())
+    }
+
+    fn any_up(self: &Rc<Self>, f: impl Fn(&Meta) -> bool) -> bool {
+        let mut up = Some(self.clone());
+        while let Some(m) = up {
+            if f(&m) {
+                return true;
+            }
+            up = m.parent();
+        }
+        false
     }
 
     pub(crate) fn set_parent(&self, parent: &Rc<Meta>) {
@@ -342,6 +369,48 @@ impl Node {
             Kind::Spacer => {}
         }
         out
+    }
+
+    /// This node's children, as they are now.
+    fn each_child_now(&self, f: &mut dyn FnMut(&Node)) {
+        match &self.kind {
+            Kind::Group(g) => g.borrow().iter().for_each(f),
+            _ => self.children_static().into_iter().for_each(f),
+        }
+    }
+
+    /// Hides or shows this subtree's views, given whether a view above it
+    /// is hidden: each node's views are hidden while it or a view above it
+    /// is, whatever order they were hidden in.
+    pub(crate) fn apply_hidden(&self, above: bool) {
+        let hide = above || self.meta.hidden.get();
+        let mut own = self.decor.clone();
+        match &self.kind {
+            Kind::Leaf(l) => own.push(l.view.clone()),
+            Kind::Scroll { scroll, .. } => own.push(Native::scroll_as_view(scroll)),
+            _ => {}
+        }
+        if hide {
+            for v in own.iter().filter(|v| !v.isHidden()) {
+                v.setHidden(true);
+                self.meta.hides.set(true);
+            }
+        } else if self.meta.hides.replace(false) {
+            own.iter().for_each(|v| v.setHidden(false));
+        }
+        self.each_child_now(&mut |c| c.apply_hidden(hide));
+    }
+
+    /// Disables or enables this subtree's controls, given whether a view
+    /// above it is disabled.
+    pub(crate) fn apply_disabled(&self, above: bool) {
+        let disable = above || self.meta.disabled.get();
+        if let Kind::Leaf(l) = &self.kind
+            && let Some(control) = l.view.downcast_ref::<objc2_app_kit::NSControl>()
+        {
+            control.setEnabled(!disable);
+        }
+        self.each_child_now(&mut |c| c.apply_disabled(disable));
     }
 
     /// Keeps a Rust value alive for as long as the node.
@@ -1063,17 +1132,6 @@ impl<V: View> View for Modified<V> {
                 }
             }));
         }
-        if let Some(when) = self.disabled {
-            let mut leaves = Vec::new();
-            node.leaf_views(&mut leaves);
-            let controls: Vec<_> = leaves.into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSControl>().ok()).collect();
-            node.own(Effect::new(move || {
-                let enabled = !when.get();
-                for c in &controls {
-                    c.setEnabled(enabled);
-                }
-            }));
-        }
         if let Some(tip) = &self.tooltip {
             let tip = objc2_foundation::NSString::from_str(tip);
             let mut leaves = Vec::new();
@@ -1122,6 +1180,9 @@ impl<V: View> View for Modified<V> {
                 crate::popover::attach(&mut node, anchor, spec);
             }
         }
+        if let Some(when) = self.disabled {
+            node = disable_when(node, when);
+        }
         if let Some(when) = self.hidden {
             node = hide_when(node, when);
         }
@@ -1152,41 +1213,53 @@ fn hide_when(node: Node, when: crate::Value<bool>) -> Node {
     group
 }
 
-/// A branch built into `parent` while it (or a view above it) is hidden
-/// starts hidden too, and shows with that view: built while hidden, a
-/// `dynamic`'s new branch or a `for_each`'s new row showed through.
-fn hide_under_hidden(parent: &Rc<Meta>, new: &Node) {
-    let mut up = Some(parent.clone());
-    while let Some(m) = up {
-        if m.hidden.get() {
-            let views: Vec<NativeView> = new.all_views().into_iter().filter(|v| !v.isHidden()).collect();
-            views.iter().for_each(|v| v.setHidden(true));
-            m.hid.borrow_mut().extend(views);
+/// `node` in a group of its own whose controls [`ViewExt::disabled`]
+/// disables while `when()` is true, with those of the views inside it,
+/// whenever they were built.
+fn disable_when(node: Node, when: crate::Value<bool>) -> Node {
+    let children = Rc::new(RefCell::new(Vec::new()));
+    let mut group = Node::new(Kind::Group(children.clone()));
+    node.meta.set_parent(&group.meta);
+    children.borrow_mut().push(node);
+    let meta = group.meta.clone();
+    let first = Cell::new(true);
+    group.own(Effect::new(move || {
+        let disable = when.get();
+        let initial = first.replace(false);
+        if meta.disabled.replace(disable) == disable && !initial {
             return;
         }
-        up = m.parent();
+        if !initial || disable {
+            let above = meta.parent().is_some_and(|p| p.disabled_here());
+            children.borrow().iter().for_each(|c| c.apply_disabled(above || disable));
+        }
+    }));
+    group
+}
+
+/// Sets a control's own disabled state (a button's `.disabled(..)`): it is
+/// enabled only if no view above it is disabled either.
+pub(crate) fn set_control_disabled(meta: &Rc<Meta>, control: &objc2_app_kit::NSControl, disabled: bool) {
+    meta.disabled.set(disabled);
+    control.setEnabled(!meta.disabled_here());
+}
+
+/// A branch built into `parent` (a `dynamic`'s new branch, a `for_each`'s
+/// new row) takes the state of the views above it: hidden while one of
+/// them is, its controls disabled while one of them is.
+fn inherit_state(parent: &Rc<Meta>, new: &Node) {
+    if parent.hidden_here() {
+        new.apply_hidden(true);
+    }
+    if parent.disabled_here() {
+        new.apply_disabled(true);
     }
 }
 
 fn set_hidden(meta: &Rc<Meta>, children: &RefCell<Vec<Node>>, hide: bool) {
     meta.hidden.set(hide);
-    if hide {
-        let views: Vec<NativeView> = children.borrow().iter().flat_map(Node::all_views).filter(|v| !v.isHidden()).collect();
-        views.iter().for_each(|v| v.setHidden(true));
-        meta.hid.borrow_mut().extend(views);
-    } else {
-        let views = std::mem::take(&mut *meta.hid.borrow_mut());
-        // Inside a view that's still hidden, they wait for it.
-        let mut up = meta.parent();
-        while let Some(m) = up {
-            if m.hidden.get() {
-                m.hid.borrow_mut().extend(views);
-                return;
-            }
-            up = m.parent();
-        }
-        views.iter().for_each(|v| v.setHidden(false));
-    }
+    let above = meta.parent().is_some_and(|p| p.hidden_here());
+    children.borrow().iter().for_each(|c| c.apply_hidden(above || hide));
     // Laid out again (it was skipped while hidden, so it may still be dirty).
     meta.dirty.set(false);
     meta.mark();
@@ -1467,9 +1540,11 @@ impl View for Dynamic {
                 let mut new = owner.with(|| view.build_node(&mut Cx::new(container.clone())));
                 new.owner = Some(owner);
                 new.meta.set_parent(&meta);
-                hide_under_hidden(&meta, &new);
-                // The old node (and its subtree) is dropped here: teardown.
-                *children.borrow_mut() = vec![new];
+                inherit_state(&meta, &new);
+                // The old node (and its subtree) is dropped here, outside
+                // the borrow: teardown.
+                let old = std::mem::replace(&mut *children.borrow_mut(), vec![new]);
+                drop(old);
                 meta.mark();
             });
         }));
@@ -1524,8 +1599,11 @@ where
         node.own(Effect::new(move || {
             let items = items();
             untrack(|| {
-                let mut old: HashMap<T::Id, Node> =
-                    keys.borrow_mut().drain(..).zip(children.borrow_mut().drain(..)).collect();
+                // Taken out first: a node dropped here (two items with one
+                // id) is torn down outside the borrows.
+                let old_keys: Vec<T::Id> = keys.borrow_mut().drain(..).collect();
+                let old_nodes: Vec<Node> = children.borrow_mut().drain(..).collect();
+                let mut old: HashMap<T::Id, Node> = old_keys.into_iter().zip(old_nodes).collect();
                 let mut new_keys = Vec::with_capacity(items.len());
                 let mut new_nodes = Vec::with_capacity(items.len());
                 for item in items {
@@ -1533,9 +1611,13 @@ where
                     let n = match old.remove(&key) {
                         Some(n) => n,
                         None => {
-                            let n = Node::build_owned(AnyView::new(row(item)), &mut Cx::new(container.clone()));
+                            // Signals the row's closure makes belong to
+                            // the row, as those its views make do.
+                            let owner = Owner::new();
+                            let mut n = owner.with(|| AnyView::new(row(item)).build_node(&mut Cx::new(container.clone())));
+                            n.owner = Some(owner);
                             n.meta.set_parent(&meta);
-                            hide_under_hidden(&meta, &n);
+                            inherit_state(&meta, &n);
                             n
                         }
                     };

@@ -227,10 +227,22 @@ thread_local! {
 /// Runs `f` laying out a container `width` wide, mirrored right to left
 /// when `rtl`.
 pub(crate) fn mirrored<R>(rtl: bool, width: f64, f: impl FnOnce() -> R) -> R {
-    let prev = MIRROR.with(|m| m.replace(rtl.then_some(width)));
-    let r = f();
-    MIRROR.with(|m| m.set(prev));
-    r
+    // Put back even if `f` unwinds (a failure caught further out).
+    struct Restore(Option<f64>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let _ = MIRROR.try_with(|m| m.set(self.0));
+        }
+    }
+    let _restore = Restore(MIRROR.with(|m| m.replace(rtl.then_some(width))));
+    f()
+}
+
+/// The width frames are mirrored within right to left (0 left to right):
+/// part of what a placed node's frame depends on, since the same rectangle
+/// lands elsewhere in a container of another width.
+fn mirror_width() -> f64 {
+    MIRROR.with(Cell::get).unwrap_or(0.0)
 }
 
 /// Whether the container being laid out is mirrored.
@@ -258,7 +270,7 @@ fn snapped(x: f64, y: f64, w: f64, h: f64, snap: &Snap) -> Rect {
 /// flipped container, skipping it if it is clean and its rectangle is the same.
 pub(crate) fn place(node: &Node, x: f64, y: f64, w: f64, h: f64, snap: &Snap) {
     let rect = [x, y, w, h];
-    if !node.meta.dirty.get() && node.meta.rect.get() == Some(rect) {
+    if !node.meta.dirty.get() && node.meta.rect.get() == Some(rect) && node.meta.mirror.get() == mirror_width() {
         bump(&SKIPPED);
         return;
     }
@@ -286,7 +298,7 @@ fn place_under_bar_at(node: &Node, x: f64, w: f64, h: f64, top: f64, snap: &Snap
     }
     // Its own key: the same size under a different bar is a new layout.
     let rect = [x, -top, w, h];
-    if !node.meta.dirty.get() && node.meta.rect.get() == Some(rect) {
+    if !node.meta.dirty.get() && node.meta.rect.get() == Some(rect) && node.meta.mirror.get() == mirror_width() {
         bump(&SKIPPED);
         return;
     }
@@ -382,6 +394,7 @@ fn place_body(node: &Node, x: f64, y: f64, w: f64, h: f64, top: f64, snap: &Snap
 
 fn finish(meta: &Meta, rect: [f64; 4]) {
     meta.rect.set(Some(rect));
+    meta.mirror.set(mirror_width());
     meta.dirty.set(false);
 }
 

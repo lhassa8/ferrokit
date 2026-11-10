@@ -60,31 +60,41 @@ define_class!(
 
         #[unsafe(method(mouseEntered:))]
         fn mouse_entered(&self, _event: &NSEvent) {
-            self.hover(true);
+            crate::failure::guard("a clickable view (mouse_entered)", (), || {
+                self.hover(true);
+            })
         }
 
         #[unsafe(method(mouseExited:))]
         fn mouse_exited(&self, _event: &NSEvent) {
-            self.hover(false);
+            crate::failure::guard("a clickable view (mouse_exited)", (), || {
+                self.hover(false);
+            })
         }
 
         #[unsafe(method(mouseDown:))]
         fn mouse_down(&self, _event: &NSEvent) {
-            self.press(true);
+            crate::failure::guard("a clickable view (mouse_down)", (), || {
+                self.press(true);
+            })
         }
 
         #[unsafe(method(mouseDragged:))]
         fn mouse_dragged(&self, event: &NSEvent) {
-            self.press(self.inside(event));
+            crate::failure::guard("a clickable view (mouse_dragged)", (), || {
+                self.press(self.inside(event));
+            })
         }
 
         #[unsafe(method(mouseUp:))]
         fn mouse_up(&self, event: &NSEvent) {
-            let was = self.ivars().pressed.get();
-            self.press(false);
-            if was && self.inside(event) {
-                self.click();
-            }
+            crate::failure::guard("a clickable view (mouse_up)", (), || {
+                let was = self.ivars().pressed.get();
+                self.press(false);
+                if was && self.inside(event) {
+                    self.click();
+                }
+            })
         }
 
         #[unsafe(method(isAccessibilityElement))]
@@ -94,23 +104,29 @@ define_class!(
 
         #[unsafe(method_id(accessibilityRole))]
         fn ax_role(&self) -> Option<Retained<NSString>> {
-            // SAFETY: AppKit's role constant.
-            Some(unsafe { objc2_app_kit::NSAccessibilityButtonRole }.copy())
+            crate::failure::guard("a clickable view (ax_role)", None, || {
+                // SAFETY: AppKit's role constant.
+                Some(unsafe { objc2_app_kit::NSAccessibilityButtonRole }.copy())
+            })
         }
 
         #[unsafe(method_id(accessibilityLabel))]
         fn ax_label(&self) -> Option<Retained<NSString>> {
-            let label = self.ivars().label.borrow().clone().unwrap_or_else(|| {
-                let texts = self.ivars().texts.borrow();
-                texts.iter().map(|t| t.stringValue().to_string()).filter(|t| !t.is_empty()).collect::<Vec<_>>().join(", ")
-            });
-            Some(NSString::from_str(&label))
+            crate::failure::guard("a clickable view (ax_label)", None, || {
+                let label = self.ivars().label.borrow().clone().unwrap_or_else(|| {
+                    let texts = self.ivars().texts.borrow();
+                    texts.iter().map(|t| t.stringValue().to_string()).filter(|t| !t.is_empty()).collect::<Vec<_>>().join(", ")
+                });
+                Some(NSString::from_str(&label))
+            })
         }
 
         #[unsafe(method(accessibilityPerformPress))]
         fn ax_press(&self) -> bool {
-            self.click();
-            self.ivars().click.is_some()
+            crate::failure::guard("a clickable view (ax_press)", false, || {
+                self.click();
+                self.ivars().click.is_some()
+            })
         }
     }
 );

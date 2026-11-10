@@ -3506,7 +3506,85 @@ fn failure_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     );
     ferrokit::close_window(&w);
     crash_report_check();
-    after_events(move || rtl_checks(events.clone()));
+    after_events(move || failure_boundary_checks(events.clone()));
+}
+
+/// Failures are caught wherever AppKit calls in, not only in actions: a
+/// table asking for a cell, typing in a text field, a background task.
+fn failure_boundary_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use ferrokit::testing::failures;
+    use ferrokit::{Cancel, Resource};
+    let poisoned = Rc::new(Cell::new(false));
+    let p = poisoned.clone();
+    let model = Rc::new(TableModel::new(
+        ViewId(9300),
+        vec![Column::text("name", "Name", move |s: &String| {
+            if p.get() {
+                panic!("a deliberate panic in a column");
+            }
+            s.clone()
+        })],
+    ));
+    model.set_rows(vec!["one".to_string(), "two".to_string()]);
+    let (typed, count) = (Signal::new(String::new()), Signal::new(0));
+    let progress = Signal::new(None);
+    let load = Resource::new(|| (), |(): (), _: &Cancel| -> Result<i64, &'static str> { panic!("a deliberate panic in a load") });
+    let w = open(
+        Window::new("Boundary").size(360.0, 220.0).view(
+            vstack((
+                table(&model).height(80.0),
+                text_field(&typed),
+                ferrokit::watch(move || {
+                    if typed.get() == "boom" {
+                        panic!("a deliberate panic after typing");
+                    }
+                }),
+                button("Count", move || count.update(|n| *n += 1)),
+                text(move || format!("count {}", count.get())),
+            ))
+            .padding(12.0),
+        ),
+    );
+    let before = failures().len();
+    // The table asks for a cell: the column's closure panics.
+    poisoned.set(true);
+    let tv = model.table_view();
+    tv.reloadData();
+    let cell = tv.viewAtColumn_row_makeIfNecessary(0, 0, true);
+    poisoned.set(false);
+    // Typing: an effect that reads the field's signal panics.
+    let field = all_views(&w.contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.isEditable()).unwrap();
+    ferrokit::testing::post_edit(&field, "boom");
+    // A background task that panics: its progress ends, `then` never runs.
+    let ran = Rc::new(Cell::new(false));
+    let r = ran.clone();
+    ferrokit::spawn_with_progress(&progress, |_| -> i64 { panic!("a deliberate panic in a task") }, move |_| r.set(true));
+    let w2 = w.clone();
+    until(
+        move || progress.get_untracked().is_none() && !load.loading(),
+        3000,
+        move || {
+            // After this task's batch: the button's action below runs in a
+            // batch of its own, as a click's does.
+            let (w2, cell_made) = (w2.clone(), cell.is_some());
+            let (ran, load, events) = (ran.clone(), load.clone(), events.clone());
+            after_events(move || {
+                let caught: Vec<ferrokit::Failure> = failures().into_iter().skip(before).collect();
+                let places: Vec<&str> = caught.iter().map(|f| f.place).collect();
+                let button = all_views(&w2.contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).find(|b| b.title().to_string() == "Count").unwrap();
+                send_action(&button);
+                let shown = all_views(&w2.contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<NSTextField>().ok()).any(|f| f.stringValue().to_string() == "count 1");
+                let error = load.error();
+                check(
+                    "failures-caught-everywhere",
+                    places.iter().any(|p| p.starts_with("a table")) && places.iter().any(|p| p.starts_with("a control")) && places.iter().filter(|p| **p == "a background task").count() == 2 && !cell_made && !ran.get() && progress.get_untracked().is_none() && error.as_deref().is_some_and(|e| e.contains("panicked")) && shown,
+                    format!("caught in {places:?}; the cell {}; the task's then ran {}; its progress {:?}; the load's error {error:?}; the app goes on {shown}", if cell_made { "was made" } else { "wasn't made" }, ran.get(), progress.get_untracked()),
+                );
+                ferrokit::close_window(&w2);
+                rtl_checks(events.clone());
+            });
+        },
+    );
 }
 
 /// L5: a panic Ferrokit doesn't catch writes a crash report; one it
@@ -3592,6 +3670,15 @@ fn rtl_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     if let Ok(dir) = std::env::var("SNAP") {
         snapshot_windows(&dir);
     }
+    // Wider: First stays at the right edge (its rectangle is the same
+    // left to right, so it was skipped and kept the old width's mirror).
+    rtl_w.setContentSize(objc2_foundation::NSSize::new(520.0, 200.0));
+    let wide = frames(&rtl_w);
+    check(
+        "right-to-left-resize",
+        wide.0.is_some_and(|first| (first.1 - 490.0).abs() < 1.0) && wide.1.is_some_and(|last| (last.0 - 30.0).abs() < 1.0),
+        format!("100 points wider: First {:?} (ends at 490), Last {:?} (starts at 30)", wide.0, wide.1),
+    );
     ferrokit::close_window(&rtl_w);
     set_right_to_left(None);
     // Mirrored in the 420-point window: x becomes 420 − (x + width).
@@ -5163,8 +5250,115 @@ fn dynamic_hidden_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
             let pair = |a: bool, b: bool| vec![("Row 1".to_string(), a), ("Row 2".to_string(), b)];
             check("foreach-hidden", rows_hidden == pair(true, true) && rows_shown == pair(false, false), format!("added while hidden {rows_hidden:?}; shown {rows_shown:?}"));
             ferrokit::close_window(&w3);
-            about_help_checks(events.clone());
+            tree_state_checks(events.clone());
         });
+    });
+}
+
+/// Hidden and disabled come from the tree as it is now: nested hidden
+/// views compose whatever order they change in, a hidden region doesn't
+/// keep the views it replaced, a disabled view's later branches and rows
+/// are disabled too, and a `for_each` row's signals go with the row.
+fn tree_state_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use ferrokit::live_signals;
+    use objc2_app_kit::NSButton;
+    let (outer, inner, which, off, own_off) = (Signal::new(true), Signal::new(false), Signal::new(0), Signal::new(true), Signal::new(true));
+    let rows = Signal::new(vec![place(1, "Line 1", None)]);
+    let before = live_signals();
+    let w = open(Window::new("Tree State").size(320.0, 220.0).view(
+        vstack((
+            vstack((text("Outer"), button("Nested", || {}).hidden(move || inner.get()))).hidden(move || outer.get()),
+            dynamic(move || button(format!("Swap {}", which.get()), || {})).hidden(move || outer.get()),
+            vstack((
+                dynamic(move || button(format!("Form {}", which.get()), || {})),
+                for_each(
+                    move || rows.get(),
+                    |p: Place| {
+                        // A row's own state: freed with the row.
+                        let open = Signal::new(false);
+                        button(&p.name, move || open.set(true))
+                    },
+                ),
+                button("Own", || {}).disabled(move || own_off.get()),
+            ))
+            .disabled(move || off.get()),
+        ))
+        .padding(12.0),
+    ));
+    let find = |w: &objc2_app_kit::NSWindow, prefix: &str| -> Vec<Retained<NSButton>> {
+        all_views(&w.contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<NSButton>().ok()).filter(|b| b.title().to_string().starts_with(prefix)).collect()
+    };
+    let hidden = |w: &objc2_app_kit::NSWindow, prefix: &str| find(w, prefix).iter().map(|b| b.isHidden()).collect::<Vec<_>>();
+    let enabled = |w: &objc2_app_kit::NSWindow, prefix: &str| find(w, prefix).iter().map(|b| b.isEnabled()).collect::<Vec<_>>();
+    // A table sorted outside keeps the app's order; a changed row regroups.
+    {
+        let m = TableModel::new(ViewId(9310), vec![Column::text("name", "Name", |s: &String| s.clone())]);
+        m.set_sorts_in_place(false);
+        m.set_sort(Some(ferrokit::Sort { column: "name".into(), ascending: true }));
+        m.set_rows(vec!["b".to_string(), "a".to_string(), "c".to_string()]);
+        m.select(&[0]);
+        let at = m.table_view().selectedRow();
+        check("table-sorted-outside", at == 0 && m.sort().is_some(), format!("rows b, a, c with built-in sorting off: b is shown at row {at}; the header's sort is kept {}", m.sort().is_some()));
+        let g = TableModel::new(ViewId(9311), vec![Column::text("name", "Name", |s: &String| s.clone())]);
+        g.set_group_by(Some(Box::new(|s: &String| s[..1].to_string())));
+        g.set_rows(vec!["a1".to_string(), "b1".to_string()]);
+        let before = g.groups();
+        g.update_row(1, "a2".to_string());
+        let after = g.groups();
+        check("table-update-regroups", before == ["a", "b"] && after == ["a"], format!("groups {before:?}; after b1 became a2: {after:?}"));
+    }
+    // A picker whose options share a title keeps them all, in order.
+    {
+        let choice = Signal::new(2);
+        let pw = open(Window::new("Picker").size(240.0, 80.0).view(vstack((picker(&choice, vec![("None", 0), ("Custom", 1), ("None", 2)]), image("no.such.symbol.anywhere"))).padding(12.0)));
+        let popup = all_views(&pw.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSPopUpButton>().ok()).unwrap();
+        let (items, selected) = (popup.numberOfItems(), popup.indexOfSelectedItem());
+        check("picker-same-titles", items == 3 && selected == 2, format!("None, Custom, None: {items} items, the third selected: index {selected}"));
+        let reported = ferrokit::testing::failures().iter().any(|f| f.place == "an image" && f.message.contains("no.such.symbol.anywhere"));
+        let shown = all_views(&pw.contentView().unwrap()).into_iter().any(|v| v.downcast::<objc2_app_kit::NSImageView>().is_ok());
+        check("image-unknown-symbol", reported && shown, format!("an unknown SF Symbol: reported {reported}, a placeholder shown {shown}"));
+        ferrokit::close_window(&pw);
+    }
+    // The inner view is hidden while the outer one already is; showing the
+    // outer one mustn't show it.
+    batch(|| inner.set(true));
+    batch(|| outer.set(false));
+    let nested = hidden(&w, "Nested");
+    batch(|| inner.set(false));
+    let nested_shown = hidden(&w, "Nested");
+    check("hidden-nested", nested == [true] && nested_shown == [false], format!("inner hidden under a hidden outer, outer shown: hidden {nested:?}; inner shown: {nested_shown:?}"));
+    // Replaced while hidden: the old views go.
+    batch(|| outer.set(true));
+    let first = objc2::rc::Weak::from_retained(&find(&w, "Swap")[0]);
+    for i in 1..=50 {
+        batch(|| which.set(i));
+    }
+    // Disabled: the replaced branch and a new row are disabled too.
+    batch(|| rows.update(|r| r.push(place(2, "Line 2", None))));
+    let (form, lines, own) = (enabled(&w, "Form"), enabled(&w, "Line"), enabled(&w, "Own"));
+    batch(|| off.set(false));
+    let (form_on, lines_on, own_still) = (enabled(&w, "Form"), enabled(&w, "Line"), enabled(&w, "Own"));
+    batch(|| own_off.set(false));
+    let own_on = enabled(&w, "Own");
+    check(
+        "disabled-inherited",
+        form == [false] && lines == [false, false] && own == [false] && form_on == [true] && lines_on == [true, true] && own_still == [false] && own_on == [true],
+        format!("disabled: branch {form:?}, rows {lines:?}, own {own:?}; enabled: branch {form_on:?}, rows {lines_on:?}, a view disabled itself {own_still:?}, then {own_on:?}"),
+    );
+    // Rows that go take their signals.
+    let with_rows = live_signals();
+    for i in 3..=40 {
+        batch(|| rows.set(vec![place(i, &format!("Line {i}"), None)]));
+    }
+    let after_rows = live_signals();
+    check("foreach-row-signals", after_rows < with_rows && after_rows <= before + 16, format!("signals: {before} before the window, {with_rows} with two rows, {after_rows} after 38 replacements of the rows"));
+    let w2 = w.clone();
+    after_events(move || {
+        let kept = first.load().is_some();
+        let now = find(&w2, "Swap").iter().map(|b| b.title().to_string()).collect::<Vec<_>>();
+        check("hidden-rebuild-frees", !kept && now == ["Swap 50"], format!("after 50 replacements while hidden: the first view kept {kept}; now {now:?}"));
+        ferrokit::close_window(&w2);
+        about_help_checks(events.clone());
     });
 }
 

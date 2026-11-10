@@ -36,14 +36,16 @@ define_class!(
 
         #[unsafe(method(setFrameSize:))]
         fn set_frame_size(&self, size: NSSize) {
-            let _: () = unsafe { msg_send![super(self), setFrameSize: size] };
-            if crate::in_layout() {
-                return; // the layout pass in progress places the content next
-            }
-            if let Some(meta) = self.ivars().borrow().upgrade() {
-                meta.mark();
-                crate::relayout_now();
-            }
+            crate::failure::guard("a window's chrome (set_frame_size)", (), || {
+                let _: () = unsafe { msg_send![super(self), setFrameSize: size] };
+                if crate::in_layout() {
+                    return; // the layout pass in progress places the content next
+                }
+                if let Some(meta) = self.ivars().borrow().upgrade() {
+                    meta.mark();
+                    crate::relayout_now();
+                }
+            })
         }
     }
 );
@@ -63,43 +65,49 @@ define_class!(
     unsafe impl NSSplitViewDelegate for SplitDelegate {
         #[unsafe(method(splitView:shouldAdjustSizeOfSubview:))]
         fn should_adjust(&self, split: &NSSplitView, view: &NSView) -> bool {
-            // The first pane (a sidebar) and collapsible ones (an inspector)
-            // keep their size; the others take the change.
-            let panes = split.arrangedSubviews();
-            let index = panes.iter().position(|p| std::ptr::eq(&*p, view));
-            panes.count() < 2 || !index.is_some_and(|i| i == 0 || self.ivars().collapsible.iter().any(|(c, _)| *c == i))
+            crate::failure::guard("a window's chrome (should_adjust)", true, || {
+                // The first pane (a sidebar) and collapsible ones (an inspector)
+                // keep their size; the others take the change.
+                let panes = split.arrangedSubviews();
+                let index = panes.iter().position(|p| std::ptr::eq(&*p, view));
+                panes.count() < 2 || !index.is_some_and(|i| i == 0 || self.ivars().collapsible.iter().any(|(c, _)| *c == i))
+            })
         }
 
         #[unsafe(method(splitView:canCollapseSubview:))]
         fn can_collapse(&self, split: &NSSplitView, view: &NSView) -> bool {
-            let index = split.arrangedSubviews().iter().position(|p| std::ptr::eq(&*p, view));
-            index.is_some_and(|i| self.ivars().collapsible.iter().any(|(c, _)| *c == i))
+            crate::failure::guard("a window's chrome (can_collapse)", false, || {
+                let index = split.arrangedSubviews().iter().position(|p| std::ptr::eq(&*p, view));
+                index.is_some_and(|i| self.ivars().collapsible.iter().any(|(c, _)| *c == i))
+            })
         }
 
         #[unsafe(method(splitViewDidResizeSubviews:))]
         fn did_resize(&self, notification: &NSNotification) {
-            let Some(split) = notification.object().and_then(|o| o.downcast::<NSSplitView>().ok()) else { return };
-            if let Some(f) = &*self.ivars().on_resize.borrow() {
-                f(&split);
-            }
-            // A pane the user dragged shut (or open) updates its signal.
-            let panes = split.arrangedSubviews();
-            for (i, collapsed) in self.ivars().collapsible.iter().filter(|_| !self.ivars().applying.get()) {
-                if let Some(pane) = (*i < panes.count()).then(|| panes.objectAtIndex(*i)) {
-                    let size = if split.isVertical() { pane.frame().size.width } else { pane.frame().size.height };
-                    // Zero size counts only outside layout: a pane is zero
-                    // wide in the first tiling, before its size is set.
-                    collapsed.set_if_changed(split.isSubviewCollapsed(&pane) || pane.isHidden() || (size < 1.0 && !crate::in_layout()));
+            crate::failure::guard("a window's chrome (did_resize)", (), || {
+                let Some(split) = notification.object().and_then(|o| o.downcast::<NSSplitView>().ok()) else { return };
+                if let Some(f) = &*self.ivars().on_resize.borrow() {
+                    f(&split);
                 }
-            }
-            // Layout passes place the divider themselves; only a drag (or a
-            // programmatic move outside layout) is the user's choice.
-            let (Some(key), false) = (&self.ivars().key, crate::in_layout()) else { return };
-            if let Some(first) = panes.firstObject().filter(|f| !f.isHidden())
-            {
-                let size = first.frame().size;
-                NSUserDefaults::standardUserDefaults().setDouble_forKey(if split.isVertical() { size.width } else { size.height }, key);
-            }
+                // A pane the user dragged shut (or open) updates its signal.
+                let panes = split.arrangedSubviews();
+                for (i, collapsed) in self.ivars().collapsible.iter().filter(|_| !self.ivars().applying.get()) {
+                    if let Some(pane) = (*i < panes.count()).then(|| panes.objectAtIndex(*i)) {
+                        let size = if split.isVertical() { pane.frame().size.width } else { pane.frame().size.height };
+                        // Zero size counts only outside layout: a pane is zero
+                        // wide in the first tiling, before its size is set.
+                        collapsed.set_if_changed(split.isSubviewCollapsed(&pane) || pane.isHidden() || (size < 1.0 && !crate::in_layout()));
+                    }
+                }
+                // Layout passes place the divider themselves; only a drag (or a
+                // programmatic move outside layout) is the user's choice.
+                let (Some(key), false) = (&self.ivars().key, crate::in_layout()) else { return };
+                if let Some(first) = panes.firstObject().filter(|f| !f.isHidden())
+                {
+                    let size = first.frame().size;
+                    NSUserDefaults::standardUserDefaults().setDouble_forKey(if split.isVertical() { size.width } else { size.height }, key);
+                }
+            })
         }
     }
 );
@@ -310,13 +318,15 @@ define_class!(
 
         #[unsafe(method(validateMenuItem:))]
         fn validate(&self, item: &NSMenuItem) -> bool {
-            if let Some(checked) = &self.ivars().checked {
-                item.setState(if checked() { NSControlStateValueOn } else { NSControlStateValueOff });
-            }
-            if let Some(titled) = &self.ivars().titled {
-                item.setTitle(&NSString::from_str(&titled()));
-            }
-            self.ivars().enabled.as_ref().is_none_or(|f| f())
+            crate::failure::guard("a window's chrome (validate)", false, || {
+                if let Some(checked) = &self.ivars().checked {
+                    item.setState(if checked() { NSControlStateValueOn } else { NSControlStateValueOff });
+                }
+                if let Some(titled) = &self.ivars().titled {
+                    item.setTitle(&NSString::from_str(&titled()));
+                }
+                self.ivars().enabled.as_ref().is_none_or(|f| f())
+            })
         }
     }
 );
@@ -538,7 +548,9 @@ define_class!(
     unsafe impl NSMenuDelegate for DynamicMenu {
         #[unsafe(method(menuNeedsUpdate:))]
         fn menu_needs_update(&self, menu: &NSMenu) {
-            self.refill(menu);
+            crate::failure::guard("a window's chrome (menu_needs_update)", (), || {
+                self.refill(menu);
+            })
         }
     }
 );
@@ -872,13 +884,17 @@ define_class!(
         fn fire(&self, sender: Option<&AnyObject>) {
             crate::models::flush();
             let index = sender.and_then(|s| s.downcast_ref::<objc2_app_kit::NSToolbarItemGroup>()).map_or(0, |g| g.selectedIndex());
+            // Kept for the call (an action may close its own window).
+            let _keep = objc2::Message::retain(self);
             let a = self.ivars();
             crate::failure::guard("a toolbar item's action", (), || crate::commands::acting_in(a.window.load(), || batch(|| (a.action)(index))));
         }
 
         #[unsafe(method(validateToolbarItem:))]
         fn validate(&self, _item: &NSToolbarItem) -> bool {
-            self.enabled()
+            crate::failure::guard("a window's chrome (validate)", false, || {
+                self.enabled()
+            })
         }
     }
 );
@@ -948,11 +964,13 @@ define_class!(
     unsafe impl NSToolbarDelegate for ToolbarDelegate {
         #[unsafe(method_id(toolbar:itemForItemIdentifier:willBeInsertedIntoToolbar:))]
         fn item_for(&self, _toolbar: &NSToolbar, id: &NSString, insert: bool) -> Option<Retained<NSToolbarItem>> {
-            if id.to_string() == SIDEBAR_SPACER {
-                Some(self.spacer_item(id))
-            } else {
-                self.make_item(&id.to_string(), insert)
-            }
+            crate::failure::guard("a window's chrome (item_for)", None, || {
+                if id.to_string() == SIDEBAR_SPACER {
+                    Some(self.spacer_item(id))
+                } else {
+                    self.make_item(&id.to_string(), insert)
+                }
+            })
         }
 
         #[unsafe(method_id(toolbarDefaultItemIdentifiers:))]
@@ -978,17 +996,21 @@ define_class!(
 
         #[unsafe(method(toolbarWillAddItem:))]
         fn will_add(&self, _notification: &NSNotification) {
-            self.save_soon();
+            crate::failure::guard("a window's chrome (will_add)", (), || {
+                self.save_soon();
+            })
         }
 
         #[unsafe(method(toolbarDidRemoveItem:))]
         fn did_remove(&self, notification: &NSNotification) {
-            // A removed item's effects and targets go with it.
-            let item = notification.userInfo().and_then(|u| u.objectForKey(&NSString::from_str("item"))).and_then(|i| i.downcast::<NSToolbarItem>().ok());
-            if let Some(item) = item {
-                self.ivars().live.borrow_mut().remove(&item.itemIdentifier().to_string());
-            }
-            self.save_soon();
+            crate::failure::guard("a window's chrome (did_remove)", (), || {
+                // A removed item's effects and targets go with it.
+                let item = notification.userInfo().and_then(|u| u.objectForKey(&NSString::from_str("item"))).and_then(|i| i.downcast::<NSToolbarItem>().ok());
+                if let Some(item) = item {
+                    self.ivars().live.borrow_mut().remove(&item.itemIdentifier().to_string());
+                }
+                self.save_soon();
+            })
         }
     }
 );

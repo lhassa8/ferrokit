@@ -386,11 +386,23 @@ fn document_of(window: &NSWindow) -> Option<Rc<dyn AnyDoc>> {
 /// The document of the frontmost document window.
 fn current() -> Option<Rc<dyn AnyDoc>> {
     let app = NSApplication::sharedApplication(mtm());
-    let front = app.keyWindow().or_else(|| app.mainWindow());
-    front.and_then(|w| document_of(&w)).or_else(|| {
-        // Inactive app: the last document window opened that's visible.
-        DOCS.with_borrow(|docs| docs.iter().rev().find(|d| d.window().is_some_and(|w| w.isVisible())).cloned())
-    })
+    // The key window's document; under a sheet, its parent's; with a panel
+    // or Settings key, the main window's.
+    let key = app.keyWindow();
+    let of_key = key.as_ref().and_then(|w| document_of(w).or_else(|| w.sheetParent().and_then(|p| document_of(&p))));
+    if of_key.is_some() {
+        return of_key;
+    }
+    let main = app.mainWindow();
+    if let Some(d) = main.as_ref().and_then(|w| document_of(w)) {
+        return Some(d);
+    }
+    if key.is_some() || main.is_some() {
+        // A window that isn't a document's is in front (Settings alone).
+        return None;
+    }
+    // Inactive app: the last document window opened that's visible.
+    DOCS.with_borrow(|docs| docs.iter().rev().find(|d| d.window().is_some_and(|w| w.isVisible())).cloned())
 }
 
 /// Drops a closed window's document (called from window teardown).
@@ -849,19 +861,26 @@ define_class!(
         // here, for what controls it ([`quick_look`](crate::quick_look)).
         #[unsafe(method(acceptsPreviewPanelControl:))]
         fn accepts_preview(&self, _panel: &AnyObject) -> bool {
-            crate::quicklook::source().is_some()
+            crate::failure::guard("the app delegate (accepts_preview)", false, || {
+                crate::quicklook::source().is_some()
+            })
         }
 
         #[unsafe(method(beginPreviewPanelControl:))]
         fn begin_preview(&self, panel: &AnyObject) {
-            if let Some(source) = crate::quicklook::source() {
-                // SAFETY: the panel holds its data source weakly; it's kept by quicklook.
-                let _: () = unsafe { msg_send![panel, setDataSource: &*source] };
-            }
+            crate::failure::guard("the app delegate (begin_preview)", (), || {
+                if let Some(source) = crate::quicklook::source() {
+                    // SAFETY: the panel holds its data source weakly; it's kept by quicklook.
+                    let _: () = unsafe { msg_send![panel, setDataSource: &*source] };
+                }
+            })
         }
 
         #[unsafe(method(endPreviewPanelControl:))]
-        fn end_preview(&self, _panel: &AnyObject) {}
+        fn end_preview(&self, _panel: &AnyObject) {
+            crate::failure::guard("the app delegate (end_preview)", (), || {
+            })
+        }
     }
 
     unsafe impl NSApplicationDelegate for AppDelegate {
@@ -869,36 +888,42 @@ define_class!(
         // `open file.txt`), at launch or later.
         #[unsafe(method(application:openURLs:))]
         fn open_urls(&self, _app: &NSApplication, urls: &objc2_foundation::NSArray<NSURL>) {
-            let paths: Vec<PathBuf> = urls.iter().filter_map(|u| u.path()).map(|p| PathBuf::from(p.to_string())).collect();
-            // After launch work is done (the run loop is up).
-            crate::later(move || {
-                for p in &paths {
-                    open_reporting(p);
-                }
-            });
+            crate::failure::guard("the app delegate (open_urls)", (), || {
+                let paths: Vec<PathBuf> = urls.iter().filter_map(|u| u.path()).map(|p| PathBuf::from(p.to_string())).collect();
+                // After launch work is done (the run loop is up).
+                crate::later(move || {
+                    for p in &paths {
+                        open_reporting(p);
+                    }
+                });
+            })
         }
 
         // The Dock icon's menu (App::dock_menu), built when it's opened.
         #[unsafe(method_id(applicationDockMenu:))]
         fn dock_menu(&self, _app: &NSApplication) -> Option<Retained<objc2_app_kit::NSMenu>> {
-            let items = DOCK_MENU.with_borrow(Clone::clone);
-            items.map(|items| {
-                let (menu, targets) = crate::chrome::build_menu(MainThreadMarker::from(self), items());
-                DOCK_TARGETS.with_borrow_mut(|t| *t = targets);
-                menu
+            crate::failure::guard("the app delegate (dock_menu)", None, || {
+                let items = DOCK_MENU.with_borrow(Clone::clone);
+                items.map(|items| {
+                    let (menu, targets) = crate::chrome::build_menu(MainThreadMarker::from(self), items());
+                    DOCK_TARGETS.with_borrow_mut(|t| *t = targets);
+                    menu
+                })
             })
         }
 
         #[unsafe(method(applicationShouldTerminate:))]
         fn should_terminate(&self, _app: &NSApplication) -> NSApplicationTerminateReply {
-            // What's open now comes back next time (if the user keeps windows).
-            remember_open();
-            if !DOCS.with_borrow(|docs| docs.iter().any(|d| d.edited())) {
-                return NSApplicationTerminateReply::TerminateNow;
-            }
-            // Ask outside this callback; AppKit waits for the reply.
-            crate::later(review_and_quit);
-            NSApplicationTerminateReply::TerminateLater
+            crate::failure::guard("the app delegate (should_terminate)", NSApplicationTerminateReply::TerminateCancel, || {
+                // What's open now comes back next time (if the user keeps windows).
+                remember_open();
+                if !DOCS.with_borrow(|docs| docs.iter().any(|d| d.edited())) {
+                    return NSApplicationTerminateReply::TerminateNow;
+                }
+                // Ask outside this callback; AppKit waits for the reply.
+                crate::later(review_and_quit);
+                NSApplicationTerminateReply::TerminateLater
+            })
         }
     }
 );

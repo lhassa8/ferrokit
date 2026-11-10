@@ -75,7 +75,9 @@ define_class!(
             _change: Option<&NSDictionary<NSKeyValueChangeKey, AnyObject>>,
             _context: *mut std::ffi::c_void,
         ) {
-            changed();
+            crate::boundary::guarded("an appearance change (observe)", (), || {
+                changed();
+            })
         }
     }
 );

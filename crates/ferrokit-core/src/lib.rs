@@ -11,6 +11,8 @@
 #![doc(html_logo_url = "https://raw.githubusercontent.com/lhassa8/ferrokit/main/assets/icon.png", html_favicon_url = "https://raw.githubusercontent.com/lhassa8/ferrokit/main/assets/icon-128.png")]
 
 mod appearance;
+#[doc(hidden)]
+pub mod boundary;
 mod events;
 mod geometry;
 mod host;

@@ -171,6 +171,13 @@ fi
 [ -z "$debug" ] && suite cargo_ferrokit FERROKIT_E2E=1 scripts/check-ferrokit.sh
 
 printf '\nSummary (logs in %s):%b\n' "$log" "$summary"
+# On GitHub the suites' step may be allowed to fail, so its result has to
+# show without opening the log: a summary on the run's page, and an error
+# annotation per failed suite.
+if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+  { printf '### Suites%s\n\n```' "${debug:+ (debug builds)}"; printf '%b\n' "$summary"; printf '```\n'; } >>"$GITHUB_STEP_SUMMARY"
+  printf '%b\n' "$summary" | grep '^  FAIL' | while read -r _ rest; do echo "::error title=Suite failed::$rest"; done
+fi
 if [ "$failed" -gt 0 ]; then
   echo "$failed failed"
   exit 1

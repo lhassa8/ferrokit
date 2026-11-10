@@ -100,39 +100,47 @@ define_class!(
     impl HostTextView {
         #[unsafe(method(setMarkedText:selectedRange:replacementRange:))]
         fn set_marked_text(&self, string: &AnyObject, selected: NSRange, replacement: NSRange) {
-            let () = unsafe { msg_send![super(self), setMarkedText: string, selectedRange: selected, replacementRange: replacement] };
-            self.composition_changed();
+            crate::boundary::guarded("a text view (set_marked_text)", (), || {
+                let () = unsafe { msg_send![super(self), setMarkedText: string, selectedRange: selected, replacementRange: replacement] };
+                self.composition_changed();
+            })
         }
 
         #[unsafe(method(unmarkText))]
         fn unmark_text(&self) {
-            let () = unsafe { msg_send![super(self), unmarkText] };
-            self.composition_changed();
+            crate::boundary::guarded("a text view (unmark_text)", (), || {
+                let () = unsafe { msg_send![super(self), unmarkText] };
+                self.composition_changed();
+            })
         }
 
         #[unsafe(method(insertText:replacementRange:))]
         fn insert_text(&self, string: &AnyObject, replacement: NSRange) {
-            let () = unsafe { msg_send![super(self), insertText: string, replacementRange: replacement] };
-            self.composition_changed();
-            // A typed word character (or a dot) opens the completer's list.
-            let typed = string.downcast_ref::<NSString>().map(|s| s.to_string()).unwrap_or_default();
-            let mut chars = typed.chars();
-            if let (Some(c), None) = (chars.next(), chars.next())
-                && (c.is_alphanumeric() || c == '_' || c == '.')
-                && !self.hasMarkedText()
-                && self.data().is_some_and(|d| d.has_completer())
-            {
-                self.complete_soon();
-            }
+            crate::boundary::guarded("a text view (insert_text)", (), || {
+                let () = unsafe { msg_send![super(self), insertText: string, replacementRange: replacement] };
+                self.composition_changed();
+                // A typed word character (or a dot) opens the completer's list.
+                let typed = string.downcast_ref::<NSString>().map(|s| s.to_string()).unwrap_or_default();
+                let mut chars = typed.chars();
+                if let (Some(c), None) = (chars.next(), chars.next())
+                    && (c.is_alphanumeric() || c == '_' || c == '.')
+                    && !self.hasMarkedText()
+                    && self.data().is_some_and(|d| d.has_completer())
+                {
+                    self.complete_soon();
+                }
+            })
         }
 
         // The completer's partial word (after a dot, it may be empty).
         #[unsafe(method(rangeForUserCompletion))]
         fn range_for_user_completion(&self) -> NSRange {
-            if let Some((range, _)) = self.data().and_then(|d| d.complete()) {
-                return range;
-            }
-            unsafe { msg_send![super(self), rangeForUserCompletion] }
+            crate::boundary::guarded("a text view (range_for_user_completion)", NSRange::new(0, 0), || {
+                if let Some((range, _)) = self.data().and_then(|d| d.complete()) {
+                    return range;
+                }
+                unsafe { msg_send![super(self), rangeForUserCompletion] }
+            })
         }
 
         // With a completer, a word goes in only when it's chosen (Return,
@@ -140,20 +148,22 @@ define_class!(
         // and not when typing goes on or Escape closes it.
         #[unsafe(method(insertCompletion:forPartialWordRange:movement:isFinal:))]
         fn insert_completion(&self, word: &NSString, range: NSRange, movement: isize, is_final: bool) {
-            if self.data().is_some_and(|d| d.has_completer()) {
-                let clicked = || {
-                    let mtm = MainThreadMarker::from(self);
-                    objc2_app_kit::NSApplication::sharedApplication(mtm).currentEvent().is_some_and(|e| {
-                        use objc2_app_kit::NSEventType as T;
-                        matches!(e.r#type(), T::LeftMouseDown | T::LeftMouseUp)
-                    })
-                };
-                let chosen = is_final && (movement == RETURN_MOVEMENT || movement == TAB_MOVEMENT || (movement == OTHER_MOVEMENT && clicked()));
-                if !chosen {
-                    return;
+            crate::boundary::guarded("a text view (insert_completion)", (), || {
+                if self.data().is_some_and(|d| d.has_completer()) {
+                    let clicked = || {
+                        let mtm = MainThreadMarker::from(self);
+                        objc2_app_kit::NSApplication::sharedApplication(mtm).currentEvent().is_some_and(|e| {
+                            use objc2_app_kit::NSEventType as T;
+                            matches!(e.r#type(), T::LeftMouseDown | T::LeftMouseUp)
+                        })
+                    };
+                    let chosen = is_final && (movement == RETURN_MOVEMENT || movement == TAB_MOVEMENT || (movement == OTHER_MOVEMENT && clicked()));
+                    if !chosen {
+                        return;
+                    }
                 }
-            }
-            let () = unsafe { msg_send![super(self), insertCompletion: word, forPartialWordRange: range, movement: movement, isFinal: is_final] };
+                let () = unsafe { msg_send![super(self), insertCompletion: word, forPartialWordRange: range, movement: movement, isFinal: is_final] };
+            })
         }
     }
 );
@@ -213,14 +223,16 @@ define_class!(
     unsafe impl NSTextDelegate for Delegate {
         #[unsafe(method(textDidChange:))]
         fn text_did_change(&self, _notification: &NSNotification) {
-            let Some(data) = self.data() else { return };
-            // The edit is done and the caret placed: style the rest of what
-            // it changed now (edits without this message, such as undo, get
-            // it from the run loop).
-            data.finish_highlight();
-            if !data.quiet() {
-                data.push(TextEvent::Changed);
-            }
+            crate::boundary::guarded("a text view (text_did_change)", (), || {
+                let Some(data) = self.data() else { return };
+                // The edit is done and the caret placed: style the rest of what
+                // it changed now (edits without this message, such as undo, get
+                // it from the run loop).
+                data.finish_highlight();
+                if !data.quiet() {
+                    data.push(TextEvent::Changed);
+                }
+            })
         }
     }
 
@@ -234,57 +246,67 @@ define_class!(
         // redraw read past the end of the string and aborted.
         #[unsafe(method(textStorage:willProcessEditing:range:changeInLength:))]
         fn will_process_editing(&self, _storage: &NSTextStorage, edited: NSTextStorageEditActions, range: NSRange, _delta: isize) {
-            if !edited.contains(NSTextStorageEditActions::EditedCharacters) {
-                return;
-            }
-            let Some(data) = self.data().filter(|d| !d.composing()) else { return };
-            if data.highlight(Some(range)) {
-                // Just after the edit, before the run loop draws, unless
-                // textDidChange: comes first.
-                let weak = self.ivars().data.borrow().clone();
-                let block = block2::RcBlock::new(move || {
-                    if let Some(d) = weak.as_ref().and_then(Weak::upgrade) {
-                        objc2::rc::autoreleasepool(|_| d.finish_highlight());
-                    }
-                });
-                let main = objc2_core_foundation::CFRunLoop::main().expect("main run loop");
-                // SAFETY: the main run loop; the block touches main-thread state only.
-                unsafe { main.perform_block(objc2_core_foundation::kCFRunLoopCommonModes.map(|m| m.as_ref()), Some(&block)) };
-                main.wake_up();
-            }
+            crate::boundary::guarded("a text view (will_process_editing)", (), || {
+                if !edited.contains(NSTextStorageEditActions::EditedCharacters) {
+                    return;
+                }
+                let Some(data) = self.data().filter(|d| !d.composing()) else { return };
+                if data.highlight(Some(range)) {
+                    // Just after the edit, before the run loop draws, unless
+                    // textDidChange: comes first.
+                    let weak = self.ivars().data.borrow().clone();
+                    let block = block2::RcBlock::new(move || {
+                        if let Some(d) = weak.as_ref().and_then(Weak::upgrade) {
+                            objc2::rc::autoreleasepool(|_| d.finish_highlight());
+                        }
+                    });
+                    let main = objc2_core_foundation::CFRunLoop::main().expect("main run loop");
+                    // SAFETY: the main run loop; the block touches main-thread state only.
+                    unsafe { main.perform_block(objc2_core_foundation::kCFRunLoopCommonModes.map(|m| m.as_ref()), Some(&block)) };
+                    main.wake_up();
+                }
+            })
         }
 
         #[unsafe(method(textStorage:didProcessEditing:range:changeInLength:))]
         fn did_process_editing(&self, _storage: &NSTextStorage, edited: NSTextStorageEditActions, _range: NSRange, _delta: isize) {
-            if !edited.contains(NSTextStorageEditActions::EditedCharacters) {
-                return;
-            }
-            let Some(data) = self.data().filter(|d| !d.composing() && !d.quiet()) else { return };
-            data.push(TextEvent::Changed);
+            crate::boundary::guarded("a text view (did_process_editing)", (), || {
+                if !edited.contains(NSTextStorageEditActions::EditedCharacters) {
+                    return;
+                }
+                let Some(data) = self.data().filter(|d| !d.composing() && !d.quiet()) else { return };
+                data.push(TextEvent::Changed);
+            })
         }
     }
 
     unsafe impl NSTextViewDelegate for Delegate {
         #[unsafe(method(textViewDidChangeSelection:))]
         fn selection_did_change(&self, notification: &NSNotification) {
-            let Some(data) = self.data().filter(|d| !d.quiet()) else { return };
-            let Some(view) = notification.object().and_then(|o| o.downcast::<NSTextView>().ok()) else { return };
-            let text = view.string().to_string();
-            let r = view.selectedRange();
-            data.push(TextEvent::Selection(utf16_to_bytes(&text, r.location, r.length)));
+            crate::boundary::guarded("a text view (selection_did_change)", (), || {
+                let Some(data) = self.data().filter(|d| !d.quiet()) else { return };
+                let Some(view) = notification.object().and_then(|o| o.downcast::<NSTextView>().ok()) else { return };
+                let text = view.string().to_string();
+                let r = view.selectedRange();
+                data.push(TextEvent::Selection(utf16_to_bytes(&text, r.location, r.length)));
+            })
         }
 
         // The completer's words (or AppKit's own, for an editor without one).
         #[unsafe(method_id(textView:completions:forPartialWordRange:indexOfSelectedItem:))]
         fn completions(&self, _view: &NSTextView, words: &NSArray<NSString>, _range: NSRange, index: *mut isize) -> Option<Retained<NSArray<NSString>>> {
-            Some(self.completion_words(words, index))
+            crate::boundary::guarded("a text view (completions)", None, || {
+                Some(self.completion_words(words, index))
+            })
         }
 
         // Each editor keeps its own undo history, instead of sharing the
         // window's (where ⌘Z in one view could undo another view's edit).
         #[unsafe(method_id(undoManagerForTextView:))]
         fn undo_manager_for(&self, _view: &NSTextView) -> Option<Retained<NSUndoManager>> {
-            self.data().map(|d| d.undo_manager())
+            crate::boundary::guarded("a text view (undo_manager_for)", None, || {
+                self.data().map(|d| d.undo_manager())
+            })
         }
     }
 );

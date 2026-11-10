@@ -50,13 +50,17 @@ define_class!(
     impl Source {
         #[unsafe(method(numberOfPreviewItemsInPreviewPanel:))]
         fn count(&self, _panel: &AnyObject) -> NSInteger {
-            self.ivars().borrow().len() as NSInteger
+            crate::failure::guard("Quick Look (count)", 0, || {
+                self.ivars().borrow().len() as NSInteger
+            })
         }
 
         // NSURL is a QLPreviewItem.
         #[unsafe(method_id(previewPanel:previewItemAtIndex:))]
         fn item(&self, _panel: &AnyObject, index: NSInteger) -> Option<Retained<NSURL>> {
-            usize::try_from(index).ok().and_then(|i| self.ivars().borrow().get(i).cloned())
+            crate::failure::guard("Quick Look (item)", None, || {
+                usize::try_from(index).ok().and_then(|i| self.ivars().borrow().get(i).cloned())
+            })
         }
     }
 );

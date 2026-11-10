@@ -85,7 +85,8 @@ impl Settings {
     /// `SOAK_ONLY=<action>` runs just that one (see [`run`]).
     pub fn from_env() -> Settings {
         let env = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<f64>().ok());
-        let seed = env("SOAK_SEED").map(|s| s as u64).unwrap_or_else(|| {
+        // A whole number: as a float, a seed from the clock would round.
+        let seed = std::env::var("SOAK_SEED").ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or_else(|| {
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(1)
         });
         Settings {

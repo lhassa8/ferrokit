@@ -211,7 +211,11 @@ define_class!(
         #[unsafe(method(filePromiseProvider:writePromiseToURL:completionHandler:))]
         fn write_promise(&self, _provider: &NSFilePromiseProvider, url: &NSURL, done: &block2::DynBlock<dyn Fn(*mut NSError)>) {
             let path = url.path().map(|p| PathBuf::from(p.to_string()));
-            let result = path.ok_or_else(|| std::io::Error::other("not a file URL")).and_then(|p| (self.ivars().write)(&p));
+            // On a background queue: a panic in the app's writer becomes
+            // the promise's error, not an unwind into Foundation.
+            let result = path.ok_or_else(|| std::io::Error::other("not a file URL")).and_then(|p| {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (self.ivars().write)(&p))).unwrap_or_else(|_| Err(std::io::Error::other("the writer panicked")))
+            });
             match result {
                 Ok(()) => done.call((std::ptr::null_mut(),)),
                 Err(e) => {

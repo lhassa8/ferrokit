@@ -115,10 +115,13 @@ pub(crate) fn install(
 
     // File: the app's items, then Close (every window app has one).
     let mut menus = menus;
-    let file_items = menus.iter().position(|(t, _)| t == "File").map(|i| menus.remove(i).1).unwrap_or_default();
+    // (Under its English title or the translated one, so
+    // `.menu(&t("File"), ..)` fills the same menu.)
+    let (file_title, help_title) = (t("File"), t("Help"));
+    let file_items = menus.iter().position(|(t, _)| t == "File" || *t == file_title).map(|i| menus.remove(i).1).unwrap_or_default();
     let has_own = !file_items.is_empty();
     // A "Help" menu fills the standard one (with AppKit's search field).
-    let help_items = menus.iter().position(|(t, _)| t == "Help").map(|i| menus.remove(i).1).unwrap_or_default();
+    let help_items = menus.iter().position(|(t, _)| t == "Help" || *t == help_title).map(|i| menus.remove(i).1).unwrap_or_default();
     // An app item on ⌘W (Close Tab, as in Safari) makes Close "Close
     // Window", on ⇧⌘W.
     let close_tab = file_items.iter().any(|i| i.has_command_key("w"));

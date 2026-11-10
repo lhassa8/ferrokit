@@ -125,9 +125,11 @@ impl<T: Clone + Send + 'static> Resource<T> {
                 }
                 loading.set_if_changed(true);
                 let (fetch, theirs) = (fetch.clone(), cancel.clone());
-                crate::spawn(
+                crate::spawn_outcome(
                     move || fetch(input, &theirs).map_err(|e| e.to_string()),
-                    move |result| {
+                    move |outcome| {
+                        // A fetch that panicked is a failed load.
+                        let result = outcome.unwrap_or_else(|panic| Err(format!("the load panicked: {panic}")));
                         if cancel.is_cancelled() {
                             return; // a newer load is running (or the owner went)
                         }
