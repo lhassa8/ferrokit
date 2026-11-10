@@ -484,6 +484,14 @@ pub const FULL_DISK_ACCESS_SETTINGS: &str = "x-apple.systempreferences:com.apple
 /// Whether this app has Full Disk Access. It never prompts (it tries to
 /// read the privacy database, which only apps with access can). An app
 /// gets access after a relaunch, so read it at launch or before a walk.
+///
+/// In the App Sandbox this is false whatever the user allowed, unless the
+/// app holds a folder the user chose that contains the home folder's
+/// `Library`: the sandbox keeps the app to its container and the folders
+/// the user chose, with or without Full Disk Access, and hides the
+/// privacy database with the rest. A sandboxed app has no use for the
+/// answer outside those folders, so don't send its users to System
+/// Settings on a false here.
 pub fn has_full_disk_access() -> bool {
     real_home().is_some_and(|h| std::fs::File::open(h.join("Library/Application Support/com.apple.TCC/TCC.db")).is_ok())
 }
