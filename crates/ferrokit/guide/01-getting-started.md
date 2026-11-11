@@ -36,7 +36,7 @@ By hand, add `ferrokit` to a binary crate:
 
 ```toml
 [dependencies]
-ferrokit = "0.6"
+ferrokit = "0.7"
 ```
 
 ## A first app

@@ -131,7 +131,7 @@ If Claude Code, Cursor or Codex writes most of your code, it can learn Ferrokit 
 
 **Not yet, if:**
 - you need Windows or Linux. Ferrokit is Mac only for now, and Windows is the planned second platform. Cross-platform toolkits such as Tauri, egui, Iced, Slint and GPUI are the tools for that today; they draw their own widgets or use a web view.
-- you need a stable API. It's an alpha (0.6), and the API will still change.
+- you need a stable API. It's an alpha (0.7), and the API will still change.
 
 ## Testing it like you mean it
 
@@ -153,7 +153,7 @@ Use [`ferrokit`](crates/ferrokit), with [`cargo ferrokit`](crates/cargo-ferrokit
 | [`cargo-ferrokit`](crates/cargo-ferrokit) | `cargo ferrokit new`, `run`, `check`, `bundle`, `notarize` and `appcast`. |
 | [`ferrokit-core`](crates/ferrokit-core) | The AppKit layer under `ferrokit`. You don't need to depend on it yourself. |
 
-The crates share one version number and are released together, so use matching versions. The current version is **0.6.0**. It needs macOS 15 or later.
+The crates share one version number and are released together, so use matching versions. The current version is **0.7.0**. It needs macOS 15 or later.
 
 ## Stability
 

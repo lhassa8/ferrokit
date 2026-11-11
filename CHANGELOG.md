@@ -1,9 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 (2026-11-11): reviewed, and ready for AI coding agents
 
 - **Added: `cargo ferrokit preview`**: runs the app, then rebuilds and restarts it every time a file in the package is saved. Under it (`FERROKIT_PREVIEW=1`) every window keeps its place and size across restarts, by its title, and the app comes to the front without taking the focus from the editor; a build that fails leaves the running app as it was. `testing::set_preview_mode` for checks (`preview-keeps-window-frames`, `preview-restarts`).
-Fixes from a review of the whole framework (two independent reviews, 2026-11-09). Three behaviours changed (marked **Changed**).
+Fixes from a review of the whole framework (two independent reviews, 2026-11-09). Six behaviours changed (marked **Changed**).
 
 - **Fixed: failures are caught wherever AppKit calls in, not only in actions and menus.** A panic or an Objective-C exception in a table's column closure, a text view's highlighter or completer, an outline, collection or browser's callbacks, a text field's change (and the effects it runs), a tab switch, an undo step, menu and toolbar validation, a web view's delegate, a video's time callback, a popover closing or a canvas drawing unwound into AppKit unreported. All of them (117 callbacks) now run under the guard that actions had: reported to `App::on_error`, and the app goes on (check `failures-caught-everywhere`).
 - **Changed: a panic in `spawn`'s background work is reported** (as "a background task") and its `then` doesn't run; before, it was never heard of and `then` was kept for good. `spawn_with_progress`'s signal goes back to `None`, and a `Resource` whose load panics ends as a failed load (`error()` says so, `loading()` is false) where it stayed loading forever.

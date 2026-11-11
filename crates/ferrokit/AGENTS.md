@@ -1,6 +1,6 @@
 # Ferrokit for AI coding agents
 
-Read this before writing code with `ferrokit` 0.6. Ferrokit builds native Mac apps in Rust: every view is a real AppKit view (`NSTableView`, `NSTextView`…), built once and updated in place by signals. macOS 15 or later; everything runs on the main thread.
+Read this before writing code with `ferrokit` 0.7. Ferrokit builds native Mac apps in Rust: every view is a real AppKit view (`NSTableView`, `NSTextView`…), built once and updated in place by signals. macOS 15 or later; everything runs on the main thread.
 
 - **A new app:** `cargo install cargo-ferrokit`, then `cargo ferrokit new <name>` (`--document` for a document app). It comes with this file as its `AGENTS.md`, a working example and self-checks.
 - **An existing project:** `cargo add ferrokit`, `cargo install cargo-ferrokit`, then `cargo ferrokit agents` writes this file into it as `AGENTS.md`. The self-checks in a new app's `src/main.rs` are the pattern to copy.
@@ -15,10 +15,10 @@ Read this before writing code with `ferrokit` 0.6. Ferrokit builds native Mac ap
 ## Where the docs are
 
 Read before guessing; names are regular, but behaviour has rules.
-- **The guide:** <https://docs.rs/ferrokit/latest/ferrokit/guide/>, 14 chapters with compiled examples. Also in the crate's source: `~/.cargo/registry/src/*/ferrokit-0.6.*/guide/`.
+- **The guide:** <https://docs.rs/ferrokit/latest/ferrokit/guide/>, 14 chapters with compiled examples. Also in the crate's source: `~/.cargo/registry/src/*/ferrokit-0.7.*/guide/`.
 - **Every public item on one page:** `API.md` in the same folder. Search it for what a type can do before reading source.
 - **Complete apps:** `examples/` in the same folder. `native_csv.rs` (sidebar, table, search, sheet, notes), `habits.rs` (cards, sheets, charts, a menu-bar panel), `notes.rs` (a document app), `sql_browser.rs` (the flagship).
-- `TableModel`, `Column` and `TextModel` are documented in `ferrokit-core` (re-exported by `ferrokit`): `~/.cargo/registry/src/*/ferrokit-core-0.6.*/src/table.rs` and `text.rs`.
+- `TableModel`, `Column` and `TextModel` are documented in `ferrokit-core` (re-exported by `ferrokit`): `~/.cargo/registry/src/*/ferrokit-core-0.7.*/src/table.rs` and `text.rs`.
 
 ## How a Ferrokit app is written
 
@@ -150,7 +150,7 @@ fn as_undo_steps(window: &NSWindow, steps: &[&dyn Fn()]) {
 - `testing::ax_audit(&window)` lists controls VoiceOver can't name: give each `.accessibility_label(…)`.
 - A caught panic doesn't end the app; `check` stops 15 s after one if no more checks arrive. Look for `ferrokit: a panic in …` in the output.
 
-## Known limits (0.6)
+## Known limits (0.7)
 
 Work around these instead of searching for them:
 - Table rows animate only through `TableModel::insert`, `push` and `remove` (with `Table::animated()`), not `set_rows` or in a grouped table.
