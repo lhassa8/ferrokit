@@ -5,6 +5,8 @@
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use ferrokit_core::kept::{UiCell, UiLocal as _};
+
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
@@ -206,6 +208,47 @@ pub fn tabs<T: PartialEq + Clone + 'static>(value: &Signal<T>, pages: Vec<(&str,
 
 // ---- radio group ----
 
+thread_local! {
+    /// The radio group actions not in use, and how many were ever made.
+    static GROUP_ACTIONS: UiCell<(Vec<usize>, usize)> = const { UiCell::new((Vec::new(), 0)) };
+}
+
+/// One radio group's action: `fire:` under a name of its own, taken from
+/// a pool so groups that come and go don't keep adding names.
+struct GroupAction(usize);
+
+impl GroupAction {
+    fn take() -> Self {
+        GroupAction(GROUP_ACTIONS.with_borrow_mut(|(free, made)| {
+            free.pop().unwrap_or_else(|| {
+                *made += 1;
+                *made - 1
+            })
+        }))
+    }
+
+    fn selector(&self) -> objc2::runtime::Sel {
+        use objc2::ClassType;
+        let name = std::ffi::CString::new(format!("fireGroup{}:", self.0)).unwrap_or_default();
+        let sel = objc2::runtime::Sel::register(&name);
+        let class = ActionTarget::class();
+        if class.instance_method(sel).is_none()
+            && let Some(fire) = class.instance_method(sel!(fire:))
+        {
+            // SAFETY: the new method is `fire:` itself (its code and its
+            // types: no result, one object), under another name.
+            unsafe { objc2::ffi::class_addMethod(std::ptr::from_ref(class).cast_mut(), sel, fire.implementation(), c"v@:@".as_ptr()) };
+        }
+        sel
+    }
+}
+
+impl Drop for GroupAction {
+    fn drop(&mut self) {
+        GROUP_ACTIONS.with_borrow_mut(|(free, _)| free.push(self.0));
+    }
+}
+
 /// Radio buttons choosing one of several values (see [`radio_group`]).
 pub struct RadioGroup<T> {
     value: Signal<T>,
@@ -226,12 +269,21 @@ impl<T: PartialEq + Clone + 'static> View for RadioGroup<T> {
         let mut children = Vec::new();
         let mut buttons = Vec::new();
         let mut targets = Vec::new();
+        // AppKit takes radio buttons with the same parent view and the same
+        // action for one group, and every view here has the window's
+        // parent: an action of its own keeps this group apart from others.
+        let action = GroupAction::take();
         for (title, v) in &self.options {
             // SAFETY: no target yet; set below.
             let b = unsafe { NSButton::radioButtonWithTitle_target_action(&NSString::from_str(title), None, None, cx.mtm) };
             let (signal, v) = (self.value, v.clone());
             let target = ActionTarget::new(cx.mtm, move || signal.set_if_changed(v.clone()));
-            wire(&b, &target);
+            // SAFETY: the target responds to the group's action (the same
+            // code as `fire:`); the node keeps it.
+            unsafe {
+                b.setTarget(Some(&*target));
+                b.setAction(Some(action.selector()));
+            }
             let (node, _) = Node::leaf(cx, as_view(&b), (false, false), Size::default());
             children.push(node);
             buttons.push(b);
@@ -241,6 +293,8 @@ impl<T: PartialEq + Clone + 'static> View for RadioGroup<T> {
         let mut node = Node::new(Kind::Stack { axis, spacing: if self.horizontal { 14.0 } else { 6.0 }, align: Some(crate::Align::Start), children });
         let (value, options) = (self.value, self.options);
         node.own(Effect::new(move || {
+            // Kept with the buttons: the action is free again when they go.
+            let _ = &action;
             let current = value.get();
             for (b, (_, v)) in buttons.iter().zip(&options) {
                 let want = if *v == current { NSControlStateValueOn } else { NSControlStateValueOff };

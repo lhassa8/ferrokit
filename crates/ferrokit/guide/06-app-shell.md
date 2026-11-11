@@ -73,6 +73,14 @@ App::new("Notes")
 
 - `on_command_when(cmd, enabled, action)` answers but greys the item out
   while `enabled` is false. Handlers further out aren't asked.
+- A handler on a view answers only while the focus is in that view. With
+  the focus elsewhere, the command's menu item and its `toolbar_command`
+  button are greyed out unless the window or the app handles it too. Put
+  Delete (⌘⌫) on the table, so it doesn't take the key from a text field;
+  for a toolbar button that works wherever the focus is, add
+  `Window::on_command_when`, or use `toolbar_button` with its own action.
+- Shortcut keys without a letter are their characters: `.key("\u{8}")` is
+  ⌘⌫, `"\r"` ⌘↩, `"\u{f700}"` ⌘↑ (the list is on `MenuItem::key`).
 - `Window::on_command` and `App::on_command` handle a command for the whole
   window or app.
 - `.focused_value(name, value)` publishes a value to the focus (a

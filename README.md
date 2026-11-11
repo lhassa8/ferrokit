@@ -112,6 +112,7 @@ cargo ferrokit new my-app && cd my-app && cargo ferrokit run
 | `run` | Builds a real `.app` bundle, with its name, icon and identity, and runs it |
 | `preview` | Runs it, then rebuilds and restarts it every time you save, with its windows where you left them |
 | `check` | Clippy, tests, a bundle, and your app's own self-checks |
+| `agents` | Writes `AGENTS.md` into an existing app, for your AI coding assistant |
 | `bundle` | A signed `.app` with the hardened runtime, universal on request |
 | `notarize` | Developer ID signing, Apple's notary service and stapling, then a zip ready to send |
 | `appcast` | Updates through Sparkle: the release zipped and the feed written; the app has Check for Updates… |
@@ -119,7 +120,7 @@ cargo ferrokit new my-app && cd my-app && cargo ferrokit run
 
 ## Bring your AI assistant
 
-If Claude Code, Cursor or Codex writes most of your code, it can learn Ferrokit from what ships with it. `cargo ferrokit new` puts an `AGENTS.md` in every new app: where the docs are, how a Ferrokit app is written, recipes that compile, and the known limits with their workarounds. The crate carries `API.md`, every public item on one page, and the guide is [on docs.rs](https://docs.rs/ferrokit/latest/ferrokit/guide/). To test this, fresh AI agents built two apps from the published docs alone. They didn't guess a single API name wrong, and what tripped them up is fixed in 0.4.1.
+If Claude Code, Cursor or Codex writes most of your code, it can learn Ferrokit from what ships with it. `cargo ferrokit new` puts an `AGENTS.md` in every new app, `cargo ferrokit agents` in an existing one, and the same text is in the crate beside `API.md`: where the docs are, how a Ferrokit app is written, recipes that compile, and the known limits with their workarounds. The crate carries `API.md`, every public item on one page, and the guide is [on docs.rs](https://docs.rs/ferrokit/latest/ferrokit/guide/). To test this, fresh AI agents built two apps from the published docs alone. They didn't guess a single API name wrong, and what tripped them up is fixed in 0.4.1.
 
 ## Is it for me?
 

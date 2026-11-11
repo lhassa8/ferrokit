@@ -17,11 +17,18 @@ fn main() {
             if std::env::var("CHECK").as_deref() != Ok("all") {
                 return;
             }
-            name.set("Ada".into());
-            let problems = testing::ax_audit(&windows()[0]);
-            let ok = problems.is_empty();
-            eprintln!("[check] accessibility {} {problems:?}", if ok { "PASS" } else { "FAIL" });
-            std::process::exit(if ok { 0 } else { 1 });
+            // Each step runs in a turn of its own: act in one, look in the
+            // next. After the last, the run reports and exits.
+            testing::steps(100, vec![
+                Box::new(move || name.set("Ada".into())),
+                Box::new(|| {
+                    let window = windows()[0].clone();
+                    let problems = testing::ax_audit(&window);
+                    testing::check("accessibility", problems.is_empty(), format!("{problems:?}"));
+                    let shown = testing::view_labeled(&window, "Name").is_some();
+                    testing::check("name-field", shown, "the field VoiceOver calls Name is there");
+                }),
+            ]);
         })
         .run();
 }
@@ -31,6 +38,8 @@ fn main() {
 
 | Helper | For |
 | --- | --- |
+| `check`, `skip`, `steps`, `finish` | the `[check]` lines, the count of failures, steps a turn apart, the exit status |
+| `view_labeled` | the view with an accessibility label, to read or drive |
 | `ax_audit`, `ax_elements`, `ax_tree` | what VoiceOver reads; controls without a name |
 | `post_edit`, `send_action`, `shortcut`, `menu_key` | typing, clicks and shortcuts without a mouse |
 | `snapshot_windows`, `capture_window`, `captured_pixels` | images of windows, in process or as the window server shows them |

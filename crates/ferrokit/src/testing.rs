@@ -16,6 +16,82 @@ pub mod input;
 #[path = "soak.rs"]
 pub mod soak;
 
+thread_local! {
+    /// Checks failed so far (see [`check`]).
+    static FAILED_CHECKS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Reports one self-check as `cargo ferrokit check` reads them: prints
+/// `[check] <name> PASS <note>` or `FAIL`, and counts the failures for
+/// [`finish`]. Put what was seen in `note`, so a failure says why.
+pub fn check(name: &str, pass: bool, note: impl std::fmt::Display) {
+    eprintln!("[check] {name} {} {note}", if pass { "PASS" } else { "FAIL" });
+    if !pass {
+        FAILED_CHECKS.set(FAILED_CHECKS.get() + 1);
+    }
+}
+
+/// Reports a self-check that couldn't run here (the screen is locked, a
+/// permission isn't granted): `[check] <name> SKIP <why>`. Not a failure;
+/// `cargo ferrokit check` counts it apart.
+pub fn skip(name: &str, why: impl std::fmt::Display) {
+    eprintln!("[check] {name} SKIP {why}");
+}
+
+/// Ends a self-check run: prints `[check] done, <n> failed` and exits, with
+/// a failing status if any [`check`] failed.
+pub fn finish() -> ! {
+    let failed = FAILED_CHECKS.get();
+    eprintln!("[check] done, {failed} failed");
+    std::process::exit(if failed == 0 { 0 } else { 1 });
+}
+
+/// Runs `steps` one after another, each in a turn of its own `pause_ms`
+/// after the one before, then [`finish`]es. A self-check acts in one step
+/// and looks in the next: effects, table updates and sheets settle after
+/// the step that caused them returns.
+///
+/// ```no_run
+/// use ferrokit::testing::{check, steps};
+/// use ferrokit::*;
+///
+/// let count = Signal::new(0);
+/// steps(100, vec![
+///     Box::new(move || count.set(1)),
+///     Box::new(move || check("counted", count.get_untracked() == 1, count.get_untracked())),
+/// ]);
+/// ```
+pub fn steps(pause_ms: u64, steps: Vec<Box<dyn FnOnce()>>) {
+    fn next(pause_ms: u64, mut rest: std::collections::VecDeque<Box<dyn FnOnce()>>) {
+        crate::spawn(
+            move || std::thread::sleep(std::time::Duration::from_millis(pause_ms)),
+            move |()| match rest.pop_front() {
+                Some(step) => {
+                    step();
+                    next(pause_ms, rest);
+                }
+                None => finish(),
+            },
+        );
+    }
+    next(pause_ms, steps.into());
+}
+
+/// The first view in `window` with the accessibility label `label` (what
+/// `.accessibility_label(..)` set), for a check to read or drive: a field,
+/// a table, an editor's text view, a web view.
+pub fn view_labeled(window: &objc2_app_kit::NSWindow, label: &str) -> Option<Retained<objc2_app_kit::NSView>> {
+    fn find(view: &objc2_app_kit::NSView, label: &str) -> Option<Retained<objc2_app_kit::NSView>> {
+        // SAFETY: NSView answers accessibilityLabel (NSAccessibility).
+        let own: Option<Retained<NSString>> = unsafe { objc2::msg_send![view, accessibilityLabel] };
+        if own.is_some_and(|l| l.to_string() == label) {
+            return Some(objc2::Message::retain(view));
+        }
+        view.subviews().iter().find_map(|v| find(&v, label))
+    }
+    find(&*window.contentView()?, label)
+}
+
 /// Physical footprint in MB (what Activity Monitor shows; RSS keeps freed
 /// heap pages and overstates growth), via vmmap.
 pub fn footprint_mb() -> f64 {
@@ -281,8 +357,9 @@ pub fn shortcut(window: &objc2_app_kit::NSWindow, chars: &str, shift: bool) -> b
         return true;
     }
     let Some(action) = item.action() else { return false };
-    // SAFETY: standard responder-chain dispatch with a nil sender.
-    window.firstResponder().is_some_and(|r| unsafe { r.tryToPerform_with(action, None) })
+    // SAFETY: standard responder-chain dispatch, the item as the sender (as
+    // the menu sends it: Find's actions read their item's tag).
+    window.firstResponder().is_some_and(|r| unsafe { r.tryToPerform_with(action, Some(&item)) })
 }
 
 /// Turns preview mode on or off for windows opened from now on, as

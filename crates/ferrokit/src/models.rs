@@ -522,13 +522,23 @@ impl View for TextEditor {
                 untrack(|| model.restyle());
             }));
         }
+        // The text the editor last gave the signal (its hash). The editor
+        // may have gone on since, within the same turn: a value that came
+        // from it is never written back over what it has now.
+        let from_editor: Rc<std::cell::Cell<Option<u64>>> = Rc::default();
+        let hash = |text: &str| {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            text.hash(&mut h);
+            h.finish()
+        };
         if let Some(bound) = &self.bound {
             // Signal → editor (skipped when equal: the editor is the source).
-            let (bound, model) = (*bound, self.model.clone());
+            let (bound, model, from_editor) = (*bound, self.model.clone(), from_editor.clone());
             node.own(Effect::new(move || {
                 let want = bound.get();
                 untrack(|| {
-                    if model.text() != want {
+                    if from_editor.get() != Some(hash(&want)) && model.text() != want {
                         model.set_text(&want);
                     }
                 });
@@ -545,6 +555,7 @@ impl View for TextEditor {
                         }
                         let text = model.text();
                         if let Some(b) = &bound {
+                            from_editor.set(Some(hash(&text)));
                             b.set_if_changed(text.clone());
                         }
                         on_change.iter().for_each(|f| f(text.clone()));

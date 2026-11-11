@@ -148,7 +148,31 @@ pub(crate) fn install(
     file_item.setSubmenu(Some(&file_menu));
     bar.addItem(&file_item);
 
-    let (edit_item, _) = submenu(
+    // Find, as in every Mac app with text: the items send AppKit's text
+    // finder action with their tag, and are greyed out unless the focus is
+    // in a view with a find bar (a text editor).
+    let find = |title: &str, key: &str, tag: isize| {
+        let i = item(mtm, &t(title), Some(sel!(performTextFinderAction:)), key);
+        i.setTag(tag);
+        i
+    };
+    let (find_item, _) = submenu(
+        mtm,
+        &t("Find"),
+        vec![
+            // NSTextFinderAction: show 1, next 2, previous 3, set search
+            // string 7, show replace 12.
+            Some(find("Find…", "f", 1)),
+            Some(with_modifiers(find("Find and Replace…", "f", 12), opt_cmd)),
+            Some(find("Find Next", "g", 2)),
+            Some(find("Find Previous", "G", 3)),
+            Some(find("Use Selection for Find", "e", 7)),
+        ],
+    );
+    // An "Edit" menu of the app's adds its items to the standard one.
+    let edit_title = t("Edit");
+    let edit_items = menus.iter().position(|(t, _)| t == "Edit" || *t == edit_title).map(|i| menus.remove(i).1).unwrap_or_default();
+    let (edit_item, edit_menu) = submenu(
         mtm,
         &t("Edit"),
         vec![
@@ -162,8 +186,19 @@ pub(crate) fn install(
             Some(item(mtm, &t("Paste"), Some(sel!(paste:)), "v")),
             Some(item(mtm, &t("Delete"), Some(sel!(delete:)), "")),
             Some(item(mtm, &t("Select All"), Some(sel!(selectAll:)), "a")),
+            None,
+            Some(find_item),
         ],
     );
+    if !edit_items.is_empty() {
+        let (own, targets) = build_titled_menu(mtm, "", edit_items);
+        keep.extend(targets);
+        edit_menu.addItem(&NSMenuItem::separatorItem(mtm));
+        for i in own.itemArray().iter() {
+            own.removeItem(&i);
+            edit_menu.addItem(&i);
+        }
+    }
     bar.addItem(&edit_item);
 
     for (title, items) in menus {

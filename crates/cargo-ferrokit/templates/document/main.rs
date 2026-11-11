@@ -39,15 +39,17 @@ fn main() {
 // ---- self-checks: `cargo ferrokit check` runs these (CHECK=all) ----
 
 mod self_checks {
-    use ferrokit::testing::ax_audit;
+    use ferrokit::testing::{ax_audit, check, steps};
     use ferrokit::*;
 
+    /// Each step runs in a turn of its own: act in one, look in the next
+    /// (views update after the step that changed something returns). After
+    /// the last step the run ends and reports.
     pub fn run() {
-        let mut failed = 0;
-        let mut check = |name: &str, pass: bool, note: String| {
-            eprintln!("[check] {name} {} {note}", if pass { "PASS" } else { "FAIL" });
-            failed += u32::from(!pass);
-        };
+        steps(100, vec![Box::new(first)]);
+    }
+
+    fn first() {
         let window = windows()[0].clone();
         // (t: "Untitled" in the user's language.)
         check("untitled-window", window.title().to_string() == t("Untitled"), format!("{:?}", window.title()));
@@ -59,7 +61,5 @@ mod self_checks {
         let opened = open_document(&path).map(|w| w.title().to_string());
         check("open-file", opened.as_deref().is_ok_and(|t| t.ends_with(".txt")), format!("{opened:?}"));
         let _ = std::fs::remove_file(&path);
-        eprintln!("[check] done, {failed} failed");
-        std::process::exit(if failed == 0 { 0 } else { 1 });
     }
 }

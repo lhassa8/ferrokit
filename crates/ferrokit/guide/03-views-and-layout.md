@@ -59,6 +59,23 @@ let form = grid([
 # let _ = form;
 ```
 
+Every row of a grid has the same type. When the rows hold different
+controls, wrap each cell in `AnyView::new` (or use `form` and `form_row`
+from [Controls and forms](https://docs.rs/ferrokit/latest/ferrokit/guide/ch04_controls_and_forms/),
+which take any control per row):
+
+```rust,no_run
+use ferrokit::*;
+
+let (name, plan) = (Signal::new(String::new()), Signal::new("free"));
+let form = grid([
+    (AnyView::new(text("Name:")), AnyView::new(text_field(&name).accessibility_label("Name"))),
+    (AnyView::new(text("Plan:")), AnyView::new(picker(&plan, vec![("Free", "free"), ("Plus", "plus")]).accessibility_label("Plan"))),
+])
+.align_column(0, Align::End);
+# let _ = form;
+```
+
 ## Text that changes
 
 `text("…")` is fixed. `text(|| …)` re-runs when the signals it reads

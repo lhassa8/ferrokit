@@ -2006,8 +2006,15 @@ fn controls_c_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     check("combo-box", typed && chose && combo.stringValue().to_string() == "Tokyo", format!("typed → {typed}; chose Lagos → {chose}; signal → field {:?}", combo.stringValue()));
 
     // Search: typing → signal; Return → submit; the clear button → empty.
+    // (A keystroke sends the field's action too; Return is the command
+    // its delegate sees first.)
     post_edit(&search, "1234");
-    let typed = query.get_untracked() == "1234";
+    send_action(&search);
+    let typed = query.get_untracked() == "1234" && submits.get_untracked() == 0;
+    if let Some(d) = search.delegate() {
+        let editor = objc2_app_kit::NSTextView::new(mtm());
+        let _: bool = unsafe { objc2::msg_send![&*d, control: &*search, textView: &*editor, doCommandBySelector: objc2::sel!(insertNewline:)] };
+    }
     send_action(&search);
     let submitted = submits.get_untracked() == 1;
     search.setStringValue(&NSString::from_str(""));
@@ -5262,6 +5269,131 @@ fn dynamic_hidden_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 fn tree_state_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     use ferrokit::live_signals;
     use objc2_app_kit::NSButton;
+    // Rows that change under a cell edit: what was typed is never written
+    // to another row, and the table keeps the keyboard.
+    {
+        use objc2_app_kit::NSTextField;
+        type Case = (&'static str, bool, String);
+        let results: Rc<RefCell<Vec<Case>>> = Rc::default();
+        for case in ["set_rows", "remove", "insert", "update_row"] {
+            let m = Rc::new(TableModel::new(ViewId(9320), vec![Column::text("name", "Name", |s: &String| s.clone()).editable(true)]));
+            m.set_rows(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+            let edits: Rc<RefCell<Vec<(usize, String)>>> = Rc::default();
+            let e2 = edits.clone();
+            let ew = open(Window::new("Edit").size(240.0, 160.0).view(table(&m).on_edit(move |row, _, value| e2.borrow_mut().push((row, value)))));
+            let tv = m.table_view();
+            tv.editColumn_row_withEvent_select(0, 1, None, true);
+            let cell = tv.viewAtColumn_row_makeIfNecessary(0, 1, true).and_then(|v| v.downcast::<NSTextField>().ok()).unwrap();
+            let ed = cell.currentEditor().and_then(|e| e.downcast::<objc2_app_kit::NSTextView>().ok());
+            if let Some(ed) = &ed {
+                unsafe { ed.selectAll(None) };
+                unsafe { ed.insertText_replacementRange(&NSString::from_str("typed"), objc2_foundation::NSRange::new(usize::MAX >> 1, 0)) };
+            }
+            match case {
+                "set_rows" => m.set_rows(vec!["x".to_string(), "y".to_string(), "z".to_string()]),
+                "remove" => drop(m.remove(0)),
+                "insert" => m.insert(0, "new".to_string()),
+                _ => m.update_row(1, "B".to_string()),
+            }
+            let (editing, results) = (ed.is_some(), results.clone());
+            after_events(move || {
+                let on_table = ew.firstResponder().is_some_and(|r| r.downcast::<objc2_app_kit::NSTableView>().is_ok());
+                let edits = edits.borrow().clone();
+                // The edited row itself updated: the edit is that row's.
+                let right = if case == "update_row" { edits == [(1, "typed".to_string())] } else { edits.is_empty() };
+                results.borrow_mut().push((case, editing && right && on_table, format!("{case}: edits {edits:?}, the table has the keyboard {on_table}")));
+                ferrokit::close_window(&ew);
+                if results.borrow().len() == 4 {
+                    let r = results.borrow();
+                    check("table-edit-under-reload", r.iter().all(|c| c.1), r.iter().map(|c| c.2.clone()).collect::<Vec<_>>().join("; "));
+                }
+            });
+        }
+    }
+    // A bound editor edited more than once in a turn keeps every edit (the
+    // signal's older value went back over the later ones); and Edit ▸ Find
+    // is there, with ⌘F showing the editor's find bar and the app's own
+    // Edit items after it.
+    {
+        const EDIT_A: ferrokit::Command = ferrokit::Command::new("check-edit-a");
+        const EDIT_B: ferrokit::Command = ferrokit::Command::new("check-edit-b");
+        let text = Signal::new(String::from("one"));
+        let m = TextModel::new(ViewId(9330), "one");
+        let (m1, m2) = (m.clone(), m.clone());
+        let bw = open(Window::new("Bound").size(260.0, 140.0).view(
+            text_editor(&m).bind(&text).on_command(EDIT_A, move || m1.replace_selection("A")).on_command(EDIT_B, move || m2.replace_selection("B")),
+        ));
+        bw.makeFirstResponder(Some(&m.text_view()));
+        m.set_selection(3..3);
+        batch(|| {
+            ferrokit::perform_in(Some(&bw), EDIT_A);
+            ferrokit::perform_in(Some(&bw), EDIT_B);
+            ferrokit::perform_in(Some(&bw), EDIT_A);
+        });
+        let m = m.clone();
+        after_events(move || {
+            let (shown, bound) = (m.text(), text.get_untracked());
+            check("editor-edits-in-one-turn", shown == "oneABA" && bound == shown, format!("three edits in one turn: the editor has {shown:?}, its signal {bound:?}"));
+            let edit = NSApplication::sharedApplication(mtm()).mainMenu().and_then(|bar| bar.itemWithTitle(&NSString::from_str("Edit"))).and_then(|i| i.submenu());
+            let find = edit.as_ref().and_then(|e| e.itemWithTitle(&NSString::from_str("Find"))).and_then(|i| i.submenu());
+            let tags: Vec<isize> = find.iter().flat_map(|f| f.itemArray().iter().map(|i| i.tag()).collect::<Vec<_>>()).collect();
+            // (AppKit adds its own items, Emoji & Symbols, after the app's.)
+            let titles: Vec<String> = edit.iter().flat_map(|e| e.itemArray().iter().map(|i| i.title().to_string()).collect::<Vec<_>>()).collect();
+            let own = titles.iter().position(|t| t == "Checklist Edit") > titles.iter().position(|t| t == "Find");
+            let pressed = ferrokit::testing::shortcut(&bw, "f", false);
+            let (m, bw) = (m.clone(), bw.clone());
+            after_events(move || {
+                let bar = m.is_find_visible();
+                check(
+                    "edit-menu-find",
+                    tags == [1, 12, 2, 3, 7] && own && pressed && bar,
+                    format!("Edit ▸ Find's items by action {tags:?}; the app's Edit item after Find: {own} in {titles:?}; ⌘F in the editor taken {pressed}, the find bar shows {bar}"),
+                );
+                // Lines that don't wrap run past the editor's width; wrapping
+                // again brings the text back to it.
+                let width = m.scroll_view().contentSize().width;
+                m.set_text(&"a long line of text that goes on ".repeat(30));
+                m.set_wraps(false);
+                // (The text view lays its text out when it's asked to show
+                // it: showing the end lays out the whole line.)
+                let end = objc2_foundation::NSRange::new(m.text_view().string().length(), 0);
+                m.text_view().scrollRangeToVisible(end);
+                let (m, bw) = (m.clone(), bw.clone());
+                let m0 = m.clone();
+                until(move || m0.text_view().frame().size.width > width * 2.0, 3000, move || {
+                    let tv = m.text_view();
+                    let (long, scroller) = (tv.frame().size.width, m.scroll_view().hasHorizontalScroller());
+                    m.set_wraps(true);
+                    tv.scrollRangeToVisible(end);
+                    let (m, bw) = (m.clone(), bw.clone());
+                    let m0 = m.clone();
+                    until(move || (m0.text_view().frame().size.width - width).abs() < 1.0, 3000, move || {
+                        let back = m.text_view().frame().size.width;
+                        check("editor-wraps", long > width * 2.0 && scroller && !m.scroll_view().hasHorizontalScroller() && (back - width).abs() < 1.0 && m.wraps(), format!("an editor {width} wide: not wrapping, the text is {long} wide with a scroller {scroller}; wrapping again, {back}"));
+                        ferrokit::close_window(&bw);
+                    });
+                });
+            });
+        });
+    }
+    // Two radio groups in one window: a click in one leaves the other's
+    // choice showing.
+    {
+        let (size, colour) = (Signal::new("m"), Signal::new("red"));
+        let rw = open(
+            Window::new("Radios").size(260.0, 160.0).view(vstack((ferrokit::radio_group(&size, vec![("Small", "s"), ("Medium", "m")]), ferrokit::radio_group(&colour, vec![("Red", "red"), ("Blue", "blue")]))).padding(12.0)),
+        );
+        let buttons = move |w: &objc2_app_kit::NSWindow| all_views(&w.contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<NSButton>().ok()).collect::<Vec<_>>();
+        let on = move |w: &objc2_app_kit::NSWindow| buttons(w).iter().filter(|b| b.state() == objc2_app_kit::NSControlStateValueOn).map(|b| b.title().to_string()).collect::<Vec<_>>();
+        if let Some(blue) = buttons(&rw).into_iter().find(|b| b.title().to_string() == "Blue") {
+            unsafe { blue.performClick(None) };
+        }
+        after_events(move || {
+            let shown = on(&rw);
+            check("radio-groups-apart", shown == ["Medium", "Blue"] && size.get_untracked() == "m" && colour.get_untracked() == "blue", format!("Medium chosen, then Blue clicked in the other group: on {shown:?}; values {} and {}", size.get_untracked(), colour.get_untracked()));
+            ferrokit::close_window(&rw);
+        });
+    }
     let (outer, inner, which, off, own_off) = (Signal::new(true), Signal::new(false), Signal::new(0), Signal::new(true), Signal::new(true));
     let rows = Signal::new(vec![place(1, "Line 1", None)]);
     let before = live_signals();
@@ -6502,6 +6634,7 @@ fn main() {
         // About credits and the app's own Help items.
         .about("Made with Ferrokit.", Some(("ferrokit.dev", "https://github.com/lhassa8/ferrokit")))
         .menu("Help", vec![ferrokit::menu_item("Checklist Help", || {})])
+        .menu("Edit", vec![ferrokit::menu_item("Checklist Edit", || {})])
         // C5: the Dock icon's menu, read when it opens.
         .dock_menu(|| vec![ferrokit::menu_item("New Checklist Window", || {}), ferrokit::menu_item(format!("{} windows open", ferrokit::windows().len()), || {})])
         .window(Window::new("First").size(480.0, 200.0).content(|| field("hello world")))

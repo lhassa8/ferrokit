@@ -52,6 +52,13 @@ USAGE:
         runs the app's self-checks (the app with CHECK=all; see the template)
         and verifies the signature.
 
+    cargo ferrokit agents [--force]
+        Writes AGENTS.md (and a CLAUDE.md that points to it) into the app's
+        folder: what an AI coding assistant needs to write a Ferrokit app,
+        as `new` gives every new app. For a project made without `new`, or
+        to bring the file up to this version (--force replaces one that
+        differs).
+
     cargo ferrokit notarize [--profile <notary profile>] [--sign <identity>]
                             [--universal] [--dry-run] [--bin <name>]
         Bundles with a Developer ID, sends it to Apple's notary service, waits,
@@ -89,6 +96,14 @@ Settings, in the app's Cargo.toml:
 
 type Result<T> = std::result::Result<T, String>;
 
+/// The paragraphs of the help about `command` (it can have several, as
+/// `bundle` does).
+fn command_help(command: &str) -> Option<String> {
+    let start = format!("    cargo ferrokit {command} ");
+    let about: Vec<&str> = USAGE.split("\n\n").map(|p| p.strip_prefix("USAGE:\n").unwrap_or(p)).filter(|p| p.starts_with(&start)).collect();
+    (!about.is_empty()).then(|| about.join("\n\n"))
+}
+
 /// A kind of file the app opens (`[[package.metadata.ferrokit.documents]]`).
 struct DocType {
     name: String,
@@ -108,12 +123,26 @@ fn main() -> ExitCode {
         args.remove(0);
     }
     let rest = args.get(1..).unwrap_or_default();
+    // `cargo ferrokit <command> --help`: that command's part of the help.
+    if let Some(command) = args.first().filter(|_| rest.iter().take_while(|a| *a != "--").any(|a| a == "--help" || a == "-h")) {
+        return match command_help(command) {
+            Some(help) => {
+                println!("{help}");
+                ExitCode::SUCCESS
+            }
+            None => {
+                eprintln!("cargo ferrokit: no command `{command}` (see cargo ferrokit --help)");
+                ExitCode::FAILURE
+            }
+        };
+    }
     let result = match args.first().map(String::as_str) {
         Some("new") => new(rest),
         Some("run") => run(rest),
         Some("preview") => preview(rest),
         Some("bundle") => bundle_command(rest),
         Some("check") => check(rest),
+        Some("agents") => agents(rest),
         Some("notarize") => notarize(rest),
         Some("appcast") => appcast(rest),
         Some("-V" | "--version") => {
@@ -515,10 +544,45 @@ fn new(args: &[String]) -> Result<()> {
     write("src/main.rs", fill(main))?;
     write(".gitignore", "/target\n".into())?;
     // For AI coding assistants: how a Ferrokit app is written, and its traps.
-    write("AGENTS.md", fill(include_str!("../templates/AGENTS.md")).replace("{{version}}", FERROKIT_VERSION))?;
+    write("AGENTS.md", agents_md(&display))?;
     write("CLAUDE.md", "@AGENTS.md\n".into())?;
     println!("Made {} ({}) in {}", display, if document { "a document app" } else { "an app" }, path.display());
     println!("Next:\n    cd {}\n    cargo ferrokit run      # run it\n    cargo ferrokit check    # lint, test and run its self-checks\n    cargo ferrokit bundle   # make {display}.app", path.display());
+    Ok(())
+}
+
+/// `AGENTS.md` for an app called `display`: how a Ferrokit app is written,
+/// where the docs are, recipes and traps, for AI coding assistants.
+fn agents_md(display: &str) -> String {
+    include_str!("../templates/AGENTS.md").replace("{{display}}", display).replace("{{version}}", FERROKIT_VERSION)
+}
+
+/// `cargo ferrokit agents`: the `AGENTS.md` a new app gets, for a project
+/// that wasn't made with `new` (or was made by an older version).
+fn agents(args: &[String]) -> Result<()> {
+    let a = Args::parse(args, &["--bin"], &["--force"])?;
+    let project = Project::load(a.value("--bin"))?;
+    let (file, text) = (project.dir.join("AGENTS.md"), agents_md(&project.display));
+    match std::fs::read_to_string(&file) {
+        Ok(old) if old == text => println!("AGENTS.md is current (ferrokit {FERROKIT_VERSION})"),
+        Ok(_) if !a.flag("--force") => {
+            return Err("AGENTS.md is there already, with other text: --force replaces it (keep what you added to it first)".into());
+        }
+        _ => {
+            std::fs::write(&file, text).map_err(|e| format!("AGENTS.md: {e}"))?;
+            println!("Wrote AGENTS.md (for ferrokit {FERROKIT_VERSION}): how a Ferrokit app is written, where the docs are, recipes and known limits");
+        }
+    }
+    // Claude Code reads CLAUDE.md: point it at the same text.
+    let claude = project.dir.join("CLAUDE.md");
+    match std::fs::read_to_string(&claude) {
+        Ok(old) if old.contains("AGENTS.md") => {}
+        Ok(_) => println!("CLAUDE.md is there already: add a line `@AGENTS.md` to it so Claude Code reads AGENTS.md too"),
+        Err(_) => {
+            std::fs::write(&claude, "@AGENTS.md\n").map_err(|e| format!("CLAUDE.md: {e}"))?;
+            println!("Wrote CLAUDE.md (it points Claude Code at AGENTS.md)");
+        }
+    }
     Ok(())
 }
 
@@ -1067,7 +1131,7 @@ fn check(args: &[String]) -> Result<()> {
         eprintln!("\x1b[1mall passed\x1b[0m");
         Ok(())
     } else {
-        Err(format!("{failed} failed: {}", summary.iter().filter(|(_, r)| r.is_err()).map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(", ")))
+        Err(format!("{failed} failed (the output of each is above): {}", summary.iter().filter(|(_, r)| r.is_err()).map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(", ")))
     }
 }
 
@@ -1338,6 +1402,24 @@ mod tests {
         assert_eq!((a.positional.clone(), a.value("--bin"), a.value("--out"), a.flag("--zip"), a.rest.clone()), (s(&["app"]), Some("x"), Some("dist"), true, s(&["-v"])));
         assert!(Args::parse(&s(&["--nope"]), &[], &[]).is_err());
         assert!(Args::parse(&s(&["--bin"]), &["--bin"], &[]).is_err());
+    }
+
+    #[test]
+    fn each_command_has_its_help() {
+        for command in ["new", "run", "preview", "bundle", "appcast", "check", "agents", "notarize"] {
+            let help = command_help(command).unwrap_or_default();
+            assert!(help.starts_with(&format!("    cargo ferrokit {command} ")), "{command}: {help:?}");
+        }
+        assert_eq!(command_help("bundle").unwrap().matches("cargo ferrokit bundle").count(), 2);
+        assert!(command_help("nothing").is_none());
+    }
+
+    #[test]
+    fn agents_md_is_filled_in() {
+        let text = agents_md("My App");
+        assert!(text.starts_with("# Working on My App\n"));
+        assert!(!text.contains("{{"), "a placeholder is left in AGENTS.md");
+        assert!(text.contains(&format!("ferrokit-{FERROKIT_VERSION}.")));
     }
 
     #[test]

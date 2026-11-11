@@ -112,6 +112,10 @@ fn post(event: Option<Retained<NSEvent>>) {
 /// Brings the app to the front and makes `window` key, so input reaches it.
 /// True once both hold (it can take a run-loop turn: call it, wait a
 /// moment, and call it again before sending input).
+///
+/// It stays false while the screen is locked, or when macOS doesn't let
+/// the app take the front from the one in use: nothing is wrong with the
+/// app then, and a check prints `SKIP` instead of sending input.
 pub fn ready(window: &NSWindow) -> bool {
     let app = NSApplication::sharedApplication(crate::mtm());
     if !app.isActive() {

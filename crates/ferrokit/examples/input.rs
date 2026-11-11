@@ -36,6 +36,8 @@ struct Form {
     place: Signal<Option<String>>,
     card_clicks: Signal<u32>,
     saves: Signal<u32>,
+    query: Signal<String>,
+    submits: Signal<u32>,
 }
 
 const CITIES: [(&str, &str); 5] = [("Lisbon", "Portugal"), ("Osaka", "Japan"), ("Toronto", "Canada"), ("Nairobi", "Kenya"), ("Berlin", "Germany")];
@@ -52,6 +54,8 @@ fn main() {
         place: Signal::new(None),
         card_clicks: Signal::new(0),
         saves: Signal::new(0),
+        query: Signal::new(String::new()),
+        submits: Signal::new(0),
     };
     let editor = TextModel::new(ViewId(1), "");
     let cities = Rc::new(TableModel::new(ViewId(2), vec![
@@ -73,6 +77,7 @@ fn main() {
         grid([
             (AnyView::new(text("Name:")), AnyView::new(text_field(&f.name).placeholder("Your name").accessibility_label("Name"))),
             (AnyView::new(text("Email:")), AnyView::new(text_field(&f.email).placeholder("you@example.com").accessibility_label("Email"))),
+            (AnyView::new(text("Find:")), AnyView::new(search_field(&f.query).on_submit(move || f.submits.update(|n| *n += 1)).accessibility_label("Find"))),
             (AnyView::new(text("Plan:")), AnyView::new(segmented(&f.plan, vec![("Free", "free"), ("Plus", "plus"), ("Team", "team")]).accessibility_label("Plan"))),
             (AnyView::new(text("")), AnyView::new(checkbox("Send me the newsletter", &f.subscribe))),
         ])
@@ -98,7 +103,7 @@ fn main() {
     .spacing(14.0)
     .padding(20.0);
     App::new("Input")
-        .window(Window::new("Sign up").size(640.0, 620.0).view(form).on_command(SAVE, move || f.saves.update(|n| *n += 10)))
+        .window(Window::new("Sign up").size(640.0, 660.0).view(form).on_command(SAVE, move || f.saves.update(|n| *n += 10)))
         .menu("File", vec![menu_command("Save Draft", SAVE).key("s")])
         .on_launch(move || {
             if checks {
@@ -218,8 +223,34 @@ mod self_checks {
                     input::key(&w4, Key::Char('a'), &[Mod::Command]);
                     input::type_text(&w4, "a@b.c");
                 }),
+                Box::new({
+                    let (c, w) = (c3.clone(), w.clone());
+                    move || {
+                        c("select-all-replace", untrack(|| f.email.get()) == "a@b.c", format!("{:?}", untrack(|| f.email.get())));
+                        // The search field: typing changes the value and
+                        // submits nothing; Return submits once.
+                        if let Some(find) = named(&w, "Find") {
+                            input::click(&find);
+                        }
+                    }
+                }),
+                Box::new({
+                    let w = w.clone();
+                    move || input::type_text(&w, "abc")
+                }),
+                Box::new({
+                    let (c, w) = (c3.clone(), w.clone());
+                    move || {
+                        let (typed, while_typing) = untrack(|| (f.query.get(), f.submits.get()));
+                        input::key(&w, Key::Return, &[]);
+                        let c = c.clone();
+                        later(200, move || {
+                            let after = untrack(|| f.submits.get());
+                            c("search-submit", typed == "abc" && while_typing == 0 && after == 1, format!("typed {typed:?}: {while_typing} submits while typing, {after} after Return"));
+                        });
+                    }
+                }),
                 Box::new(move || {
-                    c3("select-all-replace", untrack(|| f.email.get()) == "a@b.c", format!("{:?}", untrack(|| f.email.get())));
                     // The editor: a click, two lines, then ⌘Z.
                     if let Some(ed) = named(&w5, "Notes") {
                         input::click(&ed);

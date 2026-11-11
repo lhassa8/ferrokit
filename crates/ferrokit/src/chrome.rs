@@ -419,6 +419,11 @@ impl MenuItem {
     }
 
     /// A ⌘ shortcut: `"n"` is ⌘N, `"N"` is ⇧⌘N, `","` is ⌘,.
+    ///
+    /// Keys without a letter are their characters: `"\u{8}"` is ⌘⌫
+    /// (Delete), `"\u{7f}"` ⌘⌦ (Forward Delete), `"\r"` ⌘↩, `"\u{1b}"`
+    /// ⌘⎋, `"\t"` ⌘⇥, `" "` ⌘Space, and the arrows `"\u{f700}"` ↑,
+    /// `"\u{f701}"` ↓, `"\u{f702}"` ←, `"\u{f703}"` →.
     pub fn key(self, key: &str) -> Self {
         self.key_with(key, &[])
     }

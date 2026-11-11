@@ -113,13 +113,25 @@ fn as_undo_steps(window: &NSWindow, steps: &[&dyn Fn()]) {
 - **A table's selection in a signal:** `table(&model).selection(&selected)` binds a `Signal<Vec<usize>>` of model indices both ways.
 - **A filtered table that keeps its selection:** keep the selected item's id in a signal (set it from the bound selection), and in the `watch` that calls `set_rows`, find that id's new model index and set the bound signal to it (`set_rows` clears the selection).
 - **Delete with ⌘⌫:** handle it with `.on_command(DELETE, …)` on the table, not the window: then it doesn't fire while the focus is in a text field or editor, where ⌘⌫ deletes text.
+- **A grid's rows are one type:** rows with different controls need each cell wrapped, `(AnyView::new(text("Plan:")), AnyView::new(picker(..)))`; or use `form(vec![section("", vec![form_row("Plan:", picker(..))])])`, which takes any control per row.
+- **A command is enabled where its handler has the focus.** `.on_command(DELETE, …)` on the table greys out Delete's menu item and its `toolbar_command` button while the focus is in the search field or the sidebar. For a toolbar button that works wherever the focus is, use `toolbar_button(id, label, symbol, action).disabled(move || selected.with(Vec::is_empty))`, or add `Window::on_command_when`.
+- **Shortcut keys without a letter** are their characters: `.key("\u{8}")` is ⌘⌫, `"\u{7f}"` ⌘⌦, `"\r"` ⌘↩, `"\u{1b}"` ⌘⎋, `"\u{f700}"`–`"\u{f703}"` ⌘↑ ↓ ← →.
+- **A day as a `Column::date` value:** `UNIX_EPOCH + Duration::from_secs_f64(local_day_start(day))`, with `day` from `today()` or `local_day(seconds)`.
+- **A sidebar's roots are section headings** (shown in small capitals, not selectable): put the rows the user picks under one, `TreeNode::branch(heading, rows)`.
+- **Find (⌘F) and the Edit menu:** every app has Edit ▸ Find (Find…, Find and Replace…, Find Next, Find Previous, Use Selection for Find), enabled while the focus is in a `text_editor`; don't add your own. `App::menu("Edit", items)` adds items to the standard Edit menu, `"File"` and `"Help"` fill theirs; any other title is a new menu.
+- **Lines that don't wrap** (code, logs): `TextModel::set_wraps(false)`.
+- **A document's toolbar and its view share commands, not signals.** `DocumentType::toolbar(|doc| …)` can't see signals made in the view closure: use `toolbar_command(id, label, symbol, CMD)` and handle `CMD` with `.on_command(CMD, …)` on the document's root view (it acts wherever the focus is inside that view).
+- **A document app's file types are listed twice:** `DocumentType::new(&["md", "txt"], …)` in code (the first is what a new file gets) and `[[package.metadata.ferrokit.documents]]` in `Cargo.toml` (what the Finder offers). Keep them the same.
+- **A live HTML preview:** load the page once with `load_html`, then change it with `page.evaluate("document.body.innerHTML = …")` once `is_loading()` is false; `load_html` on every keystroke reloads the page and loses the scroll position.
 - **Counts in a sidebar:** the title is a closure, so `format!("{} ({n})", …)` shows a count.
 - **Menu titles that change:** `menu_command(move || if read.get() { "Mark as Unread" } else { "Mark as Read" }.to_string(), TOGGLE)`.
 
 ## Self-checks
 
 `cargo ferrokit check` runs the app with `CHECK=all`; the app drives its own UI, prints `[check] <name> PASS|FAIL <note>` lines and exits non-zero on a failure (see `self_checks` in `src/main.rs`). Add a check for every behaviour you add.
-- **Act in one turn, look in the next.** Effects and table updates run after the current callback returns. Chain steps with `spawn(|| std::thread::sleep(Duration::from_millis(30)), move |()| …)`.
+- **The helpers:** `testing::check(name, pass, note)` prints the line and counts failures; `testing::skip(name, why)` for what can't run here; `testing::steps(100, vec![Box::new(|| …), …])` runs each step in a turn of its own and ends the run after the last (`testing::finish()` ends it by hand).
+- **Act in one step, look in the next.** Effects, table updates and sheets settle after the step that caused them returns, so a step that sets a signal and reads a view in the same breath sees the old view.
+- **Finding a view:** `testing::view_labeled(&window, "Preview")` returns the view with that `.accessibility_label(..)` (downcast it to `NSTextField`, `NSTableView`…); `testing::ax_elements(&window)` lists what VoiceOver sees, with each element's `name` and `value`. A `TextModel` or `TableModel` the checks need: keep its `Rc`/clone where they can reach it (a `thread_local`), there is no way from a window to its models.
 - **Undo steps:** in an unattended run, AppKit's per-event undo groups don't close, so one ⌘Z can undo several steps. Use `as_undo_steps` (above).
 - **Selecting from code is silent:** `TableModel::select` doesn't call `on_select`, and `set_rows` clears the selection. Run the selection's effect yourself in a check.
 - **Checks see the real user defaults:** reset the `stored` keys and data files a check depends on at its start (or point the app at a temporary file under `CHECK`).
@@ -128,8 +140,9 @@ fn as_undo_steps(window: &NSWindow, steps: &[&dyn Fn()]) {
   ```toml
   objc2 = "0.6"
   objc2-foundation = "0.3"
-  objc2-app-kit = { version = "0.3", features = ["NSResponder", "NSView", "NSWindow", "NSControl", "NSTextField", "NSButton", "NSText", "NSTextView", "NSTableView", "NSOutlineView", "NSEvent", "NSMenu", "NSMenuItem"] }
+  objc2-app-kit = { version = "0.3", features = ["NSResponder", "NSView", "NSWindow", "NSControl", "NSTextField", "NSButton", "NSText", "NSTextView", "NSTableView", "NSOutlineView", "NSEvent", "NSMenu", "NSMenuItem", "NSApplication", "NSScrollView", "NSToolbar", "NSToolbarItem"] }
   ```
+- **Real clicks and keys** (`testing::input`) need the app in front: `input::ready(&window)` stays false while the screen is locked or macOS keeps another app in front. Print `[check] <name> SKIP <why>` then, and drive the same behaviour another way (a command, `testing::shortcut`, `performClick`).
 - **Seeing your own output:** `cargo ferrokit check` shows only the `[check]` lines. To see everything, run the bundled app yourself: `CHECK=all "target/debug/bundle/<App>.app/Contents/MacOS/<binary>"`.
 - `testing::ax_audit(&window)` lists controls VoiceOver can't name: give each `.accessibility_label(…)`.
 - A caught panic doesn't end the app; `check` stops 15 s after one if no more checks arrive. Look for `ferrokit: a panic in …` in the output.

@@ -52,6 +52,12 @@
 //! tests.** `API.md`, in the crate's source and
 //! [on GitHub](https://github.com/lhassa8/ferrokit/blob/main/crates/ferrokit/API.md),
 //! lists every public item on one page. macOS 15 or later. Main thread only.
+//!
+//! **AI coding agents:** read `AGENTS.md` first, in the crate's source
+//! beside `API.md` and
+//! [on GitHub](https://github.com/lhassa8/ferrokit/blob/main/crates/ferrokit/AGENTS.md):
+//! how a Ferrokit app is written, recipes that compile, and the known
+//! limits. `cargo ferrokit agents` writes it into an app.
 
 #![warn(missing_docs)]
 #![doc(html_logo_url = "https://raw.githubusercontent.com/lhassa8/ferrokit/main/assets/icon.png", html_favicon_url = "https://raw.githubusercontent.com/lhassa8/ferrokit/main/assets/icon-128.png")]
@@ -1071,6 +1077,8 @@ impl App {
     }
 
     /// Adds a menu to the menu bar, between Edit and Window ("View", "Go"…).
+    /// A menu titled "Edit" adds its items to the standard Edit menu (after
+    /// Find), and one titled "Help" fills the standard Help menu.
     /// A menu titled "File" fills the standard File menu instead, above its
     /// Close item. Items run in a [`batch`]; their enabled and checked
     /// states are evaluated when the menu opens or a key equivalent fires.

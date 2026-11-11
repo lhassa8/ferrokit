@@ -343,10 +343,44 @@ mod self_checks {
                         format!("quitting with changes → {buttons:?}; Cancel: still running with the document edited: {alive}"),
                     );
                     restore_check();
-                    let _ = std::fs::remove_dir_all(wb_path().parent().unwrap());
-                    let failed = FAILED.with(Cell::get);
-                    eprintln!("[check] done, {failed} failed");
-                    std::process::exit(if failed == 0 { 0 } else { 1 });
+                    quit_under_sheet_check(w2);
+                });
+            });
+        });
+    }
+
+    /// ⌘Q while a document's "save the changes?" sheet is up (from ⌘W):
+    /// AppKit doesn't start a quit under a sheet, so nothing is asked
+    /// twice and the app isn't left waiting on one. After Cancel, a quit
+    /// asks as usual.
+    fn quit_under_sheet_check(w2: Retained<NSWindow>) {
+        w2.performClose(None);
+        then(move || {
+            quit();
+            then(move || {
+                let cancelled = press(&w2, "Cancel");
+                then(move || {
+                    let again = w2.attachedSheet().is_some();
+                    if again {
+                        press(&w2, "Cancel");
+                    }
+                    quit();
+                    then(move || {
+                        let asks = sheet_titles(&w2);
+                        press(&w2, "Cancel");
+                        then(move || {
+                            let alive = find("Untitled 2").is_some() && document_edited(&w2);
+                            check(
+                                "quit-under-sheet",
+                                cancelled && !again && asks == ["Cancel", "Don't Save", "Save"] && alive,
+                                format!("⌘W then quit, Cancel pressed {cancelled}: asked a second time {again}; a quit afterwards asks {asks:?}; still running with the document edited: {alive}"),
+                            );
+                            let _ = std::fs::remove_dir_all(wb_path().parent().unwrap());
+                            let failed = FAILED.with(Cell::get);
+                            eprintln!("[check] done, {failed} failed");
+                            std::process::exit(if failed == 0 { 0 } else { 1 });
+                        });
+                    });
                 });
             });
         });

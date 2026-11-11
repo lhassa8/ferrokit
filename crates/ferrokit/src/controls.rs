@@ -20,7 +20,7 @@ define_class!(
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
     #[name = "FerrokitFieldDelegate"]
-    #[ivars = Signal<String>]
+    #[ivars = FieldState]
     pub(crate) struct FieldDelegate;
 
     unsafe impl NSObjectProtocol for FieldDelegate {}
@@ -31,9 +31,18 @@ define_class!(
             crate::failure::guard("a control (did_change)", (), || {
                 let Some(field) = notification.object().and_then(|o| o.downcast::<NSTextField>().ok()) else { return };
                 let value = field.stringValue().to_string();
-                let signal = *self.ivars();
+                self.ivars().returned.set(false);
+                let signal = self.ivars().value;
                 batch(|| signal.set(value));
             })
+        }
+
+        // Return, noted for a search field's action (which a keystroke
+        // sends too); AppKit goes on with the key as it would.
+        #[unsafe(method(control:textView:doCommandBySelector:))]
+        fn do_command(&self, _control: &objc2_app_kit::NSControl, _editor: &objc2_app_kit::NSTextView, command: objc2::runtime::Sel) -> bool {
+            self.ivars().returned.set(command == sel!(insertNewline:));
+            false
         }
     }
 
@@ -41,9 +50,20 @@ define_class!(
     unsafe impl NSSearchFieldDelegate for FieldDelegate {}
 );
 
+/// A field's signal, and whether Return was the last key it took.
+pub(crate) struct FieldState {
+    value: Signal<String>,
+    returned: std::cell::Cell<bool>,
+}
+
 impl FieldDelegate {
+    /// Whether Return was pressed since the last change (asked once).
+    fn take_return(&self) -> bool {
+        self.ivars().returned.take()
+    }
+
     pub(crate) fn new(mtm: MainThreadMarker, value: Signal<String>) -> Retained<Self> {
-        let this = Self::alloc(mtm).set_ivars(value);
+        let this = Self::alloc(mtm).set_ivars(FieldState { value, returned: std::cell::Cell::new(false) });
         // SAFETY: NSObject's designated initialiser.
         unsafe { msg_send![super(this), init] }
     }
@@ -1208,13 +1228,15 @@ impl View for SearchField {
         // SAFETY: the delegate is weak in AppKit; the node keeps it.
         unsafe { field.setDelegate(Some(ProtocolObject::from_ref(&*delegate))) };
         // The clear button sends the action with empty text, but no
-        // change notification: the action reads the field too.
-        let (value, f, submit) = (self.value, field.clone(), self.on_submit);
+        // change notification: the action reads the field too. A keystroke
+        // sends the action as Return does, so Return is what the delegate
+        // saw, not "the text is as it was".
+        let (value, f, submit, d) = (self.value, field.clone(), self.on_submit, delegate.clone());
         let target = on_action(cx, &field, move || {
-            let text = f.stringValue().to_string();
-            if text.is_empty() || value.get_untracked() != text {
-                value.set_if_changed(text);
-            } else if let Some(s) = &submit {
+            value.set_if_changed(f.stringValue().to_string());
+            if d.take_return()
+                && let Some(s) = &submit
+            {
                 s();
             }
         });

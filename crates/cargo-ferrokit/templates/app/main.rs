@@ -73,25 +73,31 @@ fn main() {
 // ---- self-checks: `cargo ferrokit check` runs these (CHECK=all) ----
 
 mod self_checks {
-    use ferrokit::testing::ax_audit;
+    use ferrokit::testing::{ax_audit, check, steps};
     use ferrokit::*;
 
     use super::{ADD, Task};
 
+    /// Each step runs in a turn of its own: act in one, look in the next
+    /// (views update after the step that changed a signal returns). After
+    /// the last step the run ends and reports.
     pub fn run(tasks: Signal<Vec<Task>>, draft: Signal<String>) {
-        let mut failed = 0;
-        let mut check = |name: &str, pass: bool, note: String| {
-            eprintln!("[check] {name} {} {note}", if pass { "PASS" } else { "FAIL" });
-            failed += u32::from(!pass);
-        };
         let window = windows()[0].clone();
-        let problems = ax_audit(&window);
-        check("accessibility", problems.is_empty(), format!("{problems:?}"));
-        draft.set("Ship it".into());
-        perform_in(Some(&window), ADD);
-        let titles: Vec<String> = tasks.with(|t| t.iter().map(|t| t.title.clone()).collect());
-        check("add-task", titles.last().map(String::as_str) == Some("Ship it") && draft.get().is_empty(), format!("{titles:?}"));
-        eprintln!("[check] done, {failed} failed");
-        std::process::exit(if failed == 0 { 0 } else { 1 });
+        let w = window.clone();
+        steps(100, vec![
+            Box::new(move || {
+                let problems = ax_audit(&window);
+                check("accessibility", problems.is_empty(), format!("{problems:?}"));
+                draft.set("Ship it".into());
+                perform_in(Some(&window), ADD);
+            }),
+            Box::new(move || {
+                let titles: Vec<String> = tasks.with_untracked(|t| t.iter().map(|t| t.title.clone()).collect());
+                check("add-task", titles.last().map(String::as_str) == Some("Ship it") && draft.get_untracked().is_empty(), format!("{titles:?}"));
+                // The new row is on screen, not only in the signal.
+                let shown = testing::ax_elements(&w).iter().any(|e| e.name.contains("Ship it"));
+                check("add-task-shown", shown, "a view shows the new task");
+            }),
+        ]);
     }
 }

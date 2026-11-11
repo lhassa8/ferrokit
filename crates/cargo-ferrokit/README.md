@@ -23,6 +23,7 @@ cd my-app && cargo ferrokit run
 | `run [--release]` | Builds, bundles and runs the app (its name, icon and identity), output in the terminal. |
 | `preview` | Runs the app, then rebuilds and restarts it on every save: windows where you left them, the editor keeps the focus, a failed build leaves the app running. |
 | `check` | Clippy (warnings are errors), tests, a bundle, the app's self-checks (`CHECK=all`), the signature. |
+| `agents [--force]` | Writes `AGENTS.md` (and a `CLAUDE.md` that points to it) into an app that wasn't made with `new`, or brings it up to this version: what an AI coding assistant needs to write a Ferrokit app. |
 | `bundle [--universal] [--zip]` | A signed `.app` with the hardened runtime (ad hoc, or your Developer ID). |
 | `notarize [--dry-run]` | Developer ID signing, Apple's notary service, stapling, a zip to share. |
 | `appcast [--key-file <file>]` | Updates through Sparkle: zips the bundled app into `updates/` and writes the feed (Sparkle's `generate_appcast`), ready to upload. |

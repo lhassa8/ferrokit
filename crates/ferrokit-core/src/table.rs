@@ -904,6 +904,40 @@ fn table_of(view: &NSView) -> Option<Retained<NSTableView>> {
     None
 }
 
+/// Gives the keyboard back to a table whose rows changed under a cell
+/// edit. AppKit ends the edit when the cell's row is reloaded (what was
+/// typed isn't an edit: its row may be another one now) and leaves the
+/// window with no first responder, so the arrow keys would do nothing.
+struct KeepFocus {
+    table: Retained<NSTableView>,
+    editing: bool,
+}
+
+impl KeepFocus {
+    fn new(table: &NSTableView) -> Self {
+        let editing = table.window().and_then(|w| w.firstResponder()).and_then(|r| r.downcast::<objc2_app_kit::NSText>().ok()).is_some_and(|editor| {
+            // SAFETY: a field editor's delegate is the control it edits for.
+            let field: Option<Retained<objc2::runtime::AnyObject>> = unsafe { objc2::msg_send![&*editor, delegate] };
+            field.and_then(|f| f.downcast::<NSView>().ok()).is_some_and(|f| f.isDescendantOf(table))
+        });
+        KeepFocus { table: table.retain(), editing }
+    }
+}
+
+impl Drop for KeepFocus {
+    fn drop(&mut self) {
+        if !self.editing {
+            return;
+        }
+        if let Some(window) = self.table.window() {
+            let lost = window.firstResponder().is_none_or(|r| std::ptr::eq(Retained::as_ptr(&r).cast::<u8>(), Retained::as_ptr(&window).cast::<u8>()));
+            if lost {
+                window.makeFirstResponder(Some(&self.table));
+            }
+        }
+    }
+}
+
 fn indexes(set: &NSIndexSet) -> Vec<usize> {
     let mut out = Vec::with_capacity(set.count());
     let mut i = set.firstIndex();
@@ -1488,6 +1522,7 @@ impl<T: 'static> Inner<T> {
     }
 
     fn resort_keeping_selection(&self) {
+        let _focus = KeepFocus::new(&self.table);
         let selected = self.selection_model_rows();
         self.compute_order();
         self.table.reloadData();
@@ -1691,6 +1726,7 @@ impl<T: 'static> TableModel<T> {
     /// cleared. Call [`set_rows`](Self::set_rows) after it when the rows
     /// change too: nothing is drawn in between.
     pub fn set_columns(&self, columns: Vec<Column<T>>) {
+        let _focus = KeepFocus::new(&self.inner.table);
         let table = &self.inner.table;
         *self.inner.sort.borrow_mut() = None;
         self.inner.quiet.set(true);
@@ -1712,6 +1748,7 @@ impl<T: 'static> TableModel<T> {
 
     /// Replaces all rows (the current sort is applied). Clears the selection.
     pub fn set_rows(&self, rows: Vec<T>) {
+        let _focus = KeepFocus::new(&self.inner.table);
         *self.inner.rows.borrow_mut() = rows;
         self.inner.compute_order();
         self.inner.quiet.set(true);
@@ -1758,6 +1795,7 @@ impl<T: 'static> TableModel<T> {
 
     /// Inserts a row at a model index (the selection is kept).
     pub fn insert(&self, index: usize, row: T) {
+        let _focus = KeepFocus::new(&self.inner.table);
         let selected = self.inner.selection_model_rows();
         // Past the end is the end (an index from before a row went).
         let index = index.min(self.inner.rows.borrow().len());
@@ -1817,6 +1855,7 @@ impl<T: 'static> TableModel<T> {
 
     /// Removes a row (the selection is kept for the other rows).
     pub fn remove(&self, index: usize) -> Option<T> {
+        let _focus = KeepFocus::new(&self.inner.table);
         if index >= self.len() {
             return None;
         }
@@ -1839,6 +1878,7 @@ impl<T: 'static> TableModel<T> {
     /// [`TableEvent::RowsMoved`] asks. Returns their new model indices; they
     /// end up selected.
     pub fn move_rows(&self, rows: &[usize], before: Option<usize>) -> Vec<usize> {
+        let _focus = KeepFocus::new(&self.inner.table);
         let mut moving: Vec<usize> = rows.iter().copied().filter(|&r| r < self.len()).collect();
         moving.sort_unstable();
         moving.dedup();

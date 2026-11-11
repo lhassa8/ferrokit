@@ -1304,12 +1304,47 @@ impl TextModel {
         crate::keys::set_accepts_tab(self.inner.id, accepts);
     }
 
-    /// Shows the find bar (as ⌘F does).
+    /// Shows the find bar, as Edit ▸ Find ▸ Find… (⌘F) does in a Ferrokit
+    /// app while the focus is in the editor.
     pub fn show_find(&self) {
         // NSTextFinderActionShowFindInterface = 1, passed as the sender's tag.
         let item = objc2_app_kit::NSMenuItem::new(mtm());
         item.setTag(1);
         let () = unsafe { msg_send![&*self.inner.view, performTextFinderAction: &*item] };
+    }
+
+    /// Whether long lines wrap at the editor's width (the default), or run
+    /// on with a horizontal scroller (code, logs, tables of text).
+    pub fn set_wraps(&self, wraps: bool) {
+        let (view, scroll) = (&self.inner.view, &self.inner.scroll);
+        // SAFETY: the text view's own container.
+        let Some(container) = (unsafe { view.textContainer() }) else { return };
+        if container.widthTracksTextView() == wraps {
+            return;
+        }
+        let width = scroll.contentSize().width;
+        scroll.setHasHorizontalScroller(!wraps);
+        view.setHorizontallyResizable(!wraps);
+        container.setWidthTracksTextView(wraps);
+        if wraps {
+            // Back to the scroll view's width, which the container follows.
+            let mut frame = view.frame();
+            frame.size.width = width;
+            view.setFrame(frame);
+            container.setContainerSize(NSSize::new(width, f64::MAX));
+        } else {
+            // (Wide enough for any line; the largest number breaks layout.)
+            container.setContainerSize(NSSize::new(1.0e7, f64::MAX));
+            view.setMaxSize(NSSize::new(1.0e7, f64::MAX));
+        }
+        view.sizeToFit();
+        view.setNeedsDisplay(true);
+    }
+
+    /// Whether long lines wrap (see [`set_wraps`](Self::set_wraps)).
+    pub fn wraps(&self) -> bool {
+        // SAFETY: the text view's own container.
+        unsafe { self.inner.view.textContainer() }.is_none_or(|c| c.widthTracksTextView())
     }
 
     /// Whether the find bar is showing.

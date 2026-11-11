@@ -8,6 +8,10 @@ the state it reads changes. There is no virtual DOM and no diffing.
 Every Rust example in these chapters is compiled by `cargo test --doc`, so
 the guide can't drift from the API.
 
+AI coding agents: read `AGENTS.md` in the crate's folder first (the rules,
+recipes and known limits on one page), then `API.md` beside it for every
+public item. `cargo ferrokit agents` writes `AGENTS.md` into an app.
+
 1. [Getting started](01-getting-started.md): an app, a window, a button.
 2. [State](02-state.md): signals, memos, effects, batching, background work.
 3. [Views and layout](03-views-and-layout.md): stacks, grids, modifiers,

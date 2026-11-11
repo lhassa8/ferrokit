@@ -17,6 +17,21 @@ cargo ferrokit new e2e-docs --document --ferrokit-path "$root/crates/ferrokit"
 { echo '#![allow(dead_code)]'; sed -n '/^```rust$/,/^```$/p' e2e-app/AGENTS.md | sed '/^```/d'; } >e2e-app/src/agents_recipe.rs
 printf '\nmod agents_recipe;\n' >>e2e-app/src/main.rs
 failed=0
+# `cargo ferrokit agents`: a project without the file gets the one `new`
+# writes; one that differs is kept unless --force.
+cp e2e-docs/AGENTS.md "$dir/agents.new"
+rm e2e-docs/AGENTS.md e2e-docs/CLAUDE.md
+wrote=$(cd e2e-docs && cargo ferrokit agents 2>&1) || true
+same=no
+cmp -s "$dir/agents.new" e2e-docs/AGENTS.md && same=yes
+echo "mine" >>e2e-docs/AGENTS.md
+if [ "$same" = yes ] && [ "$(cat e2e-docs/CLAUDE.md)" = "@AGENTS.md" ] && ! (cd e2e-docs && cargo ferrokit agents >/dev/null 2>&1) && tail -1 e2e-docs/AGENTS.md | grep -qx mine; then
+  echo "[check] ferrokit-agents PASS AGENTS.md and CLAUDE.md written as new writes them; an edited one is kept without --force"
+else
+  echo "[check] ferrokit-agents FAIL $wrote"
+  failed=$((failed + 1))
+fi
+cp "$dir/agents.new" e2e-docs/AGENTS.md
 for app in e2e-app e2e-docs; do
   # The apps' [check] lines, unindented, so check-all counts them.
   if (cd "$app" && cargo ferrokit check --timeout 120) >"$dir/$app.log" 2>&1; then

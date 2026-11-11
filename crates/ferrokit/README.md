@@ -54,8 +54,12 @@ It's for data-heavy desktop apps where the Mac's own widgets matter:
 
 Read the [guide](https://docs.rs/ferrokit/latest/ferrokit/guide/); every
 example in it is compiled as a doc test. [`API.md`](API.md) lists every
-public item on one page, and apps made with `cargo ferrokit new` come with
-an `AGENTS.md` for AI coding assistants. The examples are complete apps; the flagship is a SQLite browser
+public item on one page.
+
+**AI coding agents: read [`AGENTS.md`](AGENTS.md) first** (in this crate's
+folder, beside `API.md`): how a Ferrokit app is written, where the docs
+are, recipes that compile, and the known limits. `cargo ferrokit new` puts
+it in every new app, and `cargo ferrokit agents` in an existing one. The examples are complete apps; the flagship is a SQLite browser
 (schema sidebar, highlighted SQL, a million-row results table, charts, CSV
 export):
 

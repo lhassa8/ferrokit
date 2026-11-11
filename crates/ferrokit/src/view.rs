@@ -784,6 +784,16 @@ impl<V: View> Modified<V> {
     /// Handles `command` like [`on_command`](Self::on_command), enabled only
     /// while `enabled` returns true (a disabled handler still answers: the
     /// menu item is greyed out, and handlers further out aren't asked).
+    ///
+    /// A handler on a view answers only while the focus is in that view:
+    /// with the focus elsewhere (a search field, the sidebar) the command's
+    /// menu item and its [`toolbar_command`](crate::toolbar_command) button
+    /// are greyed out unless a handler further out answers. That is right
+    /// for ⌘⌫ on a table (in a text field it deletes text). For a button
+    /// that should work wherever the focus is, give the window a handler
+    /// too ([`Window::on_command_when`](crate::Window::on_command_when)),
+    /// or use a [`toolbar_button`](crate::toolbar_button) with its own
+    /// action and `.disabled(..)`.
     pub fn on_command_when(mut self, command: crate::Command, enabled: impl Fn() -> bool + 'static, action: impl Fn() + 'static) -> Self {
         self.responds.commands.push((command, crate::commands::Handler::new(action, Some(Box::new(enabled)))));
         self
@@ -1547,6 +1557,12 @@ impl View for Grid {
 }
 
 /// A grid from rows of views (rows may be shorter than others).
+///
+/// The rows are one type, so each row holds the same kinds of views. For
+/// rows that differ (a text field in one, a picker in the next), wrap
+/// each cell: `(AnyView::new(text("Plan:")), AnyView::new(picker(..)))`;
+/// or use [`form`](crate::form) with [`form_row`](crate::form_row), which
+/// takes any control per row.
 pub fn grid(rows: impl IntoIterator<Item = impl Views>) -> Grid {
     Grid { spacing: (8.0, 8.0), rows: rows.into_iter().map(Views::into_views).collect(), align: Vec::new() }
 }

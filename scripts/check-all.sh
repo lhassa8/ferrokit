@@ -137,6 +137,7 @@ if [ -n "$lint" ]; then
   step tests cargo test --workspace --release
   step docs env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
   step api_md scripts/api-md.sh --check
+  step agents_md scripts/agents-md.sh --check
 fi
 
 ex=target/release/examples

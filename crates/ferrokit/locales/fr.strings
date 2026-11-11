@@ -20,6 +20,12 @@
 "Paste" = "Coller";
 "Delete" = "Supprimer";
 "Select All" = "Tout sélectionner";
+"Find" = "Rechercher";
+"Find…" = "Rechercher…";
+"Find and Replace…" = "Rechercher et remplacer…";
+"Find Next" = "Rechercher le suivant";
+"Find Previous" = "Rechercher le précédent";
+"Use Selection for Find" = "Rechercher la sélection";
 "Window" = "Fenêtre";
 "Minimize" = "Placer dans le Dock";
 "Zoom" = "Réduire/agrandir";

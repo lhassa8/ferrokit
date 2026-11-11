@@ -265,6 +265,11 @@ let editor = text_editor(&notes)
 # let _ = editor;
 ```
 
+Find is in the app's Edit menu (Edit ▸ Find ▸ Find…, ⌘F, and the rest),
+enabled while the focus is in the editor; `notes.show_find()` shows the
+bar from code. `notes.set_wraps(false)` lets long lines run on with a
+horizontal scroller, for code and logs.
+
 Positions are UTF-8 byte offsets. Each editor has its own undo history;
 `.shared_undo()` puts its typing in the window's history instead, between
 your app's own undoable changes (see [The app shell](https://docs.rs/ferrokit/latest/ferrokit/guide/ch06_app_shell/)).
