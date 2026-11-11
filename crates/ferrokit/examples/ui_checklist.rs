@@ -26,6 +26,16 @@ thread_local! {
     static FAILED: Cell<u32> = const { Cell::new(0) };
 }
 
+/// What could keep posted input from arriving, for a real-input check's
+/// note when it fails: the run loop's mode (AppKit's event tracking, as
+/// while the real mouse drags or scrolls over a window of the app, takes
+/// events off the queue itself), the pointer and the buttons held.
+fn input_state() -> String {
+    let p = objc2_app_kit::NSEvent::mouseLocation();
+    let mode = objc2_foundation::NSRunLoop::currentRunLoop().currentMode().map(|m| m.to_string()).unwrap_or_default();
+    format!("run loop {mode}, pointer {:.0},{:.0}, buttons held {}", p.x, p.y, objc2_app_kit::NSEvent::pressedMouseButtons())
+}
+
 fn check(name: &str, pass: bool, note: String) {
     eprintln!("[check] {name} {} {note}", if pass { "PASS" } else { "FAIL" });
     if !pass {
@@ -2603,6 +2613,7 @@ fn native_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                 }
             };
             let made = w.makeFirstResponder(Some(&a));
+            let before = input_state();
             tab(&a);
             // Posted keys arrive in their own time: wait for the focus to move.
             let on_swatch = {
@@ -2616,10 +2627,12 @@ fn native_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                 let b2 = b.clone();
                 until(move || b2.currentEditor().is_some(), 2000, move || {
                     let into_second = b.currentEditor().is_some();
+                    let pass = made && into_swatch && into_second;
+                    let state = if pass { String::new() } else { format!(" (when the Tab was sent: {before}; now: {})", input_state()) };
                     check(
                         "native-focus",
-                        made && into_swatch && into_second,
-                        format!("Tab ({}) from the first field reaches the swatch {into_swatch}, then the second field {into_second}", if real { "real keys" } else { "AppKit's key view loop, app not active" }),
+                        pass,
+                        format!("Tab ({}) from the first field reaches the swatch {into_swatch}, then the second field {into_second}{state}", if real { "real keys" } else { "AppKit's key view loop, app not active" }),
                     );
                     finish();
                 });
@@ -2793,6 +2806,7 @@ fn table_focus_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                     let (m, w, events, tv) = (m.clone(), w.clone(), events.clone(), tv.clone());
                     wait(300, move || {
                         let clicked = ferrokit::testing::input::ready(&w);
+                        let before = input_state();
                         if clicked {
                             let r = tv.frameOfCellAtColumn_row(0, 3);
                             let view: &objc2_app_kit::NSView = &tv;
@@ -2803,7 +2817,9 @@ fn table_focus_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                         wait(300, move || {
                             if clicked {
                                 let got = (m.focused_column(), focus.get_untracked(), m.selection());
-                                check("table-cell-focus-click", got == (Some("a".into()), Some("a".into()), vec![3]), format!("click on row 3, column A: table, signal, selection {got:?}"));
+                                let pass = got == (Some("a".into()), Some("a".into()), vec![3]);
+                                let state = if pass { String::new() } else { format!(" (when the click was sent: {before}; now: {})", input_state()) };
+                                check("table-cell-focus-click", pass, format!("click on row 3, column A: table, signal, selection {got:?}{state}"));
                             } else {
                                 eprintln!("[check] table-cell-focus-click SKIP the app isn't in front, so posted clicks don't arrive");
                             }
