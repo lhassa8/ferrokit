@@ -122,7 +122,7 @@ cargo ferrokit new my-app && cd my-app && cargo ferrokit run
 
 ## Bring your AI assistant
 
-If Claude Code, Cursor or Codex writes most of your code, it can learn Ferrokit from what ships with it. `cargo ferrokit new` puts an `AGENTS.md` in every new app, `cargo ferrokit agents` in an existing one, and the same text is in the crate beside `API.md`: where the docs are, how a Ferrokit app is written, recipes that compile, and the known limits with their workarounds. The crate carries `API.md`, every public item on one page, and the guide is [on docs.rs](https://docs.rs/ferrokit/latest/ferrokit/guide/). To test this, fresh AI agents built two apps from the published docs alone. They didn't guess a single API name wrong, and what tripped them up is fixed in 0.4.1.
+If Claude Code, Cursor or Codex writes most of your code, it can learn Ferrokit from what ships with it. `cargo ferrokit new` puts an `AGENTS.md` in every new app, `cargo ferrokit agents` in an existing one, and the same text is in the crate beside `API.md`: where the docs are, how a Ferrokit app is written, recipes that compile, and the known limits with their workarounds. The crate carries `API.md`, every public item on one page, and the guide is [on docs.rs](https://docs.rs/ferrokit/latest/ferrokit/guide/). To test this, fresh AI agents were given the published 0.6 docs and nothing else, and each built a working app: an expense tracker and a Markdown editor, with one compile error between them. What tripped them up is fixed in 0.7.
 
 ## Is it for me?
 
@@ -152,7 +152,7 @@ Use [`ferrokit`](crates/ferrokit), with [`cargo ferrokit`](crates/cargo-ferrokit
 | Crate | What it is |
 | --- | --- |
 | [`ferrokit`](crates/ferrokit) | The framework: whole Mac apps where every view is a real AppKit view, updated in place by fine-grained signals. |
-| [`cargo-ferrokit`](crates/cargo-ferrokit) | `cargo ferrokit new`, `run`, `check`, `bundle`, `notarize` and `appcast`. |
+| [`cargo-ferrokit`](crates/cargo-ferrokit) | `cargo ferrokit new`, `run`, `preview`, `check`, `agents`, `bundle`, `notarize` and `appcast`. |
 | [`ferrokit-core`](crates/ferrokit-core) | The AppKit layer under `ferrokit`. You don't need to depend on it yourself. |
 
 The crates share one version number and are released together, so use matching versions. The current version is **0.7.0**. It needs macOS 15 or later.
