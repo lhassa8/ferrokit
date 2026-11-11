@@ -2,10 +2,11 @@
 
 # ferrokit
 
-A native macOS UI framework for Rust. Every view is a real AppKit view (an
-actual `NSTableView`, `NSTextView`, `NSSplitView`), built once and updated
-in place by fine-grained signals. No virtual DOM, no diffing, no web view,
-no custom drawing.
+A native macOS GUI framework for Rust. Every view is a real AppKit control
+(an actual `NSTableView`, `NSOutlineView`, `NSTextView`), built once and
+updated in place by fine-grained signals. No virtual DOM, no diffing, no web
+view, no custom drawing. So VoiceOver, spell check, input methods and Mac
+text editing come with it.
 
 ```rust,no_run
 use ferrokit::*;

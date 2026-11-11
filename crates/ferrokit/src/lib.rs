@@ -1,5 +1,5 @@
-//! A native macOS UI framework for Rust: every view is a real AppKit view
-//! (`NSTableView`, `NSTextView`, `NSSplitView`…), built once and updated in
+//! A native macOS GUI framework for Rust: every view is a real AppKit control
+//! (`NSTableView`, `NSOutlineView`, `NSTextView`…), built once and updated in
 //! place by fine-grained signals. No virtual DOM, no diffing, no web view.
 //!
 //! ```no_run

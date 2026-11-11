@@ -4,7 +4,9 @@
 
 **Mac apps in Rust that are actually Mac apps.**
 
-Ferrokit builds your UI from the real thing: an actual `NSTableView`, `NSTextView`, `NSSplitView` and `NSPopover`. It isn't a web view, and it isn't a GPU renderer doing an impression of AppKit. So the details Mac users notice are right because they're Apple's own: scrolling, keyboard navigation, spell check, Dark Mode, VoiceOver.
+Ferrokit is a native macOS GUI framework for Rust: every view is a real AppKit control, built once and updated in place by fine-grained signals.
+
+It builds your UI from the real thing: an actual `NSTableView`, `NSTextView`, `NSSplitView` and `NSPopover`. It isn't a web view, and it isn't a GPU renderer doing an impression of AppKit. So the details Mac users notice are right because they're Apple's own: scrolling, keyboard navigation, spell check, Dark Mode, VoiceOver.
 
 ![The SQL browser example: a schema sidebar, a highlighted query, its results table, a bar chart of them and an inspector](assets/sql-browser.png)
 

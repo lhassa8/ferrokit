@@ -1,13 +1,13 @@
 [package]
 name = "ferrokit"
 version.workspace = true
-description = "Native Mac apps in Rust: every view a real AppKit view (tables, outlines, text), updated in place by fine-grained signals"
+description = "Native macOS GUI framework for Rust: every view a real AppKit control (NSTableView, NSOutlineView, NSTextView), updated in place by fine-grained signals"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 readme = "README.md"
-keywords = ["macos", "appkit", "gui", "native", "ui"]
+keywords = ["macos", "appkit", "gui", "native", "cocoa"]
 categories = ["gui", "os::macos-apis"]
 
 [package.metadata.docs.rs]
