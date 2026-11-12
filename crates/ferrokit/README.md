@@ -76,6 +76,6 @@ cargo install cargo-ferrokit && cargo ferrokit new my-app
 macOS 15 or later. Main thread only. Built on
 [`ferrokit-core`](https://crates.io/crates/ferrokit-core) and objc2.
 
-**Status:** 0.7.0 (formerly `appkit-ui`), an alpha: the API will change. Part of [Ferrokit](https://github.com/lhassa8/ferrokit); its crates share one version number.
+**Status:** 0.7.1 (formerly `appkit-ui`), an alpha: the API will change. Part of [Ferrokit](https://github.com/lhassa8/ferrokit); its crates share one version number.
 
 License: MIT OR Apache-2.0.
