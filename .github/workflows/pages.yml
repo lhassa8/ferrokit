@@ -1,0 +1,53 @@
+# Builds the website (scripts/site.sh) and publishes it to GitHub Pages at
+# https://lhassa8.github.io/ferrokit/. Needs Settings ▸ Pages ▸ Source set to
+# "GitHub Actions". Runs on pushes to main that touch the site, the guide,
+# AGENTS.md, API.md or the README's screenshots, and by hand.
+name: Website
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - site/**
+      - crates/ferrokit/guide/**
+      - crates/ferrokit/AGENTS.md
+      - crates/ferrokit/API.md
+      - assets/**
+      - scripts/site.sh
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # macOS: the code samples compile against ferrokit, which is Mac only.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Install mdBook
+        run: cargo install mdbook --locked --version 0.5.4
+      - name: Build
+        run: scripts/site.sh
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: target/site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

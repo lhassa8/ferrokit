@@ -1,0 +1,14 @@
+# The website's code samples (`site/src/*.md` includes them). Not part of the
+# workspace and not published: `scripts/site.sh` compiles them, so the pages
+# can't show code that doesn't build.
+[package]
+name = "ferrokit-site-snippets"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+ferrokit = { path = "../../crates/ferrokit" }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSResponder", "NSView", "NSControl", "NSLevelIndicator"] }
+
+[workspace]

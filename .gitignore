@@ -1,3 +1,8 @@
 /target
 /renamed/*/target/
 /renamed/*/Cargo.lock
+
+# The website: copied in by scripts/site.sh
+/site/src/guide/
+/site/src/images/
+/site/snippets/Cargo.lock

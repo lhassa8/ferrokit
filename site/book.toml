@@ -1,0 +1,28 @@
+# The Ferrokit website: `scripts/site.sh` builds it into `target/site`
+# (it copies the guide in from `crates/ferrokit/guide` and writes
+# llms.txt, llms-full.txt and sitemap.xml).
+[book]
+title = "Ferrokit: native macOS GUI framework for Rust"
+description = "Ferrokit builds native Mac apps in Rust from real AppKit controls (NSTableView, NSOutlineView, NSTextView), updated in place by fine-grained signals. VoiceOver, spell check and Mac text editing come with them."
+authors = ["Lars Tray"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "../target/site"
+create-missing = false
+
+[output.html]
+site-url = "/ferrokit/"
+git-repository-url = "https://github.com/lhassa8/ferrokit"
+edit-url-template = "https://github.com/lhassa8/ferrokit/edit/main/site/src/{path}"
+default-theme = "light"
+preferred-dark-theme = "navy"
+no-section-label = true
+
+[output.html.playground]
+runnable = false
+copyable = true
+
+[output.html.search]
+enable = true
