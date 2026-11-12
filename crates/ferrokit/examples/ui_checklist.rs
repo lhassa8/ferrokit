@@ -1246,7 +1246,7 @@ fn post_key(w: &objc2_app_kit::NSWindow, chars: &str, flags: NSEventModifierFlag
     }
     // US-layout key codes, for input methods that look at them.
     let code = match chars.to_lowercase().as_str() {
-        "a" => 0, "s" => 1, "h" => 4, "c" => 8, "b" => 11, "e" => 14, "r" => 15, "i" => 34, "," => 43, "n" => 45, _ => 6,
+        "a" => 0, "s" => 1, "h" => 4, "c" => 8, "b" => 11, "e" => 14, "r" => 15, "i" => 34, "," => 43, "n" => 45, "\u{1b}" => 53, _ => 6,
     };
     for t in [NSEventType::KeyDown, NSEventType::KeyUp] {
         let e = NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
@@ -5201,10 +5201,18 @@ fn completion_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let opened = model.clone();
     until(move || !opened.offered_completions().is_empty(), 3000, move || {
         let first = m.offered_completions();
-        let tv = m.text_view();
-        unsafe { tv.insertText_replacementRange(&NSString::from_str("r"), objc2_foundation::NSRange::new(usize::MAX >> 1, 0)) };
+        // The list may still be up, running its own event loop (on an idle
+        // Mac nothing else ends it): close it as the user would, with an
+        // Escape it reads, before typing on opens the next one.
+        let was_open = completion_list_open();
+        if was_open {
+            post_key(&w2, "\u{1b}", NSEventModifierFlags::empty());
+        }
         let (m, w2, first) = (m.clone(), w2.clone(), first.clone());
         let events = events.clone();
+        until(|| !completion_list_open(), 3000, move || {
+        let tv = m.text_view();
+        unsafe { tv.insertText_replacementRange(&NSString::from_str("r"), objc2_foundation::NSRange::new(usize::MAX >> 1, 0)) };
         let (narrowed, before) = (m.clone(), first.clone());
         until(move || narrowed.offered_completions() != before, 3000, move || {
             let filtered = m.offered_completions();
@@ -5234,7 +5242,14 @@ fn completion_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                 outline_expanded_checks(events.clone());
             });
         });
+        });
     });
+}
+
+/// Whether this code runs inside AppKit's completion list: the list runs
+/// its own event loop, in the event-tracking mode, while it's up.
+fn completion_list_open() -> bool {
+    objc2_foundation::NSRunLoop::currentRunLoop().currentMode().is_some_and(|m| m.to_string() == "NSEventTrackingRunLoopMode")
 }
 
 /// A `dynamic` inside a hidden view, rebuilt while hidden: its new views
