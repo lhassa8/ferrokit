@@ -8,6 +8,7 @@
 # to docs.rs's copy of the guide are pointed at the site's pages), the
 # screenshots from assets/, and llms.txt, llms-full.txt and sitemap.xml are
 # written from the crate's own AGENTS.md and API.md, so none of it drifts.
+# Files in site/static are copied to the site's root unchanged.
 set -euo pipefail
 root=${0:A:h:h}
 cd "$root"
@@ -68,6 +69,8 @@ echo "site: writing llms.txt, llms-full.txt, sitemap.xml"
   print -r -- "- [Source and example apps](https://github.com/lhassa8/ferrokit)"
 } > $out/llms.txt
 cp crates/ferrokit/AGENTS.md crates/ferrokit/API.md $out/
+# Files served as they are at the site's root (Search Console's verification file).
+for f in site/static/*(N); do cp $f $out/; done
 { cat crates/ferrokit/AGENTS.md; print; print -r -- "---"; print; cat crates/ferrokit/API.md } > $out/llms-full.txt
 {
   print -r -- '<?xml version="1.0" encoding="UTF-8"?>'
