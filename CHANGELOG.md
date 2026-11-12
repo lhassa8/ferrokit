@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Fixed: work queued in the keystroke that opened the completion list waited until the list closed.** The list (`TextModel::set_completer`) was opened from a run-loop block, and AppKit runs the list's own event loop inside it, so `later` work and effects queued in the same turn waited for the list to close; on an idle Mac nothing closed it (found by CI). The list now opens from a timer, once for the keys typed in one turn, and that work runs while the list is open (check `text-completion`).
+
 ## 0.7.0 (2026-11-11): reviewed, and ready for AI coding agents
 
 - **Added: `cargo ferrokit preview`**: runs the app, then rebuilds and restarts it every time a file in the package is saved. Under it (`FERROKIT_PREVIEW=1`) every window keeps its place and size across restarts, by its title, and the app comes to the front without taking the focus from the editor; a build that fails leaves the running app as it was. `testing::set_preview_mode` for checks (`preview-keeps-window-frames`, `preview-restarts`).

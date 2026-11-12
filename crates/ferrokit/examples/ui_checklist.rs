@@ -5196,14 +5196,17 @@ fn completion_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let typed = |t: &str| unsafe { tv.insertText_replacementRange(&NSString::from_str(t), objc2_foundation::NSRange::new(usize::MAX >> 1, 0)) };
     typed("s");
     typed("e");
+    // The list opens in its own time (from a timer): wait for its words.
     let (m, w2) = (model.clone(), w.clone());
-    after_events(move || {
+    let opened = model.clone();
+    until(move || !opened.offered_completions().is_empty(), 3000, move || {
         let first = m.offered_completions();
         let tv = m.text_view();
         unsafe { tv.insertText_replacementRange(&NSString::from_str("r"), objc2_foundation::NSRange::new(usize::MAX >> 1, 0)) };
         let (m, w2, first) = (m.clone(), w2.clone(), first.clone());
         let events = events.clone();
-        after_events(move || {
+        let (narrowed, before) = (m.clone(), first.clone());
+        until(move || narrowed.offered_completions() != before, 3000, move || {
             let filtered = m.offered_completions();
             let tv = m.text_view();
             // Escape: the list goes, the text stays as typed.

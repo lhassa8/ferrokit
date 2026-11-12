@@ -132,6 +132,19 @@ define_class!(
             })
         }
 
+        // complete_soon's timer: opens the completion list if there's
+        // still something to offer.
+        #[unsafe(method(ferrokitCompleteNow:))]
+        fn complete_now(&self, _sender: Option<&AnyObject>) {
+            crate::boundary::guarded("a text view (complete_now)", (), || {
+                if self.hasMarkedText() || self.data().is_none_or(|d| d.complete().is_none_or(|(_, items)| items.is_empty())) {
+                    return;
+                }
+                // SAFETY: AppKit's completion, on the main thread.
+                objc2::rc::autoreleasepool(|_| unsafe { self.complete(None) });
+            })
+        }
+
         // The completer's partial word (after a dot, it may be empty).
         #[unsafe(method(rangeForUserCompletion))]
         fn range_for_user_completion(&self) -> NSRange {
@@ -174,21 +187,19 @@ impl HostTextView {
     }
 
     /// Opens the completion list after this event (when there's something
-    /// to offer), as AppKit's own complete: does.
+    /// to offer), as AppKit's own complete: does: from a timer, once for
+    /// the keys typed in one turn. Not from a run-loop block: the list runs
+    /// its own event loop until an event ends it, and blocks queued in the
+    /// same pass as that block (`later` work, the app's effects) would wait
+    /// until then; on an idle Mac, forever.
     fn complete_soon(&self) {
-        let view = objc2::rc::Weak::from(self);
-        let block = block2::RcBlock::new(move || {
-            let Some(v) = view.load() else { return };
-            if v.hasMarkedText() || v.data().is_none_or(|d| d.complete().is_none_or(|(_, items)| items.is_empty())) {
-                return;
-            }
-            // SAFETY: AppKit's completion, on the main thread.
-            objc2::rc::autoreleasepool(|_| unsafe { v.complete(None) });
-        });
-        let main = objc2_core_foundation::CFRunLoop::main().expect("main run loop");
-        // SAFETY: the main run loop; the block touches main-thread state only.
-        unsafe { main.perform_block(objc2_core_foundation::kCFRunLoopDefaultMode.map(|m| m.as_ref()), Some(&block)) };
-        main.wake_up();
+        let sel = objc2::sel!(ferrokitCompleteNow:);
+        // SAFETY: NSObject's perform requests, on the main thread; the
+        // timer keeps the view alive until it fires.
+        unsafe {
+            let () = msg_send![objc2::class!(NSObject), cancelPreviousPerformRequestsWithTarget: self, selector: sel, object: Option::<&AnyObject>::None];
+            let () = msg_send![self, performSelector: sel, withObject: Option::<&AnyObject>::None, afterDelay: 0.0f64];
+        }
     }
 
     /// Emits `Composition` when marked text appears, changes or goes away.

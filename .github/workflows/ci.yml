@@ -7,6 +7,9 @@ name: CI
 on:
   push:
   pull_request:
+  # Run it again by hand (Actions › CI › Run workflow), for a check that
+  # failed for a reason outside the code.
+  workflow_dispatch:
 
 jobs:
   check:
