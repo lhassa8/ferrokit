@@ -73,6 +73,7 @@ Settings, in the app's Cargo.toml:
     min-macos = \"15.0\"
     category = \"public.app-category.productivity\"
     languages = [\"de\", \"fr\"]     # its translations (see ferrokit's App::translations)
+    url-schemes = [\"myapp\"]      # opens myapp://… links (see ferrokit's App::on_open_url)
     sign = \"Developer ID Application: …\"
     notary-profile = \"…\"       # xcrun notarytool store-credentials …
     sandbox = true              # the App Sandbox (needed for the Mac App Store):
@@ -276,6 +277,8 @@ struct Project {
     documents: Vec<DocType>,
     /// Languages the app speaks besides English (its translations).
     languages: Vec<String>,
+    /// URL schemes the app opens (`myapp` for `myapp://…` links).
+    url_schemes: Vec<String>,
     sign: Option<String>,
     notary_profile: Option<String>,
     /// Signed for the App Sandbox (`sandbox = true`), and with outgoing
@@ -340,7 +343,7 @@ fn check_settings(m: &serde_json::Value) -> Result<()> {
     let Some(table) = m.as_object() else { return Ok(()) };
     const TEXT: [&str; 10] = ["name", "id", "icon", "min-macos", "category", "sign", "notary-profile", "app-store-sign", "installer-sign", "provisioning-profile"];
     const BOOL: [&str; 2] = ["sandbox", "network"];
-    const OTHER: [&str; 5] = ["documents", "languages", "updates", "entitlements", "plist"];
+    const OTHER: [&str; 6] = ["documents", "languages", "url-schemes", "updates", "entitlements", "plist"];
     let unknown = |section: &str, key: &str, known: &[&str]| format!("[package.metadata.ferrokit{section}] has no setting `{key}` (it has: {})", known.join(", "));
     for (key, value) in table {
         if TEXT.contains(&key.as_str()) {
@@ -354,6 +357,16 @@ fn check_settings(m: &serde_json::Value) -> Result<()> {
         } else if !OTHER.contains(&key.as_str()) {
             let known: Vec<&str> = TEXT.iter().chain(&BOOL).chain(&OTHER).copied().collect();
             return Err(unknown("", key, &known));
+        }
+    }
+    if let Some(schemes) = table.get("url-schemes") {
+        let Some(list) = schemes.as_array().filter(|l| l.iter().all(serde_json::Value::is_string)) else {
+            return Err("[package.metadata.ferrokit] `url-schemes` must be a list of names in quotes, such as [\"myapp\"]".into());
+        };
+        // RFC 3986: a letter, then letters, digits, `+`, `-` and `.`.
+        let valid = |s: &str| s.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) && s.chars().all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c));
+        if let Some(bad) = list.iter().filter_map(serde_json::Value::as_str).find(|s| !valid(s) || s.contains("://")) {
+            return Err(format!("[package.metadata.ferrokit] `url-schemes`: \"{bad}\" isn't a URL scheme (a letter, then letters, digits, +, - or .; without \"://\")"));
         }
     }
     for d in m["documents"].as_array().into_iter().flatten() {
@@ -468,8 +481,10 @@ impl Project {
             .collect();
         let updates = Updates::from_metadata(&m["updates"], &dir)?;
         let languages = m["languages"].as_array().into_iter().flatten().filter_map(|l| l.as_str().map(String::from)).filter(|l| l != "en").collect();
+        let url_schemes = m["url-schemes"].as_array().into_iter().flatten().filter_map(|l| l.as_str().map(str::to_ascii_lowercase)).collect();
         Ok(Project {
             languages,
+            url_schemes,
             version: package["version"].as_str().unwrap_or("0.1.0").to_string(),
             target_dir: PathBuf::from(meta["target_directory"].as_str().unwrap_or("target")),
             display: text("name").unwrap_or_else(|| bin.clone()),
@@ -842,6 +857,15 @@ fn info_plist(p: &Project, icon: bool, build: Option<&str>, sparkle: bool) -> St
         // menu items) in the user's language when it has it.
         let langs: String = std::iter::once("en").chain(p.languages.iter().map(String::as_str)).map(|l| format!("<string>{}</string>", xml(l))).collect();
         s += &format!("  <key>CFBundleLocalizations</key><array>{langs}</array>\n");
+    }
+    if !p.url_schemes.is_empty() {
+        // Its URL schemes: macOS opens `scheme://…` links with the app
+        // (ferrokit's App::on_open_url gets them).
+        let schemes: String = p.url_schemes.iter().map(|s| format!("<string>{}</string>", xml(s))).collect();
+        s += &format!(
+            "  <key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>{}</string><key>CFBundleURLSchemes</key><array>{schemes}</array></dict></array>\n",
+            xml(&p.id)
+        );
     }
     if !p.documents.is_empty() {
         // Editor role, Alternate rank: offered for these files, never made
@@ -1429,9 +1453,10 @@ mod tests {
         assert_eq!(Extra::table(&ok, "plist").unwrap().len(), 3);
         assert!(Extra::table(&ok, "entitlements").unwrap().is_empty());
         // A quoted true, another spelling, a key in the wrong table.
-        for wrong in [serde_json::json!({ "sandbox": "true" }), serde_json::json!({ "Sandbox": true }), serde_json::json!({ "min_macos": "15.0" }), serde_json::json!({ "documents": [{ "name": "Text", "sandbox": true }] }), serde_json::json!({ "updates": { "feed": "https://x", "public-key": "k", "sandbox": true } })] {
+        for wrong in [serde_json::json!({ "sandbox": "true" }), serde_json::json!({ "Sandbox": true }), serde_json::json!({ "min_macos": "15.0" }), serde_json::json!({ "documents": [{ "name": "Text", "sandbox": true }] }), serde_json::json!({ "updates": { "feed": "https://x", "public-key": "k", "sandbox": true } }), serde_json::json!({ "url-schemes": "myapp" }), serde_json::json!({ "url-schemes": ["myapp://"] }), serde_json::json!({ "url-schemes": ["1app"] }), serde_json::json!({ "url-schemes": ["my app"] })] {
             assert!(check_settings(&wrong).is_err(), "{wrong}");
         }
+        assert!(check_settings(&serde_json::json!({ "url-schemes": ["myapp", "x-my.app+2"] })).is_ok());
         assert!(Extra::table(&serde_json::json!({ "plist": { "a": 3 } }), "plist").is_err());
         assert!(Args::parse(&s(&["--sign", "--zip"]), &["--sign"], &["--zip"]).is_err(), "an option isn't a value");
         assert!(Args::parse(&s(&["--sign", "-"]), &["--sign"], &[]).is_ok(), "ad hoc is");
@@ -1452,6 +1477,7 @@ mod tests {
             category: None,
             documents: vec![DocType { name: "Text".into(), extensions: vec!["txt".into(), "md".into()], related: vec![], role: "Editor".into() }],
             languages: vec!["de".into()],
+            url_schemes: vec![],
             sign: None,
             notary_profile: None,
             sandbox: false,
@@ -1471,12 +1497,16 @@ mod tests {
         assert!(plist.contains("<key>CFBundleIconFile</key><string>AppIcon</string>"));
         assert!(plist.contains("<key>CFBundleLocalizations</key><array><string>en</string><string>de</string></array>"));
         assert!(!plist.contains("NSIsRelatedItemType"), "no related files declared");
+        assert!(!plist.contains("CFBundleURLTypes"), "no URL schemes declared");
         // The app's own keys, by type.
         assert!(plist.contains("<key>ITSAppUsesNonExemptEncryption</key>\n    <false/>"), "{plist}");
         assert!(plist.contains("<key>NSHumanReadableCopyright</key>\n    <string>© 2026 A &amp; B</string>"));
         assert_eq!(Extra::xml("com.apple.security.print", &p.entitlements[0].1), "    <key>com.apple.security.print</key>\n    <true/>\n");
-        // Related files: their extensions, declared as related items.
+        // URL schemes, under the app's identifier.
         let mut p = p;
+        p.url_schemes = vec!["notes".into(), "notes-beta".into()];
+        assert!(info_plist(&p, true, None, false).contains("<key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>com.example.notes</string><key>CFBundleURLSchemes</key><array><string>notes</string><string>notes-beta</string></array></dict></array>"));
+        // Related files: their extensions, declared as related items.
         p.documents = vec![
             DocType { name: "Database".into(), extensions: vec!["sqlite".into(), "db".into()], related: vec!["-wal".into(), "-journal".into()], role: "Editor".into() },
             DocType { name: "Data File".into(), extensions: vec!["csv".into()], related: vec![], role: "Viewer".into() },

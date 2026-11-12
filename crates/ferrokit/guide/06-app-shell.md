@@ -184,6 +184,43 @@ extensions = ["txt", "md"]
 
 The `notes` example is a complete text editor built this way.
 
+## Links into the app: URL schemes
+
+An app can have its own kind of link, `myapp://…`, that opens it from a
+web page, an email, another app or `open` in Terminal (sign-in callbacks,
+"open this item" links). Declare the scheme in `Cargo.toml`, and `cargo
+ferrokit bundle` registers it with macOS:
+
+```toml
+[package.metadata.ferrokit]
+url-schemes = ["notes"]
+```
+
+`App::on_open_url` gets each link, whether it launched the app or came
+while it ran, after the windows are up:
+
+```rust,no_run
+use ferrokit::*;
+
+let shown = Signal::new(String::new());
+App::new("Notes")
+    .on_open_url(move |url| {
+        // notes://open/42 opens note 42.
+        if let Some(id) = url.strip_prefix("notes://open/") {
+            shown.set(id.to_string());
+        }
+    })
+    .window(Window::new("Notes").view(text(move || shown.get())))
+    .run();
+```
+
+macOS only sends links to a bundled app (`cargo ferrokit run`), not to a
+bare `cargo run`. The link arrives as macOS gives it, percent-encoded
+(`notes://open/my%20note`); decode it with a crate such as `url` if you
+need to. Anyone can send your app a link, so treat it like any other
+untrusted input: check it before acting on it, and ask before anything
+destructive.
+
 ## Toolbar and split view
 
 ```rust,no_run

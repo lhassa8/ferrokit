@@ -1050,6 +1050,7 @@ pub struct App {
     menu_bar_only: bool,
     welcome: Option<Rc<dyn Fn() -> Window>>,
     dock_menu: Option<Rc<dyn Fn() -> Vec<MenuItem>>>,
+    open_url: Option<documents::OpenUrl>,
     crash_reports: Option<Box<dyn Fn(CrashReport)>>,
     about: Option<(String, Option<(String, String)>)>,
 }
@@ -1058,7 +1059,7 @@ impl App {
     /// An app called `name` (shown in the menu bar).
     pub fn new(name: &str) -> Self {
         failure::install();
-        App { name: name.into(), windows: Vec::new(), on_launch: None, menus: Vec::new(), settings: None, documents: None, extras: Vec::new(), menu_bar_only: false, welcome: None, dock_menu: None, crash_reports: None, about: None }
+        App { name: name.into(), windows: Vec::new(), on_launch: None, menus: Vec::new(), settings: None, documents: None, extras: Vec::new(), menu_bar_only: false, welcome: None, dock_menu: None, open_url: None, crash_reports: None, about: None }
     }
 
     /// Opens `window` at launch. Call more than once for several windows.
@@ -1143,6 +1144,39 @@ impl App {
     /// runs each time the menu opens, so it can read the app's state.
     pub fn dock_menu(mut self, items: impl Fn() -> Vec<MenuItem> + 'static) -> Self {
         self.dock_menu = Some(Rc::new(items));
+        self
+    }
+
+    /// Links in the app's own URL schemes: `f` gets each one opened while
+    /// the app runs or that launched it (`myapp://open?id=3`, from a web
+    /// page, another app or `open` in Terminal), after its windows are up.
+    /// Declare the schemes in `Cargo.toml` and `cargo ferrokit` registers
+    /// them with macOS when it bundles the app:
+    ///
+    /// ```toml
+    /// [package.metadata.ferrokit]
+    /// url-schemes = ["myapp"]
+    /// ```
+    ///
+    /// macOS only sends links to a bundled app (`cargo ferrokit run`), not
+    /// to a bare `cargo run`. The link comes as macOS gives it, scheme
+    /// first and percent-encoded; anyone can send one, so read it as
+    /// untrusted input.
+    ///
+    /// ```no_run
+    /// use ferrokit::*;
+    /// let shown = Signal::new(String::new());
+    /// App::new("Notes")
+    ///     .on_open_url(move |url| {
+    ///         if let Some(id) = url.strip_prefix("notes://open/") {
+    ///             shown.set(id.to_string());
+    ///         }
+    ///     })
+    ///     .window(Window::new("Notes").view(text(move || shown.get())))
+    ///     .run();
+    /// ```
+    pub fn on_open_url(mut self, f: impl Fn(&str) + 'static) -> Self {
+        self.open_url = Some(Rc::new(f));
         self
     }
 
@@ -1257,6 +1291,10 @@ impl App {
         }
         if let Some(items) = self.dock_menu {
             documents::DOCK_MENU.with_borrow_mut(|d| *d = Some(items));
+            documents::install_delegate();
+        }
+        if let Some(f) = self.open_url {
+            documents::OPEN_URL.with_borrow_mut(|o| *o = Some(f));
             documents::install_delegate();
         }
         after_batch(|| {

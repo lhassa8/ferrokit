@@ -927,15 +927,24 @@ define_class!(
 
     unsafe impl NSApplicationDelegate for AppDelegate {
         // Files opened from the Finder (double-click, drop on the Dock icon,
-        // `open file.txt`), at launch or later.
+        // `open file.txt`), and links in the app's URL schemes
+        // (App::on_open_url), at launch or later.
         #[unsafe(method(application:openURLs:))]
         fn open_urls(&self, _app: &NSApplication, urls: &objc2_foundation::NSArray<NSURL>) {
             crate::failure::guard("the app delegate (open_urls)", (), || {
-                let paths: Vec<PathBuf> = urls.iter().filter_map(|u| u.path()).map(|p| PathBuf::from(p.to_string())).collect();
+                let (files, links): (Vec<_>, Vec<_>) = urls.iter().partition(|u| u.isFileURL());
+                let paths: Vec<PathBuf> = files.iter().filter_map(|u| u.path()).map(|p| PathBuf::from(p.to_string())).collect();
+                let links: Vec<String> = links.iter().filter_map(|u| u.absoluteString()).map(|s| s.to_string()).collect();
                 // After launch work is done (the run loop is up).
                 crate::later(move || {
                     for p in &paths {
                         open_reporting(p);
+                    }
+                    if !links.is_empty() {
+                        match OPEN_URL.with_borrow(Clone::clone) {
+                            Some(f) => links.iter().for_each(|l| f(l)),
+                            None => eprintln!("ferrokit: {} opened, but the app has no App::on_open_url", links.join(", ")),
+                        }
                     }
                 });
             })
@@ -973,7 +982,12 @@ define_class!(
 /// Builds the Dock menu's items when it opens.
 pub(crate) type DockItems = Rc<dyn Fn() -> Vec<crate::MenuItem>>;
 
+/// What the app does with a link in one of its URL schemes.
+pub(crate) type OpenUrl = Rc<dyn Fn(&str)>;
+
 thread_local! {
+    /// [`App::on_open_url`](crate::App::on_open_url)'s handler.
+    pub(crate) static OPEN_URL: UiCell<Option<OpenUrl>> = const { UiCell::new(None) };
     /// The Dock menu's items ([`App::dock_menu`](crate::App::dock_menu)).
     pub(crate) static DOCK_MENU: UiCell<Option<DockItems>> = const { UiCell::new(None) };
     /// The last Dock menu's action targets, alive while it can be used.
