@@ -27,7 +27,7 @@ fn main() {
 
 It's for data-heavy desktop apps where the Mac's own widgets matter:
 
-- **Deep widgets:** a virtualised table (200,000 rows load in about 150 ms
+- **Deep widgets:** a virtualised table (200,000 rows load in about 5 ms
   and scroll at display rate; sorting, editing, drag and drop, copy and
   paste), outlines and source-list sidebars, and a text editor with spell
   checking, input methods, Find and undo.

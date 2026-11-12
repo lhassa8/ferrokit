@@ -73,7 +73,7 @@ let model = Rc::new(TableModel::new(ViewId(1), vec![
     Column::number("total", "Total", |o: &Order| o.total),
     Column::check("paid", "Paid", |o: &Order| o.paid),
 ]));
-model.set_rows(orders); // 200,000 rows load in about 150 ms
+model.set_rows(orders); // 200,000 rows load in about 5 ms
 let view = table(&model).on_activate(|row| println!("opened row {row}"));
 ```
 
@@ -128,7 +128,7 @@ If Claude Code, Cursor or Codex writes most of your code, it can learn Ferrokit 
 
 - **`AGENTS.md`:** where the docs are, how a Ferrokit app is written, recipes that compile, and the known limits with their workarounds. `cargo ferrokit new` puts it in every new app, and `cargo ferrokit agents` in an existing one.
 - **`API.md`:** every public item on one page, in the crate beside `AGENTS.md`. The guide is [on docs.rs](https://docs.rs/ferrokit/latest/ferrokit/guide/).
-- **Tested on agents:** fresh AI agents given only the published 0.6 docs each built a working app (an expense tracker and a Markdown editor) with one compile error between them. What tripped them up is fixed in 0.7.
+- **Tested with agents:** fresh AI agents given only the published 0.6 docs each built a working app (an expense tracker and a Markdown editor) with one compile error between them. What tripped them up is fixed in 0.7.
 
 ## Is it for me?
 
