@@ -2907,7 +2907,27 @@ fn tabs_and_dock_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let items: Vec<String> = menu.map(|m| m.itemArray().iter().map(|i| i.title().to_string()).collect()).unwrap_or_default();
     let fresh = items.get(1).is_some_and(|t| t.ends_with("windows open"));
     check("dock-menu", items.first().map(String::as_str) == Some("New Checklist Window") && fresh, format!("{items:?}"));
-    after_events(move || toolbar_kind_checks(events.clone()));
+
+    // Links in the app's URL schemes reach App::on_open_url, by the
+    // delegate method macOS calls (scripts/check-ferrokit.sh sends a real
+    // one to a bundled app); several at once, in order, as macOS gives them.
+    let links = ["checklist://open/item%203?from=check", "checklist:settings"];
+    let urls: Vec<Retained<objc2_foundation::NSURL>> = links.iter().filter_map(|l| objc2_foundation::NSURL::URLWithString(&NSString::from_str(l))).collect();
+    let urls = objc2_foundation::NSArray::from_retained_slice(&urls);
+    if let Some(d) = app.delegate() {
+        // SAFETY: Ferrokit's app delegate answers application:openURLs:.
+        let () = unsafe { objc2::msg_send![&*d, application: &*app, openURLs: &*urls] };
+    }
+    after_events(move || {
+        let got = OPENED_URLS.with_borrow(Clone::clone);
+        check("open-url", got == links, format!("sent {links:?}, App::on_open_url got {got:?}"));
+        toolbar_kind_checks(events.clone());
+    });
+}
+
+thread_local! {
+    /// The links App::on_open_url got (check `open-url`).
+    static OPENED_URLS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
 /// C7: toolbar groups, a picker, and a customisable toolbar whose layout is
@@ -6656,6 +6676,8 @@ fn main() {
         .menu("Edit", vec![ferrokit::menu_item("Checklist Edit", || {})])
         // C5: the Dock icon's menu, read when it opens.
         .dock_menu(|| vec![ferrokit::menu_item("New Checklist Window", || {}), ferrokit::menu_item(format!("{} windows open", ferrokit::windows().len()), || {})])
+        // Links in the app's URL schemes.
+        .on_open_url(|url| OPENED_URLS.with_borrow_mut(|u| u.push(url.to_string())))
         .window(Window::new("First").size(480.0, 200.0).content(|| field("hello world")))
         .window(Window::new("Second").size(360.0, 160.0))
         .window(Window::new("Views").size(320.0, 420.0).view(views_window()))

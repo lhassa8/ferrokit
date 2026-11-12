@@ -39,6 +39,7 @@ icon = "icon.png"          # square PNG (1024 px) or .icns
 min-macos = "15.0"
 category = "public.app-category.productivity"
 languages = ["de", "fr"]   # its translations, besides English
+url-schemes = ["myapp"]    # opens myapp://… links (ferrokit's App::on_open_url)
 sign = "Developer ID Application: Your Name (TEAMID)"
 notary-profile = "my-profile"   # xcrun notarytool store-credentials my-profile …
 sandbox = true                  # sign for the App Sandbox (files the user chooses, bookmarks)

@@ -245,5 +245,42 @@ else
   tail -20 "$dir/e2e-fails.log"
   failed=$((failed + 1))
 fi
+# A link in the app's own URL scheme, through macOS: the bundled app
+# (url-schemes in its Cargo.toml) opens one, and macOS hands it back to
+# the running app's App::on_open_url. A copy macOS starts instead also
+# exits after the link, so none is left running.
+cargo ferrokit new e2e-url --ferrokit-path "$root/crates/ferrokit" >/dev/null
+printf 'url-schemes = ["ferrokit-e2e-check"]\n' >>e2e-url/Cargo.toml
+cat >e2e-url/src/main.rs <<'RS'
+use ferrokit::*;
+
+const LINK: &str = "ferrokit-e2e-check://open/item%203?from=check";
+
+fn main() {
+    App::new("Url Test")
+        .window(Window::new("Url Test").view(text("Waiting for a link")))
+        .on_open_url(|url| {
+            let ok = url == LINK;
+            eprintln!("[check] open-url {} the app got {url:?} from macOS", if ok { "PASS" } else { "FAIL" });
+            eprintln!("[check] done, {} failed", u8::from(!ok));
+            std::process::exit(i32::from(!ok));
+        })
+        .on_launch(|| {
+            if std::env::var("CHECK").is_ok_and(|v| v == "all") && !open_url(LINK) {
+                eprintln!("[check] open-url FAIL macOS has no app for the scheme");
+                std::process::exit(1);
+            }
+        })
+        .run();
+}
+RS
+if (cd e2e-url && cargo ferrokit check --no-lint --timeout 120) >"$dir/e2e-url.log" 2>&1 &&
+  plutil -extract CFBundleURLTypes.0.CFBundleURLSchemes.0 raw "$CARGO_TARGET_DIR/debug/bundle/E2e Url.app/Contents/Info.plist" 2>/dev/null | grep -qx ferrokit-e2e-check; then
+  echo "[check] url-scheme PASS declared in Info.plist; $(sed -n 's/^ *\[check\] open-url PASS //p' "$dir/e2e-url.log")"
+else
+  echo "[check] url-scheme FAIL"
+  tail -20 "$dir/e2e-url.log"
+  failed=$((failed + 1))
+fi
 echo "[check] done, $failed failed"
 [ "$failed" -eq 0 ]

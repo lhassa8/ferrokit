@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Added: URL schemes.** An app declares its own links in `Cargo.toml` (`url-schemes = ["myapp"]`), `cargo ferrokit bundle` registers them with macOS (`CFBundleURLTypes`), and `App::on_open_url(|url| …)` gets each `myapp://…` link, whether it launched the app or came while it ran. A misspelt scheme (`"myapp://"`, a space) stops the build with what's wrong. Guide chapter 6, "Links into the app" (checks `open-url`, and `url-scheme` in `cargo ferrokit`'s suite, which sends a real link through macOS to a bundled app). Issue #1.
 - **Fixed: work queued in the keystroke that opened the completion list waited until the list closed.** The list (`TextModel::set_completer`) was opened from a run-loop block, and AppKit runs the list's own event loop inside it, so `later` work and effects queued in the same turn waited for the list to close; on an idle Mac nothing closed it (found by CI). The list now opens from a timer, once for the keys typed in one turn, and that work runs while the list is open (check `text-completion`).
 
 ## 0.7.0 (2026-11-11): reviewed, and ready for AI coding agents
