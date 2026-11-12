@@ -8,6 +8,8 @@ Ferrokit is a native macOS GUI framework for Rust: every view is a real AppKit c
 
 It builds your UI from the real thing: an actual `NSTableView`, `NSTextView`, `NSSplitView` and `NSPopover`. It isn't a web view, and it isn't a GPU renderer doing an impression of AppKit. So the details Mac users notice are right because they're Apple's own: scrolling, keyboard navigation, spell check, Dark Mode, VoiceOver.
 
+Rowboat, a SQLite editor for the Mac, is built with Ferrokit and is waiting for review in the Mac App Store.
+
 ![The SQL browser example: a schema sidebar, a highlighted query, its results table, a bar chart of them and an inspector](assets/sql-browser.png)
 
 https://github.com/user-attachments/assets/47f03091-6c3d-4e5b-a77d-bddb544e64e1
@@ -122,7 +124,11 @@ cargo ferrokit new my-app && cd my-app && cargo ferrokit run
 
 ## Bring your AI assistant
 
-If Claude Code, Cursor or Codex writes most of your code, it can learn Ferrokit from what ships with it. `cargo ferrokit new` puts an `AGENTS.md` in every new app, `cargo ferrokit agents` in an existing one, and the same text is in the crate beside `API.md`: where the docs are, how a Ferrokit app is written, recipes that compile, and the known limits with their workarounds. The crate carries `API.md`, every public item on one page, and the guide is [on docs.rs](https://docs.rs/ferrokit/latest/ferrokit/guide/). To test this, fresh AI agents were given the published 0.6 docs and nothing else, and each built a working app: an expense tracker and a Markdown editor, with one compile error between them. What tripped them up is fixed in 0.7.
+If Claude Code, Cursor or Codex writes most of your code, it can learn Ferrokit from what ships with it:
+
+- **`AGENTS.md`:** where the docs are, how a Ferrokit app is written, recipes that compile, and the known limits with their workarounds. `cargo ferrokit new` puts it in every new app, and `cargo ferrokit agents` in an existing one.
+- **`API.md`:** every public item on one page, in the crate beside `AGENTS.md`. The guide is [on docs.rs](https://docs.rs/ferrokit/latest/ferrokit/guide/).
+- **Tested on agents:** fresh AI agents given only the published 0.6 docs each built a working app (an expense tracker and a Markdown editor) with one compile error between them. What tripped them up is fixed in 0.7.
 
 ## Is it for me?
 
@@ -159,7 +165,7 @@ The crates share one version number and are released together, so use matching v
 
 ## Stability
 
-Ferrokit is an alpha and has no users yet. Until then, it promises the following.
+Ferrokit is an alpha. It promises the following.
 
 - **Versions:** while it's 0.x, a minor release (0.4 → 0.5) may change the API; a patch release (0.4.0 → 0.4.1) never does. Every change that breaks code is listed in the CHANGELOG with what to write instead, and a renamed item keeps working, deprecated, for one minor release where it can.
 - **One version:** the crates are released together under one version; `ferrokit` pins `ferrokit-core` exactly.
