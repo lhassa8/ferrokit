@@ -13,7 +13,7 @@ recipes and known limits on one page), then `API.md` beside it for every
 public item. `cargo ferrokit agents` writes `AGENTS.md` into an app.
 
 1. [Getting started](01-getting-started.md): an app, a window, a button.
-2. [State](02-state.md): signals, memos, effects, batching, background work.
+2. [State](02-state.md): signals, memos, effects, batching, background work, async tasks.
 3. [Views and layout](03-views-and-layout.md): stacks, grids, modifiers,
    lists and identity.
 4. [Controls and forms](04-controls-and-forms.md): fields, toggles,

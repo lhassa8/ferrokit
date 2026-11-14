@@ -124,6 +124,62 @@ spawn(
 
 `later(f)` runs `f` on the next pass of the main run loop.
 
+## Async tasks
+
+`spawn_local(future)` runs a future on the main thread. Between its
+`.await`s it can read and set signals as an action does. Each poll is a
+batch. Inside a task:
+
+- `background(|| …).await` runs blocking work on another thread (it's
+  `spawn` as a future);
+- `sleep(duration).await` pauses without blocking anything.
+
+```rust,no_run
+use ferrokit::*;
+use std::time::Duration;
+
+let status = Signal::new(String::new());
+let save = button("Save", move || {
+    spawn_local(async move {
+        status.set("Saving…".into());
+        let written = background(|| std::fs::write("/tmp/notes.txt", "…")).await;
+        status.set(match written {
+            Ok(()) => "Saved".into(),
+            Err(e) => format!("Couldn't save: {e}"),
+        });
+        sleep(Duration::from_secs(2)).await;
+        status.set(String::new());
+    });
+});
+# let _ = save;
+```
+
+- A task belongs to the owner current when it starts, as a signal does.
+  Closing its window, or removing its view, drops the future: the task stops
+  at the `.await` it's waiting at. `spawn_local` returns a `Task`:
+  `cancel()` stops it, `detach()` keeps it running after its owner goes.
+- Tasks keep running while a menu is open or a window is being resized.
+- A panic in a task, or in `background` work it awaits, is reported (see
+  `App::on_error`) and ends that task only.
+- Ferrokit has no I/O runtime. Libraries such as reqwest and sqlx need
+  their own runtime (tokio). Keep one in your app, spawn the I/O on it, and
+  await the join handle from the task:
+
+```rust,ignore
+let rt = tokio::runtime::Runtime::new()?; // kept for the app's lifetime
+let handle = rt.handle().clone();
+spawn_local(async move {
+    match handle.spawn(async move { reqwest::get(url).await?.text().await }).await {
+        Ok(Ok(body)) => page.set(body),
+        Ok(Err(e)) => error.set(Some(e.to_string())),
+        Err(e) => error.set(Some(e.to_string())), // the runtime task panicked
+    }
+});
+```
+
+Don't block inside a task: a poll runs on the main thread, and the UI waits
+for it.
+
 ## Loading data: `Resource`
 
 A resource loads a value on a background thread from the signals it reads,
