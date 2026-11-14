@@ -161,6 +161,7 @@ Use [`ferrokit`](crates/ferrokit), with [`cargo ferrokit`](crates/cargo-ferrokit
 | --- | --- |
 | [`ferrokit`](crates/ferrokit) | The framework: whole Mac apps where every view is a real AppKit view, updated in place by fine-grained signals. |
 | [`cargo-ferrokit`](crates/cargo-ferrokit) | `cargo ferrokit new`, `run`, `preview`, `check`, `agents`, `bundle`, `notarize` and `appcast`. |
+| [`ferrokit-build`](crates/ferrokit-build) | Compiles your app's Swift (and SwiftUI) code from `build.rs`, for views only SwiftUI has. |
 | [`ferrokit-core`](crates/ferrokit-core) | The AppKit layer under `ferrokit`. You don't need to depend on it yourself. |
 
 The crates share one version number and are released together, so use matching versions. The current version is **0.8.0**. It needs macOS 15 or later.

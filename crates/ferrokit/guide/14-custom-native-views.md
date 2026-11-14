@@ -200,4 +200,103 @@ map.
   `.keep(controller)`. It isn't added as a child of the window's controller.
 - **Ferrokit views inside a wrapped view.** A wrapped view is a leaf: its
   subviews are its own.
-- **SwiftUI.** `NSHostingView` needs Swift.
+- **SwiftUI** needs Swift: see the next section.
+
+## SwiftUI views
+
+Some of Apple's views exist only in SwiftUI: Swift Charts, `Gauge`'s
+styles, MapKit's SwiftUI `Map`, and many third-party packages. An
+`NSHostingView` is an `NSView`, so `native` wraps it. The SwiftUI view is
+written in Swift, and [`ferrokit-build`](https://docs.rs/ferrokit-build)
+compiles it into the app from `build.rs`:
+
+```toml
+# Cargo.toml
+[build-dependencies]
+ferrokit-build = "0.8"
+```
+
+```rust,ignore
+// build.rs
+fn main() {
+    ferrokit_build::swift("swift").compile();
+}
+```
+
+The Swift side makes the view and exports C functions: one that returns
+the hosting view, retained, and one per value the app sets:
+
+```swift
+// swift/Sales.swift
+import Charts
+import SwiftUI
+
+final class SalesModel: ObservableObject {
+    @Published var values: [Double] = []
+}
+
+struct SalesChart: View {
+    @ObservedObject var model: SalesModel
+    var body: some View {
+        Chart(Array(model.values.enumerated()), id: \.offset) {
+            BarMark(x: .value("Month", $0.offset), y: .value("Sales", $0.element))
+        }
+        .padding()
+    }
+}
+
+@MainActor @_cdecl("sales_chart_new")
+public func salesChartNew() -> UnsafeMutableRawPointer {
+    let view = NSHostingView(rootView: SalesChart(model: SalesModel()))
+    return Unmanaged.passRetained(view).toOpaque()
+}
+
+@MainActor @_cdecl("sales_chart_set")
+public func salesChartSet(_ view: UnsafeMutableRawPointer, _ values: UnsafePointer<Double>, _ count: Int) {
+    let host = Unmanaged<NSHostingView<SalesChart>>.fromOpaque(view).takeUnretainedValue()
+    host.rootView.model.values = Array(UnsafeBufferPointer(start: values, count: count))
+}
+```
+
+The Rust side wraps the hosting view and sets its values from a signal:
+
+```rust,ignore
+use std::ffi::c_void;
+
+unsafe extern "C" {
+    fn sales_chart_new() -> *mut c_void;
+    fn sales_chart_set(view: *mut c_void, values: *const f64, count: isize);
+}
+
+let sales = Signal::new(vec![12.0, 30.0, 22.0, 48.0]);
+let chart = native(|_| {
+    // SAFETY: a +1 NSHostingView, owned from here on.
+    unsafe { Retained::from_raw(sales_chart_new().cast::<NSView>()) }.expect("a view")
+})
+.update(move |view| {
+    let v: *mut c_void = (view as *const NSView).cast_mut().cast();
+    // SAFETY: the chart's own view; a buffer of `len` values.
+    sales.with(|s| unsafe { sales_chart_set(v, s.as_ptr(), s.len() as isize) })
+});
+```
+
+(These two blocks are `ignore`d here: they need the Swift file to link.)
+
+For values coming back, such as a SwiftUI slider, pass a C callback and a
+context pointer (a boxed signal, freed in `.on_remove`) to the Swift
+function. SwiftUI's view is released when the Ferrokit view leaves the tree.
+Its ideal size is the hosting view's `fittingSize`, which `native` already
+uses; by default it fills the room it gets, like a map.
+
+Things to know:
+
+- **Swift runtime:** it comes with macOS, so nothing is added to the app.
+  `swiftc` comes with the Command Line Tools.
+- **Accessibility:** SwiftUI builds its accessibility tree only when an
+  assistive app such as VoiceOver asks for it, through the system's
+  accessibility API. `testing::ax_audit` walks the tree inside the app, so
+  until something has asked that way, a hosting view looks like one
+  empty group.
+- **The glue is by hand for now.** A smaller bridge, with named SwiftUI
+  views and `.prop`, `.binding` and `.on`, is being designed in
+  [issue #7](https://github.com/lhassa8/ferrokit/issues/7).
