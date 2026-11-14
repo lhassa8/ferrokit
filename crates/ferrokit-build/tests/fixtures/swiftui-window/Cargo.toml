@@ -1,0 +1,17 @@
+[package]
+name = "swiftui-window"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# A Ferrokit window with SwiftUI inside, for check-all's `swiftui_window`
+# suite (its own target folder: target/ferrokit-build-fixtures).
+[workspace]
+
+[dependencies]
+ferrokit = { path = "../../../../ferrokit" }
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSView", "NSResponder"] }
+
+[build-dependencies]
+ferrokit-build = { path = "../../.." }

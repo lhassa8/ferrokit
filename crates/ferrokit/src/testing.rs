@@ -517,7 +517,10 @@ pub struct AxElement {
     pub label: String,
 }
 
-/// Every accessibility element under `window`'s content view, depth first.
+/// Every accessibility element under `window`'s content view, depth first,
+/// including those inside SwiftUI views (`NSHostingView`), which SwiftUI
+/// makes only once the system's accessibility API is asked: the walk asks
+/// it first, as VoiceOver does.
 pub fn ax_elements(window: &objc2_app_kit::NSWindow) -> Vec<AxElement> {
     use objc2::runtime::AnyObject;
     // Asked of the object, not its class: some elements (a table's or
@@ -589,9 +592,46 @@ pub fn ax_elements(window: &objc2_app_kit::NSWindow) -> Vec<AxElement> {
     }
     let mut out = Vec::new();
     if let Some(content) = window.contentView() {
+        wake_swiftui(&content);
         walk(&content, 0, "", "", &mut out);
     }
     out
+}
+
+#[link(name = "ApplicationServices", kind = "framework")]
+unsafe extern "C" {
+    fn AXUIElementCreateApplication(pid: i32) -> *const std::ffi::c_void;
+    fn AXUIElementCopyAttributeValue(element: *const std::ffi::c_void, attribute: *const std::ffi::c_void, value: *mut *const std::ffi::c_void) -> i32;
+    fn CFRelease(object: *const std::ffi::c_void);
+}
+
+/// SwiftUI makes a hosting view's accessibility elements only once an
+/// assistive app (VoiceOver) asks through the system accessibility API;
+/// until then a walk inside the app finds one empty group. When `view` holds
+/// a SwiftUI view, ask once that way, as VoiceOver would. Asking the app's
+/// own process needs no Accessibility permission.
+fn wake_swiftui(view: &objc2_app_kit::NSView) {
+    fn has_hosting(v: &objc2_app_kit::NSView) -> bool {
+        v.class().name().to_string_lossy().contains("HostingView") || v.subviews().iter().any(|s| has_hosting(&s))
+    }
+    if !has_hosting(view) {
+        return;
+    }
+    let windows = NSString::from_str("AXWindows");
+    // SAFETY: AX calls on this process's own application element; the
+    // NSString is toll-free bridged to the CFString the call takes; each
+    // object created or copied is released once.
+    unsafe {
+        let app = AXUIElementCreateApplication(std::process::id() as i32);
+        if app.is_null() {
+            return;
+        }
+        let mut value = std::ptr::null();
+        if AXUIElementCopyAttributeValue(app, (&*windows as *const NSString).cast(), &mut value) == 0 && !value.is_null() {
+            CFRelease(value);
+        }
+        CFRelease(app);
+    }
 }
 
 /// What VoiceOver users would miss in `window`: controls with no name to

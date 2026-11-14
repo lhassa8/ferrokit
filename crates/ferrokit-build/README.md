@@ -19,7 +19,7 @@ fn main() {
 - **Follows the build:** the target architecture (Apple silicon, Intel and universal builds), the Cargo profile's optimisation and debug info, and `MACOSX_DEPLOYMENT_TARGET` (15.0 by default).
 - **Options:** `.module(..)`, `.min_macos(..)`, `.swift_version("6")`, `.flag(..)`; `try_compile()` returns the error instead of stopping the build.
 - **Errors:** `swiftc`'s own errors show in the build output.
-- **Toolchain:** `swiftc` comes with the Command Line Tools (`xcode-select --install`). No Xcode project is needed.
+- **Toolchain:** `swiftc` comes with the Command Line Tools (`xcode-select --install`). SwiftUI's macros (`@State`, `@Entry`, `#Preview`, macros since the macOS 27 SDK) need Xcode, which has their plugin: when an Xcode is in `/Applications`, it's used for them, with a warning. `DEVELOPER_DIR` picks a toolchain yourself. No Xcode project is needed.
 
 To show a SwiftUI view in a Ferrokit window, return an `NSHostingView` from Swift and wrap it with `ferrokit::native`. Ferrokit's guide, [chapter 14](https://github.com/lhassa8/ferrokit/blob/main/crates/ferrokit/guide/14-custom-native-views.md#swiftui-views), has the recipe. A bridge that needs less glue is being designed in [issue #7](https://github.com/lhassa8/ferrokit/issues/7).
 

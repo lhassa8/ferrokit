@@ -20,7 +20,11 @@
 //! rest of Apple's frameworks come with macOS, so nothing is copied into the
 //! app; the frameworks the Swift code imports are linked automatically.
 //! `swiftc` comes with the Command Line Tools (`xcode-select --install`),
-//! which a Rust build on a Mac needs anyway; Xcode works too.
+//! which a Rust build on a Mac needs anyway. SwiftUI's macros (`@State`,
+//! `@Entry`, `#Preview`: macros since the macOS 27 SDK) need Xcode, whose
+//! plugin expands them: when the Command Line Tools are selected and an
+//! Xcode is in `/Applications`, it's used for the Swift (with a warning);
+//! `DEVELOPER_DIR` picks one yourself.
 //!
 //! On the Swift side, export functions with C names; on the Rust side,
 //! declare them in an `extern "C"` block:
@@ -55,6 +59,8 @@
 //! package's own binaries only.
 
 #![warn(missing_docs)]
+// The examples are build scripts, where `fn main` is the point.
+#![allow(clippy::needless_doctest_main)]
 
 use std::env;
 use std::fmt;
@@ -89,6 +95,9 @@ pub enum Error {
     NoToolchain(String),
     /// `swiftc` reported errors (they're above, in the build output).
     Compile,
+    /// The Swift uses SwiftUI's macros (`@State`, `@Entry`, `#Preview`),
+    /// which need Xcode: the Command Line Tools don't have their plugin.
+    NeedsXcode,
     /// A Cargo variable a build script gets is missing (not run by Cargo).
     NotInBuildScript(&'static str),
 }
@@ -100,6 +109,7 @@ impl fmt::Display for Error {
             Error::NoSources(dir) => write!(f, "no .swift files in {}", dir.display()),
             Error::NoToolchain(why) => write!(f, "couldn't run swiftc ({why}); install the Command Line Tools with `xcode-select --install`, or Xcode"),
             Error::Compile => write!(f, "swiftc failed; its errors are above"),
+            Error::NeedsXcode => write!(f, "this Swift uses SwiftUI's macros (@State, @Entry, #Preview), which the Command Line Tools can't expand: install Xcode (it's found in /Applications), or set DEVELOPER_DIR to one"),
             Error::NotInBuildScript(var) => write!(f, "{var} isn't set: call ferrokit-build from a build script (build.rs)"),
         }
     }
@@ -176,30 +186,59 @@ impl Swift {
         };
         let min = self.min_macos.clone().or_else(|| env::var("MACOSX_DEPLOYMENT_TARGET").ok()).unwrap_or_else(|| "15.0".into());
         let module = self.module.clone().unwrap_or_else(|| module_name(&env::var("CARGO_PKG_NAME").unwrap_or_default()));
-        let sdk = xcrun(&["--sdk", "macosx", "--show-sdk-path"])?;
-        let swiftc = PathBuf::from(xcrun(&["--find", "swiftc"])?);
         let lib = out.join("libferrokit_swift.a");
-
-        let mut cmd = Command::new(&swiftc);
-        cmd.args(["-emit-library", "-static", "-parse-as-library"])
-            .args(["-module-name", &module])
-            .args(["-target", &format!("{arch}-apple-macos{min}")])
-            .arg("-sdk")
-            .arg(&sdk)
-            .arg("-module-cache-path")
-            .arg(out.join("swift-module-cache"));
         let opt = env::var("OPT_LEVEL").unwrap_or_default();
-        cmd.arg(if opt == "0" { "-Onone" } else { "-O" });
-        if !matches!(env::var("DEBUG").as_deref(), Ok("false" | "0" | "none") | Err(_)) {
-            cmd.arg("-g");
+        let debug_info = !matches!(env::var("DEBUG").as_deref(), Ok("false" | "0" | "none") | Err(_));
+        let compile = |developer: Option<&Path>| -> Result<(String, PathBuf, std::process::Output), Error> {
+            let sdk = xcrun(developer, &["--sdk", "macosx", "--show-sdk-path"])?;
+            let swiftc = PathBuf::from(xcrun(developer, &["--find", "swiftc"])?);
+            let mut cmd = Command::new(&swiftc);
+            if let Some(d) = developer {
+                cmd.env("DEVELOPER_DIR", d);
+            }
+            cmd.args(["-emit-library", "-static", "-parse-as-library"])
+                .args(["-module-name", &module])
+                .args(["-target", &format!("{arch}-apple-macos{min}")])
+                .arg("-sdk")
+                .arg(&sdk)
+                .arg("-module-cache-path")
+                .arg(out.join("swift-module-cache"))
+                .arg(if opt == "0" { "-Onone" } else { "-O" });
+            if debug_info {
+                cmd.arg("-g");
+            }
+            if let Some(v) = &self.swift_version {
+                cmd.args(["-swift-version", v]);
+            }
+            cmd.args(&self.flags).arg("-o").arg(&lib).args(&sources);
+            let output = cmd.output().map_err(|e| Error::NoToolchain(format!("{}: {e}", swiftc.display())))?;
+            Ok((sdk, swiftc, output))
+        };
+
+        let (mut sdk, mut swiftc, mut output) = compile(None)?;
+        // The Command Line Tools have no SwiftUI macro plugin, and in the
+        // macOS 27 SDK `@State`, `@Entry` and `#Preview` are macros: use an
+        // installed Xcode for them (unless DEVELOPER_DIR chose a toolchain).
+        if !output.status.success() && needs_macro_plugin(&output.stderr) && env::var_os("DEVELOPER_DIR").is_none() {
+            match installed_xcode() {
+                Some(xcode) => {
+                    println!("cargo:warning=the selected developer tools can't expand SwiftUI's macros (@State…); compiling the Swift with {}", xcode.display());
+                    (sdk, swiftc, output) = compile(Some(&xcode))?;
+                }
+                None => {
+                    eprint!("{}", String::from_utf8_lossy(&output.stderr));
+                    return Err(Error::NeedsXcode);
+                }
+            }
         }
-        if let Some(v) = &self.swift_version {
-            cmd.args(["-swift-version", v]);
-        }
-        cmd.args(&self.flags).arg("-o").arg(&lib).args(&sources);
-        let status = cmd.status().map_err(|e| Error::NoToolchain(format!("{}: {e}", swiftc.display())))?;
-        if !status.success() {
+        if !output.status.success() {
+            eprint!("{}", String::from_utf8_lossy(&output.stderr));
             return Err(Error::Compile);
+        }
+        // Swift's warnings, shown by Cargo (a build script's own output is
+        // shown only when it fails).
+        for line in String::from_utf8_lossy(&output.stderr).lines().filter(|l| l.contains(": warning: ")) {
+            println!("cargo:warning={line}");
         }
 
         println!("cargo:rustc-link-search=native={}", out.display());
@@ -235,12 +274,38 @@ fn sources(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-fn xcrun(args: &[&str]) -> Result<String, Error> {
-    let o = Command::new("xcrun").args(args).output().map_err(|e| Error::NoToolchain(format!("xcrun: {e}")))?;
+fn xcrun(developer: Option<&Path>, args: &[&str]) -> Result<String, Error> {
+    let mut cmd = Command::new("xcrun");
+    if let Some(d) = developer {
+        cmd.env("DEVELOPER_DIR", d);
+    }
+    let o = cmd.args(args).output().map_err(|e| Error::NoToolchain(format!("xcrun: {e}")))?;
     if !o.status.success() {
         return Err(Error::NoToolchain(format!("xcrun {}: {}", args.join(" "), String::from_utf8_lossy(&o.stderr).trim())));
     }
     Ok(String::from_utf8_lossy(&o.stdout).trim().to_string())
+}
+
+/// Whether `swiftc` failed for want of a macro plugin (SwiftUI's, with
+/// the Command Line Tools).
+fn needs_macro_plugin(stderr: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(stderr);
+    text.contains("plugin for module") && text.contains("not found")
+}
+
+/// An installed Xcode's developer folder, if it has SwiftUI's macro plugin.
+fn installed_xcode() -> Option<PathBuf> {
+    let mut apps: Vec<PathBuf> = std::fs::read_dir("/Applications")
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("Xcode") && n.ends_with(".app")))
+        .collect();
+    // Xcode.app first, then the others by name.
+    apps.sort_by_key(|p| (p.file_name().is_none_or(|n| n != "Xcode.app"), p.clone()));
+    apps.into_iter()
+        .map(|app| app.join("Contents/Developer"))
+        .find(|dev| dev.join("Platforms/MacOSX.platform/Developer/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib").exists())
 }
 
 /// A package name as a Swift module name: `my-app` → `MyApp`, `2d_tools` →

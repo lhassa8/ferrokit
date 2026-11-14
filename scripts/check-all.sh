@@ -161,6 +161,18 @@ suite values CHECK=all "$ex/values"
 suite native_views CHECK=all "$ex/native_views"
 suite sql_browser CHECK=all "$ex/sql_browser"
 suite sql_browser_de CHECK=l10n "$ex/sql_browser" -AppleLanguages "(de)"
+# SwiftUI inside a Ferrokit window, compiled by ferrokit-build (a fixture
+# with its own workspace and target folder): the accessibility audit sees
+# inside SwiftUI's views.
+fixture=crates/ferrokit-build/tests/fixtures/swiftui-window
+fixtures_target=$PWD/target/ferrokit-build-fixtures
+if [ -n "$debug" ]; then
+  step swiftui_window_build env CARGO_TARGET_DIR="$fixtures_target" cargo build --manifest-path "$fixture/Cargo.toml"
+  suite swiftui_window CHECK=all "$fixtures_target/debug/swiftui-window"
+else
+  step swiftui_window_build env CARGO_TARGET_DIR="$fixtures_target" cargo build --release --manifest-path "$fixture/Cargo.toml"
+  suite swiftui_window CHECK=all "$fixtures_target/release/swiftui-window"
+fi
 # The notes example in the App Sandbox (signed with the entitlements
 # `cargo ferrokit bundle` gives `sandbox = true`): documents, recents and
 # restoring them work there too.

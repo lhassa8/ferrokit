@@ -291,12 +291,16 @@ uses; by default it fills the room it gets, like a map.
 Things to know:
 
 - **Swift runtime:** it comes with macOS, so nothing is added to the app.
-  `swiftc` comes with the Command Line Tools.
-- **Accessibility:** SwiftUI builds its accessibility tree only when an
-  assistive app such as VoiceOver asks for it, through the system's
-  accessibility API. `testing::ax_audit` walks the tree inside the app, so
-  until something has asked that way, a hosting view looks like one
-  empty group.
+- **Toolchain:** `swiftc` comes with the Command Line Tools. Since the
+  macOS 27 SDK, SwiftUI's `@State`, `@Entry` and `#Preview` are macros,
+  and only Xcode has the plugin that expands them. `ferrokit-build` uses an
+  Xcode in `/Applications` for them, with a warning; without one, it stops
+  the build and says to install Xcode. Swift without those macros (like
+  the example above, which uses `ObservableObject`) needs only the Command
+  Line Tools.
+- **Accessibility:** SwiftUI's views are in the window's accessibility tree,
+  for VoiceOver and for `testing::ax_elements` and `ax_audit`, which find a
+  SwiftUI control without a name as they do Ferrokit's own.
 - **The glue is by hand for now.** A smaller bridge, with named SwiftUI
   views and `.prop`, `.binding` and `.on`, is being designed in
   [issue #7](https://github.com/lhassa8/ferrokit/issues/7).
