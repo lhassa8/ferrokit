@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "cargo-ferrokit"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "serde_json",
 ]
@@ -59,7 +59,7 @@ checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
 
 [[package]]
 name = "ferrokit"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "block2",
  "ferrokit-core",
@@ -84,7 +84,7 @@ dependencies = [
 
 [[package]]
 name = "ferrokit-core"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "block2",
  "objc2",

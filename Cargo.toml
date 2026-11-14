@@ -4,7 +4,7 @@ members = ["crates/ferrokit-core", "crates/ferrokit", "crates/cargo-ferrokit"]
 exclude = ["renamed", "retired"]
 
 [workspace.package]
-version = "0.7.1"
+version = "0.8.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.88"

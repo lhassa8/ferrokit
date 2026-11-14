@@ -2,8 +2,9 @@
 
 Where Ferrokit is going, roughly in order. It changes as people tell us what they need; the "What I'm building" issues weigh most.
 
-## Now: 0.7
+## Now: 0.8
 
+- **Released in 0.8.0:** links into the app (`myapp://` URL schemes, #1) and the first layer of async (`spawn_local`, #2).
 - **Released in 0.7.0:** `cargo ferrokit preview` (rebuilds and restarts the app on every save, windows where they were), the fixes from a review of the whole framework, Edit ▸ Find in every app, and what AI coding agents need to succeed with Ferrokit: `AGENTS.md` in the crate, `cargo ferrokit agents`, and helpers for self-checks.
 - **Asked for on r/rust:**
   - async/await: run a future and update signals with its result, without writing the threading yourself ([#2](https://github.com/lhassa8/ferrokit/issues/2)). The first layer is done in 0.8 (`spawn_local`, `background`, `sleep`, tasks that stop with their window); the rest is being designed in #2;
