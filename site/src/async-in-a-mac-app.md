@@ -54,4 +54,4 @@ An app in the App Sandbox needs `network = true` under `[package.metadata.ferrok
 - Don't block inside a task: each poll runs on the main thread, and the UI waits for it. Blocking work goes in `background`.
 - Don't call `block_on` on the main thread: it freezes the UI.
 
-More in the guide: [Async tasks](guide/02-state.md#async-tasks), and [Live data](guide/07-live-data.md) for `Resource`, which reloads a value on a background thread when the signals it reads change. Async resources and awaitable panels and alerts are being designed in [issue #2](https://github.com/lhassa8/ferrokit/issues/2): say what you'd want there.
+More in the guide: [Async tasks](guide/02-state.md#async-tasks), and [Loading data](guide/02-state.md#loading-data-resource) for `Resource`, which reloads a value on a background thread when the signals it reads change. Async resources and awaitable panels and alerts are being designed in [issue #2](https://github.com/lhassa8/ferrokit/issues/2): say what you'd want there.
