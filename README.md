@@ -189,4 +189,4 @@ Contributions are very welcome, small ones included: see [CONTRIBUTING.md](CONTR
 
 ## License
 
-MIT OR Apache-2.0, at your option.
+Dual-licensed under the [MIT License](LICENSE-MIT) or the [Apache License 2.0](LICENSE-APACHE), at your option: you may use Ferrokit under either one. This is the usual licence for Rust crates.
