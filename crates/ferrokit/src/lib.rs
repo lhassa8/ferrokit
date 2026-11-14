@@ -100,6 +100,7 @@ mod store;
 mod style;
 mod surface;
 mod syntax;
+mod task;
 mod transfer;
 mod undo;
 pub mod updates;
@@ -129,6 +130,7 @@ pub use store::{Stored, read_stored, remove_stored, stored, write_stored};
 pub use undo::{set_undoable, undoable, undoable_in};
 pub use commands::{Command, can_perform, can_perform_in, focused_value, focused_value_in, focused_window, menu_command, perform, perform_in, toolbar_command};
 pub use resource::{Cancel, Load, Resource};
+pub use task::{Background, Sleep, Task, background, sleep, spawn_local};
 pub use signal::{Effect, Memo, Signal, after_batch, batch, effect_runs, live_signals, untrack};
 pub use controls::{
     ColorWell, ComboBox, DatePicker, SearchField, Segmented, TimePicker, color_well, combo_box, date_picker, search_field, segmented, segmented_with, time_picker,
@@ -1747,7 +1749,7 @@ pub fn spawn_with_progress<T: Send + 'static>(progress: &Signal<Option<f64>>, wo
 /// lists every public item on one page.
 ///
 /// - [Getting started](guide::ch01_getting_started): an app, a window, a button.
-/// - [State](guide::ch02_state): signals, memos, effects, batching, background work.
+/// - [State](guide::ch02_state): signals, memos, effects, batching, background work, async tasks.
 /// - [Views and layout](guide::ch03_views_and_layout): stacks, grids, modifiers, lists and identity.
 /// - [Controls and forms](guide::ch04_controls_and_forms): fields, toggles, pickers, sliders, and naming them for VoiceOver.
 /// - [Tables, outlines and editors](guide::ch05_tables_outlines_editors): the deep widgets.

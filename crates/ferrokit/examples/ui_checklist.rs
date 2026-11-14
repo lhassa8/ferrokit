@@ -312,8 +312,251 @@ fn resource_owner_check(events: Rc<RefCell<Vec<AppEvent>>>) {
             );
             // Outside this continuation's batch, as the checks expect.
             let events = events.clone();
-            later(move || command_checks(events.clone()));
+            later(move || async_checks(events.clone()));
         });
+    });
+}
+
+/// Sets its flag when dropped (a task's future was dropped).
+struct DropFlag(Rc<Cell<bool>>);
+
+impl Drop for DropFlag {
+    fn drop(&mut self) {
+        self.0.set(true);
+    }
+}
+
+/// Async tasks (`spawn_local`): polled on the main thread on a later pass,
+/// each poll a batch, awaiting background work and a timer.
+fn async_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use ferrokit::{background, sleep, spawn_local};
+    use std::time::{Duration, Instant};
+    let main_thread = std::thread::current().id();
+    let steps = Signal::new(Vec::<String>::new());
+    let runs = Rc::new(Cell::new(0u32));
+    let rs = runs.clone();
+    let watcher = Effect::new(move || {
+        let _ = steps.get();
+        rs.set(rs.get() + 1);
+    });
+    let (ran, on_main, slept) = (Rc::new(Cell::new(false)), Rc::new(Cell::new(true)), Rc::new(Cell::new(Duration::ZERO)));
+    let (r, om, sl) = (ran.clone(), on_main.clone(), slept.clone());
+    let task = spawn_local(async move {
+        r.set(true);
+        om.set(om.get() && std::thread::current().id() == main_thread);
+        steps.set(vec!["start".into()]);
+        let (worker, sum) = background(|| (std::thread::current().id(), (1..=1000u64).sum::<u64>())).await;
+        om.set(om.get() && std::thread::current().id() == main_thread);
+        let t = Instant::now();
+        sleep(Duration::from_millis(80)).await;
+        sl.set(t.elapsed());
+        let mut v = steps.get_untracked();
+        v.push(format!("sum {sum}"));
+        v.push(if worker != main_thread { "worker off main" } else { "worker ON MAIN" }.into());
+        steps.set(v);
+    });
+    let polled_inline = ran.get();
+    until(move || task.is_finished(), 3000, move || {
+        let _ = &watcher;
+        let got = steps.get_untracked();
+        check(
+            "async-task",
+            !polled_inline && task.is_finished() && on_main.get() && got == ["start", "sum 500500", "worker off main"] && slept.get() >= Duration::from_millis(75) && runs.get() == 3,
+            format!("first poll inside spawn_local: {polled_inline}; finished {}; polls on main {}; steps {got:?}; slept {:?}; watcher runs {} (3: one per set, each poll a batch)", task.is_finished(), on_main.get(), slept.get(), runs.get()),
+        );
+        async_cancel_checks(events);
+    });
+}
+
+/// Cancelling a task: by its handle (the future dropped at once), and from
+/// inside its own poll (dropped when the poll returns).
+fn async_cancel_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use ferrokit::{Task, sleep, spawn_local};
+    use std::time::Duration;
+    let (dropped, reached) = (Rc::new(Cell::new(false)), Rc::new(Cell::new(false)));
+    let (d, r) = (dropped.clone(), reached.clone());
+    let task = spawn_local(async move {
+        let _flag = DropFlag(d);
+        sleep(Duration::from_secs(10)).await;
+        r.set(true);
+    });
+    wait(100, move || {
+        let before = (dropped.get(), task.is_finished());
+        task.cancel();
+        let after = (dropped.get(), task.is_finished());
+        let me: Rc<Cell<Option<Task>>> = Rc::new(Cell::new(None));
+        let (self_dropped, self_reached) = (Rc::new(Cell::new(false)), Rc::new(Cell::new(false)));
+        let (m, sd, sr) = (me.clone(), self_dropped.clone(), self_reached.clone());
+        let own = spawn_local(async move {
+            let _flag = DropFlag(sd);
+            sleep(Duration::from_millis(20)).await;
+            if let Some(t) = m.get() {
+                t.cancel();
+            }
+            sleep(Duration::from_millis(20)).await;
+            sr.set(true);
+        });
+        me.set(Some(own));
+        wait(250, move || {
+            check(
+                "async-task-cancel",
+                before == (false, false) && after == (true, true) && !reached.get() && self_dropped.get() && !self_reached.get() && own.is_finished(),
+                format!("(dropped, finished) before cancel {before:?}, after {after:?}; ran past its await {}; cancelled itself: dropped {}, ran on {}", reached.get(), self_dropped.get(), self_reached.get()),
+            );
+            async_owner_check(events);
+        });
+    });
+}
+
+/// A task started in a window's view tree stops when the window closes; a
+/// detached one goes on; the window's signals are all freed.
+fn async_owner_check(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use ferrokit::{sleep, spawn_local};
+    use std::time::Duration;
+    let (owned_dropped, owned_reached, detached_done) = (Rc::new(Cell::new(false)), Rc::new(Cell::new(false)), Rc::new(Cell::new(false)));
+    let (od, or, dd) = (owned_dropped.clone(), owned_reached.clone(), detached_done.clone());
+    let signals = ferrokit::live_signals();
+    let w = open(Window::new("Async Owner").size(200.0, 80.0).view(dynamic(move || {
+        let shown = Signal::new(0);
+        let (od, or, dd) = (od.clone(), or.clone(), dd.clone());
+        spawn_local(async move {
+            let _flag = DropFlag(od);
+            sleep(Duration::from_secs(5)).await;
+            shown.set(1);
+            or.set(true);
+        });
+        spawn_local(async move {
+            sleep(Duration::from_millis(150)).await;
+            dd.set(true);
+        })
+        .detach();
+        text(move || format!("{}", shown.get()))
+    })));
+    wait(50, move || {
+        ferrokit::close_window(&w);
+        wait(400, move || {
+            let left = ferrokit::live_signals() as i64 - signals as i64;
+            check(
+                "async-task-owner",
+                owned_dropped.get() && !owned_reached.get() && detached_done.get() && left == 0,
+                format!("closing the window dropped its task: {} (ran on: {}); the detached one finished: {}; signals left {left}", owned_dropped.get(), owned_reached.get(), detached_done.get()),
+            );
+            async_panic_check(events);
+        });
+    });
+}
+
+/// A panic in a task, or in background work it awaits, is reported and
+/// ends only that task.
+fn async_panic_check(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use ferrokit::testing::failures;
+    use ferrokit::{background, sleep, spawn_local};
+    use std::time::Duration;
+    let before = failures().len();
+    let t1 = spawn_local(async {
+        sleep(Duration::from_millis(20)).await;
+        panic!("deliberate async panic");
+    });
+    let (dropped, reached, other) = (Rc::new(Cell::new(false)), Rc::new(Cell::new(false)), Rc::new(Cell::new(false)));
+    let (d, r, o) = (dropped.clone(), reached.clone(), other.clone());
+    let t2 = spawn_local(async move {
+        let _flag = DropFlag(d);
+        let _: u32 = background(|| panic!("deliberate background panic")).await;
+        r.set(true);
+    });
+    let t3 = spawn_local(async move {
+        sleep(Duration::from_millis(60)).await;
+        o.set(true);
+    });
+    until(move || t1.is_finished() && t2.is_finished() && t3.is_finished(), 3000, move || {
+        let caught: Vec<(&str, String)> = failures().into_iter().skip(before).map(|f| (f.place, f.message)).collect();
+        let in_task = caught.iter().any(|(p, m)| *p == "an async task" && m.contains("deliberate async panic"));
+        let in_work = caught.iter().any(|(p, m)| *p == "a background task" && m.contains("deliberate background panic"));
+        check(
+            "async-task-panic",
+            in_task && in_work && t1.is_finished() && t2.is_finished() && dropped.get() && !reached.get() && other.get(),
+            format!("reported {caught:?}; the background panic ended its task: {} (ran on: {}); another task finished: {}", dropped.get(), reached.get(), other.get()),
+        );
+        async_tracking_check(events);
+    });
+}
+
+/// Tasks go on in a nested run loop in event-tracking mode (as while a
+/// menu is open): timers and wakes from other threads both arrive.
+fn async_tracking_check(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use ferrokit::{background, sleep, spawn_local};
+    use objc2_foundation::{NSDate, NSRunLoop};
+    use std::time::{Duration, Instant};
+    let done = Rc::new(Cell::new(false));
+    let d = done.clone();
+    let task = spawn_local(async move {
+        sleep(Duration::from_millis(30)).await;
+        let n = background(|| 2 + 2).await;
+        sleep(Duration::from_millis(30)).await;
+        d.set(n == 4);
+    });
+    later(move || {
+        if !done.get() && !task.is_finished() {
+            let start = Instant::now();
+            let mode = NSString::from_str("NSEventTrackingRunLoopMode");
+            while !task.is_finished() && start.elapsed() < Duration::from_secs(2) {
+                NSRunLoop::currentRunLoop().runMode_beforeDate(&mode, &NSDate::dateWithTimeIntervalSinceNow(0.02));
+            }
+            check(
+                "async-task-tracking",
+                done.get() && task.is_finished(),
+                format!("the task finished inside an event-tracking run loop: {} after {:?}", done.get(), start.elapsed()),
+            );
+        } else {
+            check("async-task-tracking", false, "the task finished before the nested run loop started".to_string());
+        }
+        async_nested_wake_check(events.clone());
+    });
+}
+
+/// A task woken while its own poll is running a nested run loop (a modal
+/// AppKit call inside it): the wake isn't lost, and the task resumes once
+/// that poll returns.
+fn async_nested_wake_check(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use ferrokit::{sleep, spawn_local};
+    use objc2_foundation::{NSDate, NSRunLoop};
+    use std::future::Future;
+    use std::task::Poll;
+    use std::time::{Duration, Instant};
+    let (woken_inside, done) = (Rc::new(Cell::new(false)), Rc::new(Cell::new(false)));
+    let (wi, d) = (woken_inside.clone(), done.clone());
+    let task = spawn_local(async move {
+        // Start a timer (its waker is this task's), then wait for it in a
+        // nested run loop inside this same poll.
+        let mut timer = Box::pin(sleep(Duration::from_millis(20)));
+        std::future::poll_fn(|cx| {
+            let _ = timer.as_mut().poll(cx);
+            let start = Instant::now();
+            let mode = NSString::from_str("NSEventTrackingRunLoopMode");
+            while start.elapsed() < Duration::from_millis(200) {
+                NSRunLoop::currentRunLoop().runMode_beforeDate(&mode, &NSDate::dateWithTimeIntervalSinceNow(0.02));
+            }
+            wi.set(timer.as_mut().poll(cx).is_ready());
+            Poll::Ready(())
+        })
+        .await;
+        // Pending once, with no wake of its own: only the wake that came
+        // during the nested loop gets the task polled again.
+        let mut first = true;
+        std::future::poll_fn(move |_| {
+            if std::mem::take(&mut first) { Poll::Pending } else { Poll::Ready(()) }
+        })
+        .await;
+        d.set(true);
+    });
+    until(move || task.is_finished(), 2000, move || {
+        check(
+            "async-task-nested-wake",
+            woken_inside.get() && done.get(),
+            format!("the timer fired inside the poll's nested run loop: {}; the task resumed afterwards: {}", woken_inside.get(), done.get()),
+        );
+        let events = events.clone();
+        later(move || command_checks(events.clone()));
     });
 }
 

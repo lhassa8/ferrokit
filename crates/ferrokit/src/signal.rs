@@ -44,6 +44,9 @@ pub(crate) struct Owner(Rc<OwnerInner>);
 pub(crate) struct OwnerInner {
     signals: RefCell<Vec<(u32, u32)>>,
     effects: RefCell<Vec<Effect>>,
+    /// Async tasks started while it was current (see [`crate::spawn_local`]):
+    /// cancelled when it goes, unless detached or already finished.
+    tasks: RefCell<Vec<u64>>,
 }
 
 impl Owner {
@@ -73,7 +76,11 @@ impl Owner {
 
 impl Drop for OwnerInner {
     fn drop(&mut self) {
-        // Memos' effects stop first, then the signals go.
+        // Its tasks are cancelled first (their futures may read its
+        // signals as they're dropped), then memos' effects stop, then the
+        // signals go.
+        let tasks = std::mem::take(&mut *self.tasks.borrow_mut());
+        crate::task::cancel_all(tasks);
         self.effects.borrow_mut().clear();
         let signals = std::mem::take(&mut *self.signals.borrow_mut());
         // The values are dropped outside the arena's borrow (a value may
@@ -142,6 +149,32 @@ pub(crate) fn with_current_owner(f: impl Fn() + 'static) -> impl Fn() + 'static 
     move || match owner.as_ref().and_then(Weak::upgrade) {
         Some(o) => Owner(o).with(&f),
         None => f(),
+    }
+}
+
+/// Adds task `id` to the current owner, returned (weakly) for the task's
+/// polls; `None` outside any owner (the task lives as long as the app).
+pub(crate) fn own_task(id: u64) -> Option<Weak<OwnerInner>> {
+    OWNER.with_borrow(|o| {
+        o.as_ref().map(|o| {
+            o.tasks.borrow_mut().push(id);
+            Rc::downgrade(o)
+        })
+    })
+}
+
+/// Takes task `id` off its owner's list (it finished, or was detached).
+pub(crate) fn disown_task(owner: &Weak<OwnerInner>, id: u64) {
+    if let Some(o) = owner.upgrade() {
+        o.tasks.borrow_mut().retain(|&t| t != id);
+    }
+}
+
+/// Runs `f` with `owner` current if it's still there (else with none).
+pub(crate) fn with_weak_owner<R>(owner: Option<&Weak<OwnerInner>>, f: impl FnOnce() -> R) -> R {
+    match owner.and_then(Weak::upgrade) {
+        Some(o) => Owner(o).with(f),
+        None => unowned(f),
     }
 }
 

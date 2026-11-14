@@ -8,7 +8,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 
 **Where to look:** app, windows, menus and the shell → App and windows, `chrome`, `dialogs`, `commands`; state → `signal`, `resource`, `store`, `undo`; views and modifiers → `view`, `layout`, `appkit_views`, `controls`, `style`, `motion`; tables, outlines, text → `models`, `table`, `outline`, `text`; charts → `charts`, `canvas`; checks → Module `testing`.
 
-**Contents:** [App and windows (lib)](#app-and-windows-lib) · [signal](#signal) · [view](#view) · [layout](#layout) · [appkit_views](#appkit_views) · [controls](#controls) · [models](#models) · [table](#table) · [outline](#outline) · [text](#text) · [commands](#commands) · [chrome](#chrome) · [dialogs](#dialogs) · [appearance](#appearance) · [frame](#frame) · [store](#store) · [undo](#undo) · [resource](#resource) · [documents](#documents) · [collection](#collection) · [syntax](#syntax) · [style](#style) · [surface](#surface) · [material](#material) · [widgets](#widgets) · [media](#media) · [browser](#browser) · [crash](#crash) · [updates](#updates) · [failure](#failure) · [filter](#filter) · [form](#form) · [quicklook](#quicklook) · [services](#services) · [status](#status) · [motion](#motion) · [popover](#popover) · [canvas](#canvas) · [native](#native) · [related](#related) · [value](#value) · [transfer](#transfer) · [l10n](#l10n) · [charts](#charts) · [host](#host) · [Module updates](#module-updates) · [Module testing](#module-testing) · [Module input](#module-input) · [Module soak](#module-soak)
+**Contents:** [App and windows (lib)](#app-and-windows-lib) · [signal](#signal) · [view](#view) · [layout](#layout) · [appkit_views](#appkit_views) · [controls](#controls) · [models](#models) · [table](#table) · [outline](#outline) · [text](#text) · [commands](#commands) · [chrome](#chrome) · [dialogs](#dialogs) · [appearance](#appearance) · [frame](#frame) · [store](#store) · [undo](#undo) · [resource](#resource) · [task](#task) · [documents](#documents) · [collection](#collection) · [syntax](#syntax) · [style](#style) · [surface](#surface) · [material](#material) · [widgets](#widgets) · [media](#media) · [browser](#browser) · [crash](#crash) · [updates](#updates) · [failure](#failure) · [filter](#filter) · [form](#form) · [quicklook](#quicklook) · [services](#services) · [status](#status) · [motion](#motion) · [popover](#popover) · [canvas](#canvas) · [native](#native) · [related](#related) · [value](#value) · [transfer](#transfer) · [l10n](#l10n) · [charts](#charts) · [host](#host) · [Module updates](#module-updates) · [Module testing](#module-testing) · [Module input](#module-input) · [Module soak](#module-soak)
 
 ## App and windows (lib)
 
@@ -1015,6 +1015,28 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn error(&self) -> Option<String>`: The error of the latest finished load, if it failed.
 - `pub fn state(&self) -> Load<T>`: Loading, the latest value, or the latest error: whichever the most recent finished load produced (`Loading` only before the first).
 - `pub fn refetch(&self)`: Loads again with the same inputs (the running load is cancelled).
+
+## task
+
+- `pub fn background<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Background<T>`: Runs `work` on a background thread now, and returns a future for its result, to await in a `spawn_local` task: `spawn` for async code. Call from the main thread.
+- `pub fn sleep(duration: Duration) -> Sleep`: A future that's ready after `duration`, timed on the main run loop (in the common modes, so it fires while a menu is open). The timer starts at the first poll. Call from the main thread; await it in a `spawn_local` task.
+- `pub fn spawn_local(future: impl Future<Output = ()> + 'static) -> Task`: Runs `future` on the main thread, as a task of the main run loop: it can read and set signals and touch views between its `.await`s, so it needn't be `Send`. Call from the main thread. The first poll is on a later pass of the run loop, not inside this call.
+
+### `Background`
+
+`pub struct Background<T>`: A future for work on a background thread, from `background`.
+
+### `Sleep`
+
+`pub struct Sleep`: A future that's ready after a time, from `sleep`.
+
+### `Task`
+
+`pub struct Task(u64)`: A task started by `spawn_local`. A `Copy` handle; dropping it neither cancels nor detaches the task.
+
+- `pub fn cancel(self)`: Stops the task: its future is dropped now (at the `.await` it's waiting at; called from inside the task, as soon as its current poll returns). Work a `background` call already started on its thread runs to the end; its result is dropped. Nothing happens if the task has finished.
+- `pub fn detach(self)`: Keeps the task running after its owner goes (a closed window, a removed view), until it finishes or is cancelled.
+- `pub fn is_finished(self) -> bool`: Whether the task is over: its future finished, panicked or was cancelled (also by its owner going).
 
 ## documents
 
