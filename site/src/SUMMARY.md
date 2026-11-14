@@ -9,6 +9,8 @@
 - [VoiceOver, spell check and input methods in a Rust GUI](voiceover-and-mac-text.md)
 - [Shipping a Rust app to the Mac App Store](mac-app-store.md)
 - [Wrapping any NSView in a Rust UI](wrap-any-nsview.md)
+- [Async code in a native Mac app (tokio, reqwest)](async-in-a-mac-app.md)
+- [Open your Mac app from a link (`myapp://`)](open-mac-app-from-a-link.md)
 
 # Choosing
 

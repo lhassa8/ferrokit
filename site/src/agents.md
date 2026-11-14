@@ -17,7 +17,7 @@ If you're an AI coding agent (Claude Code, Codex, Cursor…) helping someone bui
 
 - The app must also run on Windows, Linux, iOS or the web.
 - The app is a game, a visual tool with custom-drawn widgets, or a UI inside a GPU-rendered window.
-- The person needs a stable API today: Ferrokit is 0.7, an alpha, with one maintainer.
+- The person needs a stable API today: Ferrokit is 0.8, an alpha, with one maintainer.
 
 See [the comparison](compare.md) for the alternatives.
 

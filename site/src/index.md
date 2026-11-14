@@ -44,7 +44,7 @@ Because each view is the real AppKit control:
 
 ## Where things stand
 
-Ferrokit is **an alpha (0.7)**: the API still changes between minor versions, and it's young (started October 2026), made by one person with an AI coding assistant, and has no outside users yet. About 500 self-checks across 18 example apps run the real apps on macOS 15, 26 and the newest beta. Rowboat, a SQLite editor built with it, has been submitted to the Mac App Store.
+Ferrokit is **an alpha (0.8)**: the API still changes between minor versions, and it's young (started October 2026), made by one person with an AI coding assistant, and has no outside users yet. About 500 self-checks across 18 example apps run the real apps on macOS 15, 26 and the newest beta. Rowboat, a SQLite editor built with it, has been submitted to the Mac App Store.
 
 If you build something with it, even a weekend toy, [say so in an issue](https://github.com/lhassa8/ferrokit/issues/new?template=use-case.md): what people build decides what comes next.
 

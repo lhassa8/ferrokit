@@ -51,7 +51,7 @@ echo "site: writing llms.txt, llms-full.txt, sitemap.xml"
   print
   print -r -- "## How to"
   print
-  for p in native-mac-app-in-rust nstableview-from-rust voiceover-and-mac-text mac-app-store wrap-any-nsview compare; do
+  for p in native-mac-app-in-rust nstableview-from-rust voiceover-and-mac-text mac-app-store wrap-any-nsview async-in-a-mac-app open-mac-app-from-a-link compare; do
     title=$(grep -m1 '^# ' site/src/$p.md | sed 's/^# //')
     print -r -- "- [$title]($site/$p.html)"
   done

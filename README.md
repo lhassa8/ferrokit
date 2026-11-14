@@ -141,7 +141,7 @@ If Claude Code, Cursor or Codex writes most of your code, it can learn Ferrokit 
 
 **Not yet, if:**
 - you need Windows or Linux. Ferrokit is Mac only for now, and Windows is the planned second platform. Cross-platform toolkits such as Tauri, egui, Iced, Slint and GPUI are the tools for that today; they draw their own widgets or use a web view.
-- you need a stable API. It's an alpha (0.7), and the API will still change.
+- you need a stable API. It's an alpha (0.8), and the API will still change.
 
 ## Testing it like you mean it
 

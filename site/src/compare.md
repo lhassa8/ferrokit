@@ -11,7 +11,7 @@ Ferrokit is written by the same person as this page, so read it with that in min
 
 | | How it draws on the Mac | Platforms | Maturity (2026-11-11) |
 | --- | --- | --- | --- |
-| **Ferrokit** | Stock AppKit controls (`NSTableView`, `NSTextView`…) | macOS 15+ | 0.7, alpha; started Oct 2026; one maintainer; no outside users yet |
+| **Ferrokit** | Stock AppKit controls (`NSTableView`, `NSTextView`…) | macOS 15+ | 0.8, alpha; started Oct 2026; one maintainer; no outside users yet |
 | **[egui](https://github.com/emilk/egui)** | Its own renderer (immediate mode, wgpu/OpenGL) | Mac, Windows, Linux, web, Android | 0.37 (Oct 2026); ~32k stars; very active |
 | **[Iced](https://github.com/iced-rs/iced)** | Its own renderer (wgpu or CPU) | Mac, Windows, Linux, web | 0.14 (Dec 2025); ~32k stars; active; calls itself experimental |
 | **[Slint](https://github.com/slint-ui/slint)** | Its own renderer; the `cupertino` style imitates macOS | Desktop, mobile, web, embedded | 1.18 (Sep 2026); ~25k stars; active; commercial company behind it |
@@ -72,4 +72,4 @@ The ideas carry over, with a few differences:
 - **Deep widgets have models.** A table is a `TableModel` of your own row type, created once and fed with `set_rows`; a text editor is a `TextModel`. You don't re-describe a million rows each frame ([Tables, outlines and editors](guide/05-tables-outlines-editors.md)).
 - **Menus, shortcuts and the toolbar are the system's:** commands, handled where the focus is ([The app shell](guide/06-app-shell.md)).
 - **Styling is AppKit's:** system colours and fonts, materials, SF Symbols. You style less and get the system look ([Styling](guide/09-styling.md)).
-- **Everything runs on the main thread;** `spawn` does background work and hands the result back.
+- **Everything runs on the main thread;** `spawn` does background work and hands the result back, and `spawn_local` runs async code there, awaiting work on other threads or your own tokio runtime ([Async code in a native Mac app](async-in-a-mac-app.md)).

@@ -6,8 +6,8 @@ Where Ferrokit is going, roughly in order. It changes as people tell us what the
 
 - **Released in 0.7.0:** `cargo ferrokit preview` (rebuilds and restarts the app on every save, windows where they were), the fixes from a review of the whole framework, Edit ▸ Find in every app, and what AI coding agents need to succeed with Ferrokit: `AGENTS.md` in the crate, `cargo ferrokit agents`, and helpers for self-checks.
 - **Asked for on r/rust:**
-  - async/await: run a future and update signals with its result, without writing the threading yourself ([#2](https://github.com/lhassa8/ferrokit/issues/2), design first);
-  - opening the app from a custom URL scheme (`myapp://…`, [#1](https://github.com/lhassa8/ferrokit/issues/1)).
+  - async/await: run a future and update signals with its result, without writing the threading yourself ([#2](https://github.com/lhassa8/ferrokit/issues/2)). The first layer is done in 0.8 (`spawn_local`, `background`, `sleep`, tasks that stop with their window); the rest is being designed in #2;
+  - opening the app from a custom URL scheme (`myapp://…`, [#1](https://github.com/lhassa8/ferrokit/issues/1)): done in 0.8.
 - **Found by agents building apps in trials:** a toolbar button that shows an on/off state, a collapsed split pane that comes back at its old width, thousands grouping in number columns.
 - **Contributor experience:** starter issues, a guide page for people coming from egui, Iced or Slint.
 

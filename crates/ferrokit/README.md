@@ -34,10 +34,12 @@ It's for data-heavy desktop apps where the Mac's own widgets matter:
 - **The app shell:** menus with shortcuts and state, commands that act on
   the focused view, toolbars, split views with collapsible sidebars and
   inspectors, popovers, sheets, alerts, open and save panels, document
-  apps, a Settings window, window restoration, per-window undo.
-- **State and data:** `Copy` signals owned by the views that made them, and
+  apps, a Settings window, window restoration, per-window undo, and links
+  into the app (`myapp://` URL schemes).
+- **State and data:** `Copy` signals owned by the views that made them,
   `Resource` for loading off the main thread (a newer load cancels the
-  stale one).
+  stale one), and async tasks on the main thread (`spawn_local`) that stop
+  when their window closes.
 - **Text, drawing, transfer:** syntax highlighting in the editor, a canvas
   with bar and line charts (a million points draw quickly), the clipboard,
   drag and drop (files written where they're dropped).
