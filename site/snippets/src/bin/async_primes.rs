@@ -10,6 +10,10 @@ fn main() {
     let running: Signal<Option<Task>> = Signal::new(None);
 
     let start = button("Count primes", move || {
+        // A second click starts over: the count already running stops.
+        if let Some(task) = running.get_untracked() {
+            task.cancel();
+        }
         let task = spawn_local(async move {
             status.set("Counting…".into());
             // Blocking work runs on another thread; the window stays responsive.

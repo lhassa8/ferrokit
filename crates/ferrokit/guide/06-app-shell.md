@@ -188,8 +188,8 @@ The `notes` example is a complete text editor built this way.
 
 An app can have its own kind of link, `myapp://…`, that opens it from a
 web page, an email, another app or `open` in Terminal (sign-in callbacks,
-"open this item" links). Declare the scheme in `Cargo.toml`, and `cargo
-ferrokit bundle` registers it with macOS:
+"open this item" links). Declare the scheme in `Cargo.toml`; `cargo
+ferrokit bundle` writes it into the app's `Info.plist`:
 
 ```toml
 [package.metadata.ferrokit]
@@ -214,8 +214,13 @@ App::new("Notes")
     .run();
 ```
 
-macOS only sends links to a bundled app (`cargo ferrokit run`), not to a
-bare `cargo run`. The link arrives as macOS gives it, percent-encoded
+macOS learns the scheme the first time the bundled app runs (`cargo
+ferrokit run`); after that, a link starts the app if it isn't running.
+Until then, opening a link fails with "no application" (a bundle that's
+built but never run doesn't count), and a bare `cargo run` never gets
+links. When several copies of the app declare the same scheme (an old
+build, a copy in `/Applications`), macOS picks one of them, not
+necessarily the one you just built. The link arrives as macOS gives it, percent-encoded
 (`notes://open/my%20note`); decode it with a crate such as `url` if you
 need to. Anyone can send your app a link, so treat it like any other
 untrusted input: check it before acting on it, and ask before anything

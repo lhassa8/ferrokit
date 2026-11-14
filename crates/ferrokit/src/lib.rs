@@ -1152,8 +1152,9 @@ impl App {
     /// Links in the app's own URL schemes: `f` gets each one opened while
     /// the app runs or that launched it (`myapp://open?id=3`, from a web
     /// page, another app or `open` in Terminal), after its windows are up.
-    /// Declare the schemes in `Cargo.toml` and `cargo ferrokit` registers
-    /// them with macOS when it bundles the app:
+    /// Declare the schemes in `Cargo.toml`: `cargo ferrokit bundle` writes
+    /// them into the app's `Info.plist`, and macOS learns them the first
+    /// time the bundled app runs (`cargo ferrokit run` does both):
     ///
     /// ```toml
     /// [package.metadata.ferrokit]
