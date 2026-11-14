@@ -83,6 +83,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferrokit-build"
+version = "0.8.0"
+
+[[package]]
 name = "ferrokit-core"
 version = "0.8.0"
 dependencies = [

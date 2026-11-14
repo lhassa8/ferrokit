@@ -1,0 +1,17 @@
+[package]
+name = "ferrokit-build"
+version.workspace = true
+description = "Compile a Mac app's Swift (and SwiftUI) code from build.rs and link it, for apps built with ferrokit"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+readme = "README.md"
+# The fixture apps are for this repository's tests, not the package.
+exclude = ["tests/fixtures"]
+keywords = ["swift", "swiftui", "macos", "build", "ferrokit"]
+categories = ["development-tools::build-utils", "os::macos-apis"]
+
+[package.metadata.docs.rs]
+default-target = "aarch64-apple-darwin"
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Added: `ferrokit-build`, a new crate that compiles an app's Swift code.** In `build.rs`, `ferrokit_build::swift("swift").compile()` compiles every `.swift` file under `swift/` with `swiftc` and links it into the app. The Swift runtime and the frameworks it imports (SwiftUI, Charts…) come with macOS. It builds for the target's architecture, with the profile's optimisation and `MACOSX_DEPLOYMENT_TARGET`. Guide chapter 14 has a new section, "SwiftUI views": a Swift Charts chart in a Ferrokit window through `native(..)`. The crate's tests build fixture apps: plain Swift; SwiftUI with Charts and Swift Concurrency in Swift 6 mode; and, when that target is installed, an Intel build. Issue #7 discusses a bridge that needs less glue.
+
 ## 0.8.0 (2026-11-14): links into the app, and async tasks
 
 - **Added: async tasks.** `spawn_local(future)` runs a future on the main thread, so it can read and set signals between its awaits (each poll is a batch). `background(|| …)` is `spawn` as a future, and `sleep(duration)` a timer on the main run loop. A task belongs to the owner it started in: closing its window drops it, unless `Task::detach` was called; `Task::cancel` stops it. Tasks keep running while a menu is open. A panic in a task or its background work is reported and ends only that task. Ferrokit brings no I/O runtime: await your own runtime's join handle (tokio for reqwest or sqlx). Guide chapter 2, "Async tasks" (checks `async-task`, `async-task-cancel`, `async-task-owner`, `async-task-panic`, `async-task-tracking`, `async-task-nested-wake`). The first part of issue #2.

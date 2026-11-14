@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/ferrokit-core", "crates/ferrokit", "crates/cargo-ferrokit"]
+members = ["crates/ferrokit-core", "crates/ferrokit", "crates/cargo-ferrokit", "crates/ferrokit-build"]
 exclude = ["renamed", "retired"]
 
 [workspace.package]
