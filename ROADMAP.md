@@ -2,12 +2,11 @@
 
 Where Ferrokit is going, roughly in order. It changes as people tell us what they need; the "What I'm building" issues weigh most.
 
-## Now: 0.8
+## Now: 0.9
 
-- **Released in 0.8.0,** both asked for on r/rust:
-  - links into the app: `myapp://` URL schemes declared in `Cargo.toml` and handled by `App::on_open_url` ([#1](https://github.com/lhassa8/ferrokit/issues/1));
-  - async tasks, the first layer of async/await: `spawn_local`, `background`, `sleep`, and tasks that stop with their window ([#2](https://github.com/lhassa8/ferrokit/issues/2)).
-- **Released in 0.7.0:** `cargo ferrokit preview` (rebuilds and restarts the app on every save, windows where they were), the fixes from a review of the whole framework, Edit ▸ Find in every app, and what AI coding agents need to succeed with Ferrokit: `AGENTS.md` in the crate, `cargo ferrokit agents`, and helpers for self-checks.
+- **Released in 0.9.0:** SwiftUI views in a Ferrokit app (Swift Charts, `Gauge`'s styles, MapKit's SwiftUI `Map`) through `native(..)`, with a new crate, `ferrokit-build`, that compiles the app's Swift from `build.rs`; and Ferrokit's accessibility audit sees inside SwiftUI views.
+- **Being designed in [#7](https://github.com/lhassa8/ferrokit/issues/7):** the SwiftUI bridge, so a SwiftUI view needs one line naming it instead of hand-written glue.
+- **Released in 0.8.0:** links into the app (`myapp://`, [#1](https://github.com/lhassa8/ferrokit/issues/1)) and async tasks ([#2](https://github.com/lhassa8/ferrokit/issues/2)).
 - **Being designed in [#2](https://github.com/lhassa8/ferrokit/issues/2):** the rest of async: awaitable panels and alerts, async resources, and an optional helper for tokio. Your answers to the questions there decide them.
 - **Found by agents building apps in trials:** a toolbar button that shows an on/off state, a collapsed split pane that comes back at its old width, thousands grouping in number columns.
 - **Contributor experience:** starter issues, a guide page for people coming from egui, Iced or Slint.
@@ -15,7 +14,6 @@ Where Ferrokit is going, roughly in order. It changes as people tell us what the
 ## Next
 
 - **Preview that keeps state:** `cargo ferrokit preview` restarts the app today, keeping its windows and `stored` values; keeping the rest of its state across a rebuild is next.
-- **SwiftUI inside Ferrokit:** wrap a SwiftUI view the way `native(..)` wraps an `NSView`, for the parts of Apple's frameworks that are SwiftUI-only. A design issue first.
 - More of AppKit wrapped as apps need it (tell us which), and fewer places where an app has to reach for `objc2` directly.
 
 What people build decides the order: "What I'm building" issues weigh most.
