@@ -23,8 +23,9 @@
 //! which a Rust build on a Mac needs anyway. SwiftUI's macros (`@State`,
 //! `@Entry`, `#Preview`: macros since the macOS 27 SDK) need Xcode, whose
 //! plugin expands them: when the Command Line Tools are selected and an
-//! Xcode is in `/Applications`, it's used for the Swift (with a warning);
-//! `DEVELOPER_DIR` picks one yourself.
+//! Xcode is in `/Applications`, it's used for the Swift (with a warning).
+//! Setting `DEVELOPER_DIR` picks the toolchain yourself, and turns that
+//! fallback off.
 //!
 //! On the Swift side, export functions with C names; on the Rust side,
 //! declare them in an `extern "C"` block:

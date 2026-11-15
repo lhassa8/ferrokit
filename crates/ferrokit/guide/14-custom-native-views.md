@@ -261,6 +261,9 @@ public func salesChartSet(_ view: UnsafeMutableRawPointer, _ values: UnsafePoint
 The Rust side wraps the hosting view and sets its values from a signal:
 
 ```rust,ignore
+use ferrokit::*;
+use objc2::rc::Retained;
+use objc2_app_kit::NSView;
 use std::ffi::c_void;
 
 unsafe extern "C" {
