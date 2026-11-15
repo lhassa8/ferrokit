@@ -10,7 +10,7 @@ The `objc2` crates go in your `Cargo.toml`, with the features for the classes yo
 
 ```toml
 [dependencies]
-ferrokit = "0.8"
+ferrokit = "0.9"
 objc2-app-kit = { version = "0.3", features = ["NSResponder", "NSView", "NSControl", "NSLevelIndicator"] }
 ```
 
@@ -25,4 +25,4 @@ The `native_views` example wraps `MKMapView` and a clock face the app draws itse
 git clone https://github.com/lhassa8/ferrokit && cd ferrokit && cargo run -p ferrokit --example native_views
 ```
 
-[Custom native views](guide/14-custom-native-views.md) has delegates, drawing, focus and accessibility.
+[Custom native views](guide/14-custom-native-views.md) has delegates, drawing, focus and accessibility. For a SwiftUI view (Swift Charts, MapKit's `Map`), see [SwiftUI views in a Rust Mac app](swiftui-views-in-a-rust-mac-app.md).

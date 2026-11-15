@@ -11,6 +11,7 @@
 - [Wrapping any NSView in a Rust UI](wrap-any-nsview.md)
 - [Async code in a native Mac app (tokio, reqwest)](async-in-a-mac-app.md)
 - [Open your Mac app from a link (`myapp://`)](open-mac-app-from-a-link.md)
+- [SwiftUI views in a Rust Mac app (Swift Charts)](swiftui-views-in-a-rust-mac-app.md)
 
 # Choosing
 

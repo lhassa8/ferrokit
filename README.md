@@ -8,7 +8,7 @@ Ferrokit is a native macOS GUI framework for Rust: every view is a real AppKit c
 
 It builds your UI from the real thing: an actual `NSTableView`, `NSTextView`, `NSSplitView` and `NSPopover`. It isn't a web view, and it isn't a GPU renderer doing an impression of AppKit. So the details Mac users notice are right because they're Apple's own: scrolling, keyboard navigation, spell check, Dark Mode, VoiceOver.
 
-It's built on [objc2](https://github.com/madsmtm/objc2) and `objc2-app-kit`, the Rust bindings generated from Apple's own SDK headers, so when you need an AppKit class Ferrokit doesn't wrap, you can still reach it.
+It's built on [objc2](https://github.com/madsmtm/objc2) and `objc2-app-kit`, the Rust bindings generated from Apple's own SDK headers, so when you need an AppKit class Ferrokit doesn't wrap, you can still reach it. SwiftUI-only views, such as Swift Charts and MapKit's `Map`, go in too: `ferrokit-build` compiles your Swift into the app.
 
 Rowboat, a SQLite editor for the Mac, is built with Ferrokit and is waiting for review in the Mac App Store.
 
@@ -141,7 +141,7 @@ If Claude Code, Cursor or Codex writes most of your code, it can learn Ferrokit 
 
 **Not yet, if:**
 - you need Windows or Linux. Ferrokit is Mac only for now, and Windows is the planned second platform. Cross-platform toolkits such as Tauri, egui, Iced, Slint and GPUI are the tools for that today; they draw their own widgets or use a web view.
-- you need a stable API. It's an alpha (0.8), and the API will still change.
+- you need a stable API. It's an alpha (0.9), and the API will still change.
 
 ## Testing it like you mean it
 
