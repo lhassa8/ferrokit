@@ -11,7 +11,7 @@
 //! ```toml
 //! # Cargo.toml
 //! [build-dependencies]
-//! ferrokit-build = "0.8"
+//! ferrokit-build = "0.9"
 //! ```
 //!
 //! Every `.swift` file under the folder (here `swift/`, next to

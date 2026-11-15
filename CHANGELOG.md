@@ -1,9 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.9.0 (2026-11-14): SwiftUI views inside Ferrokit apps
 
-- **Added: `ferrokit-build`, a new crate that compiles an app's Swift code.** In `build.rs`, `ferrokit_build::swift("swift").compile()` compiles every `.swift` file under `swift/` with `swiftc` and links it into the app. The Swift runtime and the frameworks it imports (SwiftUI, Charts…) come with macOS. It builds for the target's architecture, with the profile's optimisation and `MACOSX_DEPLOYMENT_TARGET`. Guide chapter 14 has a new section, "SwiftUI views": a Swift Charts chart in a Ferrokit window through `native(..)`. The crate's tests build fixture apps: plain Swift; SwiftUI with Charts and Swift Concurrency in Swift 6 mode; and, when that target is installed, an Intel build. Issue #7 discusses a bridge that needs less glue. SwiftUI's macros (`@State`, `@Entry`, `#Preview`) need Xcode's plugin, which the Command Line Tools lack. When those tools are selected, it compiles with an Xcode in `/Applications`, with a warning, and says to install one if none is found.
-- **Fixed: `testing::ax_elements` and `ax_audit` see inside SwiftUI views.** SwiftUI makes a hosting view's accessibility elements only after an assistive app asks through the system accessibility API, so the walk found one empty group, and a SwiftUI control without a name went unreported. When a window holds a SwiftUI view, the walk now asks the system first, as VoiceOver does; that needs no Accessibility permission. Checked in the new `swiftui_window` suite, a fixture app built with `ferrokit-build`: `swiftui-ax-elements`, `swiftui-ax-audit-named` and `swiftui-ax-audit-unnamed`, two of which fail without the fix.
+- **Added: `ferrokit-build`, a fourth crate, which compiles an app's Swift code.** In `build.rs`, `ferrokit_build::swift("swift").compile()` compiles every `.swift` file under `swift/` with `swiftc` and links it into the app.
+  - The Swift runtime and the frameworks the Swift imports (SwiftUI, Charts…) come with macOS and are linked automatically.
+  - It builds for the target's architecture, with the profile's optimisation and `MACOSX_DEPLOYMENT_TARGET`.
+  - SwiftUI's macros (`@State`, `@Entry`, `#Preview`, macros since the macOS 27 SDK) need Xcode's plugin, which the Command Line Tools lack. With those tools selected, it compiles with an Xcode from `/Applications` and warns that it did; with no Xcode installed, it stops and says to install one.
+  - Its tests build fixture apps: plain Swift; SwiftUI with Charts and Swift Concurrency in Swift 6 mode; and, when that target is installed, an Intel build.
+- **Added: guide chapter 14, "SwiftUI views":** a Swift Charts chart in a Ferrokit window, through `native(..)` and a few `@_cdecl` functions. Issue #7 is designing a bridge that needs less glue.
+- **Fixed: `testing::ax_elements` and `ax_audit` see inside SwiftUI views.** SwiftUI makes a hosting view's accessibility elements only after an assistive app asks through the system accessibility API. So the walk found one empty group, and a SwiftUI control without a name went unreported. When a window holds a SwiftUI view, the walk now asks the system first, as VoiceOver does; that needs no Accessibility permission. Checked in the new `swiftui_window` suite (`swiftui-ax-elements`, `swiftui-ax-audit-named`, `swiftui-ax-audit-unnamed`; two of them fail without the fix).
+- **Fixed: `cargo-ferrokit`'s package includes the licence texts** (`LICENSE-MIT`, `LICENSE-APACHE`). Every earlier version was published without them.
 
 ## 0.8.0 (2026-11-14): links into the app, and async tasks
 

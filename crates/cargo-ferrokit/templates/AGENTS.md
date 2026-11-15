@@ -150,8 +150,9 @@ fn as_undo_steps(window: &NSWindow, steps: &[&dyn Fn()]) {
 - `testing::ax_audit(&window)` lists controls VoiceOver can't name: give each `.accessibility_label(…)`.
 - A caught panic doesn't end the app; `check` stops 15 s after one if no more checks arrive. Look for `ferrokit: a panic in …` in the output.
 
-## Known limits (0.8)
+## Known limits (0.9)
 
 Work around these instead of searching for them:
 - Table rows animate only through `TableModel::insert`, `push` and `remove` (with `Table::animated()`), not `set_rows` or in a grouped table.
 - `View` can't be implemented outside Ferrokit (`Cx` and `Node` are opaque): wrap an `NSView` with `native(..)` instead (see Recipes). A wrapped view is a leaf: Ferrokit views can't go inside it.
+- SwiftUI views take hand-written `@_cdecl` glue (see Recipes); a bridge is being designed in issue #7. Swift that uses SwiftUI's macros (`@State`, `@Entry`, `#Preview`) needs Xcode installed, not only the Command Line Tools; plain Swift and `ObservableObject` don't.
