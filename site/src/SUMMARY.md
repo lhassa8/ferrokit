@@ -1,6 +1,7 @@
 # Summary
 
 [Ferrokit: native Mac apps in Rust](index.md)
+[FAQ](faq.md)
 
 # How to
 
@@ -9,13 +10,14 @@
 - [VoiceOver, spell check and input methods in a Rust GUI](voiceover-and-mac-text.md)
 - [Shipping a Rust app to the Mac App Store](mac-app-store.md)
 - [Wrapping any NSView in a Rust UI](wrap-any-nsview.md)
+- [A native Mac GUI for an existing Rust CLI](gui-for-an-existing-rust-cli.md)
 - [Async code in a native Mac app (tokio, reqwest)](async-in-a-mac-app.md)
 - [Open your Mac app from a link (`myapp://`)](open-mac-app-from-a-link.md)
 - [SwiftUI views in a Rust Mac app (Swift Charts)](swiftui-views-in-a-rust-mac-app.md)
 
 # Choosing
 
-- [Ferrokit vs egui, Iced, Slint, Tauri, NSH, cacao and objc2 on the Mac](compare.md)
+- [Ferrokit vs egui, Iced, Slint, Tauri, GPUI, NSH, cacao and objc2 on the Mac](compare.md)
 
 # The guide
 

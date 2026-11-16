@@ -8,6 +8,8 @@ edition = "2024"
 publish = false
 
 [dependencies]
+# For the "GUI for an existing CLI" page: a library with async functions.
+tokio = { version = "1", features = ["rt-multi-thread", "fs", "time"] }
 ferrokit = { path = "../../crates/ferrokit" }
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSResponder", "NSView", "NSControl", "NSLevelIndicator"] }
 

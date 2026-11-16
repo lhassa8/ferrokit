@@ -1,0 +1,23 @@
+{
+  "$schema": "https://context7.com/schema/context7.json",
+  "projectTitle": "Ferrokit",
+  "description": "Native macOS GUI framework for Rust: every view a real AppKit control (NSTableView, NSOutlineView, NSTextView), updated in place by fine-grained signals.",
+  "folders": [
+    "crates/ferrokit",
+    "crates/ferrokit-build",
+    "site/src"
+  ],
+  "excludeFolders": [
+    "site/snippets",
+    "retired",
+    "experiments",
+    "target",
+    "crates/ferrokit/tests"
+  ],
+  "rules": [
+    "Read AGENTS.md first: views are built once and updated by signals; never rebuild views or native models per update.",
+    "Ferrokit is macOS only (15 or later); everything runs on the main thread. Use spawn_local, background or spawn for async and blocking work.",
+    "An app's main is a plain fn main ending in App::run, not #[tokio::main]; keep a tokio runtime in a OnceLock for tokio libraries.",
+    "Verify changes with cargo ferrokit check, which runs the app's CHECK=all self-checks."
+  ]
+}

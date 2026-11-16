@@ -1,11 +1,11 @@
-# Ferrokit vs egui, Iced, Slint, Tauri, NSH, cacao and objc2 on the Mac
+# Ferrokit vs egui, Iced, Slint, Tauri, GPUI, NSH, cacao and objc2 on the Mac
 
 Which Rust GUI should you use for a **Mac app**? It depends mostly on one question: does the app have to run anywhere else?
 
-- **Also Windows, Linux, mobile or the web:** use a cross-platform toolkit: egui, Iced, Slint, Tauri or NSH. Ferrokit is Mac only.
+- **Also Windows, Linux, mobile or the web:** use a cross-platform toolkit: egui, Iced, Slint, Tauri, GPUI or NSH. Ferrokit is Mac only.
 - **Mac only, and it should look and behave like a Mac app:** that's what Ferrokit is for. NSH and raw `objc2` are the other ways to get AppKit views from Rust.
 
-Ferrokit is written by the same person as this page, so read it with that in mind. Facts about the other projects come from their own repositories and docs, checked **2026-11-11**, with links. If something here is wrong or out of date, please [open an issue](https://github.com/lhassa8/ferrokit/issues).
+Ferrokit is written by the same person as this page, so read it with that in mind. Facts about the other projects come from their own repositories and docs, checked **2026-11-11** (GPUI **2026-11-16**), with links. If something here is wrong or out of date, please [open an issue](https://github.com/lhassa8/ferrokit/issues).
 
 ## At a glance
 
@@ -16,6 +16,7 @@ Ferrokit is written by the same person as this page, so read it with that in min
 | **[Iced](https://github.com/iced-rs/iced)** | Its own renderer (wgpu or CPU) | Mac, Windows, Linux, web | 0.14 (Dec 2025); ~32k stars; active; calls itself experimental |
 | **[Slint](https://github.com/slint-ui/slint)** | Its own renderer; the `cupertino` style imitates macOS | Desktop, mobile, web, embedded | 1.18 (Sep 2026); ~25k stars; active; commercial company behind it |
 | **[Tauri](https://github.com/tauri-apps/tauri)** | The system web view (WKWebView); UI in HTML, CSS, JS | Mac, Windows, Linux, iOS, Android | 2.12 (Oct 2026), 3.0 in alpha; ~113k stars; very active |
+| **[GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui)** with [GPUI Component](https://github.com/longbridge/gpui-kit) | Its own GPU renderer (Metal on the Mac); controls "inspired by macOS and Windows" | Mac, Windows, Linux (GPUI Kit also WebAssembly) | GPUI 0.2.2, pre-1.0, "often breaking changes" (Zed's editor is built on it); GPUI Component 0.10 (Nov 2026), ~21k stars, very active (Longbridge) |
 | **[NSH](https://github.com/longbridge/nsh)** | AppKit views and Core Animation, styled by the app | Mac, iOS, Android, Windows, Linux, web | 0.5 (Nov 2026); ~2.5k stars; very active (Longbridge) |
 | **[cacao](https://github.com/ryanmcgrath/cacao)** | AppKit controls through safe bindings | Mac (iOS in alpha) | 0.4.0-beta2 (Aug 2023); ~2.1k stars; no commits since Dec 2024 |
 | **[objc2](https://github.com/madsmtm/objc2)** | Whatever AppKit you call yourself: bindings, no widget layer | Apple platforms | objc2 0.6.5, objc2-app-kit 0.3.2; the bindings Ferrokit itself uses |
@@ -29,6 +30,7 @@ Ferrokit is written by the same person as this page, so read it with that in min
 | **Iced** | Not in a release yet ([#1849](https://github.com/iced-rs/iced/pull/1849)) | Added in 0.14 | Not found | `table` widget (0.14); virtualisation not found |
 | **Slint** | Via AccessKit, `accessible-*` properties | Not confirmed on desktop | Not found | `StandardTableView`, visible rows only ([docs](https://docs.slint.dev/latest/docs/slint/reference/std-widgets/views/standardtableview/)) |
 | **Tauri** | What WebKit and your HTML provide | What WebKit provides | What WebKit provides | A JavaScript grid library of your choice |
+| **GPUI + GPUI Component** | Via AccessKit, built into its interaction layer ([README](https://github.com/longbridge/gpui-kit)) | Not stated in the README | Not stated | Data table with virtual scrolling, "hundreds of thousands of rows" |
 | **NSH** | The real view hierarchy, with labels, roles and states ([docs](https://nsh.dev/docs/accessibility)) | Handled (inputs are `NSTextField`/`NSTextView`) | Not stated | `DataTable`, cells in view only ([docs](https://nsh.dev/elements/data-table)) |
 | **cacao** | Whatever the wrapped controls do | Same | Same | `ListView` with cached rows |
 | **objc2** | Whatever you build | Same | Same | `NSTableView`, if you write its data source and delegate |
@@ -54,6 +56,8 @@ Ferrokit is written by the same person as this page, so read it with that in min
 **Pick Slint** for a designer-friendly markup language, embedded devices, or one UI on desktop and mobile. Check its licence: royalty-free for desktop, mobile and web apps (not embedded), GPLv3, or commercial.
 
 **Pick Tauri** if you or your team know web development, or you want one UI on desktop and mobile with the largest ecosystem. The UI is HTML and CSS in WebKit; it can look Mac-like with work, but it's a web page.
+
+**Pick GPUI with GPUI Component** for a fast, polished desktop app on Mac, Windows and Linux with a ready-made component set (docks, a code editor, data tables, charts): it's the toolkit Zed is built on, and the one r/rust named most when asked about native-feeling Rust apps. It draws its own controls on the GPU, styled after macOS and Windows, rather than using AppKit's, and GPUI itself is pre-1.0 with frequent breaking changes.
 
 **Pick NSH** for native views on several platforms from one Rust (or TSX) codebase, with your own design system on top. It's the closest project to Ferrokit in spirit; the difference is that NSH is cross-platform and lets the app own the controls' look, while Ferrokit is Mac only and uses AppKit's stock controls as they are.
 

@@ -35,7 +35,7 @@ echo "site: building"
 mdbook build site
 
 out=target/site
-echo "site: writing llms.txt, llms-full.txt, sitemap.xml"
+echo "site: writing llms.txt, llms-full.txt"
 {
   print -r -- "# Ferrokit: native macOS GUI framework for Rust"
   print
@@ -51,16 +51,18 @@ echo "site: writing llms.txt, llms-full.txt, sitemap.xml"
   print
   print -r -- "## How to"
   print
-  for p in native-mac-app-in-rust nstableview-from-rust voiceover-and-mac-text mac-app-store wrap-any-nsview async-in-a-mac-app open-mac-app-from-a-link swiftui-views-in-a-rust-mac-app compare; do
+  print -r -- "Each page is also at its .html address; these are the Markdown copies."
+  print
+  for p in faq native-mac-app-in-rust gui-for-an-existing-rust-cli nstableview-from-rust voiceover-and-mac-text mac-app-store wrap-any-nsview async-in-a-mac-app open-mac-app-from-a-link swiftui-views-in-a-rust-mac-app compare; do
     title=$(grep -m1 '^# ' site/src/$p.md | sed 's/^# //')
-    print -r -- "- [$title]($site/$p.html)"
+    print -r -- "- [$title]($site/$p.md)"
   done
   print
   print -r -- "## Guide"
   print
   for f in site/src/guide/[0-9][0-9]-*.md; do
     title=$(grep -m1 '^# ' $f | sed 's/^# //')
-    print -r -- "- [$title]($site/guide/${f:t:r}.html)"
+    print -r -- "- [$title]($site/guide/${f:t:r}.md)"
   done
   print
   print -r -- "## Optional"
@@ -72,16 +74,8 @@ cp crates/ferrokit/AGENTS.md crates/ferrokit/API.md $out/
 # Files served as they are at the site's root (Search Console's verification file).
 for f in site/static/*(N); do cp $f $out/; done
 { cat crates/ferrokit/AGENTS.md; print; print -r -- "---"; print; cat crates/ferrokit/API.md } > $out/llms-full.txt
-{
-  print -r -- '<?xml version="1.0" encoding="UTF-8"?>'
-  print -r -- '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
-  for f in $out/**/*.html(N); do
-    rel=${f#$out/}
-    [[ $rel == 404.html || $rel == print.html || $rel == toc.html ]] && continue
-    print -r -- "  <url><loc>$site/$rel</loc></url>"
-  done
-  print -r -- '</urlset>'
-} > $out/sitemap.xml
+# Per-page descriptions, Markdown copies, structured data and the sitemap.
+python3 -I scripts/site_post.py $out $site "$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
 
 echo "site: done, $out/index.html"
 if [[ ${1:-} == --serve ]]; then
