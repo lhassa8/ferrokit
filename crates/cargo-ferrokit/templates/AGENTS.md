@@ -9,6 +9,16 @@
 - `cargo ferrokit check`: clippy (warnings are errors), tests, a bundle, then the app's self-checks (`CHECK=all`). Run it after every change.
 - `cargo ferrokit bundle` / `notarize`: a signed `.app`; settings in `[package.metadata.ferrokit]` in `Cargo.toml`.
 
+## A GUI for an existing Rust project
+
+When the project already has a library or a CLI, the app goes beside it:
+
+- **Where:** a second binary in the same package, behind a feature, so the CLI's build and `cargo install` don't change. In `Cargo.toml`: `ferrokit = { version = "{{version}}", optional = true }`, `[features] gui = ["dep:ferrokit"]`, and `[[bin]] name = "<name>-gui"`, `path = "src/bin/<name>-gui.rs"`, `required-features = ["gui"]` (list the CLI's own `[[bin]]` too). Then `bin = "<name>-gui"` under `[package.metadata.ferrokit]`: `cargo ferrokit run`, `check` and `bundle` build that binary with its features, and lint and test with them. In a workspace, a new member package that depends on the library works too; run `cargo ferrokit` in its folder.
+- **`main` belongs to Ferrokit.** The app's `main` is a plain `fn main` ending in `App::new(..).run()`, which runs AppKit on the main thread until the app quits. Don't put `#[tokio::main]` on it. To call the library's async functions, keep a tokio runtime in a `static OnceLock<tokio::runtime::Runtime>`, and run them with `runtime().block_on(..)` inside `spawn` or `background` (or `runtime().spawn(..)` and `.await` the handle in `spawn_local`). Loading the data once before `App::new` with `block_on` is fine.
+- **Reuse the library, don't copy it:** call its types and functions from the app, and save through its own save function, so the CLI and the app write the same format.
+- **A data file the CLI changes while the app is open:** re-read it in a `spawn_local` loop (`sleep(Duration::from_secs(1)).await`, compare the file's modification time, `background` for the read), and set the signal only when the contents differ: `set_rows` clears a table's selection, so an unchanged reload shouldn't reach it.
+- **Self-checks** stay in the release build: they run only under `CHECK=all`. Point them at a temporary data file (an environment variable the library already reads, or a path the app takes), never the user's.
+
 ## Where the docs are
 
 Read before guessing; names are regular, but behaviour has rules.
@@ -108,7 +118,7 @@ fn as_undo_steps(window: &NSWindow, steps: &[&dyn Fn()]) {
 ```
 
 - **A table row's menu:** `table(&model).row_menu("Delete", move |row| …)`; each call adds an item. Number columns: `Column::number(…).decimals(2)`.
-- **A date column:** `Column::date("modified", "Date Modified", |r: &Row| Some(r.modified))` (a `SystemTime`): sorted by date, shown in the user's format ("Today", "12 Mar 2024"); `.with_time()` adds the time.
+- **A date column:** `Column::date("modified", "Date Modified", |r: &Row| Some(r.modified))` (a `SystemTime`): sorted by date, shown in the user's format ("Today", "12 Mar 2024"); `.with_time()` adds the time; `.none_text("Running")` is shown for `None` (default nothing).
 - **Delete and Space on a table:** `table(&model).on_key(TableKey::Delete, |rows| …)` (⌫ or ⌦, no ⌘) and `TableKey::Space` (Quick Look); keep a menu item for the same action.
 - **Acting on one cell (Set to NULL, Copy Value):** `table(&model).cell_focus(&column)` with a `Signal<Option<String>>`: a click or ← → focuses a column, and the action reads the selected rows and `column.get()`; put it in a menu with a shortcut (⌥⌫).
 - **Walking the disk:** read `has_full_disk_access()` once, then skip every folder where `asks_before_reading(path, access)` is true (show it as not scanned): a read that waits for the user's consent can't be cancelled and can stall the Mac. `open_url(FULL_DISK_ACCESS_SETTINGS)` opens the pane where the user allows it.
@@ -121,6 +131,8 @@ fn as_undo_steps(window: &NSWindow, steps: &[&dyn Fn()]) {
 - **A day as a `Column::date` value:** `UNIX_EPOCH + Duration::from_secs_f64(local_day_start(day))`, with `day` from `today()` or `local_day(seconds)`.
 - **A sidebar's roots are section headings** (shown in small capitals, not selectable): put the rows the user picks under one, `TreeNode::branch(heading, rows)`.
 - **Find (⌘F) and the Edit menu:** every app has Edit ▸ Find (Find…, Find and Replace…, Find Next, Find Previous, Use Selection for Find), enabled while the focus is in a `text_editor`; don't add your own. `App::menu("Edit", items)` adds items to the standard Edit menu, `"File"` and `"Help"` fill theirs; any other title is a new menu.
+- **More than 16 children in a stack:** a tuple takes up to 16 views; group some in a nested `vstack`/`hstack`, or pass a `Vec<AnyView>` (`vec![AnyView::new(a), AnyView::new(b)]`).
+- **Suggestions computed at runtime:** `combo_box_with(&value, move || projects.get())` re-reads its list when the signals change (`combo_box(&value, vec!["a", "b"])` is a fixed list); `.placeholder("Project")` on either.
 - **Lines that don't wrap** (code, logs): `TextModel::set_wraps(false)`.
 - **A document's toolbar and its view share commands, not signals.** `DocumentType::toolbar(|doc| …)` can't see signals made in the view closure: use `toolbar_command(id, label, symbol, CMD)` and handle `CMD` with `.on_command(CMD, …)` on the document's root view (it acts wherever the focus is inside that view).
 - **Links into the app (`myapp://…`):** `url-schemes = ["myapp"]` under `[package.metadata.ferrokit]` in `Cargo.toml`, and `App::on_open_url(|url| …)` in code. Only a bundled app gets links (`cargo ferrokit run`, not `cargo run`); the link is percent-encoded and untrusted, so check it before acting.

@@ -335,7 +335,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 
 ### `Views` (trait)
 
-`pub trait Views`: A list of child views: a tuple of views, or a `Vec<AnyView>`.
+`pub trait Views`: A list of child views: a tuple of up to 16 views, or a `Vec<AnyView>` (`vec![AnyView::new(a), AnyView::new(b), ..]`) for more. A nested stack also groups children: `vstack((header, vstack((a, b, c)), footer))`.
 
 - `fn into_views(self) -> Vec<AnyView>`: Erases the children, in order.
 
@@ -431,6 +431,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 
 - `pub fn color_well(value: &Signal<Color>) -> ColorWell`: A colour well bound two ways to `value`.
 - `pub fn combo_box(value: &Signal<String>, suggestions: Vec<&str>) -> ComboBox`: A text field bound two ways to `value`, with `suggestions` in a pop-up list (typing completes from them).
+- `pub fn combo_box_with(value: &Signal<String>, suggestions: impl Fn() -> Vec<String> + 'static) -> ComboBox`: A combo box whose suggestions come from `suggestions`, re-read when the signals it reads change (names already used in the app's data, say). Bound two ways to `value`, like `combo_box`.
 - `pub fn date_picker(value: &Signal<std::time::SystemTime>) -> DatePicker`: A date picker bound two ways to `value` (date only; see `DatePicker::with_time`).
 - `pub fn search_field(value: &Signal<String>) -> SearchField`: A search field bound two ways to `value` (updated as the user types).
 - `pub fn segmented<T: PartialEq + Clone + 'static>(value: &Signal<T>, options: Vec<(&str, T)>) -> Segmented<T>`: A segmented control bound two ways to `value`, one segment per option (title, value). VoiceOver reads each segment's title.
@@ -455,6 +456,8 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 ### `ComboBox`
 
 `pub struct ComboBox`: A text field with a list of suggestions (`NSComboBox`).
+
+- `pub fn placeholder(mut self, text: &str) -> Self`: Grey text shown while it's empty.
 
 ### `DatePicker`
 
@@ -617,6 +620,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn progress(id: &str, title: &str, value: impl Fn(&T) -> f64 + 'static) -> Self`: A progress bar from 0 to 1 (values outside are clamped). Sorted and copied as the number; VoiceOver reads it as a percentage.
 - `pub fn date(id: &str, title: &str, value: impl Fn(&T) -> Option<std::time::SystemTime> + 'static) -> Self`: A date column: shown in the user's format and language ("12 Mar 2024", "Today", "Yesterday"), sorted by date, oldest first; `None` shows nothing and sorts before every date. Copied as shown. `with_time` adds the time.
 - `pub fn with_time(mut self) -> Self`: Shows a date column's time too ("Today at 09:41").
+- `pub fn none_text(mut self, text: &str) -> Self`: What a date column shows for `None` (default nothing): "Running" for a timer with no end yet, "Never" for a file never opened. It still sorts before every date, and is copied as shown.
 - `pub fn icon(mut self, image: impl Fn(&T) -> Option<CellImage> + 'static) -> Self`: Shows an image before each cell's text (a text or number column), e.g. a file's icon before its name. `None` leaves the space empty.
 - `pub fn style(mut self, style: impl Fn(&T) -> CellStyle + 'static) -> Self`: Styles each cell of a text or number column from its row: a colour, a background tint, italic or struck-through text. The style is read when a cell is shown; after changing what it depends on, refresh the rows (`TableModel::update_row`).
 - `pub fn fit(mut self) -> Self`: Sizes the column to its widest content (and its title) whenever the rows change. With many rows, the longest values are measured.

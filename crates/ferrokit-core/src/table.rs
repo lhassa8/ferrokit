@@ -47,15 +47,16 @@ pub enum Value {
     Bool(bool),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 enum Kind {
     Text,
     Number { decimals: usize },
     Check,
     /// A bar from 0 to 1 (the value is a number).
     Progress,
-    /// A date (the value is seconds since 1970; not finite: none).
-    Date { time: bool },
+    /// A date (the value is seconds since 1970; not finite: none, shown
+    /// as `none`'s text).
+    Date { time: bool, none: Option<std::rc::Rc<str>> },
 }
 
 /// A small image shown before a cell's text (see [`Column::icon`]).
@@ -139,7 +140,7 @@ impl<T> Column<T> {
         Self::new(
             id,
             title,
-            Kind::Date { time: false },
+            Kind::Date { time: false, none: None },
             Box::new(move |row| {
                 let secs = value(row).map_or(f64::NEG_INFINITY, |t| match t.duration_since(std::time::UNIX_EPOCH) {
                     Ok(d) => d.as_secs_f64(),
@@ -153,8 +154,18 @@ impl<T> Column<T> {
 
     /// Shows a date column's time too ("Today at 09:41").
     pub fn with_time(mut self) -> Self {
-        if let Kind::Date { .. } = self.kind {
-            self.kind = Kind::Date { time: true };
+        if let Kind::Date { time, .. } = &mut self.kind {
+            *time = true;
+        }
+        self
+    }
+
+    /// What a date column shows for `None` (default nothing): "Running"
+    /// for a timer with no end yet, "Never" for a file never opened. It
+    /// still sorts before every date, and is copied as shown.
+    pub fn none_text(mut self, text: &str) -> Self {
+        if let Kind::Date { none, .. } = &mut self.kind {
+            *none = Some(text.into());
         }
         self
     }
@@ -218,10 +229,11 @@ impl<T> Column<T> {
     }
 }
 
-fn display(kind: Kind, value: &Value) -> String {
+fn display(kind: &Kind, value: &Value) -> String {
     match (kind, value) {
         (_, Value::Text(s)) => s.clone(),
-        (Kind::Date { time }, Value::Number(n)) => format_date(*n, time),
+        (Kind::Date { none: Some(text), .. }, Value::Number(n)) if !n.is_finite() => text.to_string(),
+        (Kind::Date { time, .. }, Value::Number(n)) => format_date(*n, *time),
         // NaN is no value (a database's NULL): shown as nothing.
         (Kind::Number { .. }, Value::Number(n)) if n.is_nan() => String::new(),
         (Kind::Number { decimals: 0 }, Value::Number(n)) => format!("{n:.0}"),
@@ -594,7 +606,7 @@ define_class!(
                 let value = sender.stringValue().to_string();
                 // Editing ends with Return, Tab or the focus moving away; an
                 // edit cancelled with Escape (or left as it was) isn't one.
-                let shown = (row >= 0).then(|| data.cell(row as usize, &column)).flatten().map(|(kind, v)| display(kind, &v));
+                let shown = (row >= 0).then(|| data.cell(row as usize, &column)).flatten().map(|(kind, v)| display(&kind, &v));
                 if shown.as_deref() == Some(value.as_str()) {
                     return;
                 }
@@ -951,7 +963,7 @@ fn indexes(set: &NSIndexSet) -> Vec<usize> {
 impl Source {
     fn cell_text(&self, column: Option<&NSTableColumn>, row: NSInteger) -> Option<Retained<NSString>> {
         let (kind, value) = self.data()?.cell(row as usize, &column?.identifier().to_string())?;
-        Some(NSString::from_str(&display(kind, &value)))
+        Some(NSString::from_str(&display(&kind, &value)))
     }
 
     fn data(&self) -> Option<Rc<dyn Data>> {
@@ -1154,7 +1166,7 @@ impl Source {
         // Set on reuse too: a column's kind can change (`set_columns`).
         field.setAlignment(if let Kind::Number { .. } = kind { NSTextAlignment::Right } else { NSTextAlignment::Natural });
         let style = self.data().and_then(|d| d.style(row as usize, &ident.to_string()));
-        Self::show_text(&field, &display(kind, &value), style.as_ref());
+        Self::show_text(&field, &display(&kind, &value), style.as_ref());
         Some(Retained::into_super(Retained::into_super(field)))
     }
 
@@ -1254,7 +1266,7 @@ fn show_text(field: &NSTextField, text: &str, style: Option<&CellStyle>) {
         // SAFETY: as above.
         if let Some(tf) = unsafe { cell.textField() } {
             let style = self.data().and_then(|d| d.style(row as usize, &ident.to_string()));
-            Self::show_text(&tf, &display(kind, value), style.as_ref());
+            Self::show_text(&tf, &display(&kind, value), style.as_ref());
         }
         Retained::into_super(cell)
     }
@@ -1296,7 +1308,7 @@ impl<T: 'static> Data for Inner<T> {
         let column = columns.iter().find(|c| c.id == column)?;
         let index = self.model_row(view_row)?;
         let rows = self.rows.borrow();
-        Some((column.kind, (column.value)(rows.get(index)?)))
+        Some((column.kind.clone(), (column.value)(rows.get(index)?)))
     }
 
     fn model_row(&self, view_row: usize) -> Option<usize> {
@@ -1393,7 +1405,7 @@ impl<T: 'static> Data for Inner<T> {
         view_rows
             .iter()
             .filter_map(|&r| rows.get(*order.get(r)?))
-            .map(|row| columns.iter().map(|c| clean(display(c.kind, &(c.value)(row)))).collect::<Vec<_>>().join("\t"))
+            .map(|row| columns.iter().map(|c| clean(display(&c.kind, &(c.value)(row)))).collect::<Vec<_>>().join("\t"))
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -1468,7 +1480,7 @@ impl<T: 'static> Inner<T> {
         let rows = self.rows.borrow();
         for column in self.columns.borrow().iter().filter(|c| c.fit) {
             let Some(native) = self.table.tableColumnWithIdentifier(&NSString::from_str(&column.id)) else { continue };
-            let mut texts: Vec<String> = rows.iter().map(|r| display(column.kind, &(column.value)(r))).collect();
+            let mut texts: Vec<String> = rows.iter().map(|r| display(&column.kind, &(column.value)(r))).collect();
             if texts.len() > 2_000 {
                 texts.sort_by_key(|t| std::cmp::Reverse(t.chars().count()));
                 texts.truncate(64);
@@ -2197,12 +2209,16 @@ mod tests {
     #[test]
     fn dates_shown_in_the_users_format() {
         use super::{Kind, Value, display};
-        let none = display(Kind::Date { time: false }, &Value::Number(f64::NEG_INFINITY));
+        let none = display(&Kind::Date { time: false, none: None }, &Value::Number(f64::NEG_INFINITY));
         assert_eq!(none, "");
         // 2020-09-13 12:26:40 UTC: the year shows in every medium style.
-        let day = display(Kind::Date { time: false }, &Value::Number(1_600_000_000.0));
-        let with_time = display(Kind::Date { time: true }, &Value::Number(1_600_000_000.0));
+        let day = display(&Kind::Date { time: false, none: None }, &Value::Number(1_600_000_000.0));
+        let with_time = display(&Kind::Date { time: true, none: None }, &Value::Number(1_600_000_000.0));
         assert!(day.contains("2020") && with_time.contains("2020") && with_time.len() > day.len(), "{day:?} {with_time:?}");
+        // `none_text`: a word for a missing date; dates stay dates.
+        let col = super::Column::<Option<std::time::SystemTime>>::date("end", "End", |t| *t).with_time().none_text("Running");
+        assert_eq!(display(&col.kind, &(col.value)(&None)), "Running");
+        assert_eq!(display(&col.kind, &(col.value)(&Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000)))), with_time);
     }
 
     #[test]
@@ -2220,9 +2236,9 @@ mod number_cells {
 
     #[test]
     fn nan_is_no_value() {
-        assert_eq!(display(Kind::Number { decimals: 2 }, &Value::Number(f64::NAN)), "");
+        assert_eq!(display(&Kind::Number { decimals: 2 }, &Value::Number(f64::NAN)), "");
         // The region's decimal separator (78,4 in Germany), no grouping.
-        assert_eq!(display(Kind::Number { decimals: 2 }, &Value::Number(1.5)), format!("1{}50", decimal_separator()));
-        assert_eq!(display(Kind::Number { decimals: 0 }, &Value::Number(2026.0)), "2026");
+        assert_eq!(display(&Kind::Number { decimals: 2 }, &Value::Number(1.5)), format!("1{}50", decimal_separator()));
+        assert_eq!(display(&Kind::Number { decimals: 0 }, &Value::Number(2026.0)), "2026");
     }
 }

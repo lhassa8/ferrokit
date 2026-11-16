@@ -17,6 +17,9 @@ id = "{{id}}"
 # A square PNG (1024 px is best) or an .icns.
 # icon = "icon.png"
 min-macos = "15.0"
+# The app's binary, when the package has several (a CLI beside the app);
+# its required-features are turned on for every build:
+# bin = "{{name}}-gui"
 # category = "public.app-category.productivity"
 # Languages it's translated into (App::translations), besides English:
 # languages = ["de", "fr"]

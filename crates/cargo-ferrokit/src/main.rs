@@ -269,6 +269,8 @@ struct Project {
     dir: PathBuf,
     target_dir: PathBuf,
     bin: String,
+    /// The binary's `required-features` (`a,b`), turned on for every build.
+    features: Option<String>,
     display: String,
     id: String,
     icon: Option<PathBuf>,
@@ -341,7 +343,7 @@ impl Extra {
 /// type: a misspelt `sandbox` would otherwise ship an app without it.
 fn check_settings(m: &serde_json::Value) -> Result<()> {
     let Some(table) = m.as_object() else { return Ok(()) };
-    const TEXT: [&str; 10] = ["name", "id", "icon", "min-macos", "category", "sign", "notary-profile", "app-store-sign", "installer-sign", "provisioning-profile"];
+    const TEXT: [&str; 11] = ["bin", "name", "id", "icon", "min-macos", "category", "sign", "notary-profile", "app-store-sign", "installer-sign", "provisioning-profile"];
     const BOOL: [&str; 2] = ["sandbox", "network"];
     const OTHER: [&str; 6] = ["documents", "languages", "url-schemes", "updates", "entitlements", "plist"];
     let unknown = |section: &str, key: &str, known: &[&str]| format!("[package.metadata.ferrokit{section}] has no setting `{key}` (it has: {})", known.join(", "));
@@ -434,6 +436,14 @@ impl Updates {
 }
 
 impl Project {
+    /// `--features a,b` for the binary's `required-features`, or nothing.
+    fn feature_args(&self) -> Vec<&str> {
+        match self.features.as_deref() {
+            Some(f) => vec!["--features", f],
+            None => vec![],
+        }
+    }
+
     /// The package in the current folder (or the only one in its workspace).
     fn load(bin: Option<&str>) -> Result<Project> {
         let json = output(&cargo(), &["metadata", "--no-deps", "--format-version", "1"], None)?;
@@ -446,23 +456,30 @@ impl Project {
             .find(|p| dir_of(p).canonicalize().is_ok_and(|d| d == cwd))
             .or_else(|| (packages.len() == 1).then(|| &packages[0]))
             .ok_or("run this in an app's folder (where its Cargo.toml is)")?;
-        let bins: Vec<String> = package["targets"]
+        // Each binary with its `required-features` (a GUI beside a CLI is
+        // often behind a feature).
+        let targets: Vec<(String, Vec<String>)> = package["targets"]
             .as_array()
             .into_iter()
             .flatten()
             .filter(|t| t["kind"].as_array().is_some_and(|k| k.iter().any(|k| k == "bin")))
-            .filter_map(|t| t["name"].as_str().map(String::from))
+            .filter_map(|t| {
+                let features = t["required-features"].as_array().into_iter().flatten().filter_map(|f| f.as_str().map(String::from)).collect();
+                t["name"].as_str().map(|n| (n.to_string(), features))
+            })
             .collect();
-        let bin = match bin {
+        let bins: Vec<String> = targets.iter().map(|(n, _)| n.clone()).collect();
+        let name = package["name"].as_str().unwrap_or_default().to_string();
+        let m = &package["metadata"]["ferrokit"];
+        check_settings(m)?;
+        let bin = match bin.or(m["bin"].as_str()) {
             Some(b) if bins.iter().any(|x| x == b) => b.to_string(),
             Some(b) => return Err(format!("no binary `{b}` (there's {})", bins.join(", "))),
             None if bins.len() == 1 => bins[0].clone(),
             None if bins.is_empty() => return Err("the package has no binary to bundle".into()),
-            None => return Err(format!("several binaries ({}): choose one with --bin", bins.join(", "))),
+            None => return Err(format!("several binaries ({}): choose the app with --bin, or once with `bin = \"<name>\"` under [package.metadata.ferrokit]", bins.join(", "))),
         };
-        let name = package["name"].as_str().unwrap_or_default().to_string();
-        let m = &package["metadata"]["ferrokit"];
-        check_settings(m)?;
+        let features = targets.iter().find(|(n, _)| *n == bin).map(|(_, f)| f.join(",")).filter(|f| !f.is_empty());
         let text = |key: &str| m[key].as_str().map(String::from);
         let dir = dir_of(package);
         let documents = m["documents"]
@@ -506,6 +523,7 @@ impl Project {
             package: name,
             dir,
             bin,
+            features,
         })
     }
 }
@@ -663,6 +681,7 @@ fn bundle(p: &Project, o: &BundleOptions) -> Result<PathBuf> {
     let triples: Vec<&str> = if o.universal { vec!["aarch64-apple-darwin", "x86_64-apple-darwin"] } else { vec![] };
     if triples.is_empty() {
         let mut args = vec!["build", "-p", &p.package, "--bin", &p.bin];
+        args.extend(p.feature_args());
         if o.release {
             args.push("--release");
         }
@@ -675,6 +694,7 @@ fn bundle(p: &Project, o: &BundleOptions) -> Result<PathBuf> {
                 return Err(format!("the Rust target {t} isn't installed: rustup target add {t}"));
             }
             let mut args = vec!["build", "-p", &p.package, "--bin", &p.bin, "--target", t];
+            args.extend(p.feature_args());
             if o.release {
                 args.push("--release");
             }
@@ -1137,9 +1157,15 @@ fn check(args: &[String]) -> Result<()> {
     let pkg = project.package.clone();
     if !a.flag("--no-lint") {
         step("Lint (clippy, warnings are errors)");
-        record("clippy", sh(&cargo(), &["clippy", "-p", &pkg, "--all-targets", "--", "-D", "warnings"], Some(&project.dir)).map(|_| String::new()));
+        // With the app's features, so a feature-gated app is linted and tested too.
+        let mut clippy = vec!["clippy", "-p", &pkg, "--all-targets"];
+        clippy.extend(project.feature_args());
+        clippy.extend(["--", "-D", "warnings"]);
+        record("clippy", sh(&cargo(), &clippy, Some(&project.dir)).map(|_| String::new()));
         step("Tests");
-        record("tests", sh(&cargo(), &["test", "-p", &pkg], Some(&project.dir)).map(|_| String::new()));
+        let mut test = vec!["test", "-p", &pkg];
+        test.extend(project.feature_args());
+        record("tests", sh(&cargo(), &test, Some(&project.dir)).map(|_| String::new()));
     }
     let app = bundle(&project, &BundleOptions { release: false, universal: false, sign: "-".into(), out: None, store: None });
     match app {
@@ -1470,6 +1496,7 @@ mod tests {
             dir: PathBuf::new(),
             target_dir: PathBuf::new(),
             bin: "notes".into(),
+            features: None,
             display: "Notes & More".into(),
             id: "com.example.notes".into(),
             icon: None,

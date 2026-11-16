@@ -81,6 +81,70 @@ AppKit is single-threaded, and so is `ferrokit`: views and signals live on
 the main thread. Long work goes to a background thread with `spawn`,
 which hands the result back to the main thread (see [State](https://docs.rs/ferrokit/latest/ferrokit/guide/ch02_state/)).
 
+## A GUI for an existing project
+
+A Rust project that already has a library or a command-line tool can
+add its Mac app as a second binary in the same package. Put it behind a
+feature, so the tool's build and `cargo install` stay as they are:
+
+```toml
+[dependencies]
+ferrokit = { version = "0.9", optional = true }
+
+[features]
+gui = ["dep:ferrokit"]
+
+[[bin]]
+name = "tally"
+path = "src/main.rs"
+
+[[bin]]
+name = "tally-gui"
+path = "src/bin/tally-gui.rs"
+required-features = ["gui"]
+
+[package.metadata.ferrokit]
+bin = "tally-gui"
+name = "Tally"
+```
+
+With `bin` set, `cargo ferrokit run`, `check` and `bundle` build
+`tally-gui` with the `gui` feature. (In a workspace, a new member package
+that depends on the library works as well.)
+
+The app's `main` is a plain `fn main` that ends in `App::run`: AppKit
+needs the main thread for as long as the app runs, so it can't be a
+`#[tokio::main]` function. A library with `async` functions runs them on
+a tokio runtime the app keeps, from a background thread:
+
+```rust,ignore
+use std::sync::OnceLock;
+use ferrokit::*;
+
+fn runtime() -> &'static tokio::runtime::Runtime {
+    static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RT.get_or_init(|| tokio::runtime::Runtime::new().expect("a tokio runtime"))
+}
+
+fn main() {
+    // Once, before the app starts: blocking here is fine.
+    let entries = Signal::new(runtime().block_on(mylib::load()).unwrap_or_default());
+    // Later, from a button: the save runs on another thread, and the
+    // result comes back on the main thread.
+    let save_now = move || {
+        let list = entries.get_untracked();
+        spawn(move || runtime().block_on(mylib::save(list)), |result| {
+            if let Err(e) = result {
+                eprintln!("not saved: {e}");
+            }
+        });
+    };
+    App::new("Tally")
+        .window(Window::new("Tally").view(button("Save", save_now)))
+        .run();
+}
+```
+
 ## Opening windows later
 
 `App::window` opens windows at launch. `open(Window)` opens one while the

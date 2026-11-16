@@ -245,6 +245,35 @@ else
   tail -20 "$dir/e2e-fails.log"
   failed=$((failed + 1))
 fi
+# A GUI beside a CLI: two binaries, the app behind a `gui` feature
+# (required-features). Without `bin` set, cargo ferrokit asks which; with
+# it, it builds the app with its features, lints and tests with them too.
+cargo ferrokit new e2e-gui --ferrokit-path "$root/crates/ferrokit" >/dev/null
+printf 'fn main() {\n    println!("the CLI");\n}\n' >e2e-gui/src/cli.rs
+cat >>e2e-gui/Cargo.toml <<'TOML'
+
+[features]
+gui = []
+
+[[bin]]
+name = "e2e-gui-cli"
+path = "src/cli.rs"
+
+[[bin]]
+name = "e2e-gui"
+path = "src/main.rs"
+required-features = ["gui"]
+TOML
+asked=$(cd e2e-gui && cargo ferrokit check --no-lint 2>&1) || true
+sed -i '' 's/^\[package.metadata.ferrokit\]$/&\
+bin = "e2e-gui"/' e2e-gui/Cargo.toml
+if echo "$asked" | grep -q "several binaries (.*e2e-gui-cli.*): choose the app" && (cd e2e-gui && cargo ferrokit check --timeout 120) >"$dir/e2e-gui.log" 2>&1 && grep -q "self-checks: [1-9][0-9]* passed" "$dir/e2e-gui.log"; then
+  echo "[check] feature-gated-bin PASS asks which binary; with bin set, lint, tests, bundle and self-checks pass with the gui feature"
+else
+  echo "[check] feature-gated-bin FAIL $asked"
+  tail -20 "$dir/e2e-gui.log" 2>/dev/null || true
+  failed=$((failed + 1))
+fi
 # A link in the app's own URL scheme, through macOS: the bundled app
 # (url-schemes in its Cargo.toml) opens one, and macOS hands it back to
 # the running app's App::on_open_url. A copy macOS starts instead also

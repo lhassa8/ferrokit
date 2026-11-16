@@ -2170,7 +2170,7 @@ fn names(m: &TableModel<Item2>) -> Vec<String> {
 /// action or notification) sets the signal; setting the signal updates
 /// the control.
 fn controls_c_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
-    use ferrokit::{Color, color_well, combo_box, date_picker, search_field, segmented, time_picker};
+    use ferrokit::{Color, color_well, combo_box, combo_box_with, date_picker, search_field, segmented, time_picker};
     use objc2_app_kit::{NSColorWell, NSComboBox, NSDatePicker, NSSearchField, NSSegmentedControl};
     use std::time::{Duration, UNIX_EPOCH};
     let day = |d: u64| UNIX_EPOCH + Duration::from_secs(1_790_000_000 + d * 86_400);
@@ -2182,7 +2182,9 @@ fn controls_c_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let submits = Signal::new(0u32);
     let s2 = submits;
     let time = Signal::new((9u32, 30u32));
-    let w = open(Window::new("Controls C").size(420.0, 350.0).view(
+    let places = Signal::new(vec!["Oslo".to_string()]);
+    let place = Signal::new(String::new());
+    let w = open(Window::new("Controls C").size(420.0, 380.0).view(
         vstack((
             date_picker(&date).accessibility_label("Due"),
             date_picker(&date).with_time().calendar().range(day(0), day(400)).accessibility_label("Due, calendar"),
@@ -2190,6 +2192,7 @@ fn controls_c_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
             color_well(&colour).accessibility_label("Colour"),
             segmented(&view_mode, vec![("List", 1u8), ("Grid", 2), ("Columns", 3)]).accessibility_label("View"),
             combo_box(&city, vec!["Berlin", "Lagos", "Tokyo"]).accessibility_label("City"),
+            combo_box_with(&place, move || places.get()).placeholder("Place").accessibility_label("Place"),
             search_field(&query).placeholder("Search orders").on_submit(move || s2.update(|n| *n += 1)).accessibility_label("Search"),
         ))
         .padding(12.0),
@@ -2199,7 +2202,9 @@ fn controls_c_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let time_p = (pickers.len() == 3).then(|| pickers.remove(2));
     let well = all.iter().find_map(|v| v.clone().downcast::<NSColorWell>().ok()).unwrap();
     let seg = all.iter().find_map(|v| v.clone().downcast::<NSSegmentedControl>().ok()).unwrap();
-    let combo = all.iter().find_map(|v| v.clone().downcast::<NSComboBox>().ok()).unwrap();
+    let mut combos = all.iter().filter_map(|v| v.clone().downcast::<NSComboBox>().ok());
+    let combo = combos.next().unwrap();
+    let live_combo = combos.next().unwrap();
     let search = all.iter().find_map(|v| v.clone().downcast::<NSSearchField>().ok()).unwrap();
     let secs = |p: &NSDatePicker| p.dateValue().timeIntervalSince1970() as u64;
 
@@ -2257,6 +2262,17 @@ fn controls_c_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let chose = city.get_untracked() == "Lagos";
     batch(|| city.set("Tokyo".into()));
     check("combo-box", typed && chose && combo.stringValue().to_string() == "Tokyo", format!("typed → {typed}; chose Lagos → {chose}; signal → field {:?}", combo.stringValue()));
+
+    // Live suggestions: the list follows its signal and leaves the text
+    // alone; the placeholder shows while it's empty.
+    let items = |c: &NSComboBox| (0..c.numberOfItems()).filter_map(|i| c.itemObjectValueAtIndex(i).downcast::<NSString>().ok().map(|s| s.to_string())).collect::<Vec<_>>();
+    let first = items(&live_combo);
+    let hint = live_combo.placeholderString().map(|p| p.to_string());
+    post_edit(&live_combo, "Ber");
+    batch(|| places.update(|p| p.push("Bergen".into())));
+    let grown = items(&live_combo);
+    let kept = place.get_untracked() == "Ber" && live_combo.stringValue().to_string() == "Ber";
+    check("combo-box-live", first == ["Oslo"] && grown == ["Oslo", "Bergen"] && kept && hint.as_deref() == Some("Place"), format!("items {first:?} → {grown:?}; typed text kept: {kept}; placeholder {hint:?}"));
 
     // Search: typing → signal; Return → submit; the clear button → empty.
     // (A keystroke sends the field's action too; Return is the command

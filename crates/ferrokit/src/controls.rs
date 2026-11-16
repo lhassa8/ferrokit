@@ -1159,17 +1159,45 @@ define_class!(
 /// A text field with a list of suggestions (`NSComboBox`).
 pub struct ComboBox {
     value: Signal<String>,
-    suggestions: Vec<String>,
+    suggestions: Suggestions,
+    placeholder: Option<String>,
+}
+
+enum Suggestions {
+    Fixed(Vec<String>),
+    Live(Box<dyn Fn() -> Vec<String>>),
+}
+
+impl ComboBox {
+    /// Grey text shown while it's empty.
+    pub fn placeholder(mut self, text: &str) -> Self {
+        self.placeholder = Some(text.into());
+        self
+    }
+}
+
+fn set_suggestions(combo: &objc2_app_kit::NSComboBox, suggestions: &[String]) {
+    combo.removeAllItems();
+    for s in suggestions {
+        // SAFETY: the combo box takes object values; NSStrings are what
+        // it shows and what the delegate reads back.
+        unsafe { combo.addItemWithObjectValue(&NSString::from_str(s)) };
+    }
 }
 
 impl View for ComboBox {
     fn build(self, cx: &mut Cx) -> Node {
         let combo = objc2_app_kit::NSComboBox::new(cx.mtm);
-        for s in &self.suggestions {
-            // SAFETY: the combo box takes object values; NSStrings are what
-            // it shows and what the delegate reads back.
-            unsafe { combo.addItemWithObjectValue(&NSString::from_str(s)) };
+        if let Some(p) = &self.placeholder {
+            combo.setPlaceholderString(Some(&NSString::from_str(p)));
         }
+        let live = match self.suggestions {
+            Suggestions::Fixed(list) => {
+                set_suggestions(&combo, &list);
+                None
+            }
+            Suggestions::Live(f) => Some(f),
+        };
         combo.setCompletes(true);
         let delegate = ComboDelegate::alloc(cx.mtm).set_ivars(self.value);
         // SAFETY: NSObject's designated initialiser.
@@ -1177,6 +1205,7 @@ impl View for ComboBox {
         // SAFETY: the delegate is weak in AppKit; the node keeps it.
         unsafe { combo.setDelegate(Some(ProtocolObject::from_ref(&*delegate))) };
         let (mut node, _) = Node::leaf(cx, Retained::into_super(Retained::into_super(Retained::into_super(combo.clone()))), (true, false), Size { w: 120.0, h: 0.0 });
+        let live_combo = combo.clone();
         let value = self.value;
         node.own(Effect::new(move || {
             let v = value.get();
@@ -1184,6 +1213,17 @@ impl View for ComboBox {
                 combo.setStringValue(&NSString::from_str(&v));
             }
         }));
+        if let Some(f) = live {
+            let combo = live_combo;
+            let mut last: Option<Vec<String>> = None;
+            node.own(Effect::new(move || {
+                let list = f();
+                if last.as_ref() != Some(&list) {
+                    set_suggestions(&combo, &list);
+                    last = Some(list);
+                }
+            }));
+        }
         node.keep(Retained::into_super(delegate));
         node
     }
@@ -1192,7 +1232,23 @@ impl View for ComboBox {
 /// A text field bound two ways to `value`, with `suggestions` in a pop-up
 /// list (typing completes from them).
 pub fn combo_box(value: &Signal<String>, suggestions: Vec<&str>) -> ComboBox {
-    ComboBox { value: *value, suggestions: suggestions.into_iter().map(String::from).collect() }
+    ComboBox { value: *value, suggestions: Suggestions::Fixed(suggestions.into_iter().map(String::from).collect()), placeholder: None }
+}
+
+/// A combo box whose suggestions come from `suggestions`, re-read when the
+/// signals it reads change (names already used in the app's data, say).
+/// Bound two ways to `value`, like [`combo_box`].
+///
+/// ```no_run
+/// use ferrokit::*;
+///
+/// let projects = Signal::new(vec!["docs".to_string(), "website".to_string()]);
+/// let project = Signal::new(String::new());
+/// let field = combo_box_with(&project, move || projects.get()).placeholder("Project");
+/// # let _ = field;
+/// ```
+pub fn combo_box_with(value: &Signal<String>, suggestions: impl Fn() -> Vec<String> + 'static) -> ComboBox {
+    ComboBox { value: *value, suggestions: Suggestions::Live(Box::new(suggestions)), placeholder: None }
 }
 
 /// A search field (rounded, with a clear button) bound to `value`.

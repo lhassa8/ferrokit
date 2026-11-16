@@ -133,7 +133,7 @@ pub use resource::{Cancel, Load, Resource};
 pub use task::{Background, Sleep, Task, background, sleep, spawn_local};
 pub use signal::{Effect, Memo, Signal, after_batch, batch, effect_runs, live_signals, untrack};
 pub use controls::{
-    ColorWell, ComboBox, DatePicker, SearchField, Segmented, TimePicker, color_well, combo_box, date_picker, search_field, segmented, segmented_with, time_picker,
+    ColorWell, ComboBox, DatePicker, SearchField, Segmented, TimePicker, color_well, combo_box, combo_box_with, date_picker, search_field, segmented, segmented_with, time_picker,
     Checkbox, Image, Picker, Progress, Slider, Stepper, SymbolEffect, TextField, checkbox, image, image_data, image_file, picker, progress, secure_field, slider,
     stepper, text_field, toggle,
 };

@@ -1396,7 +1396,9 @@ fn add_surface(node: Node, mut look: crate::surface::Look, cx: &Cx) -> Node {
     node
 }
 
-/// A list of child views: a tuple of views, or a `Vec<AnyView>`.
+/// A list of child views: a tuple of up to 16 views, or a `Vec<AnyView>`
+/// (`vec![AnyView::new(a), AnyView::new(b), ..]`) for more. A nested stack
+/// also groups children: `vstack((header, vstack((a, b, c)), footer))`.
 pub trait Views {
     /// Erases the children, in order.
     fn into_views(self) -> Vec<AnyView>;
@@ -1437,6 +1439,12 @@ tuple_views!(A, B, C, D, E, F, G);
 tuple_views!(A, B, C, D, E, F, G, H);
 tuple_views!(A, B, C, D, E, F, G, H, I);
 tuple_views!(A, B, C, D, E, F, G, H, I, J);
+tuple_views!(A, B, C, D, E, F, G, H, I, J, K);
+tuple_views!(A, B, C, D, E, F, G, H, I, J, K, L);
+tuple_views!(A, B, C, D, E, F, G, H, I, J, K, L, M);
+tuple_views!(A, B, C, D, E, F, G, H, I, J, K, L, M, N);
+tuple_views!(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O);
+tuple_views!(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P);
 
 /// A stack of views along one axis.
 pub struct Stack {
