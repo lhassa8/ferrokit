@@ -14,6 +14,7 @@ on:
       - crates/ferrokit/API.md
       - assets/**
       - scripts/site.sh
+      - scripts/site_post.py
       - .github/workflows/pages.yml
   workflow_dispatch:
 
@@ -32,6 +33,9 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The pages' "Updated" dates come from each file's last commit.
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
