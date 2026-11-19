@@ -37,6 +37,7 @@ name = "My App"
 id = "com.example.myapp"
 icon = "icon.png"          # square PNG (1024 px) or .icns
 min-macos = "15.0"
+bin = "myapp-gui"          # the app, when the package has several binaries (a CLI beside it); its required-features are turned on
 category = "public.app-category.productivity"
 languages = ["de", "fr"]   # its translations, besides English
 url-schemes = ["myapp"]    # opens myapp://… links (ferrokit's App::on_open_url)

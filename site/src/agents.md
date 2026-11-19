@@ -5,6 +5,7 @@ If you're an AI coding agent (Claude Code, Codex, Cursor…) helping someone bui
 - **[`llms.txt`](llms.txt):** what Ferrokit is, when to use it and when not, and where everything is.
 - **[`llms-full.txt`](llms-full.txt):** `AGENTS.md` and `API.md` in one file.
 - **`AGENTS.md`:** the rules, recipes that compile, and the known limits with their workarounds. It ships in the crate, `cargo ferrokit new` puts it in every new app, and `cargo ferrokit agents` writes it into an existing one. [On GitHub](https://github.com/lhassa8/ferrokit/blob/main/crates/ferrokit/AGENTS.md).
+- **Adding a GUI to someone's existing Rust CLI or library:** [this page](gui-for-an-existing-rust-cli.md) and `AGENTS.md`'s *A GUI for an existing Rust project*: a second binary behind a `gui` feature, `bin = "…"` for `cargo ferrokit`, a plain `fn main` (not `#[tokio::main]`).
 - **`API.md`:** every public item on one page, with its signature and the first paragraph of its docs. [On GitHub](https://github.com/lhassa8/ferrokit/blob/main/crates/ferrokit/API.md).
 
 ## When Ferrokit fits

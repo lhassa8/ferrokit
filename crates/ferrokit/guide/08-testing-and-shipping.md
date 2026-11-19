@@ -248,6 +248,7 @@ name = "My App"            # in the menu bar, Finder and Dock
 id = "com.example.myapp"   # the bundle identifier
 icon = "icon.png"          # a square PNG (1024 px) or .icns
 min-macos = "15.0"
+# bin = "myapp-gui"       # the app, when the package has several binaries
 [[package.metadata.ferrokit.documents]]  # files the app opens
 name = "Text"
 extensions = ["txt", "md"]

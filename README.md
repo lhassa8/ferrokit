@@ -147,7 +147,7 @@ If Claude Code, Cursor or Codex writes most of your code, it can learn Ferrokit 
 
 ## Testing it like you mean it
 
-Ferrokit tests itself with real apps. About 500 self-checks across 18 example apps click real buttons, type into real text views and read back what AppKit did. They run in release and debug builds and in the App Sandbox, on macOS 15, 26 and the newest beta. Your app gets the same tools: `ferrokit::testing` and `cargo ferrokit check`.
+Ferrokit tests itself with real apps. About 550 self-checks across 18 example apps click real buttons, type into real text views and read back what AppKit did. They run in release and debug builds and in the App Sandbox, on macOS 15, 26 and the newest beta. Your app gets the same tools: `ferrokit::testing` and `cargo ferrokit check`.
 
 ## Built something?
 

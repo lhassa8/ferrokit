@@ -84,7 +84,9 @@ let form = vstack((
 - `segmented` reads each segment's title to VoiceOver; give the control as
   a whole a name too.
 - `combo_box` keeps free text: typing sets the signal, and so does picking
-  a suggestion.
+  a suggestion. Its suggestions are a fixed list; `combo_box_with(&value,
+  move || names.get())` reads them from signals and updates the list when
+  they change. `.placeholder("Project")` shows grey text while it's empty.
 - `search_field` updates its signal as the user types; the clear button
   empties it, and Return runs `on_submit`.
 
