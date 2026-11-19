@@ -1,9 +1,9 @@
 # Ferrokit for AI coding agents
 
-Read this before writing code with `ferrokit` 0.9. Ferrokit builds native Mac apps in Rust: every view is a real AppKit view (`NSTableView`, `NSTextView`…), built once and updated in place by signals. macOS 15 or later; everything runs on the main thread.
+Read this before writing code with `ferrokit` 0.10. Ferrokit builds native Mac apps in Rust: every view is a real AppKit view (`NSTableView`, `NSTextView`…), built once and updated in place by signals. macOS 15 or later; everything runs on the main thread.
 
 - **A new app:** `cargo install cargo-ferrokit`, then `cargo ferrokit new <name>` (`--document` for a document app). It comes with this file as its `AGENTS.md`, a working example and self-checks.
-- **An existing project:** `cargo add ferrokit`, `cargo install cargo-ferrokit`, then `cargo ferrokit agents` writes this file into it as `AGENTS.md`. *A GUI for an existing Rust project* (below) says where the app goes and what happens to `#[tokio::main]`; the self-checks in a new app's `src/main.rs` are the pattern to copy.
+- **An existing project** (a CLI or a library): `cargo install cargo-ferrokit`, then `cargo ferrokit agents` writes this file into it as `AGENTS.md`. Add `ferrokit` as *A GUI for an existing Rust project* (below) says: an optional dependency behind a `gui` feature, for a second binary, so the CLI's build doesn't change. The self-checks in a new app's `src/main.rs` (`cargo ferrokit new`) are the pattern to copy.
 
 ## Commands
 
@@ -16,8 +16,8 @@ Read this before writing code with `ferrokit` 0.9. Ferrokit builds native Mac ap
 
 When the project already has a library or a CLI, the app goes beside it:
 
-- **Where:** a second binary in the same package, behind a feature, so the CLI's build and `cargo install` don't change. In `Cargo.toml`: `ferrokit = { version = "0.9", optional = true }`, `[features] gui = ["dep:ferrokit"]`, and `[[bin]] name = "<name>-gui"`, `path = "src/bin/<name>-gui.rs"`, `required-features = ["gui"]` (list the CLI's own `[[bin]]` too). Then `bin = "<name>-gui"` under `[package.metadata.ferrokit]`: `cargo ferrokit run`, `check` and `bundle` build that binary with its features, and lint and test with them. In a workspace, a new member package that depends on the library works too; run `cargo ferrokit` in its folder.
-- **`main` belongs to Ferrokit.** The app's `main` is a plain `fn main` ending in `App::new(..).run()`, which runs AppKit on the main thread until the app quits. Don't put `#[tokio::main]` on it. To call the library's async functions, keep a tokio runtime in a `static OnceLock<tokio::runtime::Runtime>`, and run them with `runtime().block_on(..)` inside `spawn` or `background` (or `runtime().spawn(..)` and `.await` the handle in `spawn_local`). Loading the data once before `App::new` with `block_on` is fine.
+- **Where:** a second binary in the same package, behind a feature, so the CLI's build and `cargo install` don't change. In `Cargo.toml`: `ferrokit = { version = "0.10", optional = true }`, `[features] gui = ["dep:ferrokit"]`, and `[[bin]] name = "<name>-gui"`, `path = "src/bin/<name>-gui.rs"`, `required-features = ["gui"]` (list the CLI's own `[[bin]]` too). Then `bin = "<name>-gui"` under `[package.metadata.ferrokit]`: `cargo ferrokit run`, `check` and `bundle` build that binary with its features, and lint and test with them. In a workspace, a new member package that depends on the library works too; run `cargo ferrokit` in its folder.
+- **`main` belongs to Ferrokit.** The app's `main` is a plain `fn main` ending in `App::new(..).run()`, which runs AppKit on the main thread until the app quits. Don't put `#[tokio::main]` on it. To call the library's async functions, keep a tokio runtime in a `static OnceLock<tokio::runtime::Runtime>` (`Runtime::new()` needs tokio's `rt-multi-thread` feature; with only `rt`, build it with `Builder::new_current_thread().enable_all()`), and run them with `runtime().block_on(..)` inside `spawn` or `background` (or `runtime().spawn(..)` and `.await` the handle in `spawn_local`). Loading the data once before `App::new` with `block_on` is fine.
 - **Reuse the library, don't copy it:** call its types and functions from the app, and save through its own save function, so the CLI and the app write the same format.
 - **A data file the CLI changes while the app is open:** re-read it in a `spawn_local` loop (`sleep(Duration::from_secs(1)).await`, compare the file's modification time, `background` for the read), and set the signal only when the contents differ: `set_rows` clears a table's selection, so an unchanged reload shouldn't reach it.
 - **Self-checks** stay in the release build: they run only under `CHECK=all`. Point them at a temporary data file (an environment variable the library already reads, or a path the app takes), never the user's.
@@ -25,10 +25,10 @@ When the project already has a library or a CLI, the app goes beside it:
 ## Where the docs are
 
 Read before guessing; names are regular, but behaviour has rules.
-- **The guide:** <https://docs.rs/ferrokit/latest/ferrokit/guide/>, 14 chapters with compiled examples. Also in the crate's source: `~/.cargo/registry/src/*/ferrokit-0.9.*/guide/`.
+- **The guide:** <https://docs.rs/ferrokit/latest/ferrokit/guide/>, 14 chapters with compiled examples. Also in the crate's source: `~/.cargo/registry/src/*/ferrokit-0.10.*/guide/`.
 - **Every public item on one page:** `API.md` in the same folder. Search it for what a type can do before reading source.
 - **Complete apps:** `examples/` in the same folder. `native_csv.rs` (sidebar, table, search, sheet, notes), `habits.rs` (cards, sheets, charts, a menu-bar panel), `notes.rs` (a document app), `sql_browser.rs` (the flagship).
-- `TableModel`, `Column` and `TextModel` are documented in `ferrokit-core` (re-exported by `ferrokit`): `~/.cargo/registry/src/*/ferrokit-core-0.9.*/src/table.rs` and `text.rs`.
+- `TableModel`, `Column` and `TextModel` are documented in `ferrokit-core` (re-exported by `ferrokit`): `~/.cargo/registry/src/*/ferrokit-core-0.10.*/src/table.rs` and `text.rs`.
 
 ## How a Ferrokit app is written
 
@@ -165,7 +165,7 @@ fn as_undo_steps(window: &NSWindow, steps: &[&dyn Fn()]) {
 - `testing::ax_audit(&window)` lists controls VoiceOver can't name: give each `.accessibility_label(…)`.
 - A caught panic doesn't end the app; `check` stops 15 s after one if no more checks arrive. Look for `ferrokit: a panic in …` in the output.
 
-## Known limits (0.9)
+## Known limits (0.10)
 
 Work around these instead of searching for them:
 - Table rows animate only through `TableModel::insert`, `push` and `remove` (with `Table::animated()`), not `set_rows` or in a grouped table.

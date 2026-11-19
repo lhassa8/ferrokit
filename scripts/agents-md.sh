@@ -18,7 +18,7 @@ header = f"""# Ferrokit for AI coding agents
 Read this before writing code with `ferrokit` {version}. Ferrokit builds native Mac apps in Rust: every view is a real AppKit view (`NSTableView`, `NSTextView`…), built once and updated in place by signals. macOS 15 or later; everything runs on the main thread.
 
 - **A new app:** `cargo install cargo-ferrokit`, then `cargo ferrokit new <name>` (`--document` for a document app). It comes with this file as its `AGENTS.md`, a working example and self-checks.
-- **An existing project:** `cargo add ferrokit`, `cargo install cargo-ferrokit`, then `cargo ferrokit agents` writes this file into it as `AGENTS.md`. *A GUI for an existing Rust project* (below) says where the app goes and what happens to `#[tokio::main]`; the self-checks in a new app's `src/main.rs` are the pattern to copy.
+- **An existing project** (a CLI or a library): `cargo install cargo-ferrokit`, then `cargo ferrokit agents` writes this file into it as `AGENTS.md`. Add `ferrokit` as *A GUI for an existing Rust project* (below) says: an optional dependency behind a `gui` feature, for a second binary, so the CLI's build doesn't change. The self-checks in a new app's `src/main.rs` (`cargo ferrokit new`) are the pattern to copy.
 
 """
 open(sys.argv[1], "w").write(header + body.replace("{{version}}", version))

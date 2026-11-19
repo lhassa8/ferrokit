@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.10.0 (2026-11-19): a GUI beside an existing Rust CLI
 
-From an agent trial: a fresh coding agent added a GUI to an existing Rust command-line tool with 0.9.0.
+From an agent trial: a fresh coding agent added a GUI to an existing Rust command-line tool with 0.9.0. These are the fixes for what it ran into.
 
 - **Added: a GUI beside an existing CLI.** `bin = "<name>"` under `[package.metadata.ferrokit]` picks the app when the package has several binaries (no `--bin` each time), and `cargo ferrokit run`, `check` and `bundle` turn on that binary's `required-features`; `check` lints and tests with them too. Before, a feature-gated app couldn't be built by `cargo ferrokit` at all. AGENTS.md has a new section, *A GUI for an existing Rust project* (where the app goes, why `main` can't be `#[tokio::main]` and how to call async library code, a data file the CLI changes), and so does guide chapter 1.
 - **Added: `combo_box_with(&value, move || …)`**, whose suggestions follow signals (`combo_box` takes a fixed `Vec<&str>`, so runtime suggestions needed leaked strings), and `.placeholder(..)` on combo boxes.

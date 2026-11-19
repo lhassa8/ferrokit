@@ -265,6 +265,16 @@ path = "src/main.rs"
 required-features = ["gui"]
 TOML
 asked=$(cd e2e-gui && cargo ferrokit check --no-lint 2>&1) || true
+# `agents` needs no chosen binary: beside the CLI before `bin` is set, and
+# in a library with no binary at all.
+rm -f e2e-gui/AGENTS.md e2e-gui/CLAUDE.md
+cargo new -q --lib e2e-lib
+if (cd e2e-gui && cargo ferrokit agents >/dev/null 2>&1) && (cd e2e-lib && cargo ferrokit agents >/dev/null 2>&1) && head -1 e2e-lib/AGENTS.md | grep -qx "# Working on e2e-lib" && [ -f e2e-gui/AGENTS.md ]; then
+  echo "[check] agents-before-the-app PASS AGENTS.md written beside two binaries without bin set, and in a library"
+else
+  echo "[check] agents-before-the-app FAIL"
+  failed=$((failed + 1))
+fi
 sed -i '' 's/^\[package.metadata.ferrokit\]$/&\
 bin = "e2e-gui"/' e2e-gui/Cargo.toml
 if echo "$asked" | grep -q "several binaries (.*e2e-gui-cli.*): choose the app" && (cd e2e-gui && cargo ferrokit check --timeout 120) >"$dir/e2e-gui.log" 2>&1 && grep -q "self-checks: [1-9][0-9]* passed" "$dir/e2e-gui.log"; then

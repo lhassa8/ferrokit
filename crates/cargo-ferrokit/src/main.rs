@@ -436,6 +436,24 @@ impl Updates {
 }
 
 impl Project {
+    /// The package's folder and its app name (`name` under
+    /// `[package.metadata.ferrokit]`, else the package's), whatever its
+    /// binaries: for `agents`, which can run before the app exists.
+    fn folder_and_name() -> Result<(PathBuf, String)> {
+        let json = output(&cargo(), &["metadata", "--no-deps", "--format-version", "1"], None)?;
+        let meta: serde_json::Value = serde_json::from_str(&json).map_err(|e| format!("cargo metadata: {e}"))?;
+        let cwd = std::env::current_dir().map_err(|e| e.to_string())?.canonicalize().map_err(|e| e.to_string())?;
+        let packages = meta["packages"].as_array().cloned().unwrap_or_default();
+        let dir_of = |p: &serde_json::Value| PathBuf::from(p["manifest_path"].as_str().unwrap_or_default()).parent().map(Path::to_path_buf).unwrap_or_default();
+        let package = packages
+            .iter()
+            .find(|p| dir_of(p).canonicalize().is_ok_and(|d| d == cwd))
+            .or_else(|| (packages.len() == 1).then(|| &packages[0]))
+            .ok_or("run this in a package's folder (where its Cargo.toml is)")?;
+        let name = package["metadata"]["ferrokit"]["name"].as_str().or(package["name"].as_str()).unwrap_or("the app").to_string();
+        Ok((dir_of(package), name))
+    }
+
     /// `--features a,b` for the binary's `required-features`, or nothing.
     fn feature_args(&self) -> Vec<&str> {
         match self.features.as_deref() {
@@ -594,8 +612,14 @@ fn agents_md(display: &str) -> String {
 /// that wasn't made with `new` (or was made by an older version).
 fn agents(args: &[String]) -> Result<()> {
     let a = Args::parse(args, &["--bin"], &["--force"])?;
-    let project = Project::load(a.value("--bin"))?;
-    let (file, text) = (project.dir.join("AGENTS.md"), agents_md(&project.display));
+    // It needs only the folder and the app's name, so it works before the
+    // app exists: in a library, or beside a CLI before `bin` is set.
+    let (dir, display) = match Project::load(a.value("--bin")) {
+        Ok(p) => (p.dir, p.display),
+        Err(_) if a.value("--bin").is_none() => Project::folder_and_name()?,
+        Err(e) => return Err(e),
+    };
+    let (file, text) = (dir.join("AGENTS.md"), agents_md(&display));
     match std::fs::read_to_string(&file) {
         Ok(old) if old == text => println!("AGENTS.md is current (ferrokit {FERROKIT_VERSION})"),
         Ok(_) if !a.flag("--force") => {
@@ -607,7 +631,7 @@ fn agents(args: &[String]) -> Result<()> {
         }
     }
     // Claude Code reads CLAUDE.md: point it at the same text.
-    let claude = project.dir.join("CLAUDE.md");
+    let claude = dir.join("CLAUDE.md");
     match std::fs::read_to_string(&claude) {
         Ok(old) if old.contains("AGENTS.md") => {}
         Ok(_) => println!("CLAUDE.md is there already: add a line `@AGENTS.md` to it so Claude Code reads AGENTS.md too"),
@@ -620,7 +644,7 @@ fn agents(args: &[String]) -> Result<()> {
 }
 
 /// The ferrokit that new apps depend on.
-const FERROKIT_VERSION: &str = "0.9";
+const FERROKIT_VERSION: &str = "0.10";
 
 // ---- bundle ----
 

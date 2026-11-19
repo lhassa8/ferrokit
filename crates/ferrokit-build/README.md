@@ -4,7 +4,7 @@ Compiles a Mac app's Swift code from `build.rs` and links it into the app, so Ru
 
 ```toml
 [build-dependencies]
-ferrokit-build = "0.9"
+ferrokit-build = "0.10"
 ```
 
 ```rust

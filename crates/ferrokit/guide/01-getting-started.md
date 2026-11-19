@@ -36,7 +36,7 @@ By hand, add `ferrokit` to a binary crate:
 
 ```toml
 [dependencies]
-ferrokit = "0.9"
+ferrokit = "0.10"
 ```
 
 ## A first app
@@ -89,7 +89,7 @@ feature, so the tool's build and `cargo install` stay as they are:
 
 ```toml
 [dependencies]
-ferrokit = { version = "0.9", optional = true }
+ferrokit = { version = "0.10", optional = true }
 
 [features]
 gui = ["dep:ferrokit"]
@@ -115,7 +115,9 @@ that depends on the library works as well.)
 The app's `main` is a plain `fn main` that ends in `App::run`: AppKit
 needs the main thread for as long as the app runs, so it can't be a
 `#[tokio::main]` function. A library with `async` functions runs them on
-a tokio runtime the app keeps, from a background thread:
+a tokio runtime the app keeps, from a background thread. (`Runtime::new()` needs tokio's
+`rt-multi-thread` feature; with only `rt`, use
+`Builder::new_current_thread().enable_all().build()`.)
 
 ```rust,ignore
 use std::sync::OnceLock;
@@ -128,12 +130,12 @@ fn runtime() -> &'static tokio::runtime::Runtime {
 
 fn main() {
     // Once, before the app starts: blocking here is fine.
-    let entries = Signal::new(runtime().block_on(mylib::load()).unwrap_or_default());
+    let entries = Signal::new(runtime().block_on(tally::load()).unwrap_or_default());
     // Later, from a button: the save runs on another thread, and the
     // result comes back on the main thread.
     let save_now = move || {
         let list = entries.get_untracked();
-        spawn(move || runtime().block_on(mylib::save(list)), |result| {
+        spawn(move || runtime().block_on(tally::save(list)), |result| {
             if let Err(e) = result {
                 eprintln!("not saved: {e}");
             }

@@ -14,7 +14,7 @@
 When the project already has a library or a CLI, the app goes beside it:
 
 - **Where:** a second binary in the same package, behind a feature, so the CLI's build and `cargo install` don't change. In `Cargo.toml`: `ferrokit = { version = "{{version}}", optional = true }`, `[features] gui = ["dep:ferrokit"]`, and `[[bin]] name = "<name>-gui"`, `path = "src/bin/<name>-gui.rs"`, `required-features = ["gui"]` (list the CLI's own `[[bin]]` too). Then `bin = "<name>-gui"` under `[package.metadata.ferrokit]`: `cargo ferrokit run`, `check` and `bundle` build that binary with its features, and lint and test with them. In a workspace, a new member package that depends on the library works too; run `cargo ferrokit` in its folder.
-- **`main` belongs to Ferrokit.** The app's `main` is a plain `fn main` ending in `App::new(..).run()`, which runs AppKit on the main thread until the app quits. Don't put `#[tokio::main]` on it. To call the library's async functions, keep a tokio runtime in a `static OnceLock<tokio::runtime::Runtime>`, and run them with `runtime().block_on(..)` inside `spawn` or `background` (or `runtime().spawn(..)` and `.await` the handle in `spawn_local`). Loading the data once before `App::new` with `block_on` is fine.
+- **`main` belongs to Ferrokit.** The app's `main` is a plain `fn main` ending in `App::new(..).run()`, which runs AppKit on the main thread until the app quits. Don't put `#[tokio::main]` on it. To call the library's async functions, keep a tokio runtime in a `static OnceLock<tokio::runtime::Runtime>` (`Runtime::new()` needs tokio's `rt-multi-thread` feature; with only `rt`, build it with `Builder::new_current_thread().enable_all()`), and run them with `runtime().block_on(..)` inside `spawn` or `background` (or `runtime().spawn(..)` and `.await` the handle in `spawn_local`). Loading the data once before `App::new` with `block_on` is fine.
 - **Reuse the library, don't copy it:** call its types and functions from the app, and save through its own save function, so the CLI and the app write the same format.
 - **A data file the CLI changes while the app is open:** re-read it in a `spawn_local` loop (`sleep(Duration::from_secs(1)).await`, compare the file's modification time, `background` for the read), and set the signal only when the contents differ: `set_rows` clears a table's selection, so an unchanged reload shouldn't reach it.
 - **Self-checks** stay in the release build: they run only under `CHECK=all`. Point them at a temporary data file (an environment variable the library already reads, or a path the app takes), never the user's.
@@ -162,7 +162,7 @@ fn as_undo_steps(window: &NSWindow, steps: &[&dyn Fn()]) {
 - `testing::ax_audit(&window)` lists controls VoiceOver can't name: give each `.accessibility_label(…)`.
 - A caught panic doesn't end the app; `check` stops 15 s after one if no more checks arrive. Look for `ferrokit: a panic in …` in the output.
 
-## Known limits (0.9)
+## Known limits (0.10)
 
 Work around these instead of searching for them:
 - Table rows animate only through `TableModel::insert`, `push` and `remove` (with `Table::animated()`), not `set_rows` or in a grouped table.

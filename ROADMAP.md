@@ -2,8 +2,9 @@
 
 Where Ferrokit is going, roughly in order. It changes as people tell us what they need; the "What I'm building" issues weigh most.
 
-## Now: 0.9
+## Now: 0.10
 
+- **Released in 0.10.0:** a GUI beside an existing Rust CLI or library: `cargo ferrokit` builds an app binary that sits behind a feature (`bin = "…"` in `[package.metadata.ferrokit]`), `AGENTS.md` and the guide say where the app goes and what happens to `#[tokio::main]`, and combo boxes take suggestions that change.
 - **Released in 0.9.0:** SwiftUI views in a Ferrokit app (Swift Charts, `Gauge`'s styles, MapKit's SwiftUI `Map`) through `native(..)`, with a new crate, `ferrokit-build`, that compiles the app's Swift from `build.rs`; and Ferrokit's accessibility audit sees inside SwiftUI views.
 - **Being designed in [#7](https://github.com/lhassa8/ferrokit/issues/7):** the SwiftUI bridge, so a SwiftUI view needs one line naming it instead of hand-written glue.
 - **Released in 0.8.0:** links into the app (`myapp://`, [#1](https://github.com/lhassa8/ferrokit/issues/1)) and async tasks ([#2](https://github.com/lhassa8/ferrokit/issues/2)).
