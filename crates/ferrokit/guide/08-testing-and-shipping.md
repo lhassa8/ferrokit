@@ -39,8 +39,10 @@ fn main() {
 | Helper | For |
 | --- | --- |
 | `check`, `skip`, `steps`, `finish` | the `[check]` lines, the count of failures, steps a turn apart, the exit status |
+| `wait_for`, `wait_until` | the next step waits until a condition is true (a save, a network call), up to a timeout |
+| `press_sheet_button` | answer an alert or a sheet: press its "Delete" or "Cancel" |
 | `view_labeled` | the view with an accessibility label, to read or drive |
-| `ax_audit`, `ax_elements`, `ax_tree` | what VoiceOver reads; controls without a name |
+| `ax_audit`, `ax_elements`, `ax_tree` | what VoiceOver reads (each element's role, name and value); controls without a name |
 | `post_edit`, `send_action`, `shortcut`, `menu_key` | typing, clicks and shortcuts without a mouse |
 | `snapshot_windows`, `capture_window`, `captured_pixels` | images of windows, in process or as the window server shows them |
 | `footprint_mb`, `peak_footprint_mb` | memory, as Activity Monitor shows it |

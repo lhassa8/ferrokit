@@ -2017,7 +2017,7 @@ fn deep_widget_cycles(events: Rc<RefCell<Vec<AppEvent>>>) {
 /// described images. The audit finds an unnamed field, then nothing.
 fn accessibility_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     use ferrokit::testing::{ax_audit, ax_elements};
-    let (name, vol, pick, days, on) = (Signal::new(String::new()), Signal::new(0.5), Signal::new(1u8), Signal::new(3.0), Signal::new(true));
+    let (name, vol, pick, days, on) = (Signal::new("Ada".to_string()), Signal::new(0.5), Signal::new(1u8), Signal::new(3.0), Signal::new(true));
     let notes = TextModel::new(ViewId(990), "");
     let bare = Signal::new(String::new());
     let w = open(Window::new("Accessibility").size(420.0, 420.0).view(
@@ -2048,6 +2048,15 @@ fn accessibility_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     .filter(|(r, l)| !named(r, l))
     .map(|(r, l)| format!("{r} {l}"))
     .collect::<Vec<_>>();
+    // Values as VoiceOver reads them: a field's text, a slider's number, a
+    // toggle's state.
+    let value_of = |roles: &[&str], label: &str| ax_elements(&w).into_iter().find(|e| e.name == label && roles.contains(&e.role.as_str())).map(|e| (e.role, e.value));
+    let values = [value_of(&["AXTextField"], "Name"), value_of(&["AXSlider"], "Volume"), value_of(&["AXButton"], "Sync")];
+    check(
+        "accessibility-values",
+        values[0].as_ref().is_some_and(|v| v.1 == "Ada") && values[1].as_ref().is_some_and(|v| v.1.parse::<f64>() == Ok(0.5)) && values[2].as_ref().is_some_and(|v| v.1 == "1"),
+        format!("(role, value) of the Name field, the Volume slider, the Sync switch: {values:?}"),
+    );
     let images = ax_elements(&w).iter().filter(|e| e.role == "AXImage").count();
     let problems = ax_audit(&w);
     check(
@@ -5233,6 +5242,12 @@ fn table_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         tv.numberOfRows() == 200_000 && fills,
         format!("{} rows; scroll view {:.0}×{:.0} in a 560×420 window", tv.numberOfRows(), sv.frame().size.width, sv.frame().size.height),
     );
+    // The last column reaches the table's right edge: it fills the slack
+    // (or gives way when the columns are wider than the window).
+    let last = tv.numberOfColumns() - 1;
+    let right = tv.rectOfColumn(last).origin.x + tv.rectOfColumn(last).size.width;
+    let visible = sv.contentView().bounds().size.width;
+    check("table-last-column-fills", (right - visible).abs() <= 1.0, format!("last column ends at {right:.0} in a {visible:.0}-point table"));
 
     // Selection through NSTableView → on_select (after the event pass).
     tv.selectRowIndexes_byExtendingSelection(&objc2_foundation::NSIndexSet::indexSetWithIndex(5), false);
@@ -6644,11 +6659,35 @@ fn dialog_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let buttons = sheet_win.as_ref().map(|s| buttons_in(s)).unwrap_or_default();
     let delete = buttons.iter().find(|b| b.title().to_string() == "Delete");
     let destructive = delete.is_some_and(|b| b.hasDestructiveAction());
-    if let Some(cancel) = buttons.iter().find(|b| b.title().to_string() == "Cancel") {
-        unsafe { cancel.performClick(None) };
-    }
+    // Waiting for work that finishes in its own time: done after ~150 ms of
+    // background work, well before the timeout; a condition that stays false
+    // gives up at its timeout.
+    let started = std::time::Instant::now();
+    let done = Rc::new(std::cell::Cell::new(false));
+    let d = done.clone();
+    ferrokit::spawn(|| std::thread::sleep(std::time::Duration::from_millis(150)), move |()| d.set(true));
+    ferrokit::testing::wait_until(3_000, move || done.get(), move |came| {
+        let ms = started.elapsed().as_millis();
+        let gave_up = std::time::Instant::now();
+        ferrokit::testing::wait_until(100, || false, move |never| {
+            let waited = gave_up.elapsed().as_millis();
+            check(
+                "testing-wait-until",
+                came && ms >= 150 && !never && waited >= 100,
+                format!("came true: {came} after {ms} ms; never-true gave up: {} after {waited} ms", !never),
+            );
+        });
+    });
+    let pressed = ferrokit::testing::press_sheet_button(&w, "Cancel");
+    let no_such = !ferrokit::testing::press_sheet_button(&w, "Archive");
     after_events(move || {
         let w = dialogs_window();
+        let none_left = !ferrokit::testing::press_sheet_button(&w, "Cancel");
+        check(
+            "alert-sheet-press",
+            pressed && no_such && none_left,
+            format!("Cancel pressed: {pressed}; no Archive button: {no_such}; no sheet afterwards: {none_left}"),
+        );
         check(
             "alert-sheet",
             destructive && chosen.get_untracked() == Some(1) && w.attachedSheet().is_none(),

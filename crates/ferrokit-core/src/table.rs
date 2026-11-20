@@ -193,13 +193,16 @@ impl<T> Column<T> {
         self
     }
 
-    /// Initial width in points (default 120).
+    /// Initial width in points (default 120). The last column then grows to
+    /// fill the table's width, and narrows when the window is narrower than
+    /// the columns.
     pub fn width(mut self, width: f64) -> Self {
         self.width = width;
         self
     }
 
-    /// Smallest width the user can drag the column to.
+    /// Smallest width the user can drag the column to (default 40), and,
+    /// for the last column, the narrowest it gets in a narrow window.
     pub fn min_width(mut self, min_width: f64) -> Self {
         self.min_width = min_width;
         self
@@ -1637,7 +1640,9 @@ fn add_columns<T>(table: &NSTableView, columns: &[Column<T>]) {
         column.setTitle(&NSString::from_str(&c.title));
         column.setWidth(c.width);
         column.setMinWidth(c.min_width);
-        column.setResizingMask(NSTableColumnResizingOptions::UserResizingMask);
+        // Every column can take the slack, but with the table's last-column
+        // style only the one that is last (after any reordering) does.
+        column.setResizingMask(NSTableColumnResizingOptions::UserResizingMask | NSTableColumnResizingOptions::AutoresizingMask);
         if c.sortable {
             let descriptor = NSSortDescriptor::sortDescriptorWithKey_ascending(Some(&NSString::from_str(&c.id)), true);
             column.setSortDescriptorPrototype(Some(&descriptor));
@@ -1679,6 +1684,10 @@ impl<T: 'static> TableModel<T> {
         table.setAllowsMultipleSelection(true);
         table.setAllowsColumnReordering(true);
         table.setAllowsColumnResizing(true);
+        // The last column fills the width the others leave, as in Mail and
+        // Finder, and gives way (down to its minimum) when the window is
+        // narrower than the columns.
+        table.setColumnAutoresizingStyle(objc2_app_kit::NSTableViewColumnAutoresizingStyle::LastColumnOnlyAutoresizingStyle);
         add_columns(&table, &columns);
         let scroll = NSScrollView::new(mtm);
         scroll.setHasVerticalScroller(true);

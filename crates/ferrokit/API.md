@@ -624,8 +624,8 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn icon(mut self, image: impl Fn(&T) -> Option<CellImage> + 'static) -> Self`: Shows an image before each cell's text (a text or number column), e.g. a file's icon before its name. `None` leaves the space empty.
 - `pub fn style(mut self, style: impl Fn(&T) -> CellStyle + 'static) -> Self`: Styles each cell of a text or number column from its row: a colour, a background tint, italic or struck-through text. The style is read when a cell is shown; after changing what it depends on, refresh the rows (`TableModel::update_row`).
 - `pub fn fit(mut self) -> Self`: Sizes the column to its widest content (and its title) whenever the rows change. With many rows, the longest values are measured.
-- `pub fn width(mut self, width: f64) -> Self`: Initial width in points (default 120).
-- `pub fn min_width(mut self, min_width: f64) -> Self`: Smallest width the user can drag the column to.
+- `pub fn width(mut self, width: f64) -> Self`: Initial width in points (default 120). The last column then grows to fill the table's width, and narrows when the window is narrower than the columns.
+- `pub fn min_width(mut self, min_width: f64) -> Self`: Smallest width the user can drag the column to (default 40), and, for the last column, the narrowest it gets in a narrow window.
 - `pub fn decimals(mut self, decimals: usize) -> Self`: Decimal places shown for a number column (default 0).
 - `pub fn editable(mut self, editable: bool) -> Self`: Lets the user edit this column's text or number cells (double-click, or Return on the selected row's cell). Finishing an edit (Return, Tab or a click elsewhere; not Escape) emits `TableEvent::Edit`; the model doesn't change the row: apply it with `TableModel::update_row`. No effect on checkbox columns.
 - `pub fn sortable(mut self, sortable: bool) -> Self`: Whether a header click sorts by this column (default true).
@@ -1860,7 +1860,10 @@ Helpers for automated checks of apps built with ferrokit: the accessibility tree
 - `pub fn check(name: &str, pass: bool, note: impl std::fmt::Display)`: Reports one self-check as `cargo ferrokit check` reads them: prints `[check] <name> PASS <note>` or `FAIL`, and counts the failures for `finish`. Put what was seen in `note`, so a failure says why.
 - `pub fn skip(name: &str, why: impl std::fmt::Display)`: Reports a self-check that couldn't run here (the screen is locked, a permission isn't granted): `[check] <name> SKIP <why>`. Not a failure; `cargo ferrokit check` counts it apart.
 - `pub fn finish() -> !`: Ends a self-check run: prints `[check] done, <n> failed` and exits, with a failing status if any `check` failed.
-- `pub fn steps(pause_ms: u64, steps: Vec<Box<dyn FnOnce()>>)`: Runs `steps` one after another, each in a turn of its own `pause_ms` after the one before, then `finish`es. A self-check acts in one step and looks in the next: effects, table updates and sheets settle after the step that caused them returns.
+- `pub fn steps(pause_ms: u64, steps: Vec<Box<dyn FnOnce()>>)`: Runs `steps` one after another, each in a turn of its own `pause_ms` after the one before, then `finish`es. A self-check acts in one step and looks in the next: effects, table updates and sheets settle after the step that caused them returns. A step that starts slower work (a save on another thread, a network call) calls `wait_for`, and the next step waits until that work is done instead of a fixed time.
+- `pub fn wait_for(timeout_ms: u64, condition: impl Fn() -> bool + 'static)`: Called in one of `steps`: holds the next step until `condition` is true, looking every 20 ms, for up to `timeout_ms` (then the next step runs anyway, and its check reports what it sees). Use it instead of a long pause for work that finishes in its own time: a save on another thread, a task's network call, a file another process writes.
+- `pub fn wait_until(timeout_ms: u64, condition: impl Fn() -> bool + 'static, then: impl FnOnce(bool) + 'static)`: Outside `steps`: calls `then(true)` as soon as `condition` is true (looking every 20 ms, between events), or `then(false)` after `timeout_ms`.
+- `pub fn press_sheet_button(window: &objc2_app_kit::NSWindow, title: &str) -> bool`: Presses the button titled `title` in the sheet on `window`: answers an `alert` ("Delete", "Cancel") or a `sheet`'s own buttons, as a click would. False if `window` shows no sheet or the sheet has no such button. The alert's callback runs on a later pass of the run loop, so look in the next step.
 - `pub fn view_labeled(window: &objc2_app_kit::NSWindow, label: &str) -> Option<Retained<objc2_app_kit::NSView>>`: The first view in `window` with the accessibility label `label` (what `.accessibility_label(..)` set), for a check to read or drive: a field, a table, an editor's text view, a web view.
 - `pub fn footprint_mb() -> f64`: Physical footprint in MB (what Activity Monitor shows; RSS keeps freed heap pages and overstates growth), via vmmap.
 - `pub fn peak_footprint_mb() -> f64`: The process's peak physical footprint so far, in MB (via vmmap).
@@ -1925,6 +1928,7 @@ Helpers for automated checks of apps built with ferrokit: the accessibility tree
 - `pub subrole: String`: `AXSwitch`, `AXSearchField`…
 - `pub name: String`: What VoiceOver reads as the name: the label, else the title, else a linked title element's value, else the placeholder; for static text (labels, table and sidebar rows) and a list's items, its text.
 - `pub label: String`: The element's own label (set with `accessibility_label`).
+- `pub value: String`: What VoiceOver reads as the value: a field's text, a checkbox's or switch's state (`0` or `1`; a switch's role is `AXButton`, subrole `AXSwitch`), a slider's or progress bar's number; empty when the element has none.
 
 ## Module `input`
 

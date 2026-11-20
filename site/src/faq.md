@@ -58,7 +58,7 @@ Not for apps built from Ferrokit's own views: the app `cargo ferrokit new` makes
 
 ## Does Ferrokit work with AI coding agents like Claude Code, Codex or Cursor?
 
-Yes; it's written to. The crate ships an [`AGENTS.md`](AGENTS.md) with the rules, recipes that compile and known limits, plus [`API.md`](API.md) with every public item; `cargo ferrokit agents` puts the first into your project. Agents can verify their own work with `cargo ferrokit check`, which runs the app's self-checks. In our latest trial, a fresh agent added a working GUI to an existing tokio CLI in about ten minutes with no compile errors. See [For AI coding agents](agents.md) and [`llms.txt`](llms.txt).
+Yes; it's written to. The crate ships an [`AGENTS.md`](AGENTS.md) with the rules, recipes that compile and known limits, plus [`API.md`](API.md) with every public item; `cargo ferrokit agents` puts the first into your project. Agents can verify their own work with `cargo ferrokit check`, which runs the app's self-checks. In our latest trial (November 2026), a fresh agent that found Ferrokit through crates.io alone added a working GUI to an existing tokio CLI in under six minutes, with 14 passing self-checks. See [For AI coding agents](agents.md) and [`llms.txt`](llms.txt).
 
 ## What licence is Ferrokit under?
 

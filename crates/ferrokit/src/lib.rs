@@ -1213,6 +1213,11 @@ impl App {
     }
 
     /// Runs `f` on the first run-loop pass after the windows are on screen.
+    ///
+    /// `f` runs outside any owner: signals made in it live as long as the
+    /// app, and a [`spawn_local`] task started in it runs until it finishes,
+    /// whatever window closes (no [`Task::detach`] needed). Start work that
+    /// lasts the app's life here: following a file, a timer, the self-checks.
     pub fn on_launch(mut self, f: impl FnOnce() + 'static) -> Self {
         self.on_launch = Some(Box::new(f));
         self

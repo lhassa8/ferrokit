@@ -3,7 +3,7 @@
 //! simulated edits, memory footprint and window snapshots. Used by the
 //! checklist and the example apps' self-checks.
 
-use ferrokit_core::kept::UiLocal;
+use ferrokit_core::kept::{UiCell, UiLocal};
 use objc2::rc::Retained;
 use objc2_app_kit::{NSApplication, NSTextField};
 use objc2_foundation::NSString;
@@ -49,7 +49,9 @@ pub fn finish() -> ! {
 /// Runs `steps` one after another, each in a turn of its own `pause_ms`
 /// after the one before, then [`finish`]es. A self-check acts in one step
 /// and looks in the next: effects, table updates and sheets settle after
-/// the step that caused them returns.
+/// the step that caused them returns. A step that starts slower work (a
+/// save on another thread, a network call) calls [`wait_for`], and the next
+/// step waits until that work is done instead of a fixed time.
 ///
 /// ```no_run
 /// use ferrokit::testing::{check, steps};
@@ -65,16 +67,109 @@ pub fn steps(pause_ms: u64, steps: Vec<Box<dyn FnOnce()>>) {
     fn next(pause_ms: u64, mut rest: std::collections::VecDeque<Box<dyn FnOnce()>>) {
         crate::spawn(
             move || std::thread::sleep(std::time::Duration::from_millis(pause_ms)),
-            move |()| match rest.pop_front() {
-                Some(step) => {
-                    step();
-                    next(pause_ms, rest);
+            move |()| {
+                if still_waiting() {
+                    // Look again shortly; the pause is already behind us.
+                    return next(WAIT_POLL_MS, rest);
                 }
-                None => finish(),
+                match rest.pop_front() {
+                    Some(step) => {
+                        step();
+                        next(pause_ms, rest);
+                    }
+                    None => finish(),
+                }
             },
         );
     }
     next(pause_ms, steps.into());
+}
+
+const WAIT_POLL_MS: u64 = 20;
+
+/// A condition the next of [`steps`] waits for, and until when.
+type Wait = (Box<dyn Fn() -> bool>, std::time::Instant, u64);
+
+thread_local! {
+    static WAIT: UiCell<Option<Wait>> = UiCell::new(None);
+}
+
+/// Whether [`steps`] should hold the next step: a [`wait_for`] condition is
+/// still false and its time isn't up. Clears the wait once either is true.
+fn still_waiting() -> bool {
+    let Some((condition, deadline, ms)) = WAIT.with(|w| w.borrow_mut().take()) else { return false };
+    if condition() {
+        return false;
+    }
+    if std::time::Instant::now() >= deadline {
+        eprintln!("[check] (waited {ms} ms for a condition that stayed false; going on)");
+        return false;
+    }
+    WAIT.with(|w| *w.borrow_mut() = Some((condition, deadline, ms)));
+    true
+}
+
+/// Called in one of [`steps`]: holds the next step until `condition` is
+/// true, looking every 20 ms, for up to `timeout_ms` (then the next step
+/// runs anyway, and its check reports what it sees). Use it instead of a
+/// long pause for work that finishes in its own time: a save on another
+/// thread, a task's network call, a file another process writes.
+///
+/// ```no_run
+/// use ferrokit::testing::{check, steps, wait_for};
+/// use ferrokit::*;
+///
+/// let saved = Signal::new(false);
+/// steps(100, vec![
+///     Box::new(move || {
+///         spawn(|| std::thread::sleep(std::time::Duration::from_millis(300)), move |()| saved.set(true));
+///         wait_for(5_000, move || saved.get_untracked());
+///     }),
+///     Box::new(move || check("saved", saved.get_untracked(), "")),
+/// ]);
+/// ```
+pub fn wait_for(timeout_ms: u64, condition: impl Fn() -> bool + 'static) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+    WAIT.with(|w| *w.borrow_mut() = Some((Box::new(condition), deadline, timeout_ms)));
+}
+
+/// Outside [`steps`]: calls `then(true)` as soon as `condition` is true
+/// (looking every 20 ms, between events), or `then(false)` after
+/// `timeout_ms`.
+pub fn wait_until(timeout_ms: u64, condition: impl Fn() -> bool + 'static, then: impl FnOnce(bool) + 'static) {
+    fn poll(deadline: std::time::Instant, condition: Box<dyn Fn() -> bool>, then: Box<dyn FnOnce(bool)>) {
+        if condition() {
+            return then(true);
+        }
+        if std::time::Instant::now() >= deadline {
+            return then(false);
+        }
+        crate::spawn(move || std::thread::sleep(std::time::Duration::from_millis(WAIT_POLL_MS)), move |()| poll(deadline, condition, then));
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+    poll(deadline, Box::new(condition), Box::new(then));
+}
+
+/// Presses the button titled `title` in the sheet on `window`: answers an
+/// [`alert`](crate::alert) ("Delete", "Cancel") or a [`sheet`](crate::sheet)'s
+/// own buttons, as a click would. False if `window` shows no sheet or the
+/// sheet has no such button. The alert's callback runs on a later pass of
+/// the run loop, so look in the next step.
+pub fn press_sheet_button(window: &objc2_app_kit::NSWindow, title: &str) -> bool {
+    fn find(view: &objc2_app_kit::NSView, title: &str) -> Option<Retained<objc2_app_kit::NSButton>> {
+        if let Some(b) = view.downcast_ref::<objc2_app_kit::NSButton>()
+            && b.title().to_string() == title
+            && b.isEnabled()
+        {
+            return Some(objc2::Message::retain(b));
+        }
+        view.subviews().iter().find_map(|v| find(&v, title))
+    }
+    let Some(sheet) = window.attachedSheet() else { return false };
+    let Some(button) = sheet.contentView().and_then(|v| find(&v, title)) else { return false };
+    // SAFETY: on the main thread; performClick sends the button's action.
+    unsafe { button.performClick(None) };
+    true
 }
 
 /// The first view in `window` with the accessibility label `label` (what
@@ -515,6 +610,11 @@ pub struct AxElement {
     pub name: String,
     /// The element's own label (set with `accessibility_label`).
     pub label: String,
+    /// What VoiceOver reads as the value: a field's text, a checkbox's or
+    /// switch's state (`0` or `1`; a switch's role is `AXButton`, subrole
+    /// `AXSwitch`), a slider's or progress bar's number;
+    /// empty when the element has none.
+    pub value: String,
 }
 
 /// Every accessibility element under `window`'s content view, depth first,
@@ -546,6 +646,14 @@ pub fn ax_elements(window: &objc2_app_kit::NSWindow) -> Vec<AxElement> {
     fn string(obj: &AnyObject, sel: objc2::runtime::Sel, name: &str) -> String {
         attribute(obj, sel, name).and_then(|v| v.downcast::<NSString>().ok()).map(|s| s.to_string()).unwrap_or_default()
     }
+    // A value as text: a string as it is, a number by its description.
+    fn value(obj: &AnyObject) -> String {
+        let Some(v) = attribute(obj, objc2::sel!(accessibilityValue), "AXValue") else { return String::new() };
+        match v.downcast::<NSString>() {
+            Ok(s) => s.to_string(),
+            Err(v) => v.downcast::<objc2_foundation::NSNumber>().map(|n| n.stringValue().to_string()).unwrap_or_default(),
+        }
+    }
     fn walk(obj: &AnyObject, depth: usize, parent: &str, parent_name: &str, out: &mut Vec<AxElement>) {
         let label = string(obj, objc2::sel!(accessibilityLabel), "AXDescription");
         let title = string(obj, objc2::sel!(accessibilityTitle), "AXTitle");
@@ -572,6 +680,7 @@ pub fn ax_elements(window: &objc2_app_kit::NSWindow) -> Vec<AxElement> {
             subrole: string(obj, objc2::sel!(accessibilitySubrole), "AXSubrole"),
             name,
             label,
+            value: value(obj),
         });
         if depth > 14 {
             return;

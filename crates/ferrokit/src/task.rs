@@ -111,8 +111,9 @@ impl Task {
 /// The task belongs to the current owner, like the signals made now: when
 /// the owner goes (its window closes, its view is removed) the future is
 /// dropped and the task stops at the `.await` it's waiting at
-/// ([`Task::detach`] keeps it going). Outside any owner it runs until it
-/// finishes. A panic in it is reported like any other failure (see
+/// ([`Task::detach`] keeps it going). Outside any owner (in
+/// [`App::on_launch`](crate::App::on_launch) or a [`later`](crate::later)
+/// callback) it runs until it finishes. A panic in it is reported like any other failure (see
 /// [`App::on_error`](crate::App::on_error), as "an async task") and ends
 /// the task; the app goes on.
 ///

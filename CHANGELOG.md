@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+From a second agent trial (an existing tokio CLI, with 0.10.0): what its self-checks and its window needed.
+
+- **Added: `testing::wait_for(ms, condition)`.** Called in one of `steps`, it holds the next step until the condition is true, up to the timeout, instead of a fixed pause that fails on a busy machine; `testing::wait_until(ms, condition, then)` does the same outside `steps`.
+- **Added: `testing::press_sheet_button(&window, "Delete")`** answers an alert or a sheet from a self-check.
+- **Added: `AxElement::value`**, what VoiceOver reads as an element's value (a field's text, a slider's number, a switch's state). AGENTS.md said `ax_elements` gave it; it didn't, which cost the agent a compile error.
+- **Changed: a table's last column fills the table's width**, and narrows (down to its `min_width`) when the window is narrower than the columns, as in Mail and Finder. Before, columns wider than the window pushed the last one out of sight.
+- **Docs:** a task started in `App::on_launch` belongs to no window and runs until it finishes (`App::on_launch`, `spawn_local`, AGENTS.md).
+
 ## 0.10.0 (2026-11-19): a GUI beside an existing Rust CLI
 
 From an agent trial: a fresh coding agent added a GUI to an existing Rust command-line tool with 0.9.0. These are the fixes for what it ran into.
