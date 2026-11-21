@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.10.1 (2026-11-21): what the second agent trial needed
 
 From a second agent trial (an existing tokio CLI, with 0.10.0): what its self-checks and its window needed.
 
