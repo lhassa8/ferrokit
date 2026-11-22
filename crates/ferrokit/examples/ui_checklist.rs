@@ -952,6 +952,25 @@ fn canvas_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     w.setContentSize(objc2_foundation::NSSize::new(400.0, 200.0));
     let resized = canvas_drawing(&v).unwrap();
     check("canvas-resize", resized[0] == "fill rect 0,0 100x200 Rgb(1.0, 0.0, 0.0)", format!("at 400 points wide: {:?}", resized[0]));
+    // A canvas laid out at exactly its minimum size (its first frame, so
+    // AppKit never resizes it) is drawn all the same. (It stayed blank:
+    // Rowboat's schema diagram of seven tables.)
+    let exact = open(Window::new("Canvas at its size").size(240.0, 150.0).view(canvas(|p| p.fill_rect(0.0, 0.0, p.width(), p.height(), Color::Rgb(0.0, 0.0, 1.0))).min_size(240.0, 150.0)));
+    let mut inside = Vec::new();
+    fn every(v: &NSView, out: &mut Vec<Retained<NSView>>) {
+        for s in v.subviews().iter() {
+            out.push(s.clone());
+            every(&s, out);
+        }
+    }
+    every(&exact.contentView().unwrap(), &mut inside);
+    let drawn = inside.iter().find_map(|v| canvas_drawing(v).map(|d| (d, v.frame().size)));
+    check(
+        "canvas-min-size",
+        drawn.as_ref().is_some_and(|(d, size)| d.first().map(String::as_str) == Some("fill rect 0,0 240x150 Rgb(0.0, 0.0, 1.0)") && size.width == 240.0 && size.height == 150.0),
+        format!("{drawn:?}"),
+    );
+    ferrokit::close_window(&exact);
     // A drag inside the canvas: began where it started, moves, ended.
     let dragged = ferrokit::testing::canvas_move(&v, (10.0, 10.0), (60.0, 40.0));
     use ferrokit::CanvasDrag::{Began, Ended, Moved};

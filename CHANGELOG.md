@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Fixed: a `canvas` laid out at exactly the size it was made at (its `min_size`) was never drawn** ([#8](https://github.com/lhassa8/ferrokit/issues/8)). AppKit doesn't resize a view to the size it already has, so the canvas never learned its size and never ran its drawing. Found when Rowboat's schema diagram, sized to fit its tables, came up blank for a seven-table schema.
+
 ## 0.10.1 (2026-11-21): what the second agent trial needed
 
 From a second agent trial (an existing tokio CLI, with 0.10.0): what its self-checks and its window needed.

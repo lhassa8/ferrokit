@@ -653,7 +653,9 @@ pub fn canvas(draw: impl Fn(&mut Painter) + 'static) -> Canvas {
 impl View for Canvas {
     fn build(self, cx: &mut Cx) -> Node {
         let mtm = cx.mtm;
-        let size = Signal::new((0.0, 0.0));
+        // The frame it's made with: laid out at that same size, AppKit never
+        // calls setFrameSize:, and it must still draw (issue #8).
+        let size = Signal::new((self.min.w, self.min.h));
         let view = CanvasView::alloc(mtm).set_ivars(CanvasState {
             ops: RefCell::new(Vec::new()),
             size: Cell::new(Some(size)),
