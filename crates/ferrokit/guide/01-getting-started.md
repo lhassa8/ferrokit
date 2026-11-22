@@ -36,7 +36,7 @@ By hand, add `ferrokit` to a binary crate:
 
 ```toml
 [dependencies]
-ferrokit = "0.10"
+ferrokit = "0.11"
 ```
 
 ## A first app
@@ -89,7 +89,7 @@ feature, so the tool's build and `cargo install` stay as they are:
 
 ```toml
 [dependencies]
-ferrokit = { version = "0.10", optional = true }
+ferrokit = { version = "0.11", optional = true }
 
 [features]
 gui = ["dep:ferrokit"]

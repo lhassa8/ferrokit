@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.11.0 (2026-11-22): what a showcase data grid needed
 
 - **Added: `Table::cell_spacing(points)`**: the room between cells across a row (AppKit's 17 by default); a data grid with column lines fits more with about 8 (check `table-cell-spacing`).
 - **Added: `Column::short_dates`**: a date column in the short style, numbers only and not relative ("9/23/22, 4:26 PM"; "23.09.22, 16:26"), for data grids where many dates must fit (check `date-short`).

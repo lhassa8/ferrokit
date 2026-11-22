@@ -2,8 +2,9 @@
 
 Where Ferrokit is going, roughly in order. It changes as people tell us what they need; the "What I'm building" issues weigh most.
 
-## Now: 0.10
+## Now: 0.11
 
+- **Released in 0.11.0:** what building a showcase SQLite editor (Rowboat) needed: image cells from bytes, clickable cell icons, short dates and tighter cell spacing for data grids, ↑ and ↓ in a field that filters a list (`on_arrows`), fast column fitting over a million rows, and a memory reading that works in a sandboxed app.
 - **Released in 0.10.1:** from a second agent trial, self-checks that wait for slow work (`testing::wait_for`) and answer alerts (`testing::press_sheet_button`), element values in `testing::ax_elements`, and a table's last column that fills the width.
 - **Released in 0.10.0:** a GUI beside an existing Rust CLI or library: `cargo ferrokit` builds an app binary that sits behind a feature (`bin = "…"` in `[package.metadata.ferrokit]`), `AGENTS.md` and the guide say where the app goes and what happens to `#[tokio::main]`, and combo boxes take suggestions that change.
 - **Released in 0.9.0:** SwiftUI views in a Ferrokit app (Swift Charts, `Gauge`'s styles, MapKit's SwiftUI `Map`) through `native(..)`, with a new crate, `ferrokit-build`, that compiles the app's Swift from `build.rs`; and Ferrokit's accessibility audit sees inside SwiftUI views.

@@ -13,7 +13,7 @@ In the same package, as a second binary that only builds with the `gui` feature:
 ```toml
 [dependencies]
 # …the CLI's own dependencies…
-ferrokit = { version = "0.10", optional = true }
+ferrokit = { version = "0.11", optional = true }
 
 [features]
 gui = ["dep:ferrokit"]
