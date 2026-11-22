@@ -187,26 +187,27 @@ pub fn view_labeled(window: &objc2_app_kit::NSWindow, label: &str) -> Option<Ret
     find(&*window.contentView()?, label)
 }
 
-/// Physical footprint in MB (what Activity Monitor shows; RSS keeps freed
-/// heap pages and overstates growth), via vmmap.
+/// The process's physical footprint now, in MB: what Activity Monitor's
+/// Memory column shows. Read in-process (`proc_pid_rusage`), so it works in
+/// a sandboxed app too (it ran `vmmap`, which the App Sandbox refuses, and
+/// gave 0 there).
 pub fn footprint_mb() -> f64 {
-    let out = std::process::Command::new("vmmap").args(["--summary", &std::process::id().to_string()]).output().unwrap();
-    let text = String::from_utf8_lossy(&out.stdout);
-    let line = text.lines().find(|l| l.starts_with("Physical footprint:")).unwrap_or("");
-    let v = line.split_whitespace().last().unwrap_or("0M");
-    let (num, unit) = v.split_at(v.len() - 1);
-    num.parse::<f64>().unwrap_or(0.0) * if unit == "G" { 1024.0 } else if unit == "K" { 1.0 / 1024.0 } else { 1.0 }
+    rusage().map_or(0.0, |r| r.ri_phys_footprint as f64 / (1 << 20) as f64)
 }
 
-/// The process's peak physical footprint so far, in MB (via vmmap).
+/// The process's peak physical footprint so far, in MB (see [`footprint_mb`]).
 pub fn peak_footprint_mb() -> f64 {
-    let out = std::process::Command::new("vmmap").args(["--summary", &std::process::id().to_string()]).output().unwrap();
-    let text = String::from_utf8_lossy(&out.stdout);
-    let line = text.lines().find(|l| l.starts_with("Physical footprint (peak):")).unwrap_or("");
-    let v = line.split_whitespace().last().unwrap_or("0M");
-    let (num, unit) = v.split_at(v.len() - 1);
-    num.parse::<f64>().unwrap_or(0.0) * if unit == "G" { 1024.0 } else if unit == "K" { 1.0 / 1024.0 } else { 1.0 }
+    rusage().map_or(0.0, |r| r.ri_lifetime_max_phys_footprint as f64 / (1 << 20) as f64)
 }
+
+fn rusage() -> Option<libc::rusage_info_v4> {
+    let mut info = std::mem::MaybeUninit::<libc::rusage_info_v4>::zeroed();
+    // SAFETY: the kernel fills a v4 record of our own process into `info`.
+    let ok = unsafe { libc::proc_pid_rusage(std::process::id() as i32, libc::RUSAGE_INFO_V4, info.as_mut_ptr().cast()) } == 0;
+    // SAFETY: filled by the call above when it succeeded (and zeroed before).
+    ok.then(|| unsafe { info.assume_init() })
+}
+
 /// The window's accessibility tree, flattened: (role, subrole, label/title)
 /// for every element under the content view, as VoiceOver sees it. On
 /// macOS 27, AppKit's text fields and checkboxes host SwiftUI internally, so

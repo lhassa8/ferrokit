@@ -954,6 +954,13 @@ fn table_icon_checks() {
     many.set_rows((0..1_000_000u32).collect());
     let ms = start.elapsed().as_secs_f64() * 1000.0;
     let width = many.table_view().tableColumnWithIdentifier(&NSString::from_str("n")).map_or(0.0, |c| c.width());
+    // The footprint, read in-process: 200 MB touched shows (it read 0 in
+    // sandboxed apps, through vmmap).
+    let before = ferrokit::testing::footprint_mb();
+    let block = vec![1u8; 200 << 20];
+    let during = ferrokit::testing::footprint_mb();
+    drop(std::hint::black_box(block));
+    check("footprint-reads", before > 10.0 && during - before > 180.0 && ferrokit::testing::peak_footprint_mb() >= during, format!("{before:.0} MB, then {during:.0} MB with 200 MB touched"));
     check("table-fit-many", ms < 150.0 && width > 50.0, format!("1,000,000 rows set and fitted in {ms:.0} ms; width {width:.0} pt"));
     ferrokit::close_window(&wm);
 }
