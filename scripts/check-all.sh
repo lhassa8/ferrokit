@@ -132,6 +132,9 @@ if [ -n "$debug" ]; then
 else
   step build cargo build --release --workspace --examples
 fi
+# Each library alone, with only its own features (the workspace build
+# unifies features: ferrokit-core once compiled only beside ferrokit).
+step build_alone sh -c 'cargo check --release -p ferrokit-core && cargo check --release -p ferrokit'
 if [ -n "$lint" ]; then
   step clippy cargo clippy --release --workspace --examples -- -D warnings
   step tests cargo test --workspace --release

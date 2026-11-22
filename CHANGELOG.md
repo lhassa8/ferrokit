@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Added: `Table::cell_spacing(points)`**: the room between cells across a row (AppKit's 17 by default); a data grid with column lines fits more with about 8 (check `table-cell-spacing`).
+- **Added: `Column::short_dates`**: a date column in the short style, numbers only and not relative ("9/23/22, 4:26 PM"; "23.09.22, 16:26"), for data grids where many dates must fit (check `date-short`).
+- **Fixed: `ferrokit-core` built only beside `ferrokit`** (an accessibility call needed a feature only the workspace turned on); check-all now builds each library alone.
 - **Added: `on_arrows` on text and search fields**: ↑ and ↓ while typing call it with -1 and +1 (the caret stays), for a field that filters a list, as Open Quickly and command palettes do (check `field-arrows`).
 - **Fixed: `testing::footprint_mb` and `peak_footprint_mb` read 0 in a sandboxed app**: they ran `vmmap`, which the App Sandbox refuses. They now read the footprint in-process (`proc_pid_rusage`), anywhere (check `footprint-reads`).
 - **Fixed: `Column::fit` over many rows was slow**: it formatted and sorted every value, seconds per column for a million rows, on every `set_rows`. Beyond 2,000 rows it now measures a sample spread through them (a million rows set and fitted in well under 150 ms, check `table-fit-many`).

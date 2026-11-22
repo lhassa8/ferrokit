@@ -946,6 +946,26 @@ fn table_icon_checks() {
         );
         ferrokit::close_window(&w2);
     });
+    // Short dates: numbers only, shorter than the medium style.
+    {
+        let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000);
+        let dates = Rc::new(TableModel::new(ViewId(977), vec![
+            Column::date("long", "Long", |t: &std::time::SystemTime| Some(*t)).with_time(),
+            Column::date("short", "Short", |t: &std::time::SystemTime| Some(*t)).with_time().short_dates(),
+        ]));
+        let dw = open(Window::new("Dates").size(420.0, 120.0).view(table(&dates)));
+        dates.set_rows(vec![at]);
+        let tv = dates.table_view();
+        let text = |c: isize| tv.viewAtColumn_row_makeIfNecessary(c, 0, true).and_then(|v| v.clone().downcast::<objc2_app_kit::NSTextField>().ok().map(|f| f.stringValue().to_string()).or_else(|| v.downcast::<objc2_app_kit::NSTableCellView>().ok().and_then(|c| unsafe { c.textField() }).map(|f| f.stringValue().to_string()))).unwrap_or_default();
+        let (long, short) = (text(0), text(1));
+        let spaced = Rc::new(TableModel::new(ViewId(978), vec![Column::text("a", "A", |s: &String| s.clone())]));
+        let sw = open(Window::new("Spacing").size(200.0, 80.0).view(table(&spaced).column_lines().cell_spacing(8.0)));
+        let spacing = spaced.table_view().intercellSpacing().width;
+        check("table-cell-spacing", spacing == 8.0, format!("{spacing}"));
+        ferrokit::close_window(&sw);
+        check("date-short", !short.is_empty() && short.len() < long.len() && !short.contains("Sep") && short.contains("20"), format!("{long:?} → {short:?}"));
+        ferrokit::close_window(&dw);
+    }
     // A fitted column over a million rows: sized from a sample, quickly
     // (formatting every value took seconds per column).
     let many = Rc::new(TableModel::new(ViewId(976), vec![Column::number("n", "N", |n: &u32| *n as f64).fit()]));

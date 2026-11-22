@@ -56,7 +56,7 @@ enum Kind {
     Progress,
     /// A date (the value is seconds since 1970; not finite: none, shown
     /// as `none`'s text).
-    Date { time: bool, none: Option<std::rc::Rc<str>> },
+    Date { time: bool, none: Option<std::rc::Rc<str>>, short: bool },
 }
 
 /// A small image shown before a cell's text (see [`Column::icon`]).
@@ -145,7 +145,7 @@ impl<T> Column<T> {
         Self::new(
             id,
             title,
-            Kind::Date { time: false, none: None },
+            Kind::Date { time: false, none: None, short: false },
             Box::new(move |row| {
                 let secs = value(row).map_or(f64::NEG_INFINITY, |t| match t.duration_since(std::time::UNIX_EPOCH) {
                     Ok(d) => d.as_secs_f64(),
@@ -161,6 +161,16 @@ impl<T> Column<T> {
     pub fn with_time(mut self) -> Self {
         if let Kind::Date { time, .. } = &mut self.kind {
             *time = true;
+        }
+        self
+    }
+
+    /// A date column in the short style, numbers only ("9/23/22, 4:26 PM";
+    /// "23.09.22, 16:26" in German), not relative: a data grid's dates, where
+    /// many must fit (the default is "Sep 23, 2022", "Today").
+    pub fn short_dates(mut self) -> Self {
+        if let Kind::Date { short, .. } = &mut self.kind {
+            *short = true;
         }
         self
     }
@@ -251,7 +261,7 @@ fn display(kind: &Kind, value: &Value) -> String {
     match (kind, value) {
         (_, Value::Text(s)) => s.clone(),
         (Kind::Date { none: Some(text), .. }, Value::Number(n)) if !n.is_finite() => text.to_string(),
-        (Kind::Date { time, .. }, Value::Number(n)) => format_date(*n, *time),
+        (Kind::Date { time, short, .. }, Value::Number(n)) => format_date(*n, *time, *short),
         // NaN is no value (a database's NULL): shown as nothing.
         (Kind::Number { .. }, Value::Number(n)) if n.is_nan() => String::new(),
         (Kind::Number { decimals: 0 }, Value::Number(n)) => format!("{n:.0}"),
@@ -264,7 +274,7 @@ fn display(kind: &Kind, value: &Value) -> String {
 thread_local! {
     /// The date formatters (date only, date and time), made once: making
     /// one is slow, and a table formats every visible cell.
-    static DATE_FORMATS: UiCell<[Option<Retained<objc2_foundation::NSDateFormatter>>; 2]> = const { UiCell::new([None, None]) };
+    static DATE_FORMATS: UiCell<[Option<Retained<objc2_foundation::NSDateFormatter>>; 4]> = const { UiCell::new([None, None, None, None]) };
 }
 
 thread_local! {
@@ -280,18 +290,18 @@ fn decimal_separator() -> String {
 
 /// `secs` since 1970 in the user's date format, relative where it can be
 /// ("Today"); empty when not finite (no date).
-fn format_date(secs: f64, time: bool) -> String {
+fn format_date(secs: f64, time: bool, short: bool) -> String {
     use objc2_foundation::{NSDate, NSDateFormatter, NSDateFormatterStyle};
     if !secs.is_finite() {
         return String::new();
     }
     let formatter = DATE_FORMATS.with_borrow_mut(|f| {
-        f[time as usize]
+        f[time as usize + 2 * short as usize]
             .get_or_insert_with(|| {
                 let f = NSDateFormatter::new();
-                f.setDateStyle(NSDateFormatterStyle::MediumStyle);
+                f.setDateStyle(if short { NSDateFormatterStyle::ShortStyle } else { NSDateFormatterStyle::MediumStyle });
                 f.setTimeStyle(if time { NSDateFormatterStyle::ShortStyle } else { NSDateFormatterStyle::NoStyle });
-                f.setDoesRelativeDateFormatting(true);
+                f.setDoesRelativeDateFormatting(!short);
                 f
             })
             .clone()
@@ -1272,7 +1282,10 @@ fn show_text(field: &NSTextField, text: &str, style: Option<&CellStyle>) {
                     b.setImagePosition(objc2_app_kit::NSCellImagePosition::ImageOnly);
                     b.setImageScaling(objc2_app_kit::NSImageScaling::ScaleProportionallyDown);
                     b.setIdentifier(Some(ident));
-                    objc2_app_kit::NSAccessibility::setAccessibilityLabel(&*b, Some(&NSString::from_str(&label)));
+                    // SAFETY: NSAccessibility's label setter, on a button.
+                    // (Sent directly: this crate doesn't build objc2-app-kit's
+                    // NSAccessibility feature, and alone it must compile.)
+                    let () = unsafe { msg_send![&*b, setAccessibilityLabel: &*NSString::from_str(&label)] };
                     b.setFrame(objc2_foundation::NSRect::new(objc2_foundation::NSPoint::new(2.0, 0.5), objc2_foundation::NSSize::new(16.0, 16.0)));
                     b.setAutoresizingMask(objc2_app_kit::NSAutoresizingMaskOptions::ViewMinYMargin);
                     c.addSubview(&b);
@@ -2288,12 +2301,15 @@ mod tests {
     #[test]
     fn dates_shown_in_the_users_format() {
         use super::{Kind, Value, display};
-        let none = display(&Kind::Date { time: false, none: None }, &Value::Number(f64::NEG_INFINITY));
+        let none = display(&Kind::Date { time: false, none: None, short: false }, &Value::Number(f64::NEG_INFINITY));
         assert_eq!(none, "");
         // 2020-09-13 12:26:40 UTC: the year shows in every medium style.
-        let day = display(&Kind::Date { time: false, none: None }, &Value::Number(1_600_000_000.0));
-        let with_time = display(&Kind::Date { time: true, none: None }, &Value::Number(1_600_000_000.0));
+        let day = display(&Kind::Date { time: false, none: None, short: false }, &Value::Number(1_600_000_000.0));
+        let with_time = display(&Kind::Date { time: true, none: None, short: false }, &Value::Number(1_600_000_000.0));
         assert!(day.contains("2020") && with_time.contains("2020") && with_time.len() > day.len(), "{day:?} {with_time:?}");
+        // The short style: numbers only, shorter than the medium one.
+        let short = display(&Kind::Date { time: true, none: None, short: true }, &Value::Number(1_600_000_000.0));
+        assert!(short.len() < with_time.len() && short.chars().filter(char::is_ascii_digit).count() >= 6 && !short.contains("Sep"), "{short:?} {with_time:?}");
         // `none_text`: a word for a missing date; dates stay dates.
         let col = super::Column::<Option<std::time::SystemTime>>::date("end", "End", |t| *t).with_time().none_text("Running");
         assert_eq!(display(&col.kind, &(col.value)(&None)), "Running");

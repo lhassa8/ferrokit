@@ -69,6 +69,7 @@ pub struct Table<T: 'static> {
     row_drag: bool,
     alternating: Option<bool>,
     column_lines: bool,
+    cell_spacing: Option<f64>,
     row_menu: Vec<RowAction>,
     selection: Option<Signal<Vec<usize>>>,
     focus: Option<Signal<Option<String>>>,
@@ -171,6 +172,14 @@ impl<T: 'static> Table<T> {
         self
     }
 
+    /// The room between cells across a row, in points (AppKit's default is
+    /// 17): a data grid with `column_lines` fits more columns with about 8,
+    /// as Numbers does.
+    pub fn cell_spacing(mut self, points: f64) -> Self {
+        self.cell_spacing = Some(points);
+        self
+    }
+
     /// The user can drag rows to a new place: `f` gets the dragged rows and
     /// the row they were dropped above (`None`: the end), as model indices.
     /// Apply it with [`TableModel::move_rows`]. Not while the table is sorted.
@@ -246,6 +255,11 @@ impl<T: 'static> View for Table<T> {
         }
         if self.row_drag {
             self.model.set_row_drag(true);
+        }
+        if let Some(points) = self.cell_spacing {
+            let tv = self.model.table_view();
+            let height = tv.intercellSpacing().height;
+            tv.setIntercellSpacing(objc2_foundation::NSSize::new(points, height));
         }
         if self.alternating.is_some() || self.column_lines {
             let tv = self.model.table_view();
@@ -368,6 +382,7 @@ pub fn table<T: 'static>(model: &Rc<TableModel<T>>) -> Table<T> {
         row_drag: false,
         alternating: None,
         column_lines: false,
+        cell_spacing: None,
         row_menu: Vec::new(),
         selection: None,
         focus: None,
