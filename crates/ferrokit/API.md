@@ -473,6 +473,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 
 - `pub fn placeholder(mut self, text: &str) -> Self`: Grey text shown while it's empty (default "Search").
 - `pub fn on_submit(mut self, f: impl Fn() + 'static) -> Self`: Runs `f` on Return.
+- `pub fn on_arrows(mut self, f: impl Fn(i32) + 'static) -> Self`: ↑ and ↓ while typing: `f(-1)` and `f(1)`, the keys taken (see `TextField::on_arrows`).
 
 ### `Segmented`
 
@@ -545,6 +546,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 
 - `pub fn placeholder(mut self, text: &str) -> Self`: Grey text shown while the field is empty.
 - `pub fn on_submit(mut self, f: impl Fn() + 'static) -> Self`: Runs (in a batch) when the user presses Return in the field.
+- `pub fn on_arrows(mut self, f: impl Fn(i32) + 'static) -> Self`: ↑ and ↓ while editing: `f(-1)` and `f(1)`, the keys taken (the caret stays). For a field that filters a list (Open Quickly, a command palette): the arrows move the list's selection, Return takes it.
 - `pub fn on_commit(mut self, f: impl Fn() + 'static) -> Self`: Runs (in a batch) whenever editing ends: Return, Tab, or a click elsewhere, so an edit is never lost by leaving the field. The value may be unchanged (the user only passed through).
 
 ## models

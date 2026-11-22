@@ -954,6 +954,39 @@ fn table_icon_checks() {
     many.set_rows((0..1_000_000u32).collect());
     let ms = start.elapsed().as_secs_f64() * 1000.0;
     let width = many.table_view().tableColumnWithIdentifier(&NSString::from_str("n")).map_or(0.0, |c| c.width());
+    // A search field's arrows: ↓ and ↑ reach `on_arrows` (+1, -1), taken
+    // before AppKit moves the caret (Open Quickly's list follows them).
+    {
+        let query = Signal::new("abc".to_string());
+        let steps = Rc::new(RefCell::new(Vec::new()));
+        let st = steps.clone();
+        let fw = open(Window::new("Arrows").size(260.0, 80.0).view(ferrokit::search_field(&query).on_arrows(move |d| st.borrow_mut().push(d))));
+        let mut inside = Vec::new();
+        fn every(v: &NSView, out: &mut Vec<Retained<NSView>>) {
+            for s in v.subviews().iter() {
+                out.push(s.clone());
+                every(&s, out);
+            }
+        }
+        every(&fw.contentView().unwrap(), &mut inside);
+        let field = inside.iter().find_map(|v| v.clone().downcast::<objc2_app_kit::NSSearchField>().ok());
+        let mut caret = None;
+        if let Some(f) = &field {
+            fw.makeFirstResponder(Some(f));
+            if let Some(editor) = fw.firstResponder().and_then(|r| r.downcast::<objc2_app_kit::NSTextView>().ok()) {
+                editor.setSelectedRange(objc2_foundation::NSRange::new(1, 0));
+                // SAFETY: NSResponder's command dispatch, on the main thread.
+                unsafe {
+                    editor.doCommandBySelector(objc2::sel!(moveDown:));
+                    editor.doCommandBySelector(objc2::sel!(moveUp:));
+                }
+                caret = Some(editor.selectedRange().location);
+            }
+        }
+        let got = steps.borrow().clone();
+        check("field-arrows", got == [1, -1] && caret == Some(1), format!("steps {got:?}; caret {caret:?}"));
+        ferrokit::close_window(&fw);
+    }
     // The footprint, read in-process: 200 MB touched shows (it read 0 in
     // sandboxed apps, through vmmap).
     let before = ferrokit::testing::footprint_mb();

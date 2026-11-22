@@ -42,7 +42,16 @@ define_class!(
         #[unsafe(method(control:textView:doCommandBySelector:))]
         fn do_command(&self, _control: &objc2_app_kit::NSControl, _editor: &objc2_app_kit::NSTextView, command: objc2::runtime::Sel) -> bool {
             self.ivars().returned.set(command == sel!(insertNewline:));
-            false
+            // ↑ and ↓ to the field's `on_arrows`, taken (not moving the caret).
+            let step = if command == sel!(moveUp:) { -1 } else if command == sel!(moveDown:) { 1 } else { 0 };
+            let arrows = self.ivars().arrows.borrow().clone();
+            match arrows {
+                Some(f) if step != 0 => {
+                    crate::failure::entry("a field's arrows", (), || batch(|| f(step)));
+                    true
+                }
+                _ => false,
+            }
         }
     }
 
@@ -50,10 +59,14 @@ define_class!(
     unsafe impl NSSearchFieldDelegate for FieldDelegate {}
 );
 
+/// What a field's ↑ and ↓ call (see `TextField::on_arrows`).
+type Arrows = std::rc::Rc<dyn Fn(i32)>;
+
 /// A field's signal, and whether Return was the last key it took.
 pub(crate) struct FieldState {
     value: Signal<String>,
     returned: std::cell::Cell<bool>,
+    arrows: std::cell::RefCell<Option<Arrows>>,
 }
 
 impl FieldDelegate {
@@ -63,7 +76,7 @@ impl FieldDelegate {
     }
 
     pub(crate) fn new(mtm: MainThreadMarker, value: Signal<String>) -> Retained<Self> {
-        let this = Self::alloc(mtm).set_ivars(FieldState { value, returned: std::cell::Cell::new(false) });
+        let this = Self::alloc(mtm).set_ivars(FieldState { value, returned: std::cell::Cell::new(false), arrows: std::cell::RefCell::new(None) });
         // SAFETY: NSObject's designated initialiser.
         unsafe { msg_send![super(this), init] }
     }
@@ -77,6 +90,7 @@ pub struct TextField {
     secure: bool,
     /// `on_submit` also fires when editing ends without Return.
     on_end_editing: bool,
+    arrows: Option<Arrows>,
 }
 
 impl TextField {
@@ -89,6 +103,14 @@ impl TextField {
     /// Runs (in a batch) when the user presses Return in the field.
     pub fn on_submit(mut self, f: impl Fn() + 'static) -> Self {
         self.on_submit = Some(Box::new(f));
+        self
+    }
+
+    /// ↑ and ↓ while editing: `f(-1)` and `f(1)`, the keys taken (the caret
+    /// stays). For a field that filters a list (Open Quickly, a command
+    /// palette): the arrows move the list's selection, Return takes it.
+    pub fn on_arrows(mut self, f: impl Fn(i32) + 'static) -> Self {
+        self.arrows = Some(std::rc::Rc::new(f));
         self
     }
 
@@ -114,6 +136,7 @@ impl View for TextField {
             field.setPlaceholderString(Some(&NSString::from_str(p)));
         }
         let delegate = FieldDelegate::new(mtm, self.value);
+        *delegate.ivars().arrows.borrow_mut() = self.arrows;
         // SAFETY: the delegate is weak in AppKit; the node keeps it alive.
         unsafe { field.setDelegate(Some(ProtocolObject::from_ref(&*delegate))) };
         let (mut node, _) = Node::leaf(
@@ -150,12 +173,12 @@ impl View for TextField {
 
 /// A text field bound two ways to `value`.
 pub fn text_field(value: &Signal<String>) -> TextField {
-    TextField { value: *value, placeholder: None, on_submit: None, on_end_editing: false, secure: false }
+    TextField { value: *value, placeholder: None, on_submit: None, on_end_editing: false, secure: false, arrows: None }
 }
 
 /// A password field (`NSSecureTextField`) bound two ways to `value`.
 pub fn secure_field(value: &Signal<String>) -> TextField {
-    TextField { value: *value, placeholder: None, on_submit: None, on_end_editing: false, secure: true }
+    TextField { value: *value, placeholder: None, on_submit: None, on_end_editing: false, secure: true, arrows: None }
 }
 
 fn state_of(on: bool) -> isize {
@@ -1256,6 +1279,7 @@ pub struct SearchField {
     value: Signal<String>,
     placeholder: Option<String>,
     on_submit: Option<Box<dyn Fn()>>,
+    arrows: Option<Arrows>,
 }
 
 impl SearchField {
@@ -1270,6 +1294,13 @@ impl SearchField {
         self.on_submit = Some(Box::new(f));
         self
     }
+
+    /// ↑ and ↓ while typing: `f(-1)` and `f(1)`, the keys taken (see
+    /// [`TextField::on_arrows`]).
+    pub fn on_arrows(mut self, f: impl Fn(i32) + 'static) -> Self {
+        self.arrows = Some(std::rc::Rc::new(f));
+        self
+    }
 }
 
 impl View for SearchField {
@@ -1281,6 +1312,7 @@ impl View for SearchField {
         // Each keystroke is a change (not only Return), like the toolbar's.
         field.setSendsSearchStringImmediately(true);
         let delegate = FieldDelegate::new(cx.mtm, self.value);
+        *delegate.ivars().arrows.borrow_mut() = self.arrows;
         // SAFETY: the delegate is weak in AppKit; the node keeps it.
         unsafe { field.setDelegate(Some(ProtocolObject::from_ref(&*delegate))) };
         // The clear button sends the action with empty text, but no
@@ -1312,5 +1344,5 @@ impl View for SearchField {
 
 /// A search field bound two ways to `value` (updated as the user types).
 pub fn search_field(value: &Signal<String>) -> SearchField {
-    SearchField { value: *value, placeholder: None, on_submit: None }
+    SearchField { value: *value, placeholder: None, on_submit: None, arrows: None }
 }

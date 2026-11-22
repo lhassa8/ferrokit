@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Added: `on_arrows` on text and search fields**: ↑ and ↓ while typing call it with -1 and +1 (the caret stays), for a field that filters a list, as Open Quickly and command palettes do (check `field-arrows`).
 - **Fixed: `testing::footprint_mb` and `peak_footprint_mb` read 0 in a sandboxed app**: they ran `vmmap`, which the App Sandbox refuses. They now read the footprint in-process (`proc_pid_rusage`), anywhere (check `footprint-reads`).
 - **Fixed: `Column::fit` over many rows was slow**: it formatted and sorted every value, seconds per column for a million rows, on every `set_rows`. Beyond 2,000 rows it now measures a sample spread through them (a million rows set and fitted in well under 150 ms, check `table-fit-many`).
 - **Added: `CellImage::Image(bytes)`**, an image from its encoded bytes (PNG, JPEG, HEIC…) before a cell's text: a photo's thumbnail in a table of products. `CellImage` is now `#[non_exhaustive]`.
