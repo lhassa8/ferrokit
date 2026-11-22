@@ -10,7 +10,7 @@ It builds your UI from the real thing: an actual `NSTableView`, `NSTextView`, `N
 
 It's built on [objc2](https://github.com/madsmtm/objc2) and `objc2-app-kit`, the Rust bindings generated from Apple's own SDK headers, so when you need an AppKit class Ferrokit doesn't wrap, you can still reach it. SwiftUI-only views, such as Swift Charts and MapKit's `Map`, go in too: `ferrokit-build` compiles your Swift into the app.
 
-Rowboat, a SQLite editor for the Mac, is built with Ferrokit and is waiting for review in the Mac App Store.
+[Rowboat](https://apps.apple.com/us/app/rowboat-sqlite-editor/id6832358629), a SQLite editor for the Mac, is built with Ferrokit and is [in the Mac App Store](https://apps.apple.com/us/app/rowboat-sqlite-editor/id6832358629) (free).
 
 ![The SQL browser example: a schema sidebar, a highlighted query, its results table, a bar chart of them and an inspector](assets/sql-browser.png)
 
@@ -187,7 +187,7 @@ Until 0.4 the crates were called `appkit-ui` (now `ferrokit`) and `appkit-host` 
 
 Contributions are very welcome, small ones included: see [CONTRIBUTING.md](CONTRIBUTING.md) for how to build and check it, issues labelled [`good first issue`](https://github.com/lhassa8/ferrokit/labels/good%20first%20issue) for a place to start, [Discussions](https://github.com/lhassa8/ferrokit/discussions) for questions, and [ROADMAP.md](ROADMAP.md) for where it's going. `scripts/check-all.sh` runs every check: build, clippy, tests, docs, and each example app's unattended self-checks.
 
-**How it's made and maintained:** Ferrokit is developed by one person, Lars Tray, with a lot of help from an AI coding assistant. Every behaviour has a self-check that runs the real app, and CI runs them on two macOS versions. The full development history is in this repository. I build my own apps on it (Rowboat, a SQLite editor, is the first), so it gets fixed when AppKit changes. Being one person is a real limit, and more maintainers would make it a safer bet; if you'd like to help, say hello in Discussions.
+**How it's made and maintained:** Ferrokit is developed by one person, Lars Tray, with a lot of help from an AI coding assistant. Every behaviour has a self-check that runs the real app, and CI runs them on two macOS versions. The full development history is in this repository. I build my own apps on it ([Rowboat](https://apps.apple.com/us/app/rowboat-sqlite-editor/id6832358629), a SQLite editor in the Mac App Store, is the first), so it gets fixed when AppKit changes. Being one person is a real limit, and more maintainers would make it a safer bet; if you'd like to help, say hello in Discussions.
 
 ## License
 

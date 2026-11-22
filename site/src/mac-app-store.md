@@ -1,6 +1,6 @@
 # Shipping a Rust app to the Mac App Store
 
-The Mac App Store takes an installer package (`.pkg`) of a **sandboxed** app, built for Apple silicon and Intel, signed with your App Store certificates and carrying a provisioning profile. With Ferrokit, `cargo ferrokit bundle --app-store` makes that package from your Cargo project. This is the path Rowboat, a SQLite editor built with Ferrokit, took to App Store submission.
+The Mac App Store takes an installer package (`.pkg`) of a **sandboxed** app, built for Apple silicon and Intel, signed with your App Store certificates and carrying a provisioning profile. With Ferrokit, `cargo ferrokit bundle --app-store` makes that package from your Cargo project. This is the path [Rowboat](https://apps.apple.com/us/app/rowboat-sqlite-editor/id6832358629), a SQLite editor built with Ferrokit, took into the Mac App Store.
 
 ## What you need from Apple
 
