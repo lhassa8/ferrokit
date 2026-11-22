@@ -564,6 +564,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn on_activate(mut self, f: impl Fn(usize) + 'static) -> Self`: A row was double-clicked, or Return pressed on it.
 - `pub fn on_sort(mut self, f: impl Fn(Sort) + 'static) -> Self`: The user sorted by a column (rows are already shown in the new order).
 - `pub fn on_toggle(mut self, f: impl Fn(usize, String, bool) + 'static) -> Self`: A checkbox cell was clicked: (row, column id, new value).
+- `pub fn on_icon_click(mut self, f: impl Fn(usize, String) + 'static) -> Self`: A cell's icon was clicked, in a column made with `Column::icon_action`: (row, column id).
 - `pub fn on_edit(mut self, f: impl Fn(usize, String, String) + 'static) -> Self`: An editable cell was edited: (row, column id, new text). Apply it to the row with `TableModel::update_row`.
 - `pub fn row_drag(mut self) -> Self`: Rows can be dragged to other apps (as tab-separated text). ⌘C copies the selected rows the same way, always.
 - `pub fn alternating_rows(mut self, on: bool) -> Self`: Rows in alternating colours (`true`, the default) or all on the content background (`false`): a data grid reads better striped, a short list in a modern window plainer.
@@ -600,6 +601,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 
 - `Symbol(String)`: An SF Symbol by name.
 - `FileIcon(std::path::PathBuf)`: The Finder's icon for a file or folder.
+- `Image(std::sync::Arc<[u8]>)`: An image from its encoded bytes (PNG, JPEG, HEIC, PDF… anything `NSImage` reads), scaled to fit: a thumbnail of a photo a row holds.
 
 ### `CellStyle`
 
@@ -622,6 +624,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn with_time(mut self) -> Self`: Shows a date column's time too ("Today at 09:41").
 - `pub fn none_text(mut self, text: &str) -> Self`: What a date column shows for `None` (default nothing): "Running" for a timer with no end yet, "Never" for a file never opened. It still sorts before every date, and is copied as shown.
 - `pub fn icon(mut self, image: impl Fn(&T) -> Option<CellImage> + 'static) -> Self`: Shows an image before each cell's text (a text or number column), e.g. a file's icon before its name. `None` leaves the space empty.
+- `pub fn icon_action(mut self, label: &str) -> Self`: Makes the `icon` a button: clicking it reports `TableEvent::IconClicked` (and doesn't select the row), as the arrow beside a linked value that opens what it links to. `label` is what VoiceOver says for it ("Open the linked row").
 - `pub fn style(mut self, style: impl Fn(&T) -> CellStyle + 'static) -> Self`: Styles each cell of a text or number column from its row: a colour, a background tint, italic or struck-through text. The style is read when a cell is shown; after changing what it depends on, refresh the rows (`TableModel::update_row`).
 - `pub fn fit(mut self) -> Self`: Sizes the column to its widest content (and its title) whenever the rows change. With many rows, the longest values are measured.
 - `pub fn width(mut self, width: f64) -> Self`: Initial width in points (default 120). The last column then grows to fill the table's width, and narrows when the window is narrower than the columns.

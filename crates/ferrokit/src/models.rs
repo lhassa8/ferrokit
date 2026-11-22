@@ -58,6 +58,7 @@ pub struct Table<T: 'static> {
     on_activate: Callback<usize>,
     on_sort: Callback<Sort>,
     on_toggle: Callback<(usize, String, bool)>,
+    on_icon: Callback<(usize, String)>,
     on_edit: Callback<(usize, String, String)>,
     on_columns: Callback<Vec<ColumnState>>,
     on_move: Callback<(Vec<usize>, Option<usize>)>,
@@ -132,6 +133,13 @@ impl<T: 'static> Table<T> {
     /// A checkbox cell was clicked: (row, column id, new value).
     pub fn on_toggle(mut self, f: impl Fn(usize, String, bool) + 'static) -> Self {
         self.on_toggle = Some(Box::new(move |(r, c, v)| f(r, c, v)));
+        self
+    }
+
+    /// A cell's icon was clicked, in a column made with
+    /// [`Column::icon_action`](crate::Column::icon_action): (row, column id).
+    pub fn on_icon_click(mut self, f: impl Fn(usize, String) + 'static) -> Self {
+        self.on_icon = Some(Box::new(move |(r, c)| f(r, c)));
         self
     }
 
@@ -292,7 +300,7 @@ impl<T: 'static> View for Table<T> {
                 });
             }));
         }
-        let Table { on_select, on_activate, on_sort, on_toggle, on_edit, on_columns, on_move, on_files, on_urls, on_paste, selection, focus, keys, .. } = self;
+        let Table { on_select, on_activate, on_sort, on_toggle, on_icon, on_edit, on_columns, on_move, on_files, on_urls, on_paste, selection, focus, keys, .. } = self;
         let drain: Drain = Rc::new(move || {
             for event in model.drain_events() {
                 match event {
@@ -305,6 +313,7 @@ impl<T: 'static> View for Table<T> {
                     TableEvent::Activate(row) => on_activate.iter().for_each(|f| f(row)),
                     TableEvent::Sort(sort) => on_sort.iter().for_each(|f| f(sort.clone())),
                     TableEvent::Toggle { row, column, value } => on_toggle.iter().for_each(|f| f((row, column.clone(), value))),
+                    TableEvent::IconClicked { row, column } => on_icon.iter().for_each(|f| f((row, column.clone()))),
                     TableEvent::Edit { row, column, value } => on_edit.iter().for_each(|f| f((row, column.clone(), value.clone()))),
                     TableEvent::ColumnsChanged => on_columns.iter().for_each(|f| f(model.column_state())),
                     TableEvent::RowsMoved { rows, before } => on_move.iter().for_each(|f| f((rows.clone(), before))),
@@ -348,6 +357,7 @@ pub fn table<T: 'static>(model: &Rc<TableModel<T>>) -> Table<T> {
         on_activate: None,
         on_sort: None,
         on_toggle: None,
+        on_icon: None,
         on_edit: None,
         on_columns: None,
         on_move: None,

@@ -907,7 +907,49 @@ fn popover_teardown_check(events: Rc<RefCell<Vec<AppEvent>>>) {
 
 /// The canvas: redrawn when a signal it reads changes and when it resizes,
 /// drawn pixels, clicks in its own coordinates, and VoiceOver's view of it.
+/// Table icons: an image from bytes (a photo's thumbnail) and an icon that
+/// is a button (clicked: the row and column, the selection left alone;
+/// VoiceOver reads its label).
+fn table_icon_checks() {
+    use ferrokit::{CellImage, Column, TableModel, table};
+    use objc2_app_kit::{NSButton, NSTableCellView};
+    // An 8 × 8 PNG.
+    const PNG: &str = "89504e470d0a1a0a0000000d49484452000000080000000808020000004b6d29dc0000006f49444154789c0d8e4111003008c3aa042528a91294a004253594eddbeb251112255a588c5871227f555145172ea6d8e28afcaf9a6aba7133cd36d7e41364cab4b119b3e64c3e57430d3d789861871bf26d5a6ae9c5cb2cbbdc92dfa0a38e3e7cccb1c71df9650a153a384cd8702179432f7441979c330f0000000049454e44ae426082";
+    let bytes: std::sync::Arc<[u8]> = (0..PNG.len()).step_by(2).map(|i| u8::from_str_radix(&PNG[i..i + 2], 16).unwrap()).collect();
+    let model = Rc::new(TableModel::new(ViewId(975), vec![
+        Column::text("photo", "Photo", |r: &(String, i64)| r.0.clone()).icon(move |_| Some(CellImage::Image(bytes.clone()))),
+        Column::number("ref", "Ref", |r: &(String, i64)| r.1 as f64).icon(|r| (r.1 > 0).then(|| CellImage::Symbol("arrow.forward.circle".into()))).icon_action("Open the linked row"),
+    ]));
+    model.set_rows(vec![("one".into(), 7), ("two".into(), 0)]);
+    let clicked = Rc::new(RefCell::new(Vec::new()));
+    let c = clicked.clone();
+    let w = open(Window::new("Table icons").size(320.0, 160.0).view(table(&model).on_icon_click(move |row, column| c.borrow_mut().push((row, column)))));
+    let tv = model.table_view();
+    let photo = tv.viewAtColumn_row_makeIfNecessary(0, 0, true).and_then(|v| v.downcast::<NSTableCellView>().ok());
+    // SAFETY: the cell's outlets, on the main thread.
+    let image = photo.as_ref().and_then(|c| unsafe { c.imageView() }).and_then(|i| i.image()).map(|i| i.size());
+    let button = |row: isize| tv.viewAtColumn_row_makeIfNecessary(1, row, true).and_then(|v| v.subviews().iter().find_map(|s| s.downcast::<NSButton>().ok()));
+    let (first, second) = (button(0), button(1));
+    let label = first.as_ref().and_then(|b| objc2_app_kit::NSAccessibility::accessibilityLabel(&**b)).map(|l| l.to_string());
+    let hidden_when_none = second.as_ref().is_some_and(|b| b.isHidden());
+    if let Some(b) = &first {
+        // SAFETY: a control's click, on the main thread.
+        unsafe { b.performClick(None) };
+    }
+    let w2 = w.clone();
+    after_idle(move || {
+        let got = clicked.borrow().clone();
+        check(
+            "table-icon-image-action",
+            image.is_some_and(|s| s.width > 0.0) && got == [(0, "ref".to_string())] && model.selection().is_empty() && label.as_deref() == Some("Open the linked row") && hidden_when_none,
+            format!("photo image {image:?}; clicks {got:?}, selection {:?}; VoiceOver {label:?}; no icon → button hidden {hidden_when_none}", model.selection()),
+        );
+        ferrokit::close_window(&w2);
+    });
+}
+
 fn canvas_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    table_icon_checks();
     use ferrokit::testing::canvas_drawing;
     use ferrokit::{Align, Color, canvas};
     use objc2_app_kit::NSAccessibility;

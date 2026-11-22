@@ -61,11 +61,15 @@ enum Kind {
 
 /// A small image shown before a cell's text (see [`Column::icon`]).
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum CellImage {
     /// An SF Symbol by name.
     Symbol(String),
     /// The Finder's icon for a file or folder.
     FileIcon(std::path::PathBuf),
+    /// An image from its encoded bytes (PNG, JPEG, HEIC, PDF… anything
+    /// `NSImage` reads), scaled to fit: a thumbnail of a photo a row holds.
+    Image(std::sync::Arc<[u8]>),
 }
 
 type IconFn<T> = Box<dyn Fn(&T) -> Option<CellImage>>;
@@ -100,13 +104,14 @@ pub struct Column<T> {
     editable: bool,
     fit: bool,
     icon: Option<IconFn<T>>,
+    icon_action: Option<String>,
     style: Option<StyleFn<T>>,
     value: Box<dyn Fn(&T) -> Value>,
 }
 
 impl<T> Column<T> {
     fn new(id: &str, title: &str, kind: Kind, value: Box<dyn Fn(&T) -> Value>) -> Self {
-        Self { id: id.into(), title: title.into(), width: 120.0, min_width: 40.0, kind, sortable: true, editable: false, fit: false, icon: None, style: None, value }
+        Self { id: id.into(), title: title.into(), width: 120.0, min_width: 40.0, kind, sortable: true, editable: false, fit: false, icon: None, icon_action: None, style: None, value }
     }
 
     /// A text column.
@@ -174,6 +179,15 @@ impl<T> Column<T> {
     /// e.g. a file's icon before its name. `None` leaves the space empty.
     pub fn icon(mut self, image: impl Fn(&T) -> Option<CellImage> + 'static) -> Self {
         self.icon = Some(Box::new(image));
+        self
+    }
+
+    /// Makes the [`icon`](Self::icon) a button: clicking it reports
+    /// [`TableEvent::IconClicked`] (and doesn't select the row), as the
+    /// arrow beside a linked value that opens what it links to. `label` is
+    /// what VoiceOver says for it ("Open the linked row").
+    pub fn icon_action(mut self, label: &str) -> Self {
+        self.icon_action = Some(label.into());
         self
     }
 
@@ -383,6 +397,13 @@ pub enum TableEvent {
     /// The focused column changed (see [`TableModel::set_cell_focus`]): the
     /// user clicked a cell in another column, or pressed ← or →.
     FocusedColumn(Option<String>),
+    /// A cell's icon was clicked (an [`Column::icon_action`] column).
+    IconClicked {
+        /// The row (model index).
+        row: usize,
+        /// The column id.
+        column: String,
+    },
 }
 
 /// Which transfers a table takes part in (see the `set_…` methods on
@@ -428,6 +449,8 @@ trait Data {
     fn icon(&self, view_row: usize, column: &str) -> Option<CellImage>;
     /// Whether the column has icons.
     fn has_icon(&self, column: &str) -> bool;
+    /// The VoiceOver label of the column's icon button, if its icon is one.
+    fn icon_action(&self, column: &str) -> Option<String>;
     /// The cell's style (a [`Column::style`] column).
     fn style(&self, view_row: usize, column: &str) -> Option<CellStyle>;
     /// The focused column's id (see [`TableModel::set_cell_focus`]).
@@ -615,6 +638,19 @@ define_class!(
                 }
                 if let Some(row) = (row >= 0).then_some(row as usize).and_then(|r| data.model_row(r)) {
                     data.push(TableEvent::Edit { row, column, value });
+                }
+            })
+        }
+
+        #[unsafe(method(iconClicked:))]
+        fn icon_clicked(&self, sender: &NSButton) {
+            crate::boundary::guarded("a table (icon clicked)", (), || {
+                let Some(data) = self.data() else { return };
+                let Some(table) = table_of(sender) else { return };
+                let row = table.rowForView(sender);
+                let Some(column) = sender.identifier().map(|i| i.to_string()) else { return };
+                if let Some(row) = (row >= 0).then_some(row as usize).and_then(|r| data.model_row(r)) {
+                    data.push(TableEvent::IconClicked { row, column });
                 }
             })
         }
@@ -1225,6 +1261,21 @@ fn show_text(field: &NSTextField, text: &str, style: Option<&CellStyle>) {
                 // width past the cell, and right-aligned numbers with it).
                 let c = NSTableCellView::initWithFrame(NSTableCellView::alloc(mtm), objc2_foundation::NSRect::new(objc2_foundation::NSPoint::new(0.0, 0.0), objc2_foundation::NSSize::new(124.0, 17.0)));
                 c.setIdentifier(Some(ident));
+                // An icon that acts is a borderless button (its own target,
+                // so a click on it doesn't select the row).
+                let action = self.data().and_then(|d| d.icon_action(&ident.to_string()));
+                if let Some(label) = action {
+                    // SAFETY: target is this source, which outlives the table's cells.
+                    let b = unsafe { NSButton::buttonWithImage_target_action(&objc2_app_kit::NSImage::new(), Some(self), Some(sel!(iconClicked:)), mtm) };
+                    b.setBordered(false);
+                    b.setImagePosition(objc2_app_kit::NSCellImagePosition::ImageOnly);
+                    b.setImageScaling(objc2_app_kit::NSImageScaling::ScaleProportionallyDown);
+                    b.setIdentifier(Some(ident));
+                    objc2_app_kit::NSAccessibility::setAccessibilityLabel(&*b, Some(&NSString::from_str(&label)));
+                    b.setFrame(objc2_foundation::NSRect::new(objc2_foundation::NSPoint::new(2.0, 0.5), objc2_foundation::NSSize::new(16.0, 16.0)));
+                    b.setAutoresizingMask(objc2_app_kit::NSAutoresizingMaskOptions::ViewMinYMargin);
+                    c.addSubview(&b);
+                }
                 let image = NSImageView::new(mtm);
                 // Image and text keep to the top, where plain cells draw their
                 // text: a row's text shares one baseline, icon or not.
@@ -1261,10 +1312,17 @@ fn show_text(field: &NSTextField, text: &str, style: Option<&CellStyle>) {
         let image = self.data().and_then(|d| d.icon(row as usize, &ident.to_string())).and_then(|i| match i {
             CellImage::Symbol(name) => objc2_app_kit::NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str(&name), None),
             CellImage::FileIcon(path) => Some(objc2_app_kit::NSWorkspace::sharedWorkspace().iconForFile(&NSString::from_str(&path.to_string_lossy()))),
+            CellImage::Image(bytes) => objc2_app_kit::NSImage::initWithData(<objc2_app_kit::NSImage as objc2::AnyThread>::alloc(), &objc2_foundation::NSData::with_bytes(&bytes)),
         });
+        // An acting icon is the button; the image view stays empty.
+        let button = cell.subviews().iter().find_map(|v| v.downcast::<NSButton>().ok());
+        if let Some(b) = &button {
+            b.setImage(image.as_deref());
+            b.setHidden(image.is_none());
+        }
         // SAFETY: the outlets set above (subviews of the cell).
         if let Some(iv) = unsafe { cell.imageView() } {
-            iv.setImage(image.as_deref());
+            iv.setImage(if button.is_some() { None } else { image.as_deref() });
         }
         // SAFETY: as above.
         if let Some(tf) = unsafe { cell.textField() } {
@@ -1333,6 +1391,10 @@ impl<T: 'static> Data for Inner<T> {
 
     fn has_icon(&self, column: &str) -> bool {
         self.columns.borrow().iter().any(|c| c.id == column && c.icon.is_some())
+    }
+
+    fn icon_action(&self, column: &str) -> Option<String> {
+        self.columns.borrow().iter().find(|c| c.id == column).and_then(|c| c.icon_action.clone())
     }
 
     fn style(&self, view_row: usize, column: &str) -> Option<CellStyle> {

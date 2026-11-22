@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Added: `CellImage::Image(bytes)`**, an image from its encoded bytes (PNG, JPEG, HEIC…) before a cell's text: a photo's thumbnail in a table of products. `CellImage` is now `#[non_exhaustive]`.
+- **Added: `Column::icon_action(label)` and `Table::on_icon_click`**: a cell's icon as a button (the arrow beside a linked value that opens what it links to). A click reports the row and column (`TableEvent::IconClicked`) without selecting the row; VoiceOver reads `label`; a row without an icon has no button.
 - **Fixed: a `canvas` laid out at exactly the size it was made at (its `min_size`) was never drawn** ([#8](https://github.com/lhassa8/ferrokit/issues/8)). AppKit doesn't resize a view to the size it already has, so the canvas never learned its size and never ran its drawing. Found when Rowboat's schema diagram, sized to fit its tables, came up blank for a seven-table schema.
 
 ## 0.10.1 (2026-11-21): what the second agent trial needed
