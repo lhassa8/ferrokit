@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Added: Icon Composer icons in `cargo ferrokit bundle`**: `icon = "AppIcon.icon"` (a document from Xcode's Icon Composer) is compiled with `actool` into `Assets.car` and `AppIcon.icns`, and `CFBundleIconName` set, so macOS 26 shows the icon's dark, tinted and clear looks and earlier systems the `.icns`. Needs Xcode (the Xcode in /Applications is used when `xcode-select` points at the command line tools). Unit test `icon_composer_document`.
+
 ## 0.11.0 (2026-11-22): what a showcase data grid needed
 
 - **Added: `Table::cell_spacing(points)`**: the room between cells across a row (AppKit's 17 by default); a data grid with column lines fits more with about 8 (check `table-cell-spacing`).

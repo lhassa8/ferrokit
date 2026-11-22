@@ -69,7 +69,8 @@ Settings, in the app's Cargo.toml:
     [package.metadata.ferrokit]
     name = \"My App\"            # shown in the menu bar, Finder and Dock
     id = \"com.example.myapp\"   # bundle identifier
-    icon = \"icon.png\"          # square PNG (1024 px) or .icns
+    icon = \"icon.png\"          # square PNG (1024 px), .icns, or an Icon Composer
+                                # .icon (macOS 26's dark, tinted and clear looks; needs Xcode)
     min-macos = \"15.0\"
     category = \"public.app-category.productivity\"
     languages = [\"de\", \"fr\"]     # its translations (see ferrokit's App::translations)
@@ -747,11 +748,8 @@ fn bundle(p: &Project, o: &BundleOptions) -> Result<PathBuf> {
         sh("lipo", &args.iter().map(String::as_str).collect::<Vec<_>>(), None)?;
     }
     let icon = match &p.icon {
-        Some(icon) => {
-            make_icon(icon, &resources.join("AppIcon.icns"))?;
-            true
-        }
-        None => false,
+        Some(icon) => make_icon(icon, &resources)?,
+        None => Icon::None,
     };
     let build = o.store.as_ref().and_then(|s| s.build.as_deref());
     std::fs::write(app.join("Contents/Info.plist"), info_plist(p, icon, build, sparkle.is_some())).map_err(|e| e.to_string())?;
@@ -860,7 +858,7 @@ fn xml(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
-fn info_plist(p: &Project, icon: bool, build: Option<&str>, sparkle: bool) -> String {
+fn info_plist(p: &Project, icon: Icon, build: Option<&str>, sparkle: bool) -> String {
     let key = |k: &str, v: &str| format!("  <key>{k}</key><string>{}</string>\n", xml(v));
     let mut s = String::from(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>\n",
@@ -877,8 +875,13 @@ fn info_plist(p: &Project, icon: bool, build: Option<&str>, sparkle: bool) -> St
     s += &key("LSMinimumSystemVersion", &p.min_macos);
     s += &key("NSPrincipalClass", "NSApplication");
     s += "  <key>NSHighResolutionCapable</key><true/>\n  <key>NSSupportsAutomaticGraphicsSwitching</key><true/>\n";
-    if icon {
+    if icon != Icon::None {
         s += &key("CFBundleIconFile", "AppIcon");
+    }
+    if icon == Icon::Catalog {
+        // macOS 26 takes the icon (with its dark, tinted and clear looks)
+        // from Assets.car; earlier systems from AppIcon.icns.
+        s += &key("CFBundleIconName", "AppIcon");
     }
     if let Some(c) = &p.category {
         s += &key("LSApplicationCategoryType", c);
@@ -943,10 +946,74 @@ fn info_plist(p: &Project, icon: bool, build: Option<&str>, sparkle: bool) -> St
     s
 }
 
-/// An .icns from a square PNG (or a copy of an .icns).
-fn make_icon(icon: &Path, out: &Path) -> Result<()> {
+/// What the bundle's icon is made of.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Icon {
+    None,
+    /// `AppIcon.icns` alone.
+    File,
+    /// `Assets.car` (from an Icon Composer document) and `AppIcon.icns`.
+    Catalog,
+}
+
+/// The icon in `resources`: an .icns from a square PNG (or a copy of an
+/// .icns), or an Icon Composer document compiled by Xcode's `actool`.
+fn make_icon(icon: &Path, resources: &Path) -> Result<Icon> {
+    let out = resources.join("AppIcon.icns");
     match icon.extension().and_then(|e| e.to_str()) {
-        Some("icns") => std::fs::copy(icon, out).map(|_| ()).map_err(|e| format!("{}: {e}", icon.display())),
+        Some("icon") => {
+            if !icon.join("icon.json").is_file() {
+                return Err(format!("{} isn't an Icon Composer document (no icon.json)", icon.display()));
+            }
+            // actool names the icon after the document: copy it in as AppIcon.icon.
+            let tmp = std::env::temp_dir().join(format!("cargo-ferrokit-{}", std::process::id()));
+            let doc = tmp.join("AppIcon.icon");
+            let _ = std::fs::remove_dir_all(&doc);
+            std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
+            sh("ditto", &[&icon.to_string_lossy(), &doc.to_string_lossy()], None)?;
+            let plist = tmp.join("partial.plist");
+            let args = [
+                "actool",
+                &*doc.to_string_lossy(),
+                "--compile",
+                &*resources.to_string_lossy(),
+                "--platform",
+                "macosx",
+                "--minimum-deployment-target",
+                "15.0",
+                "--app-icon",
+                "AppIcon",
+                "--output-partial-info-plist",
+                &*plist.to_string_lossy(),
+                "--errors",
+                "--warnings",
+                "--output-format",
+                "human-readable-text",
+            ]
+            .map(String::from);
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            // actool comes with Xcode, not the command line tools: use the
+            // Xcode in /Applications when xcode-select points at those.
+            let mut cmd = Command::new("xcrun");
+            if output("xcrun", &["--find", "actool"], None).is_err() {
+                let xcode = Path::new("/Applications/Xcode.app/Contents/Developer");
+                if !xcode.exists() {
+                    let _ = std::fs::remove_dir_all(&tmp);
+                    return Err(format!("{} needs Xcode's actool (install Xcode, or use a PNG icon)", icon.display()));
+                }
+                cmd.env("DEVELOPER_DIR", xcode);
+            }
+            eprintln!("    \x1b[2mxcrun {}\x1b[0m", args.join(" "));
+            let result = cmd.args(&args).output().map_err(|e| format!("couldn't run actool: {e}"));
+            let _ = std::fs::remove_dir_all(&tmp);
+            let result = result?;
+            let text = String::from_utf8_lossy(&result.stdout).into_owned() + &String::from_utf8_lossy(&result.stderr);
+            if !result.status.success() || text.contains(": error:") || !resources.join("Assets.car").is_file() || !out.is_file() {
+                return Err(format!("actool couldn't compile {}:\n{}", icon.display(), text.trim_end()));
+            }
+            Ok(Icon::Catalog)
+        }
+        Some("icns") => std::fs::copy(icon, &out).map(|_| Icon::File).map_err(|e| format!("{}: {e}", icon.display())),
         Some("png") => {
             let set = std::env::temp_dir().join(format!("cargo-ferrokit-{}", std::process::id())).join("AppIcon.iconset");
             std::fs::create_dir_all(&set).map_err(|e| e.to_string())?;
@@ -960,9 +1027,9 @@ fn make_icon(icon: &Path, out: &Path) -> Result<()> {
             }
             let result = sh("iconutil", &["-c", "icns", &set.to_string_lossy(), "-o", &out.to_string_lossy()], None);
             let _ = std::fs::remove_dir_all(set.parent().unwrap());
-            result
+            result.map(|_| Icon::File)
         }
-        _ => Err(format!("the icon {} must be a .png or .icns", icon.display())),
+        _ => Err(format!("the icon {} must be a .png, .icns or .icon", icon.display())),
     }
 }
 
@@ -1423,6 +1490,36 @@ fn notarize(args: &[String]) -> Result<()> {
 mod tests {
     use super::*;
 
+    /// An Icon Composer document becomes Assets.car and AppIcon.icns (with
+    /// Xcode's actool; skipped without Xcode).
+    #[test]
+    fn icon_composer_document() {
+        if output("xcrun", &["--find", "actool"], None).is_err() && !Path::new("/Applications/Xcode.app").exists() {
+            eprintln!("SKIP: no Xcode for actool");
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("cargo-ferrokit-icon-test-{}", std::process::id()));
+        let doc = dir.join("Mine.icon");
+        std::fs::create_dir_all(doc.join("Assets")).unwrap();
+        let png = dir.join("layer.png");
+        // A 1024-pixel layer: the system's generic app icon, as a PNG.
+        output("sips", &["-s", "format", "png", "-z", "1024", "1024", "/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/GenericApplicationIcon.icns", "--out", &png.to_string_lossy()], None).unwrap();
+        std::fs::copy(&png, doc.join("Assets/layer.png")).unwrap();
+        std::fs::write(
+            doc.join("icon.json"),
+            r#"{"fill":{"automatic-gradient":"srgb:0.1,0.4,0.7,1.0"},"groups":[{"layers":[{"image-name":"layer.png","name":"layer"}]}],"supported-platforms":{"squares":["macOS"]}}"#,
+        )
+        .unwrap();
+        let resources = dir.join("Resources");
+        std::fs::create_dir_all(&resources).unwrap();
+        assert_eq!(make_icon(&doc, &resources), Ok(Icon::Catalog));
+        assert!(resources.join("Assets.car").is_file() && resources.join("AppIcon.icns").is_file());
+        // Not a document: a clear error.
+        let err = make_icon(&dir.join("Missing.icon"), &resources).unwrap_err();
+        assert!(err.contains("isn't an Icon Composer document"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     fn s(v: &[&str]) -> Vec<String> {
         v.iter().map(|x| x.to_string()).collect()
     }
@@ -1540,12 +1637,16 @@ mod tests {
             entitlements: vec![("com.apple.security.print".into(), Extra::Bool(true))],
             plist: vec![("ITSAppUsesNonExemptEncryption".into(), Extra::Bool(false)), ("NSHumanReadableCopyright".into(), Extra::Text("© 2026 A & B".into()))],
         };
-        let plist = info_plist(&p, true, None, false);
-        assert!(info_plist(&p, true, Some("42"), false).contains("<key>CFBundleVersion</key><string>42</string>"));
+        let plist = info_plist(&p, Icon::File, None, false);
+        assert!(info_plist(&p, Icon::File, Some("42"), false).contains("<key>CFBundleVersion</key><string>42</string>"));
         assert!(plist.contains("<key>CFBundleName</key><string>Notes &amp; More</string>"));
         assert!(plist.contains("<key>CFBundleShortVersionString</key><string>1.2.0</string>"));
         assert!(plist.contains("<array><string>txt</string><string>md</string></array>"));
         assert!(plist.contains("<key>CFBundleIconFile</key><string>AppIcon</string>"));
+        assert!(!plist.contains("CFBundleIconName"), "an .icns alone has no asset catalog");
+        let catalog = info_plist(&p, Icon::Catalog, None, false);
+        assert!(catalog.contains("<key>CFBundleIconFile</key><string>AppIcon</string>") && catalog.contains("<key>CFBundleIconName</key><string>AppIcon</string>"));
+        assert!(!info_plist(&p, Icon::None, None, false).contains("CFBundleIcon"));
         assert!(plist.contains("<key>CFBundleLocalizations</key><array><string>en</string><string>de</string></array>"));
         assert!(!plist.contains("NSIsRelatedItemType"), "no related files declared");
         assert!(!plist.contains("CFBundleURLTypes"), "no URL schemes declared");
@@ -1556,13 +1657,13 @@ mod tests {
         // URL schemes, under the app's identifier.
         let mut p = p;
         p.url_schemes = vec!["notes".into(), "notes-beta".into()];
-        assert!(info_plist(&p, true, None, false).contains("<key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>com.example.notes</string><key>CFBundleURLSchemes</key><array><string>notes</string><string>notes-beta</string></array></dict></array>"));
+        assert!(info_plist(&p, Icon::File, None, false).contains("<key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>com.example.notes</string><key>CFBundleURLSchemes</key><array><string>notes</string><string>notes-beta</string></array></dict></array>"));
         // Related files: their extensions, declared as related items.
         p.documents = vec![
             DocType { name: "Database".into(), extensions: vec!["sqlite".into(), "db".into()], related: vec!["-wal".into(), "-journal".into()], role: "Editor".into() },
             DocType { name: "Data File".into(), extensions: vec!["csv".into()], related: vec![], role: "Viewer".into() },
         ];
-        let plist = info_plist(&p, true, None, false);
+        let plist = info_plist(&p, Icon::File, None, false);
         assert!(plist.contains("<key>CFBundleTypeName</key><string>Database (related)</string>"), "{plist}");
         // A viewer's role.
         assert!(plist.contains("<key>CFBundleTypeName</key><string>Data File</string><key>CFBundleTypeRole</key><string>Viewer</string>"), "{plist}");

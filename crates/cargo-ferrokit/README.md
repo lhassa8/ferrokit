@@ -35,7 +35,7 @@ Settings live in the app's `Cargo.toml`:
 [package.metadata.ferrokit]
 name = "My App"
 id = "com.example.myapp"
-icon = "icon.png"          # square PNG (1024 px) or .icns
+icon = "icon.png"          # square PNG (1024 px), .icns, or an Icon Composer .icon
 min-macos = "15.0"
 bin = "myapp-gui"          # the app, when the package has several binaries (a CLI beside it); its required-features are turned on
 category = "public.app-category.productivity"
