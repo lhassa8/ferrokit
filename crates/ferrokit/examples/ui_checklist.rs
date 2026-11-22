@@ -946,6 +946,16 @@ fn table_icon_checks() {
         );
         ferrokit::close_window(&w2);
     });
+    // A fitted column over a million rows: sized from a sample, quickly
+    // (formatting every value took seconds per column).
+    let many = Rc::new(TableModel::new(ViewId(976), vec![Column::number("n", "N", |n: &u32| *n as f64).fit()]));
+    let wm = open(Window::new("Fit many").size(200.0, 160.0).view(table(&many)));
+    let start = std::time::Instant::now();
+    many.set_rows((0..1_000_000u32).collect());
+    let ms = start.elapsed().as_secs_f64() * 1000.0;
+    let width = many.table_view().tableColumnWithIdentifier(&NSString::from_str("n")).map_or(0.0, |c| c.width());
+    check("table-fit-many", ms < 150.0 && width > 50.0, format!("1,000,000 rows set and fitted in {ms:.0} ms; width {width:.0} pt"));
+    ferrokit::close_window(&wm);
 }
 
 fn canvas_checks(events: Rc<RefCell<Vec<AppEvent>>>) {

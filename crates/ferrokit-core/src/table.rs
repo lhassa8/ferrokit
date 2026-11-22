@@ -201,7 +201,8 @@ impl<T> Column<T> {
     }
 
     /// Sizes the column to its widest content (and its title) whenever the
-    /// rows change. With many rows, the longest values are measured.
+    /// rows change. Beyond 2,000 rows, it measures a sample spread through
+    /// them, so a million rows cost what 2,000 do.
     pub fn fit(mut self) -> Self {
         self.fit = true;
         self
@@ -1538,15 +1539,22 @@ impl<T: 'static> Inner<T> {
         self.fit_columns();
     }
 
-    /// Sizes `fit` columns to their widest content: the title and, with many
-    /// rows, the 64 longest values by character count (all of them below
-    /// 2,000 rows), measured in the table's font.
+    /// Sizes `fit` columns to their widest content: the title and the 64
+    /// longest values by character count, measured in the table's font.
+    /// Beyond 2,000 rows, the values come from 2,000 rows spread evenly
+    /// through them (formatting a million values took seconds per column).
     fn fit_columns(&self) {
         let rows = self.rows.borrow();
         for column in self.columns.borrow().iter().filter(|c| c.fit) {
             let Some(native) = self.table.tableColumnWithIdentifier(&NSString::from_str(&column.id)) else { continue };
-            let mut texts: Vec<String> = rows.iter().map(|r| display(&column.kind, &(column.value)(r))).collect();
-            if texts.len() > 2_000 {
+            const SAMPLE: usize = 2_000;
+            let n = rows.len();
+            let mut texts: Vec<String> = if n > SAMPLE {
+                (0..SAMPLE).map(|k| display(&column.kind, &(column.value)(&rows[k * n / SAMPLE]))).collect()
+            } else {
+                rows.iter().map(|r| display(&column.kind, &(column.value)(r))).collect()
+            };
+            if texts.len() > 64 {
                 texts.sort_by_key(|t| std::cmp::Reverse(t.chars().count()));
                 texts.truncate(64);
             }
