@@ -8,7 +8,7 @@ use objc2::rc::Retained;
 use objc2_app_kit::{NSApplication, NSTextField};
 use objc2_foundation::NSString;
 
-use crate::{mtm, windows};
+use crate::mtm;
 
 #[path = "input.rs"]
 pub mod input;
@@ -155,7 +155,8 @@ pub fn wait_until(timeout_ms: u64, condition: impl Fn() -> bool + 'static, then:
 /// own buttons, as a click would. False if `window` shows no sheet or the
 /// sheet has no such button. The alert's callback runs on a later pass of
 /// the run loop, so look in the next step.
-pub fn press_sheet_button(window: &objc2_app_kit::NSWindow, title: &str) -> bool {
+pub fn press_sheet_button(window: &crate::WindowRef, title: &str) -> bool {
+    let window = window.ns();
     fn find(view: &objc2_app_kit::NSView, title: &str) -> Option<Retained<objc2_app_kit::NSButton>> {
         if let Some(b) = view.downcast_ref::<objc2_app_kit::NSButton>()
             && b.title().to_string() == title
@@ -175,7 +176,8 @@ pub fn press_sheet_button(window: &objc2_app_kit::NSWindow, title: &str) -> bool
 /// The first view in `window` with the accessibility label `label` (what
 /// `.accessibility_label(..)` set), for a check to read or drive: a field,
 /// a table, an editor's text view, a web view.
-pub fn view_labeled(window: &objc2_app_kit::NSWindow, label: &str) -> Option<Retained<objc2_app_kit::NSView>> {
+pub fn view_labeled(window: &crate::WindowRef, label: &str) -> Option<Retained<objc2_app_kit::NSView>> {
+    let window = window.ns();
     fn find(view: &objc2_app_kit::NSView, label: &str) -> Option<Retained<objc2_app_kit::NSView>> {
         // SAFETY: NSView answers accessibilityLabel (NSAccessibility).
         let own: Option<Retained<NSString>> = unsafe { objc2::msg_send![view, accessibilityLabel] };
@@ -212,7 +214,8 @@ fn rusage() -> Option<libc::rusage_info_v4> {
 /// for every element under the content view, as VoiceOver sees it. On
 /// macOS 27, AppKit's text fields and checkboxes host SwiftUI internally, so
 /// the AX element is a child of the NSView, not the view itself.
-pub fn ax_tree(window: &objc2_app_kit::NSWindow) -> Vec<(String, String, String)> {
+pub fn ax_tree(window: &crate::WindowRef) -> Vec<(String, String, String)> {
+    let window = window.ns();
     // Not every element in the tree implements every accessor; sending an
     // unknown selector raises an exception that would unwind out of the
     // caller. Ask first.
@@ -307,7 +310,7 @@ pub fn quick_look_state() -> (Vec<std::path::PathBuf>, Option<usize>) {
 /// the image includes the title bar and the window background (which the
 /// content view alone doesn't draw).
 pub fn snapshot_windows(dir: &str) {
-    for w in windows() {
+    for w in crate::windows_ns() {
         let content = w.contentView().unwrap();
         // SAFETY: reading the view hierarchy on the main thread.
         let view = unsafe { content.superview() }.unwrap_or(content);
@@ -363,7 +366,8 @@ pub fn menu_key(chars: &str, modifiers: &[crate::Modifier]) -> bool {
 /// (A synthesized key event through `NSMenu.performKeyEquivalent` matches
 /// the item but goes nowhere when the app isn't active: there's no key
 /// window. A person pressing keys always has the app active.)
-pub fn shortcut(window: &objc2_app_kit::NSWindow, chars: &str, shift: bool) -> bool {
+pub fn shortcut(window: &crate::WindowRef, chars: &str, shift: bool) -> bool {
+    let window = window.ns();
     use objc2_app_kit::{NSEventModifierFlags, NSMenu};
     fn find(menu: &NSMenu, key: &str, shift: bool) -> Option<(Retained<NSMenu>, isize)> {
         for i in 0..menu.numberOfItems() {
@@ -476,7 +480,8 @@ pub fn context_menu_for_word(view: &objc2_app_kit::NSTextView, word: &str) -> Ve
 /// `screencapture -l`): what's on screen, which in-process snapshots can
 /// miss (Core Animation layers, animations, vibrancy). Needs the
 /// screen-recording permission; `None` without it.
-pub fn capture_window(window: &objc2_app_kit::NSWindow) -> Option<Retained<objc2_app_kit::NSBitmapImageRep>> {
+pub fn capture_window(window: &crate::WindowRef) -> Option<Retained<objc2_app_kit::NSBitmapImageRep>> {
+    let window = window.ns();
     let path = std::env::temp_dir().join(format!("ferrokit-capture-{}-{}.png", std::process::id(), window.windowNumber()));
     let ok = std::process::Command::new("screencapture")
         .args(["-x", "-o", "-l", &window.windowNumber().to_string()])
@@ -559,7 +564,8 @@ pub struct AxElement {
 /// including those inside SwiftUI views (`NSHostingView`), which SwiftUI
 /// makes only once the system's accessibility API is asked: the walk asks
 /// it first, as VoiceOver does.
-pub fn ax_elements(window: &objc2_app_kit::NSWindow) -> Vec<AxElement> {
+pub fn ax_elements(window: &crate::WindowRef) -> Vec<AxElement> {
+    let window = window.ns();
     use objc2::runtime::AnyObject;
     // Asked of the object, not its class: some elements (a table's or
     // outline's rows) answer through AppKit's own forwarding.
@@ -686,7 +692,7 @@ fn wake_swiftui(view: &objc2_app_kit::NSView) {
 /// steppers), and images and controls read as a symbol name
 /// ("speaker.wave.2"). Empty
 /// when every control can be told apart by ear.
-pub fn ax_audit(window: &objc2_app_kit::NSWindow) -> Vec<String> {
+pub fn ax_audit(window: &crate::WindowRef) -> Vec<String> {
     const NEEDS_NAME: &[&str] =
         &["AXTextField", "AXTextArea", "AXSlider", "AXPopUpButton", "AXCheckBox", "AXRadioButton", "AXButton", "AXIncrementor", "AXComboBox", "AXMenuButton", "AXDateTimeArea", "AXColorWell"];
     let symbol_like = |s: &str| s.contains('.') && !s.contains(' ') && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.');
@@ -904,7 +910,8 @@ pub mod probes {
     }
 
     /// Sends a ⌘-key equivalent through the main menu, as a key press would.
-    pub fn key_equiv(w: &objc2_app_kit::NSWindow, chars: &str, shift: bool) -> bool {
+    pub fn key_equiv(w: &crate::WindowRef, chars: &str, shift: bool) -> bool {
+        let w = w.ns();
         use objc2_app_kit::{NSEvent, NSEventModifierFlags, NSEventType};
         let mut flags = NSEventModifierFlags::Command;
         // As a real key press: Shift shows in the characters (⇧⌘Z sends "Z").

@@ -193,7 +193,11 @@ impl<T: Clone + PartialEq + 'static> Document<T> {
     }
 
     /// The document's window, while it's open.
-    pub fn window(&self) -> Option<Retained<NSWindow>> {
+    pub fn window(&self) -> Option<crate::WindowRef> {
+        self.window_ns().map(crate::WindowRef::new)
+    }
+
+    pub(crate) fn window_ns(&self) -> Option<Retained<NSWindow>> {
         self.0.window.borrow().load()
     }
 }
@@ -215,7 +219,7 @@ trait AnyDoc {
 
 impl<T: Clone + PartialEq + 'static> AnyDoc for Document<T> {
     fn window(&self) -> Option<Retained<NSWindow>> {
-        Document::window(self)
+        Document::window_ns(self)
     }
     fn path(&self) -> Option<PathBuf> {
         self.0.path.get_untracked()
@@ -363,7 +367,7 @@ fn show<T: Clone + PartialEq + 'static>(kind: Rc<DocumentType<T>>, content: T, p
     if let Some(style) = &kind.style {
         spec = style(spec);
     }
-    let window = crate::open(spec);
+    let window = crate::open_ns(spec);
     // A document with a file comes back where its window last was.
     if let Some(p) = doc.path() {
         window.setFrameUsingName(&frame_name(&p));
@@ -492,14 +496,14 @@ pub(crate) fn restore_open() -> usize {
 /// were opened), remembering it: opening files closes it while it's
 /// unchanged, as TextEdit does.
 pub(crate) fn new_launch_document() {
-    let window = new_document();
+    let window = new_document().map(|w| objc2::Message::retain(w.ns()));
     AUTO_UNTITLED.with_borrow_mut(|a| *a = window.as_ref().map(Weak::from_retained).unwrap_or_default());
 }
 
 fn close_auto_untitled() {
     let Some(window) = AUTO_UNTITLED.with_borrow_mut(std::mem::take).load() else { return };
     let opened_more = DOCS.with_borrow(|docs| docs.len() > 1);
-    if opened_more && !document_edited(&window) && document_of(&window).is_some_and(|d| d.path().is_none()) {
+    if opened_more && !document_of(&window).is_some_and(|d| d.edited()) && document_of(&window).is_some_and(|d| d.path().is_none()) {
         window.close();
     }
 }
@@ -527,6 +531,7 @@ pub fn show_welcome() -> bool {
     let Some(make) = make else { return false };
     // (Its builder's signals go with it when it closes.)
     let w = crate::open_with(move || make());
+    let w = objc2::Message::retain(w.ns());
     w.center();
     w.makeKeyAndOrderFront(None);
     WELCOME.with_borrow_mut(|s| s.1 = Weak::from_retained(&w));
@@ -534,8 +539,8 @@ pub fn show_welcome() -> bool {
 }
 
 /// The welcome window, while it's open.
-pub fn welcome_window() -> Option<Retained<NSWindow>> {
-    WELCOME.with_borrow(|w| w.1.load()).filter(|w| w.isVisible())
+pub fn welcome_window() -> Option<crate::WindowRef> {
+    WELCOME.with_borrow(|w| w.1.load()).filter(|w| w.isVisible()).map(crate::WindowRef::new)
 }
 
 fn close_welcome() {
@@ -545,14 +550,18 @@ fn close_welcome() {
 }
 
 /// Opens a new, empty document. `None` if the app has no document type.
-pub fn new_document() -> Option<Retained<NSWindow>> {
+pub fn new_document() -> Option<crate::WindowRef> {
     let opener = OPENER.with_borrow(Clone::clone)?;
-    Some(opener.new_document())
+    Some(crate::WindowRef::new(opener.new_document()))
 }
 
 /// Opens the document at `path`, or brings its window to the front if it's
 /// already open.
-pub fn open_document(path: &Path) -> std::io::Result<Retained<NSWindow>> {
+pub fn open_document(path: &Path) -> std::io::Result<crate::WindowRef> {
+    open_document_ns(path).map(crate::WindowRef::new)
+}
+
+pub(crate) fn open_document_ns(path: &Path) -> std::io::Result<Retained<NSWindow>> {
     let open = DOCS.with_borrow(|docs| docs.iter().find(|d| d.path().as_deref() == Some(path)).and_then(|d| d.window()));
     if let Some(w) = open {
         w.makeKeyAndOrderFront(None);
@@ -571,25 +580,29 @@ pub fn open_document(path: &Path) -> std::io::Result<Retained<NSWindow>> {
 
 /// Saves the document in `window` to `path` (Save As… without the panel);
 /// it then belongs to that file.
-pub fn save_document_as(window: &NSWindow, path: &Path) -> std::io::Result<()> {
+pub fn save_document_as(window: &crate::WindowRef, path: &Path) -> std::io::Result<()> {
+    let window = window.ns();
     document_of(window).ok_or_else(|| std::io::Error::other("not a document window"))?.save_to(path)
 }
 
 /// Saves the document in `window` to its file. An error if it has none yet
 /// (use [`save_document_as`], or the Save menu item, which asks).
-pub fn save_document(window: &NSWindow) -> std::io::Result<()> {
+pub fn save_document(window: &crate::WindowRef) -> std::io::Result<()> {
+    let window = window.ns();
     let doc = document_of(window).ok_or_else(|| std::io::Error::other("not a document window"))?;
     let path = doc.path().ok_or_else(|| std::io::Error::other("the document has no file yet"))?;
     doc.save_to(&path)
 }
 
 /// Reads the document in `window` back from its file, dropping its changes.
-pub fn revert_document(window: &NSWindow) -> std::io::Result<()> {
+pub fn revert_document(window: &crate::WindowRef) -> std::io::Result<()> {
+    let window = window.ns();
     document_of(window).ok_or_else(|| std::io::Error::other("not a document window"))?.revert()
 }
 
 /// Whether the document in `window` has unsaved changes.
-pub fn document_edited(window: &NSWindow) -> bool {
+pub fn document_edited(window: &crate::WindowRef) -> bool {
+    let window = window.ns();
     document_of(window).is_some_and(|d| d.edited())
 }
 
@@ -613,12 +626,19 @@ pub fn recent_documents() -> Vec<PathBuf> {
 /// Replaces the recent documents (File ▸ Open Recent), newest first: for
 /// an app that opens files of its own it doesn't want listed (a scratch
 /// copy, a capture run's files). Kept to the menu's ten; files no longer
-/// there are left out when the list is read.
+/// there are left out when the list is read. In the App Sandbox a file
+/// stays listed after a relaunch only if the app can reach it now (it was
+/// opened, chosen or dropped in this run, or listed before).
 pub fn set_recent_documents(paths: &[PathBuf]) {
     let mut list: Vec<PathBuf> = Vec::new();
     for p in paths {
         let p = p.canonicalize().unwrap_or_else(|_| p.clone());
         if !list.contains(&p) {
+            // (Sandboxed: a bookmark, as opening the file keeps, so the
+            // list can reach it after a relaunch.)
+            if p.exists() {
+                remember_bookmark(&p);
+            }
             list.push(p);
         }
     }
@@ -773,7 +793,7 @@ pub fn choose_documents() {
     let options = OpenOptions { extensions: opener.extensions(), multiple: true, directories: false };
     let open_each = |paths: Option<Vec<PathBuf>>| paths.into_iter().flatten().for_each(|p| open_reporting(&p));
     match app.keyWindow().or_else(|| app.mainWindow()) {
-        Some(w) => open_panel(&w, options, open_each),
+        Some(w) => open_panel(&crate::WindowRef::from_ns(&w), options, open_each),
         // No window to attach the panel to: a free-standing one.
         None => crate::dialogs::open_panel_alone(options, open_each),
     }
@@ -791,7 +811,7 @@ fn report(window: Option<&NSWindow>, title: &str, message: &str) {
     let app = NSApplication::sharedApplication(mtm());
     let window = window.map(objc2::Message::retain).or_else(|| app.keyWindow()).or_else(|| app.mainWindow());
     match window {
-        Some(w) => alert(&w, Alert::new(title, message).warning(), |_| {}),
+        Some(w) => alert(&crate::WindowRef::from_ns(&w), Alert::new(title, message).warning(), |_| {}),
         None => eprintln!("{title} {message}"),
     }
 }
@@ -816,7 +836,7 @@ fn save_as_flow(doc: Rc<dyn AnyDoc>, done: impl FnOnce(bool) + 'static) {
         None => format!("{}.{}", doc.title(), doc.extension()),
     };
     let dir = doc.path().and_then(|p| p.parent().map(Path::to_path_buf));
-    save_panel(&window, &name, dir.as_deref(), move |path| match path {
+    save_panel(&crate::WindowRef::from_ns(&window), &name, dir.as_deref(), move |path| match path {
         Some(path) => {
             let ok = doc.save_to(&path).map_err(|e| report(doc.window().as_deref(), &t_with("The document “{name}” couldn't be saved.", &[("name", &doc.title())]), &e.to_string()));
             done(ok.is_ok());
@@ -831,7 +851,7 @@ fn confirm_revert() {
     let question = Alert::new(&t_with("Revert to the saved version of “{name}”?", &[("name", &doc.title())]), &t("Your current changes will be lost."))
         .button(&t("Revert"))
         .button(&t("Cancel"));
-    alert(&window, question, move |i| {
+    alert(&crate::WindowRef::from_ns(&window), question, move |i| {
         if i == 0
             && let Err(e) = doc.revert()
         {
@@ -868,7 +888,7 @@ fn close_flow(doc: Rc<dyn AnyDoc>, done: impl FnOnce(bool) + 'static) {
             w.close();
         }
     };
-    alert(&window, question, move |i| match i {
+    alert(&crate::WindowRef::from_ns(&window), question, move |i| match i {
         0 => {
             let d = doc.clone();
             save_flow(doc, move |saved| {

@@ -155,7 +155,7 @@ pub fn run(settings: Settings, actions: Vec<Action>) {
     let app = NSApplication::sharedApplication(crate::mtm());
     #[allow(deprecated)]
     app.activateIgnoringOtherApps(true);
-    if let Some(w) = crate::windows().into_iter().rev().find(|w| w.isVisible()) {
+    if let Some(w) = crate::windows_ns().into_iter().rev().find(|w| w.isVisible()) {
         w.makeKeyAndOrderFront(None);
     }
     let counts = (crate::testing::live_nodes(), crate::testing::live_signals());
@@ -247,7 +247,7 @@ fn step(state: Rc<RefCell<State>>) {
     } else {
         let mut s = state.borrow_mut();
         if s.paused.is_multiple_of(250) {
-            eprintln!("[soak] paused: another app is in front (windows: {:?})", crate::windows().iter().filter(|w| w.isVisible()).map(|w| w.title().to_string()).collect::<Vec<_>>());
+            eprintln!("[soak] paused: another app is in front (windows: {:?})", crate::windows_ns().iter().filter(|w| w.isVisible()).map(|w| w.title().to_string()).collect::<Vec<_>>());
         }
         s.paused += 1;
     }

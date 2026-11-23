@@ -57,7 +57,7 @@ impl Browser {
         }
     }
 
-    fn open(&self, window: &objc2_app_kit::NSWindow) {
+    fn open(&self, window: &WindowRef) {
         let b = self.clone();
         open_panel(window, OpenOptions::new().extensions(&["csv"]), move |paths| {
             if let Some(path) = paths.and_then(|p| p.into_iter().next()) {
@@ -76,7 +76,7 @@ impl Browser {
         });
     }
 
-    fn details(&self, window: &objc2_app_kit::NSWindow, row: usize) {
+    fn details(&self, window: &WindowRef, row: usize) {
         let Some(d) = self.data.get_untracked() else { return };
         let r = &d.records[row];
         let rows: Vec<_> = d.headers.iter().zip(r.fields.iter()).map(|(h, v)| (text(format!("{h}:")), text(v.clone()))).collect();
@@ -401,7 +401,7 @@ mod self_checks {
 
     fn views() -> Vec<Retained<NSView>> {
         let mut out = Vec::new();
-        all_views(&windows()[0].contentView().unwrap(), &mut out);
+        all_views(&windows()[0].ns().contentView().unwrap(), &mut out);
         out
     }
 
@@ -443,9 +443,9 @@ mod self_checks {
 
     fn interact(b: Browser) {
         let w = windows()[0].clone();
-        w.makeKeyAndOrderFront(None);
+        w.ns().makeKeyAndOrderFront(None);
         // Toolbar search.
-        let search = w.toolbar().unwrap().items().iter().find_map(|i| i.downcast::<NSSearchToolbarItem>().ok()).unwrap().searchField();
+        let search = w.ns().toolbar().unwrap().items().iter().find_map(|i| i.downcast::<NSSearchToolbarItem>().ok()).unwrap().searchField();
         let mut times = Vec::new();
         for q in ["p", "pa", "par", "pari", "paris"] {
             post_edit(&search, q);
@@ -495,12 +495,12 @@ mod self_checks {
         tv.selectRowIndexes_byExtendingSelection(&objc2_foundation::NSIndexSet::indexSetWithIndex(0), false);
         let ev = objc2_app_kit::NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
             objc2_app_kit::NSEventType::KeyDown, objc2_foundation::NSPoint::new(0.0, 0.0), objc2_app_kit::NSEventModifierFlags::empty(), 0.0,
-            w.windowNumber(), None, &NSString::from_str("\r"), &NSString::from_str("\r"), false, 36,
+            w.ns().windowNumber(), None, &NSString::from_str("\r"), &NSString::from_str("\r"), false, 36,
         ).unwrap();
         tv.keyDown(&ev);
         after(move || {
             let w = windows()[0].clone();
-            let sheet = w.attachedSheet();
+            let sheet = w.ns().attachedSheet();
             let labels: Vec<String> = sheet.as_ref().map(|s| {
                 let mut out = Vec::new();
                 all_views(&s.contentView().unwrap(), &mut out);
@@ -555,8 +555,8 @@ mod self_checks {
         let mut total = Vec::new();
         for k in 0..200 {
             let t = std::time::Instant::now();
-            w.setContentSize(objc2_foundation::NSSize::new(900.0 + (k % 40) as f64 * 8.0, 640.0));
-            w.displayIfNeeded();
+            w.ns().setContentSize(objc2_foundation::NSSize::new(900.0 + (k % 40) as f64 * 8.0, 640.0));
+            w.ns().displayIfNeeded();
             total.push(t.elapsed().as_secs_f64() * 1e3);
         }
         let times = ferrokit::testing::probes::layout_times_us();
@@ -602,7 +602,7 @@ mod self_checks {
             b.origin.y += 30.0;
             clip.setBoundsOrigin(b.origin);
         }
-        let w = tv.window().unwrap();
+        let w = WindowRef::from_ns(&tv.window().unwrap());
         spawn(|| std::thread::sleep(std::time::Duration::from_millis(500)), move |()| {
             if let Some(rep) = ferrokit::testing::capture_window(&w) {
                 let png = unsafe { rep.representationUsingType_properties(objc2_app_kit::NSBitmapImageFileType::PNG, &objc2_foundation::NSDictionary::new()) };

@@ -115,7 +115,12 @@ pub(crate) fn acting_in<R>(window: Option<Retained<NSWindow>>, f: impl FnOnce() 
 /// in it, such as the Quick Look panel or the font and colour panels, passes
 /// commands to the main window, as the Finder's menus act on its window while
 /// Quick Look shows; a sheet (an Open panel, an alert) keeps them.
-pub fn focused_window() -> Option<Retained<NSWindow>> {
+pub fn focused_window() -> Option<crate::WindowRef> {
+    focused_ns().map(crate::WindowRef::new)
+}
+
+/// [`focused_window`]'s `NSWindow`.
+pub(crate) fn focused_ns() -> Option<Retained<NSWindow>> {
     if let Some(w) = ACTING.with_borrow(Clone::clone) {
         return Some(w);
     }
@@ -123,7 +128,7 @@ pub fn focused_window() -> Option<Retained<NSWindow>> {
     app.keyWindow()
         .filter(|w| takes_commands(w))
         .or_else(|| app.mainWindow())
-        .or_else(|| crate::windows().into_iter().rev().find(|w| w.isVisible()))
+        .or_else(|| crate::windows_ns().into_iter().rev().find(|w| w.isVisible()))
 }
 
 /// Whether `window` takes commands itself: it shows views of the app's, or
@@ -176,16 +181,17 @@ fn resolve(window: Option<&NSWindow>, command: Command) -> Option<Rc<Handler>> {
 /// Runs `command` in the focused window (see [`focused_window`]); false if
 /// nothing handles it there or its handler is disabled.
 pub fn perform(command: Command) -> bool {
-    perform_in(focused_window().as_deref(), command)
+    perform_in(focused_window().as_ref(), command)
 }
 
 /// Whether [`perform`] would run something now.
 pub fn can_perform(command: Command) -> bool {
-    can_perform_in(focused_window().as_deref(), command)
+    can_perform_in(focused_window().as_ref(), command)
 }
 
 /// Runs `command` as if `window` were focused (`None`: the app's handler).
-pub fn perform_in(window: Option<&NSWindow>, command: Command) -> bool {
+pub fn perform_in(window: Option<&crate::WindowRef>, command: Command) -> bool {
+    let window = window.map(crate::WindowRef::ns);
     match resolve(window, command) {
         Some(h) if h.enabled() => {
             crate::models::flush();
@@ -197,7 +203,8 @@ pub fn perform_in(window: Option<&NSWindow>, command: Command) -> bool {
 }
 
 /// Whether [`perform_in`] would run something.
-pub fn can_perform_in(window: Option<&NSWindow>, command: Command) -> bool {
+pub fn can_perform_in(window: Option<&crate::WindowRef>, command: Command) -> bool {
+    let window = window.map(crate::WindowRef::ns);
     resolve(window, command).is_some_and(|h| h.enabled())
 }
 
@@ -206,11 +213,12 @@ pub fn can_perform_in(window: Option<&NSWindow>, command: Command) -> bool {
 /// command acts on, such as the selected note of the focused list. `None` if
 /// nothing near the focus publishes one of type `T`.
 pub fn focused_value<T: Clone + 'static>(name: &str) -> Option<T> {
-    focused_value_in(focused_window().as_deref()?, name)
+    focused_value_in(focused_window().as_ref()?, name)
 }
 
 /// [`focused_value`] as if `window` were focused.
-pub fn focused_value_in<T: Clone + 'static>(window: &NSWindow, name: &str) -> Option<T> {
+pub fn focused_value_in<T: Clone + 'static>(window: &crate::WindowRef, name: &str) -> Option<T> {
+    let window = window.ns();
     chain(window).iter().find_map(|m| {
         let r = m.responds.borrow();
         r.values.iter().rev().find(|(n, _)| *n == name).and_then(|(_, v)| v.downcast_ref::<T>().cloned())

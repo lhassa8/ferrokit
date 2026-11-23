@@ -174,7 +174,7 @@ questions reads top to bottom:
 ```rust,no_run
 use ferrokit::*;
 
-fn export(window: Retained<NSWindow>, csv: String, status: Signal<String>) {
+fn export(window: WindowRef, csv: String, status: Signal<String>) {
     spawn_local(async move {
         let Some(path) = save_panel_async(&window, "export.csv", None).await else { return };
         if path.exists() {

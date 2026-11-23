@@ -56,7 +56,7 @@ thread_local! {
     static SHEET: RefCell<Option<SheetHandle>> = const { RefCell::new(None) };
 }
 
-fn ask_name(parent: &NSWindow, done: impl Fn(String) + Copy + 'static) {
+fn ask_name(parent: &WindowRef, done: impl Fn(String) + Copy + 'static) {
     let close = || {
         if let Some(h) = SHEET.with_borrow_mut(Option::take) {
             h.close();
@@ -102,9 +102,9 @@ fn iso_date(days: i64) -> String {
 /// event's undo group only when the app handles an event, so in an
 /// unattended run the groups stay open across turns and one ⌘Z would undo
 /// several steps. Then undo with `testing::shortcut` (⌘Z) or
-/// `window.undoManager()`.
-fn as_undo_steps(window: &NSWindow, steps: &[&dyn Fn()]) {
-    let Some(undo) = window.undoManager() else { return };
+/// `window.ns().undoManager()`.
+fn as_undo_steps(window: &WindowRef, steps: &[&dyn Fn()]) {
+    let Some(undo) = window.ns().undoManager() else { return };
     while undo.groupingLevel() > 0 {
         undo.endUndoGrouping();
     }
@@ -154,7 +154,7 @@ fn as_undo_steps(window: &NSWindow, steps: &[&dyn Fn()]) {
 - **Selecting from code is silent:** `TableModel::select` doesn't call `on_select`, and `set_rows` clears the selection. Run the selection's effect yourself in a check.
 - **Checks see the real user defaults:** reset the `stored` keys and data files a check depends on at its start (or point the app at a temporary file under `CHECK`).
 - **Commands:** `perform_in(Some(&window), ADD)` runs one as the menu would; `can_perform_in` says whether its menu item is enabled. `testing::menu_key` presses a menu shortcut; `testing::shortcut` performs a ⌘ or ⇧⌘ shortcut without the app being active: your own menu items and commands, and standard actions (Undo, Copy) along the window's responder chain.
-- **AppKit types in checks** need the bindings in `Cargo.toml` (`ferrokit` re-exports only `NSWindow` and `Retained`); methods from a trait (`NSTextInputClient`, `NSStandardKeyBindingResponding`, `NSAnimatablePropertyContainer`) need it in scope (`use … as _;`):
+- **AppKit types in checks** need the bindings in `Cargo.toml` (`ferrokit` re-exports only `Retained`; `WindowRef::ns()` gives a window's `NSWindow`); methods from a trait (`NSTextInputClient`, `NSStandardKeyBindingResponding`, `NSAnimatablePropertyContainer`) need it in scope (`use … as _;`):
   ```toml
   objc2 = "0.6"
   objc2-foundation = "0.3"
@@ -165,7 +165,7 @@ fn as_undo_steps(window: &NSWindow, steps: &[&dyn Fn()]) {
 - `testing::ax_audit(&window)` lists controls VoiceOver can't name: give each `.accessibility_label(…)`.
 - A caught panic doesn't end the app; `check` stops 15 s after one if no more checks arrive. Look for `ferrokit: a panic in …` in the output.
 
-## Known limits (0.14)
+## Known limits (0.15)
 
 Work around these instead of searching for them:
 - Table rows animate only through `TableModel::insert`, `push` and `remove` (with `Table::animated()`), not `set_rows` or in a grouped table.

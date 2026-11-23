@@ -257,7 +257,7 @@ mod self_checks {
     }
 
     pub fn run() {
-        let w = windows().into_iter().find(|w| w.title().to_string() == "Briefing").unwrap();
+        let w = windows().into_iter().find(|w| w.title() == "Briefing").unwrap();
         let (s, days_left) = STATE.with(|c| c.borrow_mut().take()).unwrap();
         let failed = Rc::new(Cell::new(0));
         let check: Check = {
@@ -270,7 +270,7 @@ mod self_checks {
         let problems = ax_audit(&w);
         check("accessibility", problems.is_empty(), format!("{problems:?}"));
         hold_notifications();
-        snap(&w, "guide");
+        snap(w.ns(), "guide");
 
         // Printing to PDF: pages, text, and backgrounds drawn for print.
         let data = pdf_data(super::report());
@@ -294,38 +294,38 @@ mod self_checks {
         let page = s.page.clone();
         let c = check.clone();
         wait_for(4000, { let p = page.clone(); move || p.title() == "Lofoten guide" && !p.is_loading() }, move |ok| {
-            let labels = text_of(&w);
+            let labels = text_of(w.ns());
             c("web-title", ok && labels.iter().any(|l| l == "Lofoten guide"), format!("title {:?}, loading {}; labels show it {}", page.title(), page.is_loading(), labels.iter().any(|l| l == "Lofoten guide")));
             let c2 = c.clone();
             page.evaluate("document.querySelectorAll('li').length + ' ' + document.body.innerText.includes('Reine')", move |r| {
                 c2("web-script", r.as_deref() == Ok("5 true"), format!("{r:?} (\"5 true\")"));
             });
-            let back = buttons(&w).into_iter().find(|b| b.title().to_string() == "Back");
+            let back = buttons(w.ns()).into_iter().find(|b| b.title().to_string() == "Back");
             c("web-back", back.is_some_and(|b| !b.isEnabled()) && !page.can_go_back(), "Back disabled with no history".into());
             let w2 = w.clone();
             later_ms(300, move || pdf_phase(w2, s, days_left, c, failed));
         });
     }
 
-    fn pdf_phase(w: Retained<NSWindow>, s: State, days_left: Signal<i32>, check: Check, failed: Rc<Cell<u32>>) {
+    fn pdf_phase(w: WindowRef, s: State, days_left: Signal<i32>, check: Check, failed: Rc<Cell<u32>>) {
         s.tab.set(1);
         let (page, pages, find) = (s.pdf_page, s.pdf_pages, s.find);
         later_ms(300, move || {
-            snap(&w, "report");
-            let view = pdf_views(&w).into_iter().next();
+            snap(w.ns(), "report");
+            let view = pdf_views(w.ns()).into_iter().next();
             check("pdf-pages", pages.get() >= 2, format!("{} pages", pages.get()));
             page.set(1);
             let w2 = w.clone();
             later_ms(300, move || {
                 let shown = view.as_ref().and_then(|v| unsafe { Some(v.document()?.indexForPage(&*v.currentPage()?)) });
-                let label = text_of(&w2).into_iter().find(|t| t.starts_with("Page "));
+                let label = text_of(w2.ns()).into_iter().find(|t| t.starts_with("Page "));
                 check("pdf-go-to-page", shown == Some(1) && label.as_deref() == Some(&format!("Page 2 of {}", pages.get())), format!("shown {shown:?}; label {label:?}"));
                 find.set("ferry".into());
                 later_ms(300, move || {
                     let found = view.as_ref().and_then(|v| unsafe { v.highlightedSelections() }).map_or(0, |a| a.count());
                     // "Ferry, 3 h 15 min" and "Morning ferry".
                     check("pdf-find", found == 2, format!("{found} matches highlighted (2)"));
-                    snap(&w2, "report-find");
+                    snap(w2.ns(), "report-find");
                     // A match far down page 1, from page 2: it's scrolled into view.
                     find.set(String::new());
                     page.set(1);
@@ -370,16 +370,16 @@ mod self_checks {
     }
 
     /// C8: the report's thumbnail, then the Quick Look panel on it.
-    fn quick_look_phase(w: Retained<NSWindow>, s: State, days_left: Signal<i32>, check: Check, failed: Rc<Cell<u32>>) {
+    fn quick_look_phase(w: WindowRef, s: State, days_left: Signal<i32>, check: Check, failed: Rc<Cell<u32>>) {
         use ferrokit::testing::{quick_look_state, thumbnails_made};
         let c = check.clone();
         wait_for(5000, || thumbnails_made() >= 1, move |made| {
             // The PDF's first page, white and taller than wide, not its icon.
-            let view = all_in(&w.contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSImageView>().ok()).find(|v| objc2_app_kit::NSAccessibility::accessibilityLabel(&**v).is_some_and(|l| l.to_string() == "Lofoten report.pdf"));
+            let view = all_in(&w.ns().contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSImageView>().ok()).find(|v| objc2_app_kit::NSAccessibility::accessibilityLabel(&**v).is_some_and(|l| l.to_string() == "Lofoten report.pdf"));
             let size = view.as_ref().and_then(|v| v.image()).map(|i| i.size());
             let page_shaped = size.is_some_and(|s| s.height > s.width * 1.2);
             c("thumbnail", made && page_shaped, format!("made {made}; image {size:?} (a page, taller than wide); VoiceOver reads the file's name {}", view.is_some()));
-            let button = buttons(&w).into_iter().find(|b| b.title().to_string() == "Quick Look").unwrap();
+            let button = buttons(w.ns()).into_iter().find(|b| b.title().to_string() == "Quick Look").unwrap();
             // SAFETY: a click on a button of this window.
             unsafe { button.performClick(None) };
             let c2 = c.clone();
@@ -392,8 +392,8 @@ mod self_checks {
                 // The panel takes the key window, but menu commands still go
                 // to the window under it (Sift found them disabled).
                 let focused = focused_window();
-                let reaches = focused.as_ref().is_some_and(|f| std::ptr::eq(&**f, &*w));
-                let named = focused.map(|f| f.class().name().to_string_lossy().into_owned());
+                let reaches = focused.as_ref() == Some(&w);
+                let named = focused.map(|f| f.ns().class().name().to_string_lossy().into_owned());
                 c2("quick-look-commands-reach-window", reaches, format!("commands go to {named:?}"));
                 close_quick_look();
                 let c3 = c2.clone();
@@ -432,7 +432,7 @@ mod self_checks {
         out
     }
 
-    fn clip_phase(w: Retained<NSWindow>, s: State, days_left: Signal<i32>, check: Check, failed: Rc<Cell<u32>>) {
+    fn clip_phase(w: WindowRef, s: State, days_left: Signal<i32>, check: Check, failed: Rc<Cell<u32>>) {
         // A sound file (AVKit plays sound as it plays video): three seconds
         // of a soft tone, written here so it doesn't depend on the machine's
         // voices (`say` on CI runners can make an empty file).
@@ -448,8 +448,8 @@ mod self_checks {
             // The clock starts in its own time (late on CI runners without
             // a sound output): wait for it to pass 0.2 s, up to 4 s.
             wait_for(4000, move || time.get() > 0.2, move |_| {
-                snap(&w, "clip");
-                let player = player_views(&w).into_iter().next();
+                snap(w.ns(), "clip");
+                let player = player_views(w.ns()).into_iter().next();
                 let rate = player.as_ref().and_then(|p| unsafe { p.player() }).map(|p| unsafe { p.rate() });
                 check("video-plays", playing.get() && time.get() > 0.2 && rate.is_some_and(|r| r > 0.0), format!("playing {}, {:.2} s, rate {rate:?}", playing.get(), time.get()));
                 playing.set(false);
@@ -467,10 +467,10 @@ mod self_checks {
         });
     }
 
-    fn services_phase(w: Retained<NSWindow>, s: State, days_left: Signal<i32>, check: Check, failed: Rc<Cell<u32>>) {
+    fn services_phase(w: WindowRef, s: State, days_left: Signal<i32>, check: Check, failed: Rc<Cell<u32>>) {
         s.tab.set(0);
         // Share.
-        let share = buttons(&w).into_iter().find(|b| shared_items(b).is_some());
+        let share = buttons(w.ns()).into_iter().find(|b| shared_items(b).is_some());
         let items = share.as_ref().and_then(|b| shared_items(b));
         let want = vec![ShareItem::File(super::report_path()), ShareItem::Text("Our Lofoten trip, 6–15 July".into())];
         let label = share.as_ref().and_then(|b| objc2_app_kit::NSAccessibility::accessibilityLabel(&**b)).map(|l| l.to_string());
@@ -504,7 +504,7 @@ mod self_checks {
         );
 
         // A notification, and its click.
-        let remind = buttons(&w).into_iter().find(|b| b.title().to_string() == "Remind Me").unwrap();
+        let remind = buttons(w.ns()).into_iter().find(|b| b.title().to_string() == "Remind Me").unwrap();
         // SAFETY: clicking a button on the main thread.
         unsafe { remind.performClick(None) };
         let sent = sent_notifications();
@@ -557,17 +557,17 @@ mod self_checks {
         });
     }
 
-    fn print_phase(w: Retained<NSWindow>, check: Check, failed: Rc<Cell<u32>>) {
+    fn print_phase(w: WindowRef, check: Check, failed: Rc<Cell<u32>>) {
         // The Print sheet opens on the window; it's cancelled unattended.
-        let print_button = buttons(&w).into_iter().find(|b| b.title().to_string() == "Print…").unwrap();
-        w.makeKeyAndOrderFront(None);
+        let print_button = buttons(w.ns()).into_iter().find(|b| b.title().to_string() == "Print…").unwrap();
+        w.ns().makeKeyAndOrderFront(None);
         // SAFETY: as above.
         unsafe { print_button.performClick(None) };
         later_ms(1200, move || {
-            let sheet = w.attachedSheet();
+            let sheet = w.ns().attachedSheet();
             check("print-sheet", sheet.is_some(), format!("sheet {:?}", sheet.as_ref().map(|s| s.title().to_string())));
             if let Some(sheet) = sheet {
-                w.endSheet_returnCode(&sheet, objc2_app_kit::NSModalResponseCancel);
+                w.ns().endSheet_returnCode(&sheet, objc2_app_kit::NSModalResponseCancel);
             }
             later_ms(400, move || {
                 eprintln!("[check] done, {} failed", failed.get());
@@ -603,7 +603,7 @@ mod self_checks {
     /// Saves a capture of `w` as `<SNAP>/media-<name>.png` when SNAP is set.
     fn snap(w: &NSWindow, name: &str) {
         let Ok(dir) = std::env::var("SNAP") else { return };
-        let Some(rep) = ferrokit::testing::capture_window(w) else { return };
+        let Some(rep) = ferrokit::testing::capture_window(&WindowRef::from_ns(w)) else { return };
         // SAFETY: encoding a bitmap as PNG with no options.
         if let Some(png) = unsafe { rep.representationUsingType_properties(objc2_app_kit::NSBitmapImageFileType::PNG, &objc2_foundation::NSDictionary::new()) } {
             png.writeToFile_atomically(&NSString::from_str(&format!("{dir}/media-{name}.png")), true);
@@ -668,7 +668,7 @@ mod demo {
     }
 
     pub fn run(t: Tour) {
-        let Some(w) = windows().into_iter().find(|w| w.title().to_string() == "Briefing") else { return };
+        let Some(w) = windows().into_iter().find(|w| w.title() == "Briefing") else { return };
         set_appearance(Appearance::Light);
         place(&w, 900.0, 700.0);
         let Tour { tab, pdf_page, find, clip, playing, muted } = t;

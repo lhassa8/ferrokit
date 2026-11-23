@@ -190,14 +190,14 @@ mod demo {
     use super::tour::{at, place, play};
 
     pub fn run() {
-        let find = |title: &str| windows().into_iter().find(|w| w.title().to_string() == title);
+        let find = |title: &str| windows().into_iter().find(|w| w.title() == title);
         let (Some(journal), Some(playing)) = (find("Journal"), find("Now Playing")) else { return };
         set_appearance(Appearance::Light);
         place(&journal, 1000.0, 680.0);
         // The player floats over the journal's lower right corner.
-        let f = journal.frame();
-        playing.setFrameOrigin(NSPoint::new(f.origin.x + f.size.width - playing.frame().size.width - 28.0, f.origin.y + 28.0));
-        playing.orderFront(None);
+        let f = journal.ns().frame();
+        playing.ns().setFrameOrigin(NSPoint::new(f.origin.x + f.size.width - playing.ns().frame().size.width - 28.0, f.origin.y + 28.0));
+        playing.ns().orderFront(None);
         let steps = vec![
             at(2600, || set_appearance(Appearance::Dark)),
             at(2400, || set_appearance(Appearance::Light)),
@@ -218,7 +218,7 @@ mod self_checks {
 
     pub fn run() {
         let all_windows = windows();
-        let find = |t: &str| all_windows.iter().find(|w| w.title().to_string() == t).unwrap().clone();
+        let find = |t: &str| all_windows.iter().find(|w| w.title() == t).unwrap().clone();
         let (w, hud, sand) = (find("Journal"), find("Now Playing"), find("Sand"));
         let failed = std::rc::Rc::new(std::cell::Cell::new(0));
         let check = {
@@ -232,33 +232,33 @@ mod self_checks {
         check("accessibility", problems.is_empty(), format!("{problems:?}"));
 
         // Window chrome read back.
-        let full = w.styleMask().contains(NSWindowStyleMask::FullSizeContentView);
-        let hidden = w.titleVisibility() == objc2_app_kit::NSWindowTitleVisibility::Hidden;
+        let full = w.ns().styleMask().contains(NSWindowStyleMask::FullSizeContentView);
+        let hidden = w.ns().titleVisibility() == objc2_app_kit::NSWindowTitleVisibility::Hidden;
         check(
             "chrome-full-size",
-            full && w.titlebarAppearsTransparent() && hidden && w.toolbarStyle() == objc2_app_kit::NSWindowToolbarStyle::Unified,
-            format!("full-size content {full}, transparent bar {}, title hidden {hidden}, toolbar {:?}", w.titlebarAppearsTransparent(), w.toolbarStyle()),
+            full && w.ns().titlebarAppearsTransparent() && hidden && w.ns().toolbarStyle() == objc2_app_kit::NSWindowToolbarStyle::Unified,
+            format!("full-size content {full}, transparent bar {}, title hidden {hidden}, toolbar {:?}", w.ns().titlebarAppearsTransparent(), w.ns().toolbarStyle()),
         );
-        let sand_bg = sand.backgroundColor().colorUsingColorSpace(&objc2_app_kit::NSColorSpace::sRGBColorSpace()).map(|c| (c.redComponent(), c.greenComponent(), c.blueComponent()));
+        let sand_bg = sand.ns().backgroundColor().colorUsingColorSpace(&objc2_app_kit::NSColorSpace::sRGBColorSpace()).map(|c| (c.redComponent(), c.greenComponent(), c.blueComponent()));
         check(
             "chrome-compact-background",
-            sand.toolbarStyle() == objc2_app_kit::NSWindowToolbarStyle::UnifiedCompact
-                && sand.titlebarAppearsTransparent()
-                && !sand.styleMask().contains(NSWindowStyleMask::FullSizeContentView)
+            sand.ns().toolbarStyle() == objc2_app_kit::NSWindowToolbarStyle::UnifiedCompact
+                && sand.ns().titlebarAppearsTransparent()
+                && !sand.ns().styleMask().contains(NSWindowStyleMask::FullSizeContentView)
                 && sand_bg.is_some_and(|c| close(c, (0xe9 as f64 / 255.0, 0xdc as f64 / 255.0, 0xc4 as f64 / 255.0), 0.01)),
-            format!("toolbar {:?}, background {sand_bg:.3?}", sand.toolbarStyle()),
+            format!("toolbar {:?}, background {sand_bg:.3?}", sand.ns().toolbarStyle()),
         );
 
         // Under the title bar: the sidebar's material reaches the window's
         // top; its first label and the content start below the bar.
-        let content_h = w.contentView().unwrap().bounds().size.height;
-        let bar = content_h - w.contentLayoutRect().size.height;
+        let content_h = w.ns().contentView().unwrap().bounds().size.height;
+        let bar = content_h - w.ns().contentLayoutRect().size.height;
         let top_of = |v: &NSView| content_h - v.convertRect_toView(v.bounds(), None).origin.y - v.bounds().size.height;
-        let materials: Vec<Retained<NSVisualEffectView>> = all(&w).into_iter().filter_map(|v| v.downcast::<NSVisualEffectView>().ok()).collect();
+        let materials: Vec<Retained<NSVisualEffectView>> = all(w.ns()).into_iter().filter_map(|v| v.downcast::<NSVisualEffectView>().ok()).collect();
         let side = materials.iter().find(|m| m.material() == NSVisualEffectMaterial::Sidebar).cloned();
-        let places = field(&w, "Places");
+        let places = field(w.ns(), "Places");
         // (The hero's title, not the sidebar row of the same name.)
-        let hero_title = all(&w).into_iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string() == "Lofoten" && f.font().is_some_and(|f| f.pointSize() > 20.0)).unwrap();
+        let hero_title = all(w.ns()).into_iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string() == "Lofoten" && f.font().is_some_and(|f| f.pointSize() > 20.0)).unwrap();
         check(
             "sidebar-under-title-bar",
             bar > 20.0
@@ -271,13 +271,13 @@ mod self_checks {
                 top_of(&places)
             ),
         );
-        let surfaces: Vec<Retained<NSView>> = all(&w).into_iter().filter(|v| v.class().name().to_string_lossy() == "FerrokitSurface").collect();
+        let surfaces: Vec<Retained<NSView>> = all(w.ns()).into_iter().filter(|v| v.class().name().to_string_lossy() == "FerrokitSurface").collect();
         let picture = surfaces.iter().find(|s| s.frame().size.height > 200.0).cloned().unwrap();
         check("content-below-title-bar", top_of(&picture) >= bar + 24.0 - 0.5, format!("picture top {} (bar {bar} + 24 padding)", top_of(&picture)));
 
         // The glass caption: Liquid Glass on macOS 26 (a popover material
         // before), over the picture, at its bottom-left corner.
-        let glass = all(&w).into_iter().find(|v| {
+        let glass = all(w.ns()).into_iter().find(|v| {
             objc2::runtime::AnyClass::get(c"NSGlassEffectView").is_some_and(|g| v.isKindOfClass(g)) || v.downcast_ref::<NSVisualEffectView>().is_some_and(|m| m.material() == NSVisualEffectMaterial::Popover)
         });
         let kind = glass.as_ref().map(|g| g.class().name().to_string_lossy().to_string());
@@ -301,14 +301,14 @@ mod self_checks {
             t.origin.x >= g.origin.x && t.origin.y >= g.origin.y && t.origin.x + t.size.width <= g.origin.x + g.size.width
         });
         check("zstack-layers", title_in_glass && pf.size.width > 500.0 && (pf.size.height - 280.0).abs() < 0.5, format!("title inside the glass {title_in_glass}; picture {:?}", pf.size));
-        let hud_material = all(&hud).into_iter().filter_map(|v| v.downcast::<NSVisualEffectView>().ok()).map(|m| m.material()).next();
+        let hud_material = all(hud.ns()).into_iter().filter_map(|v| v.downcast::<NSVisualEffectView>().ok()).map(|m| m.material()).next();
         check("hud-material", hud_material == Some(NSVisualEffectMaterial::HUDWindow), format!("{hud_material:?}"));
 
         captures(w, sand, side.map(Retained::into_super), glass, picture, failed);
     }
 
     /// The capture checks, in light and then dark.
-    fn captures(w: Retained<NSWindow>, sand: Retained<NSWindow>, side: Option<Retained<NSView>>, glass: Option<Retained<NSView>>, picture: Retained<NSView>, failed: std::rc::Rc<std::cell::Cell<u32>>) {
+    fn captures(w: WindowRef, sand: WindowRef, side: Option<Retained<NSView>>, glass: Option<Retained<NSView>>, picture: Retained<NSView>, failed: std::rc::Rc<std::cell::Cell<u32>>) {
         let check = {
             let failed = failed.clone();
             move |name: &str, pass: bool, note: String| {
@@ -332,17 +332,17 @@ mod self_checks {
                 }
                 let mid = |v: &NSView, fx: f64, fy: f64| {
                     let r = v.convertRect_toView(v.bounds(), None);
-                    pixel(&rep, &w, r.origin.x + r.size.width * fx, r.origin.y + r.size.height * fy)
+                    pixel(&rep, w.ns(), r.origin.x + r.size.width * fx, r.origin.y + r.size.height * fy)
                 };
                 let Some((side, glass)) = side.as_ref().zip(glass.as_ref()) else { return };
                 // A sidebar point clear of its rows; the content beside it.
                 let sidebar = mid(side, 0.5, 0.2);
-                let content = pixel(&rep, &w, side.convertRect_toView(side.bounds(), None).origin.x + side.frame().size.width + 40.0, 30.0);
+                let content = pixel(&rep, w.ns(), side.convertRect_toView(side.bounds(), None).origin.x + side.frame().size.width + 40.0, 30.0);
                 // The glass: near its right edge (clear of text) and the
                 // picture just right of it at the same height.
                 let g = glass.convertRect_toView(glass.bounds(), None);
-                let in_glass = pixel(&rep, &w, g.origin.x + g.size.width - 6.0, g.origin.y + g.size.height / 2.0);
-                let beside = pixel(&rep, &w, g.origin.x + g.size.width + 14.0, g.origin.y + g.size.height / 2.0);
+                let in_glass = pixel(&rep, w.ns(), g.origin.x + g.size.width - 6.0, g.origin.y + g.size.height / 2.0);
+                let beside = pixel(&rep, w.ns(), g.origin.x + g.size.width + 14.0, g.origin.y + g.size.height / 2.0);
                 let _ = &picture;
                 looks.borrow_mut().push((name, sidebar, content, in_glass, beside));
             }
@@ -376,7 +376,7 @@ mod self_checks {
                 }
                 drop(looks);
                 if let Some(rep) = capture_window(&sand2) {
-                    let c = pixel(&rep, &sand2, sand2.frame().size.width - 30.0, 30.0);
+                    let c = pixel(&rep, sand2.ns(), sand2.ns().frame().size.width - 30.0, 30.0);
                     check("window-background", close(c, (0xe9 as f64 / 255.0, 0xdc as f64 / 255.0, 0xc4 as f64 / 255.0), 0.03), format!("{c:.3?}"));
                 }
                 eprintln!("[check] done, {} failed", failed.get());

@@ -155,8 +155,8 @@ mod self_checks {
 
     pub fn run() {
         let all_windows = windows();
-        let w = all_windows.iter().find(|w| w.title().to_string() == "Styles").unwrap().clone();
-        let pics = all_windows.iter().find(|w| w.title().to_string() == "Pictures").unwrap().clone();
+        let w = all_windows.iter().find(|w| w.title() == "Styles").unwrap().clone();
+        let pics = all_windows.iter().find(|w| w.title() == "Pictures").unwrap().clone();
         let failed = std::cell::Cell::new(0);
         let check = |name: &str, pass: bool, note: String| {
             eprintln!("[check] {name} {} {note}", if pass { "PASS" } else { "FAIL" });
@@ -166,7 +166,7 @@ mod self_checks {
         check("accessibility", problems.is_empty(), format!("{problems:?}"));
 
         // Text styles: fonts and colours read back from the labels.
-        let field = |text: &str| all(&w).into_iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string() == text).unwrap();
+        let field = |text: &str| all(w.ns()).into_iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string() == text).unwrap();
         let bold = |f: &NSTextField| f.font().is_some_and(|f| f.fontDescriptor().symbolicTraits().contains(objc2_app_kit::NSFontDescriptorSymbolicTraits::TraitBold));
         let title = field("Your money this month");
         let size = |f: &NSTextField| f.font().map_or(0.0, |f| f.pointSize());
@@ -185,21 +185,21 @@ mod self_checks {
         check("text-monospaced-digits", digits.is_some_and(|(a, b)| (a - b).abs() < 0.01), format!("width of 1111 and 8888: {digits:?}"));
 
         // Cards: the three stat cards come out the same width.
-        let surfaces: Vec<Retained<NSView>> = all(&w).into_iter().filter(|v| v.class().name().to_string_lossy() == "FerrokitSurface").collect();
+        let surfaces: Vec<Retained<NSView>> = all(w.ns()).into_iter().filter(|v| v.class().name().to_string_lossy() == "FerrokitSurface").collect();
         let cards: Vec<_> = surfaces.iter().filter(|s| s.frame().size.height > 60.0 && s.frame().size.height < 120.0).map(|s| s.frame()).collect();
         let widths: Vec<f64> = cards.iter().map(|f| f.size.width).collect();
         check("cards-equal-width", widths.len() == 3 && widths.iter().all(|x| (x - widths[0]).abs() < 1.0), format!("stat card widths {widths:?}"));
         // Modifier order: `.frame(18, 18).padding(7)`: an 18-point icon in a
         // 32-point tile.
         let tiles: Vec<_> = surfaces.iter().filter(|s| s.frame().size.height < 40.0).map(|s| s.frame().size).collect();
-        let icons: Vec<_> = all(&w).into_iter().filter_map(|v| v.downcast::<NSImageView>().ok()).map(|v| v.frame().size).filter(|s| s.width == 18.0).collect();
+        let icons: Vec<_> = all(w.ns()).into_iter().filter_map(|v| v.downcast::<NSImageView>().ok()).map(|v| v.frame().size).filter(|s| s.width == 18.0).collect();
         check(
             "modifier-order",
             tiles.len() == 4 && tiles.iter().all(|t| t.width == 32.0 && t.height == 32.0) && icons.len() == 4,
             format!("tiles {:?}; 18-point icons {}", tiles.iter().map(|t| (t.width, t.height)).collect::<Vec<_>>(), icons.len()),
         );
         // Symbols: configured and tinted.
-        let symbols: Vec<_> = all(&w).into_iter().filter_map(|v| v.downcast::<NSImageView>().ok()).collect();
+        let symbols: Vec<_> = all(w.ns()).into_iter().filter_map(|v| v.downcast::<NSImageView>().ok()).collect();
         let configured = symbols.iter().filter(|v| v.symbolConfiguration().is_some()).count();
         let tinted = symbols.iter().filter(|v| v.contentTintColor().is_some()).count();
         check("symbols-styled", configured == 7 && tinted == 4, format!("{configured} of {} with a symbol configuration (7); {tinted} tinted (4)", symbols.len()));
@@ -209,7 +209,7 @@ mod self_checks {
 
     /// The capture checks: each a run-loop pass after the appearance
     /// changes, so the window has drawn in it.
-    fn captures(w: Retained<NSWindow>, pics: Retained<NSWindow>, surfaces: Vec<Retained<NSView>>, failed: u32) {
+    fn captures(w: WindowRef, pics: WindowRef, surfaces: Vec<Retained<NSView>>, failed: u32) {
         let failed = std::rc::Rc::new(std::cell::Cell::new(failed));
         let check = {
             let failed = failed.clone();
@@ -232,12 +232,12 @@ mod self_checks {
                 }
                 let r = card.convertRect_toView(card.bounds(), None);
                 let (x0, top, x1, bottom) = (r.origin.x, r.origin.y + r.size.height, r.origin.x + r.size.width, r.origin.y);
-                let inside = pixel(&rep, &w, (x0 + x1) / 2.0, bottom + 6.0);
-                let corner = pixel(&rep, &w, x0 + 1.0, top - 1.0);
+                let inside = pixel(&rep, w.ns(), (x0 + x1) / 2.0, bottom + 6.0);
+                let corner = pixel(&rep, w.ns(), x0 + 1.0, top - 1.0);
                 // Window background: 14 points below the card, past its
                 // shadow (the gap before the next heading).
-                let window = pixel(&rep, &w, (x0 + x1) / 2.0, bottom - 14.0);
-                let shadow = pixel(&rep, &w, (x0 + x1) / 2.0, bottom - 2.0);
+                let window = pixel(&rep, w.ns(), (x0 + x1) / 2.0, bottom - 14.0);
+                let shadow = pixel(&rep, w.ns(), (x0 + x1) / 2.0, bottom - 2.0);
                 let want = objc2_app_kit::NSAppearanceCustomization::effectiveAppearance(&*card).name().to_string();
                 looks.borrow_mut().push((name, inside, corner, window, shadow, want));
             }
@@ -268,8 +268,8 @@ mod self_checks {
                 }
                 drop(looks);
                 later_ms(400, move || {
-                    pictures(&pics, &check);
-                    let faded = all(&pics).into_iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string() == "Faded").map(|f| f.alphaValue());
+                    pictures(pics.ns(), &check);
+                    let faded = all(pics.ns()).into_iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string() == "Faded").map(|f| f.alphaValue());
                     check("opacity", faded == Some(0.4), format!("{faded:?}"));
                     eprintln!("[check] done, {} failed", failed.get());
                     std::process::exit(if failed.get() == 0 { 0 } else { 1 });
@@ -280,7 +280,7 @@ mod self_checks {
 
     /// Pictures: filled (cropped to the middle, rounded) and fitted.
     fn pictures(pics: &NSWindow, check: &dyn Fn(&str, bool, String)) {
-        let Some(rep) = capture_window(pics) else { return };
+        let Some(rep) = capture_window(&WindowRef::from_ns(pics)) else { return };
         let views: Vec<Retained<NSView>> = all(pics).into_iter().filter(|v| v.class().name().to_string_lossy() == "FerrokitSurface").collect();
         let at = |v: &NSView, fx: f64, fy: f64| {
             let r = v.convertRect_toView(v.bounds(), None);

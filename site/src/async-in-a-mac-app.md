@@ -43,7 +43,7 @@ spawn_local(async move {
 Ferrokit has no I/O runtime of its own, and doesn't depend on one. reqwest, sqlx and most of tokio's I/O need tokio's reactor, so keep a tokio runtime in your app and run the I/O there. With Ferrokit's `tokio` feature, `on_runtime` awaits work on it:
 
 ```toml
-ferrokit = { version = "0.14", features = ["tokio"] }
+ferrokit = { version = "0.15", features = ["tokio"] }
 ```
 
 ```rust,ignore

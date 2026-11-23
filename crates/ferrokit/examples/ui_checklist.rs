@@ -109,7 +109,7 @@ fn run_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 
     // Windows: both open; AppKit lists them in the Window menu.
     let ws = windows();
-    let visible = ws.iter().filter(|w| w.isVisible()).count();
+    let visible = ws.iter().filter(|w| w.ns().isVisible()).count();
     check("windows", ws.len() == 12 && visible == 12, format!("{} windows, {visible} visible", ws.len()));
     let window_menu = menu_items("Window");
     let listed = ["First", "Second", "Views", "Layout", "Controls", "Controls B", "Teardown", "Table", "Outline", "Editor", "Chrome", "Dialogs"].iter().all(|t| window_menu.iter().any(|(title, _, _)| title == t));
@@ -118,8 +118,8 @@ fn run_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 
     // Edit menu → responder chain: Select All selects the focused field's text.
     let first = &ws[0];
-    let field = first.contentView().unwrap().subviews().firstObject().unwrap().downcast::<NSTextField>().unwrap();
-    first.makeFirstResponder(Some(&field));
+    let field = first.ns().contentView().unwrap().subviews().firstObject().unwrap().downcast::<NSTextField>().unwrap();
+    first.ns().makeFirstResponder(Some(&field));
     let edit_menu = bar_menu("Edit");
     let select_all = edit_menu.indexOfItemWithTitle(&NSString::from_str("Select All"));
     edit_menu.performActionForItemAtIndex(select_all);
@@ -767,8 +767,8 @@ fn command_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                 }),
             ))),
     );
-    let fields = || -> Vec<Retained<NSTextField>> { w.contentView().unwrap().subviews().iter().filter_map(|v| v.downcast::<NSTextField>().ok()).collect() };
-    let focus = |v: Option<&NSResponder>| w.makeFirstResponder(v);
+    let fields = || -> Vec<Retained<NSTextField>> { w.ns().contentView().unwrap().subviews().iter().filter_map(|v| v.downcast::<NSTextField>().ok()).collect() };
+    let focus = |v: Option<&NSResponder>| w.ns().makeFirstResponder(v);
     let fs = fields();
     let (left, right) = (fs[0].clone(), fs[1].clone());
 
@@ -804,7 +804,7 @@ fn command_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         view.itemWithTitle(&NSString::from_str("Rename Item")).unwrap().isEnabled()
     };
     let target = ferrokit::focused_window();
-    let is_ours = target.as_ref().is_some_and(|t| std::ptr::eq(&**t, &*w));
+    let is_ours = target.as_ref() == Some(&w);
     focus(Some(&left));
     let on_left = item();
     focus(Some(&right));
@@ -1106,12 +1106,12 @@ fn table_icon_checks() {
                 every(&s, out);
             }
         }
-        every(&fw.contentView().unwrap(), &mut inside);
+        every(&fw.ns().contentView().unwrap(), &mut inside);
         let field = inside.iter().find_map(|v| v.clone().downcast::<objc2_app_kit::NSSearchField>().ok());
         let mut caret = None;
         if let Some(f) = &field {
-            fw.makeFirstResponder(Some(f));
-            if let Some(editor) = fw.firstResponder().and_then(|r| r.downcast::<objc2_app_kit::NSTextView>().ok()) {
+            fw.ns().makeFirstResponder(Some(f));
+            if let Some(editor) = fw.ns().firstResponder().and_then(|r| r.downcast::<objc2_app_kit::NSTextView>().ok()) {
                 editor.setSelectedRange(objc2_foundation::NSRange::new(1, 0));
                 // SAFETY: NSResponder's command dispatch, on the main thread.
                 unsafe {
@@ -1166,7 +1166,7 @@ fn canvas_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                 walk(&s, out);
             }
         }
-        walk(&w.contentView().unwrap(), &mut all);
+        walk(&w.ns().contentView().unwrap(), &mut all);
         all.into_iter().find(|v| canvas_drawing(v).is_some()).unwrap()
     };
     let v = view();
@@ -1179,7 +1179,7 @@ fn canvas_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         format!("{first:?} → after the signal changes {second:?}"),
     );
     // Resizing the window redraws at the new size.
-    w.setContentSize(objc2_foundation::NSSize::new(400.0, 200.0));
+    w.ns().setContentSize(objc2_foundation::NSSize::new(400.0, 200.0));
     let resized = canvas_drawing(&v).unwrap();
     check("canvas-resize", resized[0] == "fill rect 0,0 100x200 Rgb(1.0, 0.0, 0.0)", format!("at 400 points wide: {:?}", resized[0]));
     // A canvas laid out at exactly its minimum size (its first frame, so
@@ -1193,7 +1193,7 @@ fn canvas_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
             every(&s, out);
         }
     }
-    every(&exact.contentView().unwrap(), &mut inside);
+    every(&exact.ns().contentView().unwrap(), &mut inside);
     let drawn = inside.iter().find_map(|v| canvas_drawing(v).map(|d| (d, v.frame().size)));
     check(
         "canvas-min-size",
@@ -1225,7 +1225,7 @@ fn canvas_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         at,
         NSEventModifierFlags::empty(),
         0.0,
-        w.windowNumber(),
+        w.ns().windowNumber(),
         None,
         0,
         1,
@@ -1240,7 +1240,7 @@ fn canvas_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         at,
         NSEventModifierFlags::empty(),
         0.0,
-        w.windowNumber(),
+        w.ns().windowNumber(),
         None,
         0,
         2,
@@ -1275,7 +1275,7 @@ fn canvas_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
             walk(&s, out);
         }
     }
-    walk(&pw.contentView().unwrap(), &mut found);
+    walk(&pw.ns().contentView().unwrap(), &mut found);
     let pie = found.into_iter().find(|v| canvas_drawing(v).is_some()).unwrap();
     let ops = canvas_drawing(&pie).unwrap();
     let fills: Vec<&String> = ops.iter().filter(|o| o.starts_with("fill path")).collect();
@@ -1330,7 +1330,7 @@ fn clipboard_drop_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
             ),
     );
     let any = open(Window::new("Any drop").size(200.0, 100.0).on_drop_files(&[], |_| {}).view(text("any")));
-    let content = w.contentView().unwrap();
+    let content = w.ns().contentView().unwrap();
     let drop_files = |view: &NSView, paths: &[std::path::PathBuf]| {
         let c = Clipboard::private();
         c.set_files(paths);
@@ -1338,7 +1338,7 @@ fn clipboard_drop_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     };
     let txt_refused = !drop_files(&content, std::slice::from_ref(&a));
     let csv_taken = drop_files(&content, &[a.clone(), b.clone()]);
-    let any_taken = drop_files(&any.contentView().unwrap(), std::slice::from_ref(&a));
+    let any_taken = drop_files(&any.ns().contentView().unwrap(), std::slice::from_ref(&a));
     let mut views = Vec::new();
     fn walk(v: &NSView, out: &mut Vec<Retained<NSView>>) {
         for s in v.subviews().iter() {
@@ -1479,8 +1479,8 @@ fn menu_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     }
     let s2 = ferrokit::open_settings();
     let after = NSApplication::sharedApplication(mtm()).windows().count();
-    let same = s1.as_ref().zip(s2.as_ref()).is_some_and(|(a, b)| std::ptr::eq(&**a, &**b));
-    let fixed = s2.as_ref().is_some_and(|w| !w.styleMask().contains(NSWindowStyleMask::Resizable) && w.isExcludedFromWindowsMenu() && w.isVisible());
+    let same = s1.as_ref().zip(s2.as_ref()).is_some_and(|(a, b)| std::ptr::eq(&**a, b.ns()));
+    let fixed = s2.as_ref().is_some_and(|w| !w.ns().styleMask().contains(NSWindowStyleMask::Resizable) && w.ns().isExcludedFromWindowsMenu() && w.ns().isVisible());
     let unlisted = !menu_items("Window").iter().any(|(t, _, _)| t == "Settings");
     check(
         "settings-window",
@@ -1490,7 +1490,7 @@ fn menu_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 
     // Stored settings: the toggle writes user defaults; a new signal reads them.
     let w = s2.unwrap();
-    let toggle_v = all_views(&w.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSSwitch>().ok());
+    let toggle_v = all_views(&w.ns().contentView().unwrap()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSSwitch>().ok());
     let defaults = objc2_foundation::NSUserDefaults::standardUserDefaults();
     let key = NSString::from_str("check.settings.dark");
     let unset = defaults.objectForKey(&key).is_none();
@@ -1510,12 +1510,12 @@ fn menu_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     defaults.removeObjectForKey(&frame_key);
     let a = open(Window::new("Restore A").size(300.0, 200.0).remember_frame("check restore"));
     let target = objc2_foundation::NSRect::new(objc2_foundation::NSPoint::new(140.0, 160.0), objc2_foundation::NSSize::new(420.0, 260.0));
-    a.setFrame_display(target, true);
+    a.ns().setFrame_display(target, true);
     let saved = defaults.stringForKey(&frame_key).map(|s| s.to_string());
     ferrokit::close_window(&a);
-    a.setFrameAutosaveName(&NSString::new());
+    a.ns().setFrameAutosaveName(&NSString::new());
     let b = open(Window::new("Restore B").size(300.0, 200.0).remember_frame("check restore"));
-    let got = b.frame();
+    let got = b.ns().frame();
     ferrokit::close_window(&b);
     check(
         "frame-autosave",
@@ -1530,13 +1530,13 @@ fn menu_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     defaults.removeObjectForKey(&split_key);
     let split_window = || Window::new("Split R").size(500.0, 200.0).view(split((text("a"), text("b"))).position(150.0).remember("check"));
     let c = open(split_window());
-    let sv = all_views(&c.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSSplitView>().ok()).unwrap();
+    let sv = all_views(&c.ns().contentView().unwrap()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSSplitView>().ok()).unwrap();
     let initial = sv.arrangedSubviews().firstObject().unwrap().frame().size.width;
     sv.setPosition_ofDividerAtIndex(230.0, 0);
     let stored_pos = defaults.doubleForKey(&split_key);
     ferrokit::close_window(&c);
     let d = open(split_window());
-    let sv = all_views(&d.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSSplitView>().ok()).unwrap();
+    let sv = all_views(&d.ns().contentView().unwrap()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSSplitView>().ok()).unwrap();
     let restored = sv.arrangedSubviews().firstObject().unwrap().frame().size.width;
     ferrokit::close_window(&d);
     check(
@@ -1554,7 +1554,7 @@ struct UndoState {
     name: Signal<String>,
     own: TextModel,
     shared: TextModel,
-    window: Retained<objc2_app_kit::NSWindow>,
+    window: ferrokit::WindowRef,
 }
 
 fn undo_title(w: &objc2_app_kit::NSWindow) -> (String, String) {
@@ -1582,12 +1582,12 @@ fn undo_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     );
     let u = UndoState { name, own, shared, window };
     let w = &u.window;
-    let m = w.undoManager();
-    let editor_w = windows().into_iter().find(|w| w.title().to_string() == "Editor").unwrap();
-    let distinct = m.as_ref().zip(editor_w.undoManager()).is_some_and(|(a, b)| !std::ptr::eq(&**a, &*b));
-    let stable = m.as_ref().zip(w.undoManager()).is_some_and(|(a, b)| std::ptr::eq(&**a, &*b));
-    let field = all_views(&w.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<NSTextField>().ok()).unwrap();
-    w.makeFirstResponder(Some(&field));
+    let m = w.ns().undoManager();
+    let editor_w = windows().into_iter().find(|w| w.title() == "Editor").unwrap();
+    let distinct = m.as_ref().zip(editor_w.ns().undoManager()).is_some_and(|(a, b)| !std::ptr::eq(&**a, &*b));
+    let stable = m.as_ref().zip(w.ns().undoManager()).is_some_and(|(a, b)| std::ptr::eq(&**a, &*b));
+    let field = all_views(&w.ns().contentView().unwrap()).into_iter().find_map(|v| v.downcast::<NSTextField>().ok()).unwrap();
+    w.ns().makeFirstResponder(Some(&field));
     // While a field is being edited its field editor has AppKit's private
     // NSCellUndoManager (field typing is undone there, then dropped when
     // editing ends); the field itself answers with the window's.
@@ -1602,15 +1602,15 @@ fn undo_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         distinct && stable && field_shares && own_apart && shared_in,
         format!("own manager per window: {distinct}, stable: {stable}; text field uses it: {field_shares} (while editing: {cell_undo:?}); default editor apart: {own_apart}; shared_undo editor in it: {shared_in}"),
     );
-    w.makeFirstResponder(None);
+    w.ns().makeFirstResponder(None);
 
     // An app-level change: ⌘Z / ⇧⌘Z with the action's name.
     set_undoable("Rename", &u.name, "B".to_string());
     after_idle(move || {
         let w = &u.window;
-        let t0 = undo_title(w);
+        let t0 = undo_title(w.ns());
         let undone = shortcut(w, "z", false);
-        let after_undo = (u.name.get_untracked(), undo_title(w));
+        let after_undo = (u.name.get_untracked(), undo_title(w.ns()));
         let redone = shortcut(w, "z", true);
         let after_redo = u.name.get_untracked();
         check(
@@ -1620,8 +1620,8 @@ fn undo_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         );
         // The default editor keeps its own history: typing there leaves the window's alone.
         u.own.replace_selection("x");
-        let own_ok = u.own.can_undo() && undo_title(w).0 == "Undo Rename";
-        check("editor-own-undo", own_ok, format!("editor can undo: {}; window's top: {:?}", u.own.can_undo(), undo_title(w).0));
+        let own_ok = u.own.can_undo() && undo_title(w.ns()).0 == "Undo Rename";
+        check("editor-own-undo", own_ok, format!("editor can undo: {}; window's top: {:?}", u.own.can_undo(), undo_title(w.ns()).0));
         let u = u.clone();
         let events = events.clone();
         after_idle(move || undo_stack_checks(u.clone(), events.clone()));
@@ -1633,7 +1633,7 @@ fn undo_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 /// run gets none, so its groups stay open across passes.)
 fn undo_stack_checks(u: UndoState, events: Rc<RefCell<Vec<AppEvent>>>) {
     let w = &u.window;
-    let m = w.undoManager().unwrap();
+    let m = w.ns().undoManager().unwrap();
     m.removeAllActions();
     while m.groupingLevel() > 0 {
         m.endUndoGrouping();
@@ -1650,7 +1650,7 @@ fn undo_stack_checks(u: UndoState, events: Rc<RefCell<Vec<AppEvent>>>) {
     let tv = u.shared.text_view();
     let typed = |t: &str| unsafe { tv.insertText_replacementRange(&NSString::from_str(t), objc2_foundation::NSRange::new(usize::MAX >> 1, 0)) };
     event(&|| typed("typed"));
-    let typing_title = undo_title(w).0;
+    let typing_title = undo_title(w.ns()).0;
     event(&|| set_undoable("Rename", &u.name, "C".to_string()));
     event(&|| typed("!"));
     let mut seen = vec![(u.name.get_untracked(), u.shared.text())];
@@ -1671,7 +1671,7 @@ fn undo_stack_checks(u: UndoState, events: Rc<RefCell<Vec<AppEvent>>>) {
     event(&|| u.shared.replace_selection("more"));
     event(&|| set_undoable("Rename", &u.name, "E".to_string()));
     u.shared.set_text("fresh");
-    let top = undo_title(w).0;
+    let top = undo_title(w.ns()).0;
     shortcut(w, "z", false);
     let first = (u.name.get_untracked(), u.shared.text());
     shortcut(w, "z", false);
@@ -1770,16 +1770,16 @@ fn posted_event_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let field_text = Signal::new(String::new());
     let shared = Rc::new(TextModel::new(""));
     let w = open(Window::new("Events").size(420.0, 260.0).view(vstack((text_field(&field_text), text_editor(&shared).shared_undo())).padding(12.0)));
-    w.makeKeyAndOrderFront(None);
-    w.makeFirstResponder(Some(&shared.text_view()));
+    w.ns().makeKeyAndOrderFront(None);
+    w.ns().makeFirstResponder(Some(&shared.text_view()));
     let cmd = NSEventModifierFlags::Command;
     let k = |c: &'static str, f: NSEventModifierFlags| {
         let w = w.clone();
-        Box::new(move || post_key(&w, c, f)) as Box<dyn Fn()>
+        Box::new(move || post_key(w.ns(), c, f)) as Box<dyn Fn()>
     };
     let none = NSEventModifierFlags::empty();
     let steps = Rc::new(vec![
-        Box::new({ let w = w.clone(); move || { post_key(&w, "a", none); post_key(&w, "b", none) } }) as Box<dyn Fn()>,
+        Box::new({ let w = w.clone(); move || { post_key(w.ns(), "a", none); post_key(w.ns(), "b", none) } }) as Box<dyn Fn()>,
         k("e", cmd | NSEventModifierFlags::Control),
         k("c", none),
         k("z", cmd),
@@ -1793,7 +1793,7 @@ fn posted_event_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let snap: Rc<dyn Fn(usize)> = {
         let (seen, m, shared, w) = (seen.clone(), m.clone(), shared.clone(), w.clone());
         Rc::new(move |_| {
-            let um = w.undoManager().unwrap();
+            let um = w.ns().undoManager().unwrap();
             seen.borrow_mut().push((m.renamed.get_untracked(), shared.text(), um.undoMenuItemTitle().to_string(), um.groupingLevel()));
         })
     };
@@ -1832,11 +1832,11 @@ fn posted_split_drag(events: Rc<RefCell<Vec<AppEvent>>>) {
             .size(600.0, 300.0)
             .view(split((vstack((text("Left").fill_width(),)).padding(8.0), vstack((text("Right").fill_width(),)).padding(8.0))).position(160.0)),
     );
-    w.makeKeyAndOrderFront(None);
-    let sv = all_views(&w.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<NSSplitView>().ok()).unwrap();
+    w.ns().makeKeyAndOrderFront(None);
+    let sv = all_views(&w.ns().contentView().unwrap()).into_iter().find_map(|v| v.downcast::<NSSplitView>().ok()).unwrap();
     let sv2 = sv.clone();
     let pane = move |i: usize| sv2.arrangedSubviews().objectAtIndex(i).frame().size.width;
-    let content = w.contentView().unwrap();
+    let content = w.ns().contentView().unwrap();
     let label_width = move |title: &str| {
         all_views(&content)
             .into_iter()
@@ -1849,7 +1849,7 @@ fn posted_split_drag(events: Rc<RefCell<Vec<AppEvent>>>) {
     let post = |t: NSEventType, x: f64| {
         let p = sv.convertPoint_toView(NSPoint::new(x, 100.0), None);
         let e = NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
-            t, p, NSEventModifierFlags::empty(), 0.0, w.windowNumber(), None, 0, 1, 1.0,
+            t, p, NSEventModifierFlags::empty(), 0.0, w.ns().windowNumber(), None, 0, 1, 1.0,
         )
         .unwrap();
         NSApplication::sharedApplication(mtm()).postEvent_atStart(&e, false);
@@ -1902,8 +1902,8 @@ fn close_button_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let (n0, list0) = (ferrokit::testing::live_nodes(), windows().len());
     let w = open(closable_window("Close Me", &value));
     let built = ferrokit::testing::live_nodes() - n0;
-    let weak = objc2::rc::Weak::from_retained(&w);
-    w.performClose(None);
+    let weak = objc2::rc::Weak::new(w.ns());
+    w.ns().performClose(None);
     drop(w);
     let v = value;
     after_idle(move || {
@@ -1924,14 +1924,14 @@ fn close_button_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         // Settings is reused: closing it keeps the same window and its views.
         let s1 = ferrokit::open_settings().unwrap();
         let s_nodes = ferrokit::testing::live_nodes();
-        s1.performClose(None);
-        let s1p = Retained::as_ptr(&s1);
+        s1.ns().performClose(None);
+        let s1p: *const objc2_app_kit::NSWindow = s1.ns();
         drop(s1);
         let v = v;
         let events = events.clone();
         after_idle(move || {
             let s2 = ferrokit::open_settings().unwrap();
-            let same = Retained::as_ptr(&s2) == s1p && ferrokit::testing::live_nodes() == s_nodes;
+            let same = std::ptr::eq(s2.ns(), s1p) && ferrokit::testing::live_nodes() == s_nodes;
             s2.close();
             check("close-settings-kept", same, format!("Settings after closing: same window and views {same}"));
             close_cycles(v, events.clone(), 0, 0.0);
@@ -1946,7 +1946,7 @@ fn action_owner_check() {
     let made: Rc<Cell<Option<Signal<String>>>> = Rc::default();
     let m = made.clone();
     let w = open(Window::new("Action Owner").size(200.0, 80.0).view(button("Make", move || m.set(Some(Signal::new("form".into()))))));
-    let b = w.contentView().unwrap().subviews().iter().find_map(|v| v.downcast::<NSButton>().ok()).unwrap();
+    let b = w.ns().contentView().unwrap().subviews().iter().find_map(|v| v.downcast::<NSButton>().ok()).unwrap();
     // SAFETY: a nil sender is allowed.
     unsafe { b.performClick(None) };
     let made_alive = made.get().is_some_and(|s| s.is_alive());
@@ -2070,7 +2070,7 @@ fn close_cycles(value: Signal<u32>, events: Rc<RefCell<Vec<AppEvent>>>, round: u
         return settled_heap(move |now| close_cycles_report(now, base, events));
     }
     let w = open(closable_window("Cycle", &value));
-    w.performClose(None);
+    w.ns().performClose(None);
     drop(w);
     let v = value;
     after_idle(move || close_cycles(v, events.clone(), round + 1, base));
@@ -2164,7 +2164,7 @@ fn sheet_cycles(events: Rc<RefCell<Vec<AppEvent>>>) {
         let name = Signal::new("draft".to_string());
         let form = Window::new("Form").size(320.0, 140.0).view(vstack((text_field(&name), checkbox("Remember", &Signal::new(true)), button("Done", || {}))).padding(16.0));
         let h = sheet(&p, form, || {});
-        f.borrow_mut().push(objc2::rc::Weak::from_retained(&h.window()));
+        f.borrow_mut().push(objc2::rc::Weak::new(h.window().ns()));
         h.close();
     });
     let p2 = parent.clone();
@@ -2174,7 +2174,7 @@ fn sheet_cycles(events: Rc<RefCell<Vec<AppEvent>>>) {
         // The floor: plain AppKit sheets with the same controls, same counts.
         let (events, parent) = (events.clone(), p2.clone());
         let pp = parent.clone();
-        let plain: Rc<dyn Fn()> = Rc::new(move || plain_sheet_cycle(&pp));
+        let plain: Rc<dyn Fn()> = Rc::new(move || plain_sheet_cycle(pp.ns()));
         let report: Rc<dyn Fn(f64)> = Rc::new(move |floor| {
             check(
                 "sheet-cycles-memory",
@@ -2243,8 +2243,8 @@ fn deep_widget_cycles(events: Rc<RefCell<Vec<AppEvent>>>) {
                     )),
                 ))),
         );
-        f.borrow_mut().push(objc2::rc::Weak::from_retained(&w));
-        w.performClose(None);
+        f.borrow_mut().push(objc2::rc::Weak::new(w.ns()));
+        w.ns().performClose(None);
     });
     let done: Rc<dyn Fn(f64)> = Rc::new(move |per| {
         let left = ferrokit::testing::live_nodes() - n0;
@@ -2318,7 +2318,7 @@ fn accessibility_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     // The form windows of this checklist.
     let mut forms = Vec::new();
     for title in ["Controls", "Controls B"] {
-        if let Some(fw) = windows().into_iter().find(|w| w.title().to_string() == title) {
+        if let Some(fw) = windows().into_iter().find(|w| w.title() == title) {
             forms.extend(ax_audit(&fw).into_iter().map(|p| format!("{title}: {p}")));
         }
     }
@@ -2328,7 +2328,7 @@ fn accessibility_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 
 /// The custom menus' shortcuts and Settings (⌘,) from posted key presses,
 /// then typing and ⌘Z in a text field.
-fn posted_shortcut_checks(w: Retained<objc2_app_kit::NSWindow>, field_text: Signal<String>, events: Rc<RefCell<Vec<AppEvent>>>) {
+fn posted_shortcut_checks(w: ferrokit::WindowRef, field_text: Signal<String>, events: Rc<RefCell<Vec<AppEvent>>>) {
     let m = MENU.with(Clone::clone);
     let cmd = NSEventModifierFlags::Command;
     let start = (m.items.get_untracked(), m.sidebar.get_untracked(), m.refreshed.get_untracked());
@@ -2345,7 +2345,7 @@ fn posted_shortcut_checks(w: Retained<objc2_app_kit::NSWindow>, field_text: Sign
             .into_iter()
             .map(|(c, f)| {
                 let w = w.clone();
-                Box::new(move || post_key(&w, c, f)) as Box<dyn Fn()>
+                Box::new(move || post_key(w.ns(), c, f)) as Box<dyn Fn()>
             })
             .collect(),
     );
@@ -2371,14 +2371,14 @@ fn posted_shortcut_checks(w: Retained<objc2_app_kit::NSWindow>, field_text: Sign
         // signal. AppKit (plain AppKit too) sends ⇧⌘Z to the window's undo
         // manager when it has a redo pending, not to the field's private
         // one, so the window's history is cleared first, as in a fresh form.
-        w.undoManager().unwrap().removeAllActions();
-        let field = all_views(&w.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<NSTextField>().ok()).unwrap();
-        w.makeFirstResponder(Some(&field));
+        w.ns().undoManager().unwrap().removeAllActions();
+        let field = all_views(&w.ns().contentView().unwrap()).into_iter().find_map(|v| v.downcast::<NSTextField>().ok()).unwrap();
+        w.ns().makeFirstResponder(Some(&field));
         let none = NSEventModifierFlags::empty();
         let steps: Rc<Vec<Box<dyn Fn()>>> = Rc::new(vec![
-            Box::new({ let w = w.clone(); move || { post_key(&w, "h", none); post_key(&w, "i", none) } }),
-            Box::new({ let w = w.clone(); move || post_key(&w, "z", cmd) }),
-            Box::new({ let w = w.clone(); move || post_key(&w, "Z", cmd | NSEventModifierFlags::Shift) }),
+            Box::new({ let w = w.clone(); move || { post_key(w.ns(), "h", none); post_key(w.ns(), "i", none) } }),
+            Box::new({ let w = w.clone(); move || post_key(w.ns(), "z", cmd) }),
+            Box::new({ let w = w.clone(); move || post_key(w.ns(), "Z", cmd | NSEventModifierFlags::Shift) }),
         ]);
         let seen: Rc<RefCell<Vec<(String, String)>>> = Rc::default();
         let snap: Rc<dyn Fn(usize)> = {
@@ -2454,7 +2454,7 @@ fn controls_c_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         ))
         .padding(12.0),
     ));
-    let all = all_views(&w.contentView().unwrap());
+    let all = all_views(&w.ns().contentView().unwrap());
     let mut pickers: Vec<_> = all.iter().filter_map(|v| v.clone().downcast::<NSDatePicker>().ok()).collect();
     let time_p = (pickers.len() == 3).then(|| pickers.remove(2));
     let well = all.iter().find_map(|v| v.clone().downcast::<NSColorWell>().ok()).unwrap();
@@ -2609,7 +2609,7 @@ fn button_kind_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         .spacing(12.0)
         .padding(16.0),
     ));
-    let all = all_views(&w.contentView().unwrap());
+    let all = all_views(&w.ns().contentView().unwrap());
     let pulls: Vec<Retained<NSPopUpButton>> = all.iter().filter_map(|v| v.clone().downcast::<NSPopUpButton>().ok()).collect();
     let buttons: Vec<Retained<NSButton>> = all.iter().filter_map(|v| v.clone().downcast::<NSButton>().ok()).filter(|b: &Retained<NSButton>| !b.isKindOfClass(NSPopUpButton::class())).collect();
     let by_title = |t: &str| buttons.iter().find(|b| b.title().to_string() == t).cloned();
@@ -2687,7 +2687,7 @@ fn slider_kind_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         .spacing(16.0)
         .padding(16.0),
     ));
-    let all = all_views(&w.contentView().unwrap());
+    let all = all_views(&w.ns().contentView().unwrap());
     let sliders: Vec<Retained<NSSlider>> = all.iter().filter_map(|v| v.clone().downcast::<NSSlider>().ok()).collect();
     let ticked = sliders.iter().find(|s| s.numberOfTickMarks() == 11).cloned();
     let small = sliders.iter().find(|s| s.controlSize() == NSControlSize::Small).cloned();
@@ -2751,7 +2751,7 @@ fn symbol_effect_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let built = ferrokit::testing::probes::symbol_effects();
     batch(|| searching.set(true));
     let on = ferrokit::testing::probes::symbol_effects();
-    let wifi = all_views(&w.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSImageView>().ok());
+    let wifi = all_views(&w.ns().contentView().unwrap()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSImageView>().ok());
     let layers = wifi.as_ref().and_then(|v| v.layer()).is_some_and(|l| animating(&l));
     batch(|| searching.set(false));
     let off = ferrokit::testing::probes::symbol_effects();
@@ -2771,19 +2771,19 @@ fn symbol_effect_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 fn window_panel_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     use ferrokit::PanelStyle;
     use objc2::ClassType;
-    use objc2_app_kit::{NSPanel, NSWindow, NSWindowStyleMask};
+    use objc2_app_kit::{NSPanel, NSWindowStyleMask};
     use objc2_foundation::NSObjectProtocol;
     let kinds = [(PanelStyle::Floating, "Inspector"), (PanelStyle::Utility, "Tools"), (PanelStyle::Hud, "Adjust")];
-    let panels: Vec<Retained<NSWindow>> =
+    let panels: Vec<ferrokit::WindowRef> =
         kinds.iter().map(|(k, t)| open(Window::new(t).size(220.0, 140.0).panel(*k).view(vstack((text(*t), button("OK", || {}))).padding(12.0)))).collect();
     let mut notes = Vec::new();
     let mut ok = true;
     for (w, (kind, _)) in panels.iter().zip(kinds) {
-        let is_panel = w.isKindOfClass(NSPanel::class());
-        let panel = w.clone().downcast::<NSPanel>().ok();
-        let floats = panel.as_ref().is_some_and(|p| p.isFloatingPanel() && p.becomesKeyOnlyIfNeeded()) && w.level() == objc2_app_kit::NSFloatingWindowLevel;
-        let behaves = w.hidesOnDeactivate() && w.isExcludedFromWindowsMenu() && !w.styleMask().contains(NSWindowStyleMask::Miniaturizable);
-        let mask = w.styleMask();
+        let is_panel = w.ns().isKindOfClass(NSPanel::class());
+        let panel = objc2::Message::retain(w.ns()).downcast::<NSPanel>().ok();
+        let floats = panel.as_ref().is_some_and(|p| p.isFloatingPanel() && p.becomesKeyOnlyIfNeeded()) && w.ns().level() == objc2_app_kit::NSFloatingWindowLevel;
+        let behaves = w.ns().hidesOnDeactivate() && w.ns().isExcludedFromWindowsMenu() && !w.ns().styleMask().contains(NSWindowStyleMask::Miniaturizable);
+        let mask = w.ns().styleMask();
         let look = match kind {
             PanelStyle::Floating => !mask.contains(NSWindowStyleMask::UtilityWindow),
             PanelStyle::Utility => mask.contains(NSWindowStyleMask::UtilityWindow) && !mask.contains(NSWindowStyleMask::HUDWindow),
@@ -2822,7 +2822,7 @@ fn hidden_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     );
     let label = {
         let w = w.clone();
-        move |t: &str| w.contentView().unwrap().subviews().iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string() == t)
+        move |t: &str| w.ns().contentView().unwrap().subviews().iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string() == t)
     };
     let mid_y = |f: &NSTextField| f.frame().origin.y + f.frame().size.height / 2.0;
     after_events(move || {
@@ -2861,7 +2861,7 @@ fn hidden_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                         let shown = ["Outer", "Inner", "Version 2"].iter().all(|t| label(t).is_some_and(|f| !f.isHidden()));
                         let replaced = label("Version 1").is_none();
                         check("hidden-nested-and-dynamic", all_hidden && waits && shown && replaced, format!("all hidden {all_hidden}, inner waits {waits}, all shown {shown}, old version gone {replaced}"));
-                        if let Some(w) = windows().into_iter().find(|w| w.title().to_string() == "Hidden") {
+                        if let Some(w) = windows().into_iter().find(|w| w.title() == "Hidden") {
                             ferrokit::close_window(&w);
                         }
                         let events = events.clone();
@@ -3016,7 +3016,7 @@ fn native_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     };
     let label = {
         let w = w.clone();
-        move |t: &str| w.contentView().unwrap().subviews().iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string() == t)
+        move |t: &str| w.ns().contentView().unwrap().subviews().iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string() == t)
     };
     let mid_y = |v: &NSView| v.frame().origin.y + v.frame().size.height / 2.0;
     after_events(move || {
@@ -3025,7 +3025,7 @@ fn native_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
             return;
         };
         let size = m.frame().size;
-        let content_w = w.contentView().unwrap().frame().size.width;
+        let content_w = w.ns().contentView().unwrap().frame().size.width;
         let fills = (fl.frame().size.width - (content_w - 24.0)).abs() < 1.0 && fl.frame().size.height >= 50.0;
         check(
             "native-layout",
@@ -3123,17 +3123,17 @@ fn native_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                     if real {
                         ferrokit::testing::input::key(&w, ferrokit::testing::input::Key::Tab, &[]);
                     } else {
-                        w.selectKeyViewFollowingView(from);
+                        w.ns().selectKeyViewFollowingView(from);
                     }
                 }
             };
-            let made = w.makeFirstResponder(Some(&a));
+            let made = w.ns().makeFirstResponder(Some(&a));
             let before = input_state();
             tab(&a);
             // Posted keys arrive in their own time: wait for the focus to move.
             let on_swatch = {
                 let (w, sw) = (w.clone(), sw.clone());
-                move || w.firstResponder().is_some_and(|r| std::ptr::eq(&*r as *const _ as *const u8, &*sw as *const _ as *const u8))
+                move || w.ns().firstResponder().is_some_and(|r| std::ptr::eq(&*r as *const _ as *const u8, &*sw as *const _ as *const u8))
             };
             let sw2 = sw.clone();
             until(on_swatch.clone(), 2000, move || {
@@ -3198,7 +3198,7 @@ fn table_selection_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                         objc2_foundation::NSPoint::new(0.0, 0.0),
                         flags,
                         0.0,
-                        w.windowNumber(),
+                        w.ns().windowNumber(),
                         None,
                         &NSString::from_str(chars),
                         &NSString::from_str(chars),
@@ -3269,7 +3269,7 @@ fn table_focus_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                 objc2_foundation::NSPoint::new(0.0, 0.0),
                 flags | NSEventModifierFlags::Function | NSEventModifierFlags::NumericPad,
                 0.0,
-                w.windowNumber(),
+                w.ns().windowNumber(),
                 None,
                 &NSString::from_str(chars),
                 &NSString::from_str(chars),
@@ -3357,18 +3357,18 @@ fn preview_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     ferrokit::testing::probes::set_preview_mode(true);
     let first = open(Window::new("Preview Frame").size(300.0, 160.0).view(text("Where it was")));
     let moved = NSRect::new(NSPoint::new(140.0, 180.0), NSSize::new(420.0, 260.0));
-    first.setFrame_display(moved, true);
-    let moved = first.frame();
+    first.ns().setFrame_display(moved, true);
+    let moved = first.ns().frame();
     ferrokit::close_window(&first);
     after_events(move || {
         // The app restarts: the same window opens where it was left.
         let again = open(Window::new("Preview Frame").size(300.0, 160.0).view(text("Where it was")));
-        let back = again.frame();
+        let back = again.ns().frame();
         ferrokit::close_window(&again);
         // Outside a preview, a window without `remember_frame` opens centred at its size.
         ferrokit::testing::probes::set_preview_mode(false);
         let plain = open(Window::new("Preview Frame").size(300.0, 160.0).view(text("Where it was")));
-        let plain_size = plain.contentRectForFrameRect(plain.frame()).size;
+        let plain_size = plain.ns().contentRectForFrameRect(plain.ns().frame()).size;
         ferrokit::close_window(&plain);
         NSUserDefaults::standardUserDefaults().removeObjectForKey(&NSString::from_str("NSWindow Frame ferrokit preview Preview Frame"));
         let same = |a: NSRect, b: NSRect| (a.origin.x - b.origin.x).abs() < 1.0 && (a.origin.y - b.origin.y).abs() < 1.0 && (a.size.width - b.size.width).abs() < 1.0 && (a.size.height - b.size.height).abs() < 1.0;
@@ -3388,16 +3388,16 @@ fn tabs_and_dock_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     use objc2_app_kit::{NSWindowCollectionBehavior, NSWindowTabbingMode};
     let a = open(Window::new("Tab A").size(360.0, 200.0).tabbing(Tabbing::Preferred, Some("checklist-docs")).view(text("A")));
     let b = open_tab(&a, Window::new("Tab B").size(360.0, 200.0).tabbing(Tabbing::Preferred, Some("checklist-docs")).view(text("B")));
-    let tabs: Vec<String> = a.tabbedWindows().map(|t| t.iter().map(|w| w.title().to_string()).collect()).unwrap_or_default();
-    let grouped = a.tabbingIdentifier().to_string() == "checklist-docs" && a.tabbingMode() == NSWindowTabbingMode::Preferred;
-    check("window-tabs", tabs.len() == 2 && tabs.contains(&"Tab B".to_string()) && grouped && b.isVisible(), format!("tabs {tabs:?}; group and mode {grouped}"));
+    let tabs: Vec<String> = a.ns().tabbedWindows().map(|t| t.iter().map(|w| w.title().to_string()).collect()).unwrap_or_default();
+    let grouped = a.ns().tabbingIdentifier().to_string() == "checklist-docs" && a.ns().tabbingMode() == NSWindowTabbingMode::Preferred;
+    check("window-tabs", tabs.len() == 2 && tabs.contains(&"Tab B".to_string()) && grouped && b.ns().isVisible(), format!("tabs {tabs:?}; group and mode {grouped}"));
     ferrokit::close_window(&b);
     ferrokit::close_window(&a);
 
     let palette = open(Window::new("Palette").size(200.0, 120.0).no_full_screen().view(text("Tools")));
-    let behaviour = palette.collectionBehavior();
+    let behaviour = palette.ns().collectionBehavior();
     let normal = open(Window::new("Normal").size(200.0, 120.0).view(text("Doc")));
-    let can = !normal.collectionBehavior().contains(NSWindowCollectionBehavior::FullScreenNone);
+    let can = !normal.ns().collectionBehavior().contains(NSWindowCollectionBehavior::FullScreenNone);
     check(
         "full-screen-option",
         behaviour.contains(NSWindowCollectionBehavior::FullScreenNone) && !behaviour.contains(NSWindowCollectionBehavior::FullScreenPrimary) && can && !is_full_screen(&normal),
@@ -3475,7 +3475,7 @@ fn toolbar_kind_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
             .view(text("Tools"))
     };
     let w = open(tools("Tools"));
-    let tb = w.toolbar().unwrap();
+    let tb = w.ns().toolbar().unwrap();
     let ids = |tb: &objc2_app_kit::NSToolbar| tb.items().iter().map(|i| i.itemIdentifier().to_string()).collect::<Vec<String>>();
     let group = |id: &str| tb.items().iter().find(|i| i.itemIdentifier().to_string() == id).and_then(|i| i.downcast::<NSToolbarItemGroup>().ok());
     let app = NSApplication::sharedApplication(mtm());
@@ -3541,7 +3541,7 @@ fn toolbar_kind_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
             let saved: Vec<String> = objc2_foundation::NSUserDefaults::standardUserDefaults().stringArrayForKey(&NSString::from_str(KEY)).map(|l| l.iter().map(|s| s.to_string()).collect()).unwrap_or_default();
             // A new window of the same toolbar starts with the user's layout.
             let again = open(tools("Tools Again"));
-            let restored = again.toolbar().map(|t| ids(&t)).unwrap_or_default();
+            let restored = again.ns().toolbar().map(|t| ids(&t)).unwrap_or_default();
             check(
                 "toolbar-customize",
                 customizable && offered && !before.contains(&"share".to_string()) && acts && saved.last().map(String::as_str) == Some("share") && restored == saved,
@@ -3582,7 +3582,7 @@ fn form_kind_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
             .padding(20.0),
         ),
     );
-    let all = || all_views(&w.contentView().unwrap());
+    let all = || all_views(&w.ns().contentView().unwrap());
     let label = |t: &str| all().into_iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string() == t);
     let switch = all().into_iter().find_map(|v| v.downcast::<NSSwitch>().ok()).unwrap();
     let lines = all().into_iter().filter_map(|v| v.downcast::<NSBox>().ok()).filter(|b| b.boxType() == objc2_app_kit::NSBoxType::Separator).count();
@@ -3609,7 +3609,7 @@ fn form_kind_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let opened = open_.get_untracked();
     let w2 = w.clone();
     after_events(move || {
-        let stepper = all_views(&w2.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<NSStepper>().ok());
+        let stepper = all_views(&w2.ns().contentView().unwrap()).into_iter().find_map(|v| v.downcast::<NSStepper>().ok());
         let stepper_named = stepper.as_ref().and_then(|s| objc2_app_kit::NSAccessibility::accessibilityLabel(&**s)).map(|l| l.to_string());
         if let Ok(dir) = std::env::var("SNAP") {
             snapshot_windows(&dir);
@@ -3618,7 +3618,7 @@ fn form_kind_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         let (w3, triangle) = (w2.clone(), triangle.clone());
         let events = events.clone();
         after_events(move || {
-            let gone = !all_views(&w3.contentView().unwrap()).into_iter().any(|v| v.downcast::<NSStepper>().is_ok());
+            let gone = !all_views(&w3.ns().contentView().unwrap()).into_iter().any(|v| v.downcast::<NSStepper>().is_ok());
             let follows = triangle.state() == objc2_app_kit::NSControlStateValueOff;
             check(
                 "disclosure",
@@ -3647,7 +3647,7 @@ fn filter_kind_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
             .padding(16.0),
         ),
     );
-    let editor = all_views(&w.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<NSPredicateEditor>().ok()).unwrap();
+    let editor = all_views(&w.ns().contentView().unwrap()).into_iter().find_map(|v| v.downcast::<NSPredicateEditor>().ok()).unwrap();
     let empty_rows = editor.numberOfRows();
     batch(|| {
         filter.set(Filter {
@@ -3742,7 +3742,7 @@ fn browser_kind_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                 .padding(12.0),
         ),
     );
-    let b = all_views(&w.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<NSBrowser>().ok()).unwrap();
+    let b = all_views(&w.ns().contentView().unwrap()).into_iter().find_map(|v| v.downcast::<NSBrowser>().ok()).unwrap();
     let rows = |b: &NSBrowser| b.selectionIndexPath().map(|p| (0..p.length()).map(|i| p.indexAtPosition(i)).collect::<Vec<_>>()).unwrap_or_default();
     let first = (b.lastColumn(), rows(&b));
     batch(|| path.set(vec!["Norway", "Lofoten", "Å"]));
@@ -3817,15 +3817,15 @@ fn shell_kind_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     use objc2_app_kit::{NSSplitViewController, NSSplitViewItemBehavior};
     let (side, insp) = (Signal::new(false), Signal::new(false));
     let w = open(shell_window("Shell", side, insp));
-    let controller = w.contentViewController().and_then(|c| c.downcast::<NSSplitViewController>().ok());
+    let controller = w.ns().contentViewController().and_then(|c| c.downcast::<NSSplitViewController>().ok());
     let behaviours: Vec<NSSplitViewItemBehavior> = controller.as_ref().map(|c| c.splitViewItems().iter().map(|i| i.behavior()).collect()).unwrap_or_default();
-    let ids: Vec<String> = w.toolbar().map(|t| t.items().iter().map(|i| i.itemIdentifier().to_string()).collect()).unwrap_or_default();
+    let ids: Vec<String> = w.ns().toolbar().map(|t| t.items().iter().map(|i| i.itemIdentifier().to_string()).collect()).unwrap_or_default();
     let w2 = w.clone();
     after_events(move || {
         // The content sits below the title bar and toolbar, the sidebar's
         // list too (they run up under it).
-        let label = |t: &str| all_views(&w2.contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string() == t);
-        let layout_top = { let r = w2.contentLayoutRect(); r.origin.y + r.size.height };
+        let label = |t: &str| all_views(&w2.ns().contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string() == t);
+        let layout_top = { let r = w2.ns().contentLayoutRect(); r.origin.y + r.size.height };
         let below = |t: &str| label(t).and_then(|l| unsafe { l.superview() }.map(|s| s.convertRect_toView(l.frame(), None))).is_some_and(|r| r.origin.y + r.size.height <= layout_top + 0.5);
         check(
             "shell-layout",
@@ -3839,10 +3839,10 @@ fn shell_kind_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         // The window's commands reach it from the sidebar's and the
         // inspector's focus too (each pane is its own tree).
         // (The editable fields: the sidebar's, then the inspector's.)
-        let fields: Vec<_> = all_views(&w2.contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<NSTextField>().ok()).filter(|f| f.isEditable()).collect();
+        let fields: Vec<_> = all_views(&w2.ns().contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<NSTextField>().ok()).filter(|f| f.isEditable()).collect();
         let mut reached = Vec::new();
         for f in &fields {
-            let focused = w2.makeFirstResponder(Some(f));
+            let focused = w2.ns().makeFirstResponder(Some(f));
             reached.push((focused, ferrokit::can_perform_in(Some(&w2), SHELL_ADD), ferrokit::perform_in(Some(&w2), SHELL_ADD)));
         }
         check(
@@ -3860,7 +3860,7 @@ fn shell_kind_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         });
         let (w3, events) = (w2.clone(), events.clone());
         spawn(|| std::thread::sleep(std::time::Duration::from_millis(900)), move |()| {
-            let c = w3.contentViewController().and_then(|c| c.downcast::<NSSplitViewController>().ok()).unwrap();
+            let c = w3.ns().contentViewController().and_then(|c| c.downcast::<NSSplitViewController>().ok()).unwrap();
             let items = c.splitViewItems();
             let hidden = items.objectAtIndex(0).isCollapsed() && items.objectAtIndex(2).isCollapsed();
             unsafe { c.toggleSidebar(None) };
@@ -3907,7 +3907,7 @@ fn shell_memory(events: Rc<RefCell<Vec<AppEvent>>>) {
         let (side, insp) = (Signal::new(false), Signal::new(false));
         let ours: Rc<dyn Fn()> = Rc::new(move || {
             let w = open(shell_window("Shell cycle", side, insp));
-            w.performClose(None);
+            w.ns().performClose(None);
         });
         let events = events.clone();
         measure_cycles(ours, Rc::new(move |per| {
@@ -4042,8 +4042,8 @@ fn failure_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
             .padding(12.0),
         ),
     );
-    let button_named = |t: &str| all_views(&w.contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).find(|b| b.title().to_string() == t).unwrap();
-    let label_now = || all_views(&w.contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string().starts_with("count")).map(|f| f.stringValue().to_string()).unwrap_or_default();
+    let button_named = |t: &str| all_views(&w.ns().contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).find(|b| b.title().to_string() == t).unwrap();
+    let label_now = || all_views(&w.ns().contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string().starts_with("count")).map(|f| f.stringValue().to_string()).unwrap_or_default();
     let before = failures().len();
     send_action(&button_named("Throw"));
     send_action(&button_named("Panic"));
@@ -4108,7 +4108,7 @@ fn failure_boundary_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let cell = tv.viewAtColumn_row_makeIfNecessary(0, 0, true);
     poisoned.set(false);
     // Typing: an effect that reads the field's signal panics.
-    let field = all_views(&w.contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.isEditable()).unwrap();
+    let field = all_views(&w.ns().contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.isEditable()).unwrap();
     ferrokit::testing::post_edit(&field, "boom");
     // A background task that panics: its progress ends, `then` never runs.
     let ran = Rc::new(Cell::new(false));
@@ -4126,9 +4126,9 @@ fn failure_boundary_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
             after_events(move || {
                 let caught: Vec<ferrokit::Failure> = failures().into_iter().skip(before).collect();
                 let places: Vec<&str> = caught.iter().map(|f| f.place).collect();
-                let button = all_views(&w2.contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).find(|b| b.title().to_string() == "Count").unwrap();
+                let button = all_views(&w2.ns().contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).find(|b| b.title().to_string() == "Count").unwrap();
                 send_action(&button);
-                let shown = all_views(&w2.contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<NSTextField>().ok()).any(|f| f.stringValue().to_string() == "count 1");
+                let shown = all_views(&w2.ns().contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<NSTextField>().ok()).any(|f| f.stringValue().to_string() == "count 1");
                 let error = load.error();
                 check(
                     "failures-caught-everywhere",
@@ -4217,18 +4217,18 @@ fn rtl_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         (x("First"), x("Last"), x("Name:"), field)
     };
     let ltr_w = open(make());
-    let ltr = frames(&ltr_w);
+    let ltr = frames(ltr_w.ns());
     ferrokit::close_window(&ltr_w);
     set_right_to_left(Some(true));
     let rtl_w = open(make());
-    let rtl = frames(&rtl_w);
+    let rtl = frames(rtl_w.ns());
     if let Ok(dir) = std::env::var("SNAP") {
         snapshot_windows(&dir);
     }
     // Wider: First stays at the right edge (its rectangle is the same
     // left to right, so it was skipped and kept the old width's mirror).
-    rtl_w.setContentSize(objc2_foundation::NSSize::new(520.0, 200.0));
-    let wide = frames(&rtl_w);
+    rtl_w.ns().setContentSize(objc2_foundation::NSSize::new(520.0, 200.0));
+    let wide = frames(rtl_w.ns());
     check(
         "right-to-left-resize",
         wide.0.is_some_and(|first| (first.1 - 490.0).abs() < 1.0) && wide.1.is_some_and(|last| (last.0 - 30.0).abs() < 1.0),
@@ -4367,7 +4367,7 @@ fn rich_table_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     });
     let row = tv.selectedRow();
     let e = NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
-        objc2_app_kit::NSEventType::KeyDown, objc2_foundation::NSPoint::new(0.0, 0.0), NSEventModifierFlags::empty(), 0.0, w.windowNumber(), None, &NSString::from_str("\r"), &NSString::from_str("\r"), false, 36,
+        objc2_app_kit::NSEventType::KeyDown, objc2_foundation::NSPoint::new(0.0, 0.0), NSEventModifierFlags::empty(), 0.0, w.ns().windowNumber(), None, &NSString::from_str("\r"), &NSString::from_str("\r"), false, 36,
     ).unwrap();
     tv.keyDown(&e);
     let model2 = model.clone();
@@ -4593,7 +4593,7 @@ fn transfer_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                     url_dropped && urls == vec![(vec!["https://example.com/report".to_string()], s4.model.row_at(2))] && files.len() == 1,
                     format!("link drop: {url_dropped} → {urls:?}; files still {}", files.len()),
                 );
-                let w = windows().into_iter().find(|w| w.title().to_string() == "Transfer").unwrap();
+                let w = windows().into_iter().find(|w| w.title() == "Transfer").unwrap();
                 ferrokit::close_window(&w);
                 let events = events.clone();
                 after_events(move || frame_check(events.clone()));
@@ -4605,7 +4605,7 @@ fn transfer_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 /// on_frame: calls come (from display frames, or the stand-in timer while
 /// the display isn't drawing), run in a batch, and stop when the loop is dropped.
 fn frame_check(events: Rc<RefCell<Vec<AppEvent>>>) {
-    let w = windows().into_iter().find(|w| w.title().to_string() == "Views").unwrap();
+    let w = windows().into_iter().find(|w| w.title() == "Views").unwrap();
     let calls = Rc::new(Cell::new(0u32));
     let c = calls.clone();
     let lp = ferrokit::on_frame(&w, move |_| c.set(c.get() + 1));
@@ -4651,8 +4651,8 @@ fn appearance_check(events: Rc<RefCell<Vec<AppEvent>>>) {
         let got = events.borrow().iter().filter(|e| **e == AppEvent::AppearanceChanged).count();
         check("appearance", after != before && got >= 1, format!("dark {before} → {after}, {got} event(s)"));
         // The native views themselves follow (they inherit NSApp's appearance).
-        let controls = windows().into_iter().find(|w| w.title().to_string() == "Controls").unwrap();
-        let views = controls.contentView().unwrap().subviews().to_vec();
+        let controls = windows().into_iter().find(|w| w.title() == "Controls").unwrap();
+        let views = controls.ns().contentView().unwrap().subviews().to_vec();
         let names = unsafe {
             objc2_foundation::NSArray::from_slice(&[objc2_app_kit::NSAppearanceNameAqua, objc2_app_kit::NSAppearanceNameDarkAqua])
         };
@@ -4742,8 +4742,8 @@ fn views_window() -> impl View {
 
 /// The window's labels: (text, view).
 fn labels() -> Vec<(String, Retained<NSTextField>)> {
-    let w = windows().into_iter().find(|w| w.title().to_string() == "Views").unwrap();
-    w.contentView()
+    let w = windows().into_iter().find(|w| w.title() == "Views").unwrap();
+    w.ns().contentView()
         .unwrap()
         .subviews()
         .iter()
@@ -4861,8 +4861,8 @@ fn layout_window() -> impl View {
 }
 
 fn frame_of(window: &str, text: &str) -> objc2_foundation::NSRect {
-    let w = windows().into_iter().find(|w| w.title().to_string() == window).unwrap();
-    w.contentView()
+    let w = windows().into_iter().find(|w| w.title() == window).unwrap();
+    w.ns().contentView()
         .unwrap()
         .subviews()
         .iter()
@@ -4879,8 +4879,8 @@ fn layout_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let max_x = |r: objc2_foundation::NSRect| r.origin.x + r.size.width;
     let max_y = |r: objc2_foundation::NSRect| r.origin.y + r.size.height;
     let wides: Vec<_> = {
-        let w = windows().into_iter().find(|w| w.title().to_string() == "Layout").unwrap();
-        w.contentView().unwrap().subviews().iter().filter_map(|v| v.downcast::<NSTextField>().ok()).filter(|t| t.stringValue().to_string() == "A wide label for alignment").map(|t| t.frame()).collect()
+        let w = windows().into_iter().find(|w| w.title() == "Layout").unwrap();
+        w.ns().contentView().unwrap().subviews().iter().filter_map(|v| v.downcast::<NSTextField>().ok()).filter(|t| t.stringValue().to_string() == "A wide label for alignment").map(|t| t.frame()).collect()
     };
     let (mid, end) = (f("mid"), f("end"));
     check(
@@ -4896,7 +4896,7 @@ fn layout_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         alice.origin.x == bob.origin.x && bob.origin.x >= max_x(key) + 8.0 - 0.5 && f("x").origin.x == f("y").origin.x,
         format!("column 2 at {:.1} / {:.1}; longest key ends at {:.1}", alice.origin.x, bob.origin.x, max_x(key)),
     );
-    let content_w = windows().into_iter().find(|w| w.title().to_string() == "Layout").unwrap().contentView().unwrap().bounds().size.width;
+    let content_w = windows().into_iter().find(|w| w.title() == "Layout").unwrap().ns().contentView().unwrap().bounds().size.width;
     let (left, right) = (f("left"), f("right"));
     check(
         "spacer",
@@ -4910,8 +4910,8 @@ fn layout_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         format!("filled {:.1} wide (of {:.1}); framed {:.1}×{:.1}", filled.size.width, content_w - 26.0, framed.size.width, framed.size.height),
     );
     let all: Vec<_> = {
-        let w = windows().into_iter().find(|w| w.title().to_string() == "Layout").unwrap();
-        w.contentView().unwrap().subviews().iter().map(|v| v.frame()).collect()
+        let w = windows().into_iter().find(|w| w.title() == "Layout").unwrap();
+        w.ns().contentView().unwrap().subviews().iter().map(|v| v.frame()).collect()
     };
     let snapped = all.iter().all(|r| [r.origin.x, r.origin.y, r.size.width, r.size.height].iter().all(|v| (v * 2.0).fract() == 0.0));
     check("pixel-snapping", snapped, format!("{} frames on the 0.5 pt grid (2x)", all.len()));
@@ -4951,10 +4951,10 @@ fn layout_bench(events: Rc<RefCell<Vec<AppEvent>>>) {
     let t = std::time::Instant::now();
     let w = open(Window::new("Bench").size(700.0, 700.0).view(vstack(rows).padding(12.0)));
     let build_ms = t.elapsed().as_secs_f64() * 1e3;
-    let views = w.contentView().unwrap().subviews().len();
+    let views = w.ns().contentView().unwrap().subviews().len();
     let n0 = ferrokit::testing::probes::layout_passes();
     for k in 0..200 {
-        w.setContentSize(objc2_foundation::NSSize::new(600.0 + (k % 40) as f64 * 10.0, 700.0));
+        w.ns().setContentSize(objc2_foundation::NSSize::new(600.0 + (k % 40) as f64 * 10.0, 700.0));
     }
     let times = ferrokit::testing::probes::layout_times_us();
     let new = ((ferrokit::testing::probes::layout_passes() - n0) as usize).min(times.len());
@@ -5031,8 +5031,8 @@ fn controls_window() -> impl View {
 fn controls_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     use objc2_app_kit::{NSButton, NSSecureTextField, NSSwitch};
     let c = CTRL.with(Clone::clone);
-    let w = windows().into_iter().find(|w| w.title().to_string() == "Controls").unwrap();
-    let subs: Vec<Retained<NSView>> = w.contentView().unwrap().subviews().to_vec();
+    let w = windows().into_iter().find(|w| w.title() == "Controls").unwrap();
+    let subs: Vec<Retained<NSView>> = w.ns().contentView().unwrap().subviews().to_vec();
     let secure = subs.iter().find_map(|v| v.clone().downcast::<NSSecureTextField>().ok()).unwrap();
     let field = subs
         .iter()
@@ -5053,7 +5053,7 @@ fn controls_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 
     // AppKit gives a default button its Return key equivalent only while
     // its window is key (the bench window took key status before this).
-    w.makeKeyAndOrderFront(None);
+    w.ns().makeKeyAndOrderFront(None);
     // Text field: placeholder; user edits → signal → label and the Save button.
     let was_disabled = !save.isEnabled();
     post_edit(&field, "Ada");
@@ -5111,7 +5111,7 @@ fn controls_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     // Safari's password AutoFill (SafariPlatformSupport, when its list is
     // up); the run loop swallowed it and ended this chain of checks.
     let raised = objc2::exception::catch(std::panic::AssertUnwindSafe(|| {
-        w.makeFirstResponder(Some(&field));
+        w.ns().makeFirstResponder(Some(&field));
         if let Some(editor) = field.currentEditor() {
             let _: () = unsafe { objc2::msg_send![&*editor, insertTab: Option::<&objc2::runtime::AnyObject>::None] };
         }
@@ -5163,9 +5163,9 @@ fn controls_b_window() -> impl View {
 
 
 
-fn controls_field() -> (Retained<objc2_app_kit::NSWindow>, Retained<NSTextField>, Retained<objc2_app_kit::NSSecureTextField>) {
-    let w = windows().into_iter().find(|w| w.title().to_string() == "Controls").unwrap();
-    let subs: Vec<Retained<NSView>> = w.contentView().unwrap().subviews().to_vec();
+fn controls_field() -> (ferrokit::WindowRef, Retained<NSTextField>, Retained<objc2_app_kit::NSSecureTextField>) {
+    let w = windows().into_iter().find(|w| w.title() == "Controls").unwrap();
+    let subs: Vec<Retained<NSView>> = w.ns().contentView().unwrap().subviews().to_vec();
     let secure = subs.iter().find_map(|v| v.clone().downcast::<objc2_app_kit::NSSecureTextField>().ok()).unwrap();
     let field = subs
         .iter()
@@ -5184,10 +5184,10 @@ fn editor_of(field: &NSTextField) -> Retained<objc2_app_kit::NSTextView> {
 fn keyboard_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let c = CTRL.with(Clone::clone);
     let (w, field, secure) = controls_field();
-    w.makeKeyAndOrderFront(None);
+    w.ns().makeKeyAndOrderFront(None);
 
     // Shift-Tab: from the password field back to the name field.
-    w.makeFirstResponder(Some(&secure));
+    w.ns().makeFirstResponder(Some(&secure));
     if let Some(editor) = secure.currentEditor() {
         let _: () = unsafe { objc2::msg_send![&*editor, insertBacktab: Option::<&objc2::runtime::AnyObject>::None] };
     }
@@ -5196,7 +5196,7 @@ fn keyboard_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     // Shortcuts: type, ⌘A selects all, ⌘Z undoes the typing, ⇧⌘Z redoes it;
     // each goes through the menu bar's key equivalents to the focused field.
     batch(|| c.name.set(String::new()));
-    w.makeFirstResponder(Some(&field));
+    w.ns().makeFirstResponder(Some(&field));
     let ed = editor_of(&field);
     unsafe { ed.insertText_replacementRange(&NSString::from_str("Hello"), objc2_foundation::NSRange::new(usize::MAX >> 1, 0)) };
     let typed = c.name.get_untracked();
@@ -5243,7 +5243,7 @@ fn ime_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let c = CTRL.with(Clone::clone);
     let (w, field, _) = controls_field();
     batch(|| c.name.set(String::new()));
-    w.makeFirstResponder(Some(&field));
+    w.ns().makeFirstResponder(Some(&field));
     // No field editor (the field couldn't become first responder, e.g. in
     // an inactive app on a CI runner): nothing to compose into.
     let Some(ed) = field.currentEditor().and_then(|e| e.downcast::<objc2_app_kit::NSTextView>().ok()) else {
@@ -5267,7 +5267,7 @@ fn ime_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     // The candidate window goes where the input method asks: the caret's
     // screen rectangle, which must lie on the field.
     let rect = unsafe { ed.firstRectForCharacterRange_actualRange(objc2_foundation::NSRange::new(0, 5), std::ptr::null_mut()) };
-    let field_screen = w.convertRectToScreen(field.convertRect_toView(field.bounds(), None));
+    let field_screen = w.ns().convertRectToScreen(field.convertRect_toView(field.bounds(), None));
     let on_field = rect.origin.x >= field_screen.origin.x - 1.0
         && rect.origin.x < field_screen.origin.x + field_screen.size.width
         && rect.origin.y >= field_screen.origin.y - 1.0
@@ -5324,8 +5324,8 @@ fn teardown_window() -> impl View {
 /// nodes, subviews and footprint return to baseline; controls deallocate.
 fn teardown_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let show = FORM.with(Clone::clone);
-    let w = windows().into_iter().find(|w| w.title().to_string() == "Teardown").unwrap();
-    let switch = w.contentView().unwrap().subviews().iter().find_map(|v| v.downcast::<objc2_app_kit::NSSwitch>().ok()).unwrap();
+    let w = windows().into_iter().find(|w| w.title() == "Teardown").unwrap();
+    let switch = w.ns().contentView().unwrap().subviews().iter().find_map(|v| v.downcast::<objc2_app_kit::NSSwitch>().ok()).unwrap();
     let weak = objc2::rc::Weak::from_retained(&switch);
     drop(switch);
     for _ in 0..100 {
@@ -5336,8 +5336,8 @@ fn teardown_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         1 + v.subviews().iter().map(|c| count(&c)).sum::<usize>()
     }
     // Every view in the form, AppKit's internal subviews included.
-    let per_form = count(&w.contentView().unwrap()) - 1;
-    let (n0, v0, f0, s0) = (ferrokit::testing::live_nodes(), w.contentView().unwrap().subviews().len(), footprint_mb(), ferrokit::testing::live_signals());
+    let per_form = count(&w.ns().contentView().unwrap()) - 1;
+    let (n0, v0, f0, s0) = (ferrokit::testing::live_nodes(), w.ns().contentView().unwrap().subviews().len(), footprint_mb(), ferrokit::testing::live_signals());
     let t = std::time::Instant::now();
     let cycles = || {
         for _ in 0..300 {
@@ -5353,8 +5353,8 @@ fn teardown_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let f_mid = footprint_mb();
     cycles();
     later(move || {
-        let w = windows().into_iter().find(|w| w.title().to_string() == "Teardown").unwrap();
-        let (n1, v1, f1, s1) = (ferrokit::testing::live_nodes(), w.contentView().unwrap().subviews().len(), footprint_mb(), ferrokit::testing::live_signals());
+        let w = windows().into_iter().find(|w| w.title() == "Teardown").unwrap();
+        let (n1, v1, f1, s1) = (ferrokit::testing::live_nodes(), w.ns().contentView().unwrap().subviews().len(), footprint_mb(), ferrokit::testing::live_signals());
         let gone = weak.load().is_none();
         // AppKit keeps ~1 KB per view ever measured and added to a window
         // (plain AppKit, same form: 7.5 MB per 300 cycles); more is ours.
@@ -5473,8 +5473,8 @@ fn after_events_dyn(f: Rc<dyn Fn()>) {
 fn table_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     use objc2_app_kit::{NSButton, NSTableView};
     let t = TABLE.with(Clone::clone);
-    let w = windows().into_iter().find(|w| w.title().to_string() == "Table").unwrap();
-    w.makeKeyAndOrderFront(None);
+    let w = windows().into_iter().find(|w| w.title() == "Table").unwrap();
+    w.ns().makeKeyAndOrderFront(None);
     let tv: Retained<NSTableView> = t.model.table_view();
     let sv = t.model.scroll_view();
     let fills = sv.frame().size.height > 300.0 && sv.frame().size.width > 500.0;
@@ -5497,13 +5497,13 @@ fn table_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     after_events(move || {
         let t = t2.clone();
         let tv = t.model.table_view();
-        let w = windows().into_iter().find(|w| w.title().to_string() == "Table").unwrap();
+        let w = windows().into_iter().find(|w| w.title() == "Table").unwrap();
         check("table-select", t.selected.get_untracked() == vec![5], format!("on_select got {:?}", t.selected.get_untracked()));
 
         // Return on the selected row → on_activate.
         let ev = objc2_app_kit::NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
             objc2_app_kit::NSEventType::KeyDown, objc2_foundation::NSPoint::new(0.0, 0.0), objc2_app_kit::NSEventModifierFlags::empty(), 0.0,
-            w.windowNumber(), None, &NSString::from_str("\r"), &NSString::from_str("\r"), false, 36,
+            w.ns().windowNumber(), None, &NSString::from_str("\r"), &NSString::from_str("\r"), false, 36,
         ).unwrap();
         tv.keyDown(&ev);
 
@@ -5622,14 +5622,14 @@ fn field_commit_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let w = open(Window::new("Commit").size(300.0, 80.0).view(
         vstack((text_field(&value).on_commit(move || commits.update(|c| c.push(value.get_untracked()))).accessibility_label("Field"),)).padding(12.0),
     ));
-    w.makeKeyAndOrderFront(None);
-    let field = all_views(&w.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<NSTextField>().ok()).unwrap();
-    w.makeFirstResponder(Some(&field));
+    w.ns().makeKeyAndOrderFront(None);
+    let field = all_views(&w.ns().contentView().unwrap()).into_iter().find_map(|v| v.downcast::<NSTextField>().ok()).unwrap();
+    w.ns().makeFirstResponder(Some(&field));
     if let Some(ed) = field.currentEditor().and_then(|e| e.downcast::<objc2_app_kit::NSTextView>().ok()) {
         unsafe { ed.insertText_replacementRange(&NSString::from_str("left by a click"), objc2_foundation::NSRange::new(usize::MAX >> 1, 0)) };
     }
     // Focus leaves the field (as a click elsewhere does): editing ends.
-    w.makeFirstResponder(None);
+    w.ns().makeFirstResponder(None);
     after_events(move || {
         let got = commits.get_untracked();
         // (Focusing the field twice ends an empty edit first: a commit of
@@ -5652,14 +5652,14 @@ fn live_segments_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     fn control(w: &objc2_app_kit::NSWindow) -> Retained<objc2_app_kit::NSSegmentedControl> {
         all_views(&w.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSSegmentedControl>().ok()).unwrap()
     }
-    let first = control(&w);
+    let first = control(w.ns());
     let width = first.frame().size.width;
     batch(|| {
         tabs.set(vec![(1, "One".into()), (2, "Two".into()), (3, "Three".into())]);
         chosen.set(3);
     });
     after_events(move || {
-        let c = control(&w);
+        let c = control(w.ns());
         let labels = |c: &objc2_app_kit::NSSegmentedControl| (0..c.segmentCount()).map(|i| c.labelForSegment(i).map(|l| l.to_string()).unwrap_or_default()).collect::<Vec<_>>();
         let grown = labels(&c);
         let same = Retained::as_ptr(&c) == Retained::as_ptr(&first);
@@ -5675,7 +5675,7 @@ fn live_segments_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         }));
         let (w, events) = (w.clone(), events.clone());
         after_events(move || {
-            let c = control(&w);
+            let c = control(w.ns());
             let shrunk = labels(&c);
             write_stored("check.stored.direct", &"kept".to_string());
             let read: Option<String> = read_stored("check.stored.direct");
@@ -5725,9 +5725,9 @@ fn completion_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         Some(ferrokit::Completion { range: start..caret, items })
     }));
     let w = open(Window::new("Completion").size(360.0, 160.0).view(text_editor(&model).accessibility_label("Code")));
-    w.makeKeyAndOrderFront(None);
+    w.ns().makeKeyAndOrderFront(None);
     let tv = model.text_view();
-    w.makeFirstResponder(Some(&tv));
+    w.ns().makeFirstResponder(Some(&tv));
     let typed = |t: &str| unsafe { tv.insertText_replacementRange(&NSString::from_str(t), objc2_foundation::NSRange::new(usize::MAX >> 1, 0)) };
     typed("s");
     typed("e");
@@ -5741,7 +5741,7 @@ fn completion_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         // Escape it reads, before typing on opens the next one.
         let was_open = completion_list_open();
         if was_open {
-            post_key(&w2, "\u{1b}", NSEventModifierFlags::empty());
+            post_key(w2.ns(), "\u{1b}", NSEventModifierFlags::empty());
         }
         let (m, w2, first) = (m.clone(), w2.clone(), first.clone());
         let events = events.clone();
@@ -5810,19 +5810,19 @@ fn dynamic_hidden_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     });
     let w2 = w.clone();
     after_events(move || {
-        let rebuilt: Vec<(String, bool)> = buttons(&w2).iter().map(|b| (b.title().to_string(), b.isHiddenOrHasHiddenAncestor())).collect();
-        let rows_hidden = row_buttons(&w2);
+        let rebuilt: Vec<(String, bool)> = buttons(w2.ns()).iter().map(|b| (b.title().to_string(), b.isHiddenOrHasHiddenAncestor())).collect();
+        let rows_hidden = row_buttons(w2.ns());
         batch(|| hide.set(false));
         let (w3, rebuilt) = (w2.clone(), rebuilt.clone());
         let events = events.clone();
         after_events(move || {
-            let shown: Vec<(String, bool)> = buttons(&w3).iter().map(|b| (b.title().to_string(), b.isHiddenOrHasHiddenAncestor())).collect();
+            let shown: Vec<(String, bool)> = buttons(w3.ns()).iter().map(|b| (b.title().to_string(), b.isHiddenOrHasHiddenAncestor())).collect();
             check(
                 "dynamic-hidden",
                 rebuilt == [("Branch 2".to_string(), true)] && shown == [("Branch 2".to_string(), false)],
                 format!("rebuilt while hidden {rebuilt:?}; shown {shown:?}"),
             );
-            let rows_shown = row_buttons(&w3);
+            let rows_shown = row_buttons(w3.ns());
             let pair = |a: bool, b: bool| vec![("Row 1".to_string(), a), ("Row 2".to_string(), b)];
             check("foreach-hidden", rows_hidden == pair(true, true) && rows_shown == pair(false, false), format!("added while hidden {rows_hidden:?}; shown {rows_shown:?}"));
             ferrokit::close_window(&w3);
@@ -5865,7 +5865,7 @@ fn tree_state_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
             }
             let (editing, results) = (ed.is_some(), results.clone());
             after_events(move || {
-                let on_table = ew.firstResponder().is_some_and(|r| r.downcast::<objc2_app_kit::NSTableView>().is_ok());
+                let on_table = ew.ns().firstResponder().is_some_and(|r| r.downcast::<objc2_app_kit::NSTableView>().is_ok());
                 let edits = edits.borrow().clone();
                 // The edited row itself updated: the edit is that row's.
                 let right = if case == "update_row" { edits == [(1, "typed".to_string())] } else { edits.is_empty() };
@@ -5891,7 +5891,7 @@ fn tree_state_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         let bw = open(Window::new("Bound").size(260.0, 140.0).view(
             text_editor(&m).bind(&text).on_command(EDIT_A, move || m1.replace_selection("A")).on_command(EDIT_B, move || m2.replace_selection("B")),
         ));
-        bw.makeFirstResponder(Some(&m.text_view()));
+        bw.ns().makeFirstResponder(Some(&m.text_view()));
         m.set_selection(3..3);
         batch(|| {
             ferrokit::perform_in(Some(&bw), EDIT_A);
@@ -5953,11 +5953,11 @@ fn tree_state_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         );
         let buttons = move |w: &objc2_app_kit::NSWindow| all_views(&w.contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<NSButton>().ok()).collect::<Vec<_>>();
         let on = move |w: &objc2_app_kit::NSWindow| buttons(w).iter().filter(|b| b.state() == objc2_app_kit::NSControlStateValueOn).map(|b| b.title().to_string()).collect::<Vec<_>>();
-        if let Some(blue) = buttons(&rw).into_iter().find(|b| b.title().to_string() == "Blue") {
+        if let Some(blue) = buttons(rw.ns()).into_iter().find(|b| b.title().to_string() == "Blue") {
             unsafe { blue.performClick(None) };
         }
         after_events(move || {
-            let shown = on(&rw);
+            let shown = on(rw.ns());
             check("radio-groups-apart", shown == ["Medium", "Blue"] && size.get_untracked() == "m" && colour.get_untracked() == "blue", format!("Medium chosen, then Blue clicked in the other group: on {shown:?}; values {} and {}", size.get_untracked(), colour.get_untracked()));
             ferrokit::close_window(&rw);
         });
@@ -6011,11 +6011,11 @@ fn tree_state_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     {
         let choice = Signal::new(2);
         let pw = open(Window::new("Picker").size(240.0, 80.0).view(vstack((picker(&choice, vec![("None", 0), ("Custom", 1), ("None", 2)]), image("no.such.symbol.anywhere"))).padding(12.0)));
-        let popup = all_views(&pw.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSPopUpButton>().ok()).unwrap();
+        let popup = all_views(&pw.ns().contentView().unwrap()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSPopUpButton>().ok()).unwrap();
         let (items, selected) = (popup.numberOfItems(), popup.indexOfSelectedItem());
         check("picker-same-titles", items == 3 && selected == 2, format!("None, Custom, None: {items} items, the third selected: index {selected}"));
         let reported = ferrokit::testing::failures().iter().any(|f| f.place == "an image" && f.message.contains("no.such.symbol.anywhere"));
-        let shown = all_views(&pw.contentView().unwrap()).into_iter().any(|v| v.downcast::<objc2_app_kit::NSImageView>().is_ok());
+        let shown = all_views(&pw.ns().contentView().unwrap()).into_iter().any(|v| v.downcast::<objc2_app_kit::NSImageView>().is_ok());
         check("image-unknown-symbol", reported && shown, format!("an unknown SF Symbol: reported {reported}, a placeholder shown {shown}"));
         ferrokit::close_window(&pw);
     }
@@ -6038,7 +6038,7 @@ fn tree_state_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
             lines.update(|l| l.push(place(2, "Look row 2", None)));
         });
         batch(|| warm.set(true));
-        let looks: Vec<(String, bool, Option<Color>, f64, String)> = all_views(&lw.contentView().unwrap())
+        let looks: Vec<(String, bool, Option<Color>, f64, String)> = all_views(&lw.ns().contentView().unwrap())
             .into_iter()
             .filter_map(|v| v.downcast::<NSTextField>().ok())
             .filter(|f| f.stringValue().to_string().starts_with("Look"))
@@ -6061,23 +6061,23 @@ fn tree_state_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     // outer one mustn't show it.
     batch(|| inner.set(true));
     batch(|| outer.set(false));
-    let nested = hidden(&w, "Nested");
+    let nested = hidden(w.ns(), "Nested");
     batch(|| inner.set(false));
-    let nested_shown = hidden(&w, "Nested");
+    let nested_shown = hidden(w.ns(), "Nested");
     check("hidden-nested", nested == [true] && nested_shown == [false], format!("inner hidden under a hidden outer, outer shown: hidden {nested:?}; inner shown: {nested_shown:?}"));
     // Replaced while hidden: the old views go.
     batch(|| outer.set(true));
-    let first = objc2::rc::Weak::from_retained(&find(&w, "Swap")[0]);
+    let first = objc2::rc::Weak::from_retained(&find(w.ns(), "Swap")[0]);
     for i in 1..=50 {
         batch(|| which.set(i));
     }
     // Disabled: the replaced branch and a new row are disabled too.
     batch(|| rows.update(|r| r.push(place(2, "Line 2", None))));
-    let (form, lines, own) = (enabled(&w, "Form"), enabled(&w, "Line"), enabled(&w, "Own"));
+    let (form, lines, own) = (enabled(w.ns(), "Form"), enabled(w.ns(), "Line"), enabled(w.ns(), "Own"));
     batch(|| off.set(false));
-    let (form_on, lines_on, own_still) = (enabled(&w, "Form"), enabled(&w, "Line"), enabled(&w, "Own"));
+    let (form_on, lines_on, own_still) = (enabled(w.ns(), "Form"), enabled(w.ns(), "Line"), enabled(w.ns(), "Own"));
     batch(|| own_off.set(false));
-    let own_on = enabled(&w, "Own");
+    let own_on = enabled(w.ns(), "Own");
     check(
         "disabled-inherited",
         form == [false] && lines == [false, false] && own == [false] && form_on == [true] && lines_on == [true, true] && own_still == [false] && own_on == [true],
@@ -6093,7 +6093,7 @@ fn tree_state_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let w2 = w.clone();
     after_events(move || {
         let kept = first.load().is_some();
-        let now = find(&w2, "Swap").iter().map(|b| b.title().to_string()).collect::<Vec<_>>();
+        let now = find(w2.ns(), "Swap").iter().map(|b| b.title().to_string()).collect::<Vec<_>>();
         check("hidden-rebuild-frees", !kept && now == ["Swap 50"], format!("after 50 replacements while hidden: the first view kept {kept}; now {now:?}"));
         ferrokit::close_window(&w2);
         about_help_checks(events.clone());
@@ -6121,7 +6121,7 @@ fn empty_cell_ax_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         // out; the row above keeps its cell (no reload).
         let first = |tv: &objc2_app_kit::NSTableView, make: bool| tv.viewAtColumn_row_makeIfNecessary(0, 0, make).map(|v| Retained::as_ptr(&v) as usize);
         // (Drawn first, so the first row has its cell.)
-        w2.displayIfNeeded();
+        w2.ns().displayIfNeeded();
         let before = first(&tv, false);
         model.insert(1, "added".to_string());
         let (inserted, kept_in) = (tv.numberOfRows(), first(&tv, false) == before);
@@ -6162,7 +6162,7 @@ fn about_help_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     after_events(move || {
         let shown = ferrokit::testing::about_shown() - before;
         // The panel, with the credits in it.
-        let panel = ferrokit::windows().into_iter().chain(NSApplication::sharedApplication(objc2::MainThreadMarker::new().unwrap()).windows().iter()).find(|w| {
+        let panel = ferrokit::windows().into_iter().map(|w| objc2::Message::retain(w.ns())).chain(NSApplication::sharedApplication(objc2::MainThreadMarker::new().unwrap()).windows().iter()).find(|w| {
             all_views(&w.contentView().unwrap()).iter().any(|v| v.downcast_ref::<objc2_app_kit::NSTextView>().is_some_and(|t| t.string().to_string().contains("Made with Ferrokit.")))
         });
         check(
@@ -6199,7 +6199,7 @@ fn outline_expanded_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         vec![TreeNode::branch(Step("a".into()), vec![TreeNode::branch(Step("b".into()), inner)]), leaf("e")]
     };
     let w = open(Window::new("Plan").size(300.0, 300.0).view(outline(tree, |s: &Step| s.0.clone()).expanded().accessibility_label("Plan")));
-    let ov = all_views(&w.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSOutlineView>().ok()).unwrap();
+    let ov = all_views(&w.ns().contentView().unwrap()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSOutlineView>().ok()).unwrap();
     let rows = ov.numberOfRows();
     batch(|| deep.set(true));
     after_events(move || {
@@ -6210,7 +6210,7 @@ fn outline_expanded_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         // draws a background (a plain one does, the content background).
         let leaf = || vec![TreeNode::leaf(Step("x".into()))];
         let w = open(Window::new("Clear").size(300.0, 200.0).view(hstack((outline(leaf, |s: &Step| s.0.clone()), outline(leaf, |s: &Step| s.0.clone()).transparent_background()))));
-        let views: Vec<_> = all_views(&w.contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSOutlineView>().ok()).collect();
+        let views: Vec<_> = all_views(&w.ns().contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSOutlineView>().ok()).collect();
         let clear = |ov: &objc2_app_kit::NSOutlineView| ov.backgroundColor().alphaComponent() == 0.0 && !ov.enclosingScrollView().unwrap().drawsBackground();
         let found: Vec<bool> = views.iter().map(|ov| clear(ov)).collect();
         let mut sorted = found.clone();
@@ -6239,7 +6239,7 @@ fn outline_lazy_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         })
         .accessibility_label("Files");
     let w = open(Window::new("Files").size(360.0, 240.0).view(files));
-    let ov = all_views(&w.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSOutlineView>().ok()).unwrap();
+    let ov = all_views(&w.ns().contentView().unwrap()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSOutlineView>().ok()).unwrap();
     let header = ov.headerView().is_some() && ov.tableColumns().count() == 2;
     let text_at = |ov: &objc2_app_kit::NSOutlineView, col: isize, row: isize| {
         ov.viewAtColumn_row_makeIfNecessary(col, row, true).and_then(|v| v.downcast::<objc2_app_kit::NSTableCellView>().ok()).and_then(|c| unsafe { c.textField() }).map(|f| f.stringValue().to_string())
@@ -6425,9 +6425,9 @@ fn outline_window() -> impl View {
 }
 
 fn outline_views() -> (Retained<objc2_app_kit::NSOutlineView>, Option<Retained<objc2_app_kit::NSOutlineView>>) {
-    let w = windows().into_iter().find(|w| w.title().to_string() == "Outline").unwrap();
+    let w = windows().into_iter().find(|w| w.title() == "Outline").unwrap();
     let mut outlines: Vec<(f64, Retained<objc2_app_kit::NSOutlineView>)> = w
-        .contentView()
+        .ns().contentView()
         .unwrap()
         .subviews()
         .iter()
@@ -6444,8 +6444,8 @@ fn outline_views() -> (Retained<objc2_app_kit::NSOutlineView>, Option<Retained<o
 
 fn outline_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let o = OUTLINE.with(Clone::clone);
-    let w = windows().into_iter().find(|w| w.title().to_string() == "Outline").unwrap();
-    w.makeKeyAndOrderFront(None);
+    let w = windows().into_iter().find(|w| w.title() == "Outline").unwrap();
+    w.ns().makeKeyAndOrderFront(None);
     let (side, tree) = outline_views();
     let tree = tree.unwrap();
 
@@ -6608,8 +6608,8 @@ fn editor_window() -> impl View {
 
 fn editor_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let e = EDITOR.with(Clone::clone);
-    let w = windows().into_iter().find(|w| w.title().to_string() == "Editor").unwrap();
-    w.makeKeyAndOrderFront(None);
+    let w = windows().into_iter().find(|w| w.title() == "Editor").unwrap();
+    w.ns().makeKeyAndOrderFront(None);
     let tv = e.model.text_view();
     let sv = e.model.scroll_view();
     check(
@@ -6619,7 +6619,7 @@ fn editor_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     );
 
     // Typing at the end → binding, on_change, and the label.
-    w.makeFirstResponder(Some(&tv));
+    w.ns().makeFirstResponder(Some(&tv));
     let end = tv.string().length();
     tv.setSelectedRange(objc2_foundation::NSRange::new(end, 0));
     let not_found = objc2_foundation::NSRange::new(usize::MAX >> 1, 0);
@@ -6627,9 +6627,9 @@ fn editor_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let e2 = e.clone();
     after_events(move || {
         let e = e2.clone();
-        let w = windows().into_iter().find(|w| w.title().to_string() == "Editor").unwrap();
+        let w = windows().into_iter().find(|w| w.title() == "Editor").unwrap();
         let bound = e.notes.get_untracked();
-        let label_ok = w.contentView().unwrap().subviews().iter().filter_map(|v| v.downcast::<NSTextField>().ok())
+        let label_ok = w.ns().contentView().unwrap().subviews().iter().filter_map(|v| v.downcast::<NSTextField>().ok())
             .any(|f| f.stringValue().to_string() == format!("{} characters", bound.chars().count()));
         check("editor-typing", bound.ends_with("error. More.") && e.changes.get_untracked() >= 1 && label_ok, format!("binding {bound:?}; on_change ×{}; label follows: {label_ok}", e.changes.get_untracked()));
 
@@ -6672,9 +6672,9 @@ fn editor_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 
 fn editor_undo_and_spelling(events: Rc<RefCell<Vec<AppEvent>>>) {
     let e = EDITOR.with(Clone::clone);
-    let w = windows().into_iter().find(|w| w.title().to_string() == "Editor").unwrap();
+    let w = windows().into_iter().find(|w| w.title() == "Editor").unwrap();
     let tv = e.model.text_view();
-    w.makeFirstResponder(Some(&tv));
+    w.ns().makeFirstResponder(Some(&tv));
     // Undo through the Edit menu's ⌘Z (the editor's own undo manager).
     let before = e.notes.get_untracked();
     let undone = shortcut(&w, "z", false);
@@ -6787,9 +6787,9 @@ fn chrome_window() -> Window {
 fn chrome_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     use objc2_app_kit::{NSSearchToolbarItem, NSSplitView};
     let c = CHROME.with(Clone::clone);
-    let w = windows().into_iter().find(|w| w.title().to_string() == "Chrome").unwrap();
-    w.makeKeyAndOrderFront(None);
-    let sv = w.contentView().unwrap().subviews().iter().find_map(|v| v.downcast::<NSSplitView>().ok()).unwrap();
+    let w = windows().into_iter().find(|w| w.title() == "Chrome").unwrap();
+    w.ns().makeKeyAndOrderFront(None);
+    let sv = w.ns().contentView().unwrap().subviews().iter().find_map(|v| v.downcast::<NSSplitView>().ok()).unwrap();
     // The panes, in order (a window's top-level split is managed by a split
     // view controller, which wraps each pane in a view of its own).
     fn pane_in(v: Retained<NSView>) -> Option<Retained<NSView>> {
@@ -6812,7 +6812,7 @@ fn chrome_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     );
 
     // Window resize: the first pane keeps its width; the second takes the change.
-    w.setContentSize(objc2_foundation::NSSize::new(720.0, 400.0));
+    w.ns().setContentSize(objc2_foundation::NSSize::new(720.0, 400.0));
     let (l2, r2) = (panes[0].frame().size.width, panes[1].frame().size.width);
     let follows = (label("Content pane").frame().size.width - (r2 - 16.0)).abs() < 1.0;
     check("split-resize", (l2 - left).abs() < 1.0 && (r2 - right - 100.0).abs() < 1.0 && follows, format!("after +100 pt: panes {l2:.0} + {r2:.0}; content follows: {follows}"));
@@ -6825,7 +6825,7 @@ fn chrome_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     check("split-drag", (l3 - 240.0).abs() < 1.0 && follows, format!("divider at 240: panes {l3:.0} + {r3:.0}; both panes' content follows: {follows}"));
 
     // Toolbar: items in order; the button's action and its disabled state.
-    let tb = w.toolbar().unwrap();
+    let tb = w.ns().toolbar().unwrap();
     let items = tb.items();
     let ids: Vec<String> = items.iter().map(|i| i.itemIdentifier().to_string()).collect();
     let add = items.iter().find(|i| i.itemIdentifier().to_string() == "add").unwrap();
@@ -6879,8 +6879,8 @@ fn chrome_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 }
 
 
-fn dialogs_window() -> Retained<objc2_app_kit::NSWindow> {
-    windows().into_iter().find(|w| w.title().to_string() == "Dialogs").unwrap()
+fn dialogs_window() -> ferrokit::WindowRef {
+    windows().into_iter().find(|w| w.title() == "Dialogs").unwrap()
 }
 
 fn buttons_in(w: &objc2_app_kit::NSWindow) -> Vec<Retained<objc2_app_kit::NSButton>> {
@@ -6901,12 +6901,12 @@ fn buttons_in(w: &objc2_app_kit::NSWindow) -> Vec<Retained<objc2_app_kit::NSButt
 
 fn dialog_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let w = dialogs_window();
-    w.makeKeyAndOrderFront(None);
+    w.ns().makeKeyAndOrderFront(None);
     // Alert sheet: destructive button, the chosen button's index, closes.
     let chosen = Signal::new(None::<usize>);
     let ch = chosen;
     alert(&w, Alert::new("Delete “report.csv”?", "This can't be undone.").button("Delete").button("Cancel").destructive(0).warning(), move |i| ch.set(Some(i)));
-    let sheet_win = w.attachedSheet();
+    let sheet_win = w.ns().attachedSheet();
     let buttons = sheet_win.as_ref().map(|s| buttons_in(s)).unwrap_or_default();
     let delete = buttons.iter().find(|b| b.title().to_string() == "Delete");
     let destructive = delete.is_some_and(|b| b.hasDestructiveAction());
@@ -6941,8 +6941,8 @@ fn dialog_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         );
         check(
             "alert-sheet",
-            destructive && chosen.get_untracked() == Some(1) && w.attachedSheet().is_none(),
-            format!("Delete shown destructive: {destructive}; Cancel → {:?}; sheet closed: {}", chosen.get_untracked(), w.attachedSheet().is_none()),
+            destructive && chosen.get_untracked() == Some(1) && w.ns().attachedSheet().is_none(),
+            format!("Delete shown destructive: {destructive}; Cancel → {:?}; sheet closed: {}", chosen.get_untracked(), w.ns().attachedSheet().is_none()),
         );
         view_sheet_check(events.clone());
     });
@@ -6965,7 +6965,7 @@ fn view_sheet_check(events: Rc<RefCell<Vec<AppEvent>>>) {
     );
     let c2 = closed;
     *handle.borrow_mut() = Some(sheet(&w, content, move || c2.set(true)));
-    let sheet_win = w.attachedSheet().unwrap();
+    let sheet_win = w.ns().attachedSheet().unwrap();
     let field = sheet_win.contentView().unwrap().subviews().iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.isEditable()).unwrap();
     let shown = field.stringValue().to_string();
     let nodes_open = ferrokit::testing::live_nodes();
@@ -6977,7 +6977,7 @@ fn view_sheet_check(events: Rc<RefCell<Vec<AppEvent>>>) {
         let w = dialogs_window();
         check(
             "view-sheet",
-            shown == "draft" && typed == "final.csv" && closed.get_untracked() && w.attachedSheet().is_none() && ferrokit::testing::live_nodes() == nodes0 && nodes_open > nodes0,
+            shown == "draft" && typed == "final.csv" && closed.get_untracked() && w.ns().attachedSheet().is_none() && ferrokit::testing::live_nodes() == nodes0 && nodes_open > nodes0,
             format!(
                 "field showed {shown:?}; typed → {typed:?}; Done closed it: {}; nodes {nodes0} → {nodes_open} open → {} after",
                 closed.get_untracked(),
@@ -6998,7 +6998,7 @@ fn view_sheet_check(events: Rc<RefCell<Vec<AppEvent>>>) {
             .padding(16.0),
         );
         *handle.borrow_mut() = Some(sheet(&w, content, || {}));
-        let sheet_win = w.attachedSheet().unwrap();
+        let sheet_win = w.ns().attachedSheet().unwrap();
         let escape = objc2_app_kit::NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
             objc2_app_kit::NSEventType::KeyDown, objc2_foundation::NSPoint::new(0.0, 0.0), NSEventModifierFlags::empty(), 0.0, sheet_win.windowNumber(), None, &NSString::from_str("\u{1b}"), &NSString::from_str("\u{1b}"), false, 53,
         ).unwrap();
@@ -7008,8 +7008,8 @@ fn view_sheet_check(events: Rc<RefCell<Vec<AppEvent>>>) {
             let w = dialogs_window();
             check(
                 "sheet-escape",
-                handled && cancelled.get_untracked() && w.attachedSheet().is_none(),
-                format!("Escape handled {handled}; Cancel pressed {}; sheet closed {}", cancelled.get_untracked(), w.attachedSheet().is_none()),
+                handled && cancelled.get_untracked() && w.ns().attachedSheet().is_none(),
+                format!("Escape handled {handled}; Cancel pressed {}; sheet closed {}", cancelled.get_untracked(), w.ns().attachedSheet().is_none()),
             );
             panel_checks(events.clone());
         });
@@ -7022,7 +7022,7 @@ fn panel_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let result = Signal::new(Some(None::<Vec<std::path::PathBuf>>));
     let r2 = result;
     open_panel(&w, OpenOptions::new().extensions(&["csv", "txt"]).multiple(), move |p| r2.set(Some(p)));
-    let panel = w.attachedSheet().and_then(|s| s.downcast::<objc2_app_kit::NSOpenPanel>().ok());
+    let panel = w.ns().attachedSheet().and_then(|s| s.downcast::<objc2_app_kit::NSOpenPanel>().ok());
     let types = panel.as_ref().map_or(0, |p| p.allowedContentTypes().count());
     let multiple = panel.as_ref().is_some_and(|p| p.allowsMultipleSelection());
     if let Some(p) = &panel {
@@ -7032,7 +7032,7 @@ fn panel_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         let w = dialogs_window();
         check(
             "open-panel",
-            panel.is_some() && types == 2 && multiple && result.get_untracked() == Some(None) && w.attachedSheet().is_none(),
+            panel.is_some() && types == 2 && multiple && result.get_untracked() == Some(None) && w.ns().attachedSheet().is_none(),
             format!("NSOpenPanel sheet: {}; {types} allowed types; multiple: {multiple}; Cancel → {:?}", panel.is_some(), result.get_untracked()),
         );
         // Save panel: proposed name and folder; Cancel → None. (The panel runs
@@ -7043,7 +7043,7 @@ fn panel_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         let saved = Signal::new(None::<Option<std::path::PathBuf>>);
         let s2 = saved;
         save_panel(&w, "export.csv", Some(&dir), move |p| s2.set(Some(p)));
-        let panel = w.attachedSheet().and_then(|s| s.downcast::<objc2_app_kit::NSSavePanel>().ok());
+        let panel = w.ns().attachedSheet().and_then(|s| s.downcast::<objc2_app_kit::NSSavePanel>().ok());
         let name = panel.as_ref().map(|p| p.nameFieldStringValue().to_string());
         let folder = panel.as_ref().and_then(|p| p.directoryURL()).and_then(|u| u.path()).map(|p| p.to_string());
         let want = dir.canonicalize().unwrap_or(dir.clone()).to_string_lossy().to_string();
@@ -7057,7 +7057,7 @@ fn panel_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
             let got = saved.get_untracked();
             check(
                 "save-panel",
-                name.as_deref() == Some("export.csv") && folder_ok && got == Some(None) && w.attachedSheet().is_none(),
+                name.as_deref() == Some("export.csv") && folder_ok && got == Some(None) && w.ns().attachedSheet().is_none(),
                 format!("proposed {name:?} in {folder:?} (expected folder: {folder_ok}); Cancel → {got:?}"),
             );
             let events = events.clone();
@@ -7071,7 +7071,7 @@ fn panel_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 fn async_dialog_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     use ferrokit::{alert_async, spawn_local};
     let w = dialogs_window();
-    w.makeKeyAndOrderFront(None);
+    w.ns().makeKeyAndOrderFront(None);
     // An alert: the button chosen; and one ended with no button (its only
     // button isn't Cancel) answers None.
     let got: Rc<RefCell<Vec<Option<usize>>>> = Rc::default();
@@ -7083,16 +7083,16 @@ fn async_dialog_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         let second = alert_async(&win, Alert::new("Done", "Exported.").button("OK")).await;
         g.borrow_mut().push(second);
     });
-    let has_sheet = || dialogs_window().attachedSheet().is_some();
+    let has_sheet = || dialogs_window().ns().attachedSheet().is_some();
     until(has_sheet, 2000, move || {
         let pressed = ferrokit::testing::press_sheet_button(&dialogs_window(), "Delete");
         let got = got.clone();
         let events = events.clone();
         let g2 = got.clone();
-        until(move || g2.borrow().len() == 1 && dialogs_window().attachedSheet().is_some(), 2000, move || {
+        until(move || g2.borrow().len() == 1 && dialogs_window().ns().attachedSheet().is_some(), 2000, move || {
             let w = dialogs_window();
-            if let Some(s) = w.attachedSheet() {
-                w.endSheet(&s); // no button: an abort
+            if let Some(s) = w.ns().attachedSheet() {
+                w.ns().endSheet(&s); // no button: an abort
             }
             let got = got.clone();
             let events = events.clone();
@@ -7100,7 +7100,7 @@ fn async_dialog_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                 let answers = got.borrow().clone();
                 check(
                     "async-alert",
-                    pressed && answers == [Some(0), None] && dialogs_window().attachedSheet().is_none(),
+                    pressed && answers == [Some(0), None] && dialogs_window().ns().attachedSheet().is_none(),
                     format!("Delete pressed: {pressed}; answers {answers:?} (Delete, then an alert ended with no button)"),
                 );
                 async_sheet_checks(events.clone());
@@ -7115,7 +7115,7 @@ fn async_sheet_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let got: Rc<RefCell<Vec<Option<String>>>> = Rc::default();
     let g = got.clone();
     let win = dialogs_window();
-    let rename = move |win: Retained<objc2_app_kit::NSWindow>| {
+    let rename = move |win: ferrokit::WindowRef| {
         sheet_async(&win, |reply: Reply<String>| {
             let name = Signal::new("final.csv".to_string());
             let (ok, cancel) = (reply.clone(), reply);
@@ -7132,13 +7132,13 @@ fn async_sheet_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         let second = rename(win.clone()).await;
         g.borrow_mut().push(second);
     });
-    let has_sheet = || dialogs_window().attachedSheet().is_some();
+    let has_sheet = || dialogs_window().ns().attachedSheet().is_some();
     until(has_sheet, 2000, move || {
         let nodes_open = ferrokit::testing::live_nodes();
         let renamed = ferrokit::testing::press_sheet_button(&dialogs_window(), "Rename");
         let (got, g2) = (got.clone(), got.clone());
         let events = events.clone();
-        until(move || g2.borrow().len() == 1 && dialogs_window().attachedSheet().is_some(), 2000, move || {
+        until(move || g2.borrow().len() == 1 && dialogs_window().ns().attachedSheet().is_some(), 2000, move || {
             let cancelled = ferrokit::testing::press_sheet_button(&dialogs_window(), "Cancel");
             let got = got.clone();
             let events = events.clone();
@@ -7151,12 +7151,12 @@ fn async_sheet_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                     let _ = alert_async(&win, Alert::new("Waiting", "A task awaits this.").button("OK")).await;
                 });
                 let events = events.clone();
-                until(|| dialogs_window().attachedSheet().is_some(), 2000, move || {
-                    let shown = dialogs_window().attachedSheet().is_some();
+                until(|| dialogs_window().ns().attachedSheet().is_some(), 2000, move || {
+                    let shown = dialogs_window().ns().attachedSheet().is_some();
                     dropped.cancel();
                     let events = events.clone();
                     after_events(move || {
-                        let closed = dialogs_window().attachedSheet().is_none();
+                        let closed = dialogs_window().ns().attachedSheet().is_none();
                         check(
                             "async-sheet",
                             renamed && cancelled && answers == [Some("final.csv".to_string()), None] && nodes_open > nodes0 && nodes_after == nodes0,
@@ -7183,18 +7183,18 @@ fn async_panel_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         g.borrow_mut().push(format!("save {save:?}"));
     });
     let cancel_panel = || {
-        if let Some(p) = dialogs_window().attachedSheet().and_then(|s| s.downcast::<objc2_app_kit::NSSavePanel>().ok()) {
+        if let Some(p) = dialogs_window().ns().attachedSheet().and_then(|s| s.downcast::<objc2_app_kit::NSSavePanel>().ok()) {
             unsafe { p.cancel(None) };
             true
         } else {
             false
         }
     };
-    until(|| dialogs_window().attachedSheet().is_some(), 2000, move || {
+    until(|| dialogs_window().ns().attachedSheet().is_some(), 2000, move || {
         let open_cancelled = cancel_panel();
         let (got, g2) = (got.clone(), got.clone());
         let events = events.clone();
-        until(move || g2.borrow().len() == 1 && dialogs_window().attachedSheet().is_some(), 2000, move || {
+        until(move || g2.borrow().len() == 1 && dialogs_window().ns().attachedSheet().is_some(), 2000, move || {
             let save_cancelled = cancel_panel();
             let got = got.clone();
             let events = events.clone();
@@ -7206,11 +7206,11 @@ fn async_panel_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                     let _ = open_panel_async(&win, OpenOptions::default()).await;
                 });
                 let events = events.clone();
-                until(|| dialogs_window().attachedSheet().is_some(), 2000, move || {
+                until(|| dialogs_window().ns().attachedSheet().is_some(), 2000, move || {
                     dropped.cancel();
                     let events = events.clone();
                     after_events(move || {
-                        let closed = dialogs_window().attachedSheet().is_none();
+                        let closed = dialogs_window().ns().attachedSheet().is_none();
                         check(
                             "async-panels",
                             open_cancelled && save_cancelled && answers == ["open None", "save None"] && closed,
@@ -7228,9 +7228,9 @@ fn async_panel_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 fn controls_b_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     use objc2_app_kit::{NSBox, NSImageView, NSPopUpButton, NSProgressIndicator, NSScrollView, NSSlider, NSStepper};
     let c = CTRL_B.with(Clone::clone);
-    let w = windows().into_iter().find(|w| w.title().to_string() == "Controls B").unwrap();
-    w.makeKeyAndOrderFront(None);
-    let subs: Vec<Retained<NSView>> = w.contentView().unwrap().subviews().to_vec();
+    let w = windows().into_iter().find(|w| w.title() == "Controls B").unwrap();
+    w.ns().makeKeyAndOrderFront(None);
+    let subs: Vec<Retained<NSView>> = w.ns().contentView().unwrap().subviews().to_vec();
     let find = |f: &dyn Fn(&Retained<NSView>) -> bool| subs.iter().find(|v| f(v)).cloned().unwrap();
     let popup = find(&|v| v.clone().downcast::<NSPopUpButton>().is_ok()).downcast::<NSPopUpButton>().unwrap();
     let slider_v = find(&|v| v.clone().downcast::<NSSlider>().is_ok()).downcast::<NSSlider>().unwrap();
@@ -7239,7 +7239,7 @@ fn controls_b_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let img = find(&|v| v.clone().downcast::<NSImageView>().is_ok()).downcast::<NSImageView>().unwrap();
     let line = find(&|v| v.clone().downcast::<NSBox>().is_ok());
     let sv = find(&|v| v.clone().downcast::<NSScrollView>().is_ok()).downcast::<NSScrollView>().unwrap();
-    let content_w = w.contentView().unwrap().bounds().size.width;
+    let content_w = w.ns().contentView().unwrap().bounds().size.width;
 
     // Picker: starts on the signal's value; user choice → signal; signal → menu.
     let initial = popup.indexOfSelectedItem();
@@ -7346,15 +7346,15 @@ fn restore_run(step: String) {
         .window(Window::new("Restore").size(400.0, 240.0).remember_frame("two-launch").view(split((text("a"), text("b"))).position(120.0).remember("two-launch")))
         .on_launch(move || {
             let w = windows().remove(0);
-            let sv = all_views(&w.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSSplitView>().ok()).unwrap();
+            let sv = all_views(&w.ns().contentView().unwrap()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSSplitView>().ok()).unwrap();
             let pane = || sv.arrangedSubviews().firstObject().unwrap().frame().size.width;
             if step == "save" {
-                w.setFrame_display(target, true);
+                w.ns().setFrame_display(target, true);
                 sv.setPosition_ofDividerAtIndex(210.0, 0);
-                eprintln!("[restore] saved frame {:?} pane {}", w.frame(), pane());
+                eprintln!("[restore] saved frame {:?} pane {}", w.ns().frame(), pane());
                 ferrokit::quit();
             } else {
-                let (frame, width) = (w.frame(), pane());
+                let (frame, width) = (w.ns().frame(), pane());
                 check("restore-across-launches", frame == target && width == 210.0, format!("frame {frame:?}; pane {width}"));
                 let d = NSUserDefaults::standardUserDefaults();
                 d.removeObjectForKey(&NSString::from_str("NSWindow Frame two-launch"));

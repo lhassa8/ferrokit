@@ -11,7 +11,7 @@ use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Bool, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send, sel};
-use objc2_app_kit::{NSButton, NSImage, NSPrintInfo, NSPrintOperation, NSPrintingPaginationMode, NSSharingServicePicker, NSView, NSWindow};
+use objc2_app_kit::{NSButton, NSImage, NSPrintInfo, NSPrintOperation, NSPrintingPaginationMode, NSSharingServicePicker, NSView};
 use objc2_foundation::{NSArray, NSBundle, NSError, NSOperationQueue, NSRectEdge, NSSize, NSString, NSURL};
 use objc2_user_notifications::{
     UNAuthorizationOptions, UNMutableNotificationContent, UNNotification, UNNotificationPresentationOptions, UNNotificationRequest, UNNotificationResponse,
@@ -188,7 +188,8 @@ thread_local! {
 ///
 /// The view is built for printing on its own: text, pictures, symbols,
 /// charts, backgrounds and borders print; shadows and materials don't.
-pub fn print(window: &NSWindow, title: &str, view: impl View) {
+pub fn print(window: &crate::WindowRef, title: &str, view: impl View) {
+    let window = window.ns();
     let info = print_info();
     let root = printable(AnyView::new(view), &info);
     let op = NSPrintOperation::printOperationWithView_printInfo(&root, &info);

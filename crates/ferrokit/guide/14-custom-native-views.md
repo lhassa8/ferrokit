@@ -213,7 +213,7 @@ compiles it into the app from `build.rs`:
 ```toml
 # Cargo.toml
 [build-dependencies]
-ferrokit-build = "0.14"
+ferrokit-build = "0.15"
 ```
 
 ```rust,ignore

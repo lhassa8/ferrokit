@@ -269,9 +269,9 @@ mod self_checks {
     }
 
     pub fn run(s: State) {
-        let w = windows().into_iter().find(|w| w.title().to_string() == "Native Views").unwrap();
+        let w = windows().into_iter().find(|w| w.title() == "Native Views").unwrap();
         let failed = Rc::new(Cell::new(0));
-        let all = views(&w);
+        let all = views(w.ns());
         let map = all.iter().find_map(|v| v.clone().downcast::<MKMapView>().ok()).unwrap();
         let dial = all.iter().find_map(|v| v.clone().downcast::<Dial>().ok()).unwrap();
         let near = |m: &MKMapView, c: &City| {
@@ -284,7 +284,7 @@ mod self_checks {
         check(
             &f,
             "native-map-layout",
-            fr.size.width >= 320.0 && (fr.size.width - (w.contentView().unwrap().frame().size.width - 240.0)).abs() < 1.0 && df.size.width == 120.0 && df.size.height == 120.0,
+            fr.size.width >= 320.0 && (fr.size.width - (w.ns().contentView().unwrap().frame().size.width - 240.0)).abs() < 1.0 && df.size.width == 120.0 && df.size.height == 120.0,
             format!("map {:.0}×{:.0} fills beside the column (200 + 32 padding + 8 spacing); dial {}×{}", fr.size.width, fr.size.height, df.size.width, df.size.height),
         );
         let at_london = near(&map, &CITIES[0]);

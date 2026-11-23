@@ -213,7 +213,7 @@ mod demo {
     use super::{Picks, Settings};
 
     pub fn run(page: Signal<i32>, s: Settings, k: Picks) {
-        let Some(w) = windows().into_iter().find(|w| w.title().to_string() == "Trip budget") else { return };
+        let Some(w) = windows().into_iter().find(|w| w.title() == "Trip budget") else { return };
         set_appearance(Appearance::Light);
         s.folder.set("/System/Library/Desktop Pictures".into());
         place(&w, 980.0, 620.0);
@@ -271,8 +271,8 @@ mod self_checks {
 
     pub fn run() {
         let ws = windows();
-        let w = ws.iter().find(|w| w.title().to_string() == "Trip budget").unwrap().clone();
-        let prefs = ws.iter().find(|w| w.title().to_string() == "Preferences").unwrap().clone();
+        let w = ws.iter().find(|w| w.title() == "Trip budget").unwrap().clone();
+        let prefs = ws.iter().find(|w| w.title() == "Preferences").unwrap().clone();
         let (page, s) = STATE.with(Cell::get).unwrap();
         let failed = Rc::new(Cell::new(0));
         let check: Check = {
@@ -286,23 +286,23 @@ mod self_checks {
         check("accessibility", problems.is_empty(), format!("{problems:?}"));
         // (Changes made here land when this callback returns: each phase
         // reads the last one's a moment later.)
-        let meter = levels(&w).into_iter().find(|l| l.levelIndicatorStyle() == objc2_app_kit::NSLevelIndicatorStyle::ContinuousCapacity).unwrap();
+        let meter = levels(w.ns()).into_iter().find(|l| l.levelIndicatorStyle() == objc2_app_kit::NSLevelIndicatorStyle::ContinuousCapacity).unwrap();
         let before = meter.doubleValue();
         page.set(3);
         s.storage.set(93.0);
         later_ms(60, move || controls(w, prefs, page, s, check, failed, before));
     }
 
-    fn controls(w: Retained<NSWindow>, prefs: Retained<NSWindow>, page: Signal<i32>, s: Settings, check: Check, failed: Rc<Cell<u32>>, before: f64) {
-        snap(&w, "settings");
-        snap(&prefs, "prefs");
+    fn controls(w: WindowRef, prefs: WindowRef, page: Signal<i32>, s: Settings, check: Check, failed: Rc<Cell<u32>>, before: f64) {
+        snap(w.ns(), "settings");
+        snap(prefs.ns(), "prefs");
         // Tabs, segmented: a segmented control over a tabless tab view,
         // both ways bound to the page.
-        let tv = all(&w).into_iter().find_map(|v| v.downcast::<NSTabView>().ok()).unwrap();
-        let seg = all(&w).into_iter().find_map(|v| v.downcast::<NSSegmentedControl>().ok());
+        let tv = all(w.ns()).into_iter().find_map(|v| v.downcast::<NSTabView>().ok()).unwrap();
+        let seg = all(w.ns()).into_iter().find_map(|v| v.downcast::<NSSegmentedControl>().ok());
         let shown = tv.selectedTabViewItem().map(|t| tv.indexOfTabViewItem(&t));
         // The settings pane is laid out once shown.
-        let radio_w = buttons(&w).iter().find(|b| b.title().to_string() == "Euro").map(|b| b.frame().size.width).unwrap_or(0.0);
+        let radio_w = buttons(w.ns()).iter().find(|b| b.title().to_string() == "Euro").map(|b| b.frame().size.width).unwrap_or(0.0);
         tv.selectTabViewItemAtIndex(1);
         let back = page.get();
         check(
@@ -310,9 +310,9 @@ mod self_checks {
             tv.tabViewType() == NSTabViewType::NoTabsNoBorder && seg.as_ref().is_some_and(|s| s.segmentCount() == 5) && shown == Some(3) && back == 1 && radio_w > 20.0,
             format!("tabless {:?}; segments {:?}; page 3 shows {shown:?}; choosing tab 1 sets the page to {back}; settings laid out ({radio_w} wide)", tv.tabViewType(), seg.map(|s| s.segmentCount())),
         );
-        let ptv = all(&prefs).into_iter().find_map(|v| v.downcast::<NSTabView>().ok()).unwrap();
+        let ptv = all(prefs.ns()).into_iter().find_map(|v| v.downcast::<NSTabView>().ok()).unwrap();
         ptv.selectTabViewItemAtIndex(1);
-        let sync = all(&prefs).into_iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string() == "Sync is off").is_some_and(|f| f.window().is_some() && f.frame().size.width > 0.0);
+        let sync = all(prefs.ns()).into_iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string() == "Sync is off").is_some_and(|f| f.window().is_some() && f.frame().size.width > 0.0);
         check(
             "tabs-bordered",
             ptv.tabViewType() == NSTabViewType::TopTabsBezelBorder && ptv.numberOfTabViewItems() == 2 && has_ax(&ax_tree(&prefs), "AXTabGroup", "", "") && sync,
@@ -320,14 +320,14 @@ mod self_checks {
         );
 
         // Radio group: a click sets the value (the state follows below).
-        let euro = buttons(&w).into_iter().find(|b| b.title().to_string() == "Euro").unwrap();
+        let euro = buttons(w.ns()).into_iter().find(|b| b.title().to_string() == "Euro").unwrap();
         // SAFETY: a click on a button of this window.
         unsafe { euro.performClick(None) };
         let picked = s.currency.get();
         s.currency.set("JPY".into());
 
         // Token field: set from the signal, edits back, suggestions.
-        let tokens = all(&w).into_iter().find_map(|v| v.downcast::<NSTokenField>().ok()).unwrap();
+        let tokens = all(w.ns()).into_iter().find_map(|v| v.downcast::<NSTokenField>().ok()).unwrap();
         let shown_tokens = token_strings(&tokens);
         let strings = NSArray::from_retained_slice(&[NSString::from_str("Hiking"), NSString::from_str("Ferries")]);
         // SAFETY: an array of strings is a token field's value.
@@ -342,7 +342,7 @@ mod self_checks {
         );
 
         // Rating (editable) and gauge (shown, with warning and critical).
-        let all_levels = levels(&w);
+        let all_levels = levels(w.ns());
         let stars = all_levels.iter().find(|l| l.levelIndicatorStyle() == objc2_app_kit::NSLevelIndicatorStyle::Rating).unwrap();
         let shown_stars = stars.doubleValue();
         stars.setDoubleValue(2.0);
@@ -356,7 +356,7 @@ mod self_checks {
         );
 
         // Path control: shows the folder; choosing a parent sets it.
-        let path = all(&w).into_iter().find_map(|v| v.downcast::<NSPathControl>().ok()).unwrap();
+        let path = all(w.ns()).into_iter().find_map(|v| v.downcast::<NSPathControl>().ok()).unwrap();
         let shown_path = path.URL().and_then(|u| u.path()).map(|p| PathBuf::from(p.to_string()));
         let canon = |p: &PathBuf| p.canonicalize().unwrap_or(p.clone());
         let shows = shown_path.as_ref().is_some_and(|p| canon(p) == canon(&std::env::temp_dir()));
@@ -367,7 +367,7 @@ mod self_checks {
         check("path-control", shows && tall && s.folder.get() == std::path::Path::new("/Users"), format!("shows {shown_path:?}, {} pt tall; choosing /Users sets {:?}", path.frame().size.height, s.folder.get()));
 
         // Link and tooltip.
-        let link = all(&w).into_iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string() == "Ferrokit guide").unwrap();
+        let link = all(w.ns()).into_iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.stringValue().to_string() == "Ferrokit guide").unwrap();
         let attrs = link.attributedStringValue();
         // SAFETY: reading an attribute at index 0 of a non-empty string.
         let url = unsafe { attrs.attribute_atIndex_effectiveRange(objc2_app_kit::NSLinkAttributeName, 0, std::ptr::null_mut()) };
@@ -378,21 +378,21 @@ mod self_checks {
             url.as_deref() == Some("https://github.com/lhassa8/ferrokit") && link.isSelectable() && role.as_deref() == Some("AXLink"),
             format!("url {url:?}; VoiceOver role {role:?}"),
         );
-        let reset = buttons(&w).into_iter().find(|b| b.title().to_string() == "Reset").unwrap();
+        let reset = buttons(w.ns()).into_iter().find(|b| b.title().to_string() == "Reset").unwrap();
         let tip = reset.toolTip().map(|t| t.to_string());
         check("tooltip", tip.as_deref() == Some("Clears the rating"), format!("{tip:?}"));
         page.set(0);
         later_ms(60, move || {
-            let yen_on = buttons(&w).into_iter().find(|b| b.title().to_string() == "Yen").is_some_and(|b| b.state() == objc2_app_kit::NSControlStateValueOn);
+            let yen_on = buttons(w.ns()).into_iter().find(|b| b.title().to_string() == "Yen").is_some_and(|b| b.state() == objc2_app_kit::NSControlStateValueOn);
             let euro_off = euro.state() == objc2_app_kit::NSControlStateValueOff;
             check("radio-group", picked == "EUR" && yen_on && euro_off, format!("click Euro → {picked}; set Yen → Yen on {yen_on}, Euro off {euro_off}"));
             charts(w, page, check, failed);
         });
     }
 
-    fn charts(w: Retained<NSWindow>, page: Signal<i32>, check: Check, failed: Rc<Cell<u32>>) {
-        snap(&w, "overview");
-        let drawings: Vec<(Retained<NSView>, Vec<String>, String)> = all(&w)
+    fn charts(w: WindowRef, page: Signal<i32>, check: Check, failed: Rc<Cell<u32>>) {
+        snap(w.ns(), "overview");
+        let drawings: Vec<(Retained<NSView>, Vec<String>, String)> = all(w.ns())
             .into_iter()
             .filter_map(|v| canvas_drawing(&v).map(|d| (v.clone(), d, v.accessibilityLabel().map(|s| s.to_string()).unwrap_or_default())))
             .collect();
@@ -447,8 +447,8 @@ mod self_checks {
         page.set(1);
         later_ms(80, move || {
             let w2 = w.clone();
-            let get = move |prefix: &str| all(&w2).into_iter().filter_map(|v| canvas_drawing(&v).map(|d| (v, d))).find(|(v, _)| v.accessibilityLabel().is_some_and(|l| l.to_string().starts_with(prefix)));
-            snap(&w, "trends");
+            let get = move |prefix: &str| all(w2.ns()).into_iter().filter_map(|v| canvas_drawing(&v).map(|d| (v, d))).find(|(v, _)| v.accessibilityLabel().is_some_and(|l| l.to_string().starts_with(prefix)));
+            snap(w.ns(), "trends");
             let area = get("Area chart");
             let texts: Vec<String> = area.as_ref().map(|(_, d)| d.iter().filter(|o| o.starts_with("text")).cloned().collect()).unwrap_or_default();
             let months = ["Jan", "Feb", "Mar"].iter().all(|m| texts.iter().any(|o| o.starts_with(&format!("text \"{m}"))));
@@ -491,14 +491,14 @@ mod self_checks {
             }
             let w5 = w.clone();
             later_ms(80, move || {
-                snap(&w5, "trends-zoomed");
+                snap(w5.ns(), "trends-zoomed");
                 page.set(2);
             });
             // A slow machine (a debug build on CI) can take a while to draw the page.
             let get2 = get.clone();
             let drawn = move || get2("Scatter chart").is_some_and(|(_, d)| d.iter().any(|o| o.starts_with("fill ellipse")));
             later_when(160, 3000, drawn, move || {
-                snap(&w, "rides");
+                snap(w.ns(), "rides");
                 let scatter = get("Scatter chart");
                 page.set(3);
                 let w3 = w.clone();
@@ -520,10 +520,10 @@ mod self_checks {
         });
     }
 
-    fn analysis_checks(w: Retained<NSWindow>, check: Check, failed: Rc<Cell<u32>>) {
-        snap(&w, "analysis");
+    fn analysis_checks(w: WindowRef, check: Check, failed: Rc<Cell<u32>>) {
+        snap(w.ns(), "analysis");
         let w2 = w.clone();
-        let get = move |prefix: &str| all(&w2).into_iter().filter_map(|v| canvas_drawing(&v).map(|d| (v, d))).filter(|(v, _)| v.accessibilityLabel().is_some_and(|l| l.to_string().starts_with(prefix))).collect::<Vec<_>>();
+        let get = move |prefix: &str| all(w2.ns()).into_iter().filter_map(|v| canvas_drawing(&v).map(|d| (v, d))).filter(|(v, _)| v.accessibilityLabel().is_some_and(|l| l.to_string().starts_with(prefix))).collect::<Vec<_>>();
         let label = |v: &NSView| v.accessibilityLabel().map(|l| l.to_string()).unwrap_or_default();
         // Histogram: 60 rides in bins on round dollars, the average marked.
         let hist = get("Histogram").pop();
@@ -552,7 +552,7 @@ mod self_checks {
         let problems = ax_audit(&w);
         check("analysis-accessibility", problems.is_empty(), format!("{problems:?}"));
         later_ms(300, move || {
-            snap(&w, "analysis-later");
+            snap(w.ns(), "analysis-later");
             eprintln!("[check] done, {} failed", failed.get());
             std::process::exit(if failed.get() == 0 { 0 } else { 1 });
         });
@@ -561,7 +561,7 @@ mod self_checks {
     /// Saves a capture of `w` as `<SNAP>/components-<name>.png` when SNAP is set.
     fn snap(w: &NSWindow, name: &str) {
         let Ok(dir) = std::env::var("SNAP") else { return };
-        let Some(rep) = ferrokit::testing::capture_window(w) else { return };
+        let Some(rep) = ferrokit::testing::capture_window(&WindowRef::from_ns(w)) else { return };
         // SAFETY: encoding a bitmap as PNG with no options.
         if let Some(png) = unsafe { rep.representationUsingType_properties(objc2_app_kit::NSBitmapImageFileType::PNG, &objc2_foundation::NSDictionary::new()) } {
             png.writeToFile_atomically(&NSString::from_str(&format!("{dir}/components-{name}.png")), true);

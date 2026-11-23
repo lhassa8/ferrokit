@@ -20,13 +20,14 @@ pub fn at(ms: u64, f: impl FnOnce() + 'static) -> Step {
 /// then prints its frame for the recorder: `[demo] frame x y w h`, points
 /// from the screen's top left, title bar included. The pointer is hidden
 /// while the app is in front (the tour's clicks don't move it).
-pub fn place(window: &NSWindow, width: f64, height: f64) {
+pub fn place(handle: &ferrokit::WindowRef, width: f64, height: f64) {
+    let window = handle.ns();
     let mtm = objc2::MainThreadMarker::new().unwrap();
     // SAFETY: +[NSCursor hide] on the main thread (no binding enabled for it).
     let _: () = unsafe { objc2::msg_send![objc2::class!(NSCursor), hide] };
     for w in windows() {
-        if &*w != window {
-            w.orderOut(None);
+        if !std::ptr::eq(w.ns(), window) {
+            w.ns().orderOut(None);
         }
     }
     let Some(screen) = NSScreen::mainScreen(mtm) else { return };
@@ -34,7 +35,7 @@ pub fn place(window: &NSWindow, width: f64, height: f64) {
     let (wd, ht) = (width.min(v.size.width * 0.97), height.min(v.size.height * 0.97));
     let origin = NSPoint::new((v.origin.x + (v.size.width - wd) / 2.0).round(), (v.origin.y + (v.size.height - ht) / 2.0).round());
     window.setFrame_display(NSRect::new(origin, NSSize::new(wd, ht)), true);
-    testing::input::ready(window);
+    testing::input::ready(handle);
     let full = screen.frame().size.height;
     let f = window.frame();
     eprintln!("[demo] frame {:.0} {:.0} {:.0} {:.0}", f.origin.x, full - f.origin.y - f.size.height, f.size.width, f.size.height);
@@ -86,8 +87,8 @@ pub fn views(window: &NSWindow) -> Vec<objc2::rc::Retained<objc2_app_kit::NSView
 /// Clicks the button titled `title` in a visible window, as the user would.
 pub fn press(title: &'static str) -> Step {
     at(0, move || {
-        for w in windows().into_iter().filter(|w| w.isVisible()) {
-            let found = views(&w).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).find(|b| b.title().to_string() == title);
+        for w in windows().into_iter().filter(|w| w.ns().isVisible()) {
+            let found = views(w.ns()).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).find(|b| b.title().to_string() == title);
             if let Some(b) = found {
                 testing::input::click(&b);
                 return;

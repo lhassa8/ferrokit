@@ -139,7 +139,7 @@ mod self_checks {
     }
 
     fn views() -> Vec<Retained<NSView>> {
-        windows()[0].contentView().unwrap().subviews().to_vec()
+        windows()[0].ns().contentView().unwrap().subviews().to_vec()
     }
 
     fn fields() -> Vec<Retained<NSTextField>> {
@@ -156,7 +156,7 @@ mod self_checks {
 
     pub fn run(s: Settings) {
         let w = windows()[0].clone();
-        w.makeKeyAndOrderFront(None);
+        w.ns().makeKeyAndOrderFront(None);
 
         // Form layout: labels right-aligned in one column, fields after it.
         let labels: Vec<_> = ["Name:", "Email:", "Password:"].iter().map(|t| label_with(t).unwrap().frame()).collect();
@@ -183,7 +183,7 @@ mod self_checks {
 
         // Tab: Name → Email → Password.
         let secure = views().into_iter().find_map(|v| v.downcast::<NSSecureTextField>().ok()).unwrap();
-        w.makeFirstResponder(Some(&f[0]));
+        w.ns().makeFirstResponder(Some(&f[0]));
         let tab = |field: &NSTextField| {
             if let Some(e) = field.currentEditor() {
                 let _: () = unsafe { objc2::msg_send![&*e, insertTab: Option::<&objc2::runtime::AnyObject>::None] };
@@ -195,7 +195,7 @@ mod self_checks {
         check("tab-order", at_email && secure.currentEditor().is_some(), format!("Name → Email: {at_email}; Email → Password: {}", secure.currentEditor().is_some()));
 
         // Shortcut through the menu: ⌘A in the name field.
-        w.makeFirstResponder(Some(&f[0]));
+        w.ns().makeFirstResponder(Some(&f[0]));
         let all = shortcut(&w, "a", false) && f[0].currentEditor().is_some_and(|e| e.selectedRange().length == s.name.get_untracked().chars().count());
         check("select-all", all, "⌘A selects the whole name".into());
 
@@ -258,7 +258,7 @@ mod self_checks {
     fn progress_on_screen() {
         let bar = views().into_iter().find(|v| v.class().name().to_string_lossy() == "NSProgressIndicator").unwrap();
         let w = bar.window().unwrap();
-        let Some(rep) = ferrokit::testing::capture_window(&w) else {
+        let Some(rep) = ferrokit::testing::capture_window(&WindowRef::from_ns(&w)) else {
             return check("progress-on-screen", true, "skipped: no capture of the window's content (screen recording not allowed here)".into());
         };
         let rows = ferrokit::testing::captured_pixels(&rep, &bar, 1);

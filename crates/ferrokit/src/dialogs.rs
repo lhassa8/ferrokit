@@ -70,7 +70,8 @@ impl Alert {
 
 /// Shows `alert` as a sheet on `window`; `on_response` gets the index of the
 /// button chosen.
-pub fn alert(window: &NSWindow, alert: Alert, on_response: impl FnOnce(usize) + 'static) {
+pub fn alert(window: &crate::WindowRef, alert: Alert, on_response: impl FnOnce(usize) + 'static) {
+    let window = window.ns();
     show_alert(window, alert, move |i| {
         if let Some(i) = i {
             on_response(i);
@@ -87,7 +88,7 @@ pub fn alert(window: &NSWindow, alert: Alert, on_response: impl FnOnce(usize) + 
 /// ```no_run
 /// use ferrokit::*;
 ///
-/// fn delete(window: Retained<NSWindow>, deleted: Signal<bool>) {
+/// fn delete(window: WindowRef, deleted: Signal<bool>) {
 ///     spawn_local(async move {
 ///         let ask = Alert::new("Delete “report.csv”?", "This can't be undone.").button("Delete").button("Cancel").destructive(0);
 ///         if alert_async(&window, ask).await == Some(0) {
@@ -97,7 +98,8 @@ pub fn alert(window: &NSWindow, alert: Alert, on_response: impl FnOnce(usize) + 
 /// }
 /// # let _ = delete;
 /// ```
-pub fn alert_async(window: &NSWindow, alert: Alert) -> crate::Answer<Option<usize>> {
+pub fn alert_async(window: &crate::WindowRef, alert: Alert) -> crate::Answer<Option<usize>> {
+    let window = window.ns();
     let cell: Pending<Option<usize>> = std::rc::Rc::default();
     let c = cell.clone();
     let shown = show_alert(window, alert, move |i| {
@@ -156,14 +158,15 @@ impl SheetHandle {
     }
 
     /// The sheet's window.
-    pub fn window(&self) -> Retained<NSWindow> {
-        self.sheet.clone()
+    pub fn window(&self) -> crate::WindowRef {
+        crate::WindowRef::new(self.sheet.clone())
     }
 }
 
 /// Shows `content` (a [`Window`] built as usual: size and view) as a sheet on
 /// `parent`. `on_close` runs when it closes; the view tree is then dropped.
-pub fn sheet(parent: &NSWindow, content: Window, on_close: impl FnOnce() + 'static) -> SheetHandle {
+pub fn sheet(parent: &crate::WindowRef, content: Window, on_close: impl FnOnce() + 'static) -> SheetHandle {
+    let parent = parent.ns();
     let sheet = objc2::rc::autoreleasepool(|_| content.open(mtm()));
     let handle = SheetHandle { parent: parent.retain(), sheet: sheet.clone() };
     let closed = once(move |()| on_close());
@@ -185,7 +188,7 @@ pub fn sheet(parent: &NSWindow, content: Window, on_close: impl FnOnce() + 'stat
 /// ```no_run
 /// use ferrokit::*;
 ///
-/// fn rename(parent: &objc2_app_kit::NSWindow) {
+/// fn rename(parent: &WindowRef) {
 ///     sheet_with(parent, || {
 ///         let name = Signal::new(String::new());
 ///         Window::new("Rename").size(300.0, 100.0).view(text_field(&name).padding(16.0))
@@ -193,7 +196,7 @@ pub fn sheet(parent: &NSWindow, content: Window, on_close: impl FnOnce() + 'stat
 /// }
 /// # let _ = rename;
 /// ```
-pub fn sheet_with(parent: &NSWindow, make: impl FnOnce() -> crate::Window, on_close: impl FnOnce() + 'static) -> SheetHandle {
+pub fn sheet_with(parent: &crate::WindowRef, make: impl FnOnce() -> crate::Window, on_close: impl FnOnce() + 'static) -> SheetHandle {
     let owner = crate::signal::Owner::new();
     let content = owner.with(make);
     let handle = sheet(parent, content, on_close);
@@ -260,7 +263,7 @@ impl<T> Reply<T> {
 /// ```no_run
 /// use ferrokit::*;
 ///
-/// fn rename(window: Retained<NSWindow>, title: Signal<String>) {
+/// fn rename(window: WindowRef, title: Signal<String>) {
 ///     spawn_local(async move {
 ///         let name = sheet_async(&window, |reply: Reply<String>| {
 ///             let name = Signal::new(title.get_untracked());
@@ -282,7 +285,7 @@ impl<T> Reply<T> {
 /// }
 /// # let _ = rename;
 /// ```
-pub fn sheet_async<T: 'static>(parent: &NSWindow, make: impl FnOnce(Reply<T>) -> crate::Window) -> crate::Answer<Option<T>> {
+pub fn sheet_async<T: 'static>(parent: &crate::WindowRef, make: impl FnOnce(Reply<T>) -> crate::Window) -> crate::Answer<Option<T>> {
     let inner = std::rc::Rc::new(ReplyInner { value: RefCell::new(None), handle: RefCell::new(None) });
     let reply = Reply { inner: inner.clone() };
     let cell: Pending<Option<T>> = std::rc::Rc::default();
@@ -353,7 +356,8 @@ fn content_types(extensions: &[String]) -> Option<Retained<NSArray<objc2_uniform
 
 /// Shows the Open panel as a sheet on `window`; `on_done` gets the chosen
 /// paths, or `None` if cancelled.
-pub fn open_panel(window: &NSWindow, options: OpenOptions, on_done: impl FnOnce(Option<Vec<PathBuf>>) + 'static) {
+pub fn open_panel(window: &crate::WindowRef, options: OpenOptions, on_done: impl FnOnce(Option<Vec<PathBuf>>) + 'static) {
+    let window = window.ns();
     let (panel, block) = open_panel_parts(options, on_done);
     panel.beginSheetModalForWindow_completionHandler(window, &block);
 }
@@ -362,7 +366,8 @@ pub fn open_panel(window: &NSWindow, options: OpenOptions, on_done: impl FnOnce(
 /// chosen paths (`None` if cancelled): [`open_panel`] for a
 /// [`spawn_local`](crate::spawn_local) task. Dropping the future (the task
 /// was cancelled) closes the panel.
-pub fn open_panel_async(window: &NSWindow, options: OpenOptions) -> crate::Answer<Option<Vec<PathBuf>>> {
+pub fn open_panel_async(window: &crate::WindowRef, options: OpenOptions) -> crate::Answer<Option<Vec<PathBuf>>> {
+    let window = window.ns();
     let cell: Pending<Option<Vec<PathBuf>>> = std::rc::Rc::default();
     let c = cell.clone();
     let (panel, block) = open_panel_parts(options, move |paths| {
@@ -407,7 +412,8 @@ fn open_panel_parts(options: OpenOptions, on_done: impl FnOnce(Option<Vec<PathBu
 /// Shows the Save panel as a sheet on `window`, proposing `name` (in
 /// `directory`, if given); `on_done` gets the chosen path, or `None` if
 /// cancelled. Nothing is written: saving is the app's job.
-pub fn save_panel(window: &NSWindow, name: &str, directory: Option<&std::path::Path>, on_done: impl FnOnce(Option<PathBuf>) + 'static) {
+pub fn save_panel(window: &crate::WindowRef, name: &str, directory: Option<&std::path::Path>, on_done: impl FnOnce(Option<PathBuf>) + 'static) {
+    let window = window.ns();
     show_save_panel(window, name, directory, on_done);
 }
 
@@ -419,7 +425,7 @@ pub fn save_panel(window: &NSWindow, name: &str, directory: Option<&std::path::P
 /// ```no_run
 /// use ferrokit::*;
 ///
-/// fn export(window: Retained<NSWindow>, csv: String, status: Signal<String>) {
+/// fn export(window: WindowRef, csv: String, status: Signal<String>) {
 ///     spawn_local(async move {
 ///         let Some(path) = save_panel_async(&window, "export.csv", None).await else { return };
 ///         match background(move || std::fs::write(&path, csv)).await {
@@ -430,7 +436,8 @@ pub fn save_panel(window: &NSWindow, name: &str, directory: Option<&std::path::P
 /// }
 /// # let _ = export;
 /// ```
-pub fn save_panel_async(window: &NSWindow, name: &str, directory: Option<&std::path::Path>) -> crate::Answer<Option<PathBuf>> {
+pub fn save_panel_async(window: &crate::WindowRef, name: &str, directory: Option<&std::path::Path>) -> crate::Answer<Option<PathBuf>> {
+    let window = window.ns();
     let cell: Pending<Option<PathBuf>> = std::rc::Rc::default();
     let c = cell.clone();
     let panel = show_save_panel(window, name, directory, move |path| {

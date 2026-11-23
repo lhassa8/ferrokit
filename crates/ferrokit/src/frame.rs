@@ -7,8 +7,6 @@ use std::cell::{Cell, RefCell};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject};
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
-use objc2_app_kit::NSWindow;
-
 
 /// The stand-in timer's interval, and how long without a display frame
 /// before it takes over.
@@ -112,7 +110,8 @@ impl Drop for FrameLoop {
 /// data keeps flowing in small steps rather than piling up.
 ///
 /// Keep the returned [`FrameLoop`]; dropping it stops the calls.
-pub fn on_frame(window: &NSWindow, f: impl FnMut(f64) + 'static) -> FrameLoop {
+pub fn on_frame(window: &crate::WindowRef, f: impl FnMut(f64) + 'static) -> FrameLoop {
+    let window = window.ns();
     let mtm = crate::mtm();
     let ticks = Ticks { f: RefCell::new(Box::new(f)), last_display: Cell::new(0.0), display: Cell::new(0), fallback: Cell::new(0) };
     let target = FrameTarget::alloc(mtm).set_ivars(ticks);

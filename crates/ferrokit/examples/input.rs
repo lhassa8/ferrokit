@@ -179,7 +179,7 @@ mod self_checks {
     }
 
     pub fn run(editor: TextModel) {
-        let w = windows().into_iter().find(|w| w.title().to_string() == "Sign up").unwrap();
+        let w = windows().into_iter().find(|w| w.title() == "Sign up").unwrap();
         let f = STATE.with(|s| s.borrow_mut().take()).unwrap();
         let failed = Rc::new(Cell::new(0));
         let check: Check = {
@@ -197,7 +197,7 @@ mod self_checks {
                 return finish(failed);
             }
             let (c, w2) = (check.clone(), w.clone());
-            let name = named(&w, "Name").unwrap();
+            let name = named(w.ns(), "Name").unwrap();
             let (c2, c3, c4, c5, c6, c7, c8, c9, c10, c11) = (c.clone(), c.clone(), c.clone(), c.clone(), c.clone(), c.clone(), c.clone(), c.clone(), c.clone(), c.clone());
             let (w3, w4, w5, w6, w7, w8, w9, w10, w11) = (w.clone(), w.clone(), w.clone(), w.clone(), w.clone(), w.clone(), w.clone(), w.clone(), w.clone());
             let editor2 = editor.clone();
@@ -216,7 +216,7 @@ mod self_checks {
                     input::key(&w3, Key::Tab, &[]);
                 }),
                 Box::new(move || {
-                    let after = focused(&w4);
+                    let after = focused(w4.ns());
                     c2("delete-and-tab", untrack(|| f.name.get()) == "Ada Lovelac" && after == "Email", format!("name {:?}; focus on {after:?}", untrack(|| f.name.get())));
                     input::type_text(&w4, "ada@example.com");
                     // ⌘A then typing replaces it all.
@@ -229,7 +229,7 @@ mod self_checks {
                         c("select-all-replace", untrack(|| f.email.get()) == "a@b.c", format!("{:?}", untrack(|| f.email.get())));
                         // The search field: typing changes the value and
                         // submits nothing; Return submits once.
-                        if let Some(find) = named(&w, "Find") {
+                        if let Some(find) = named(w.ns(), "Find") {
                             input::click(&find);
                         }
                     }
@@ -252,7 +252,7 @@ mod self_checks {
                 }),
                 Box::new(move || {
                     // The editor: a click, two lines, then ⌘Z.
-                    if let Some(ed) = named(&w5, "Notes") {
+                    if let Some(ed) = named(w5.ns(), "Notes") {
                         input::click(&ed);
                     }
                 }),
@@ -268,17 +268,17 @@ mod self_checks {
                     let undone = untrack(|| f.notes.get());
                     c5("undo-typing", undone.len() < "First line\nSecond".len(), format!("after ⌘Z {undone:?}"));
                     // The checkbox, a segment, the card and Save, by clicks.
-                    if let Some(b) = views(&w8).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).find(|b| b.title().to_string() == "Send me the newsletter") {
+                    if let Some(b) = views(w8.ns()).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).find(|b| b.title().to_string() == "Send me the newsletter") {
                         input::click(&b);
                     }
-                    if let Some(seg) = first::<objc2_app_kit::NSSegmentedControl>(&w8) {
+                    if let Some(seg) = first::<objc2_app_kit::NSSegmentedControl>(w8.ns()) {
                         let width = seg.bounds().size.width;
                         input::click_at(&seg, width * 5.0 / 6.0, seg.bounds().size.height / 2.0);
                     }
-                    if let Some(card) = named(&w8, "Card").filter(|v| v.class().name().to_string_lossy() == "FerrokitInteraction") {
+                    if let Some(card) = named(w8.ns(), "Card").filter(|v| v.class().name().to_string_lossy() == "FerrokitInteraction") {
                         input::click(&card);
                     }
-                    if let Some(save) = views(&w8).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).find(|b| b.title().to_string() == "Save") {
+                    if let Some(save) = views(w8.ns()).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).find(|b| b.title().to_string() == "Save") {
                         input::click(&save);
                     }
                 }),
@@ -288,7 +288,7 @@ mod self_checks {
                     // ⌘S through the menu's key equivalent.
                     input::key(&w9, Key::Char('s'), &[ferrokit::Modifier::Command]);
                     // The table: a click on the second row, then ↓.
-                    if let Some(t) = views(&w9).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSTableView>().ok()).find(|t| t.downcast_ref::<objc2_app_kit::NSOutlineView>().is_none()) {
+                    if let Some(t) = views(w9.ns()).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSTableView>().ok()).find(|t| t.downcast_ref::<objc2_app_kit::NSOutlineView>().is_none()) {
                         let r = t.rectOfRow(1);
                         input::click_at(&t, r.origin.x + 20.0, r.origin.y + r.size.height / 2.0);
                     }
@@ -303,7 +303,7 @@ mod self_checks {
                 }),
                 Box::new(move || {
                     // The sidebar: a click on Home, then ↓ to Work.
-                    if let Some(o) = first::<objc2_app_kit::NSOutlineView>(&w11) {
+                    if let Some(o) = first::<objc2_app_kit::NSOutlineView>(w11.ns()) {
                         let row = (0..o.numberOfRows()).find(|&r| o.itemAtRow(r).is_some() && o.levelForRow(r) == 1).unwrap_or(1);
                         let r = o.rectOfRow(row);
                         input::click_at(&o, r.origin.x + 40.0, r.origin.y + r.size.height / 2.0);
@@ -326,7 +326,7 @@ mod self_checks {
     }
 
     /// Window-server input, when the process may post it.
-    fn server_input(w: Retained<NSWindow>, f: Form, check: Check, _check2: Check, failed: Rc<Cell<u32>>) {
+    fn server_input(w: WindowRef, f: Form, check: Check, _check2: Check, failed: Rc<Cell<u32>>) {
         if !input::server_available() {
             eprintln!("[check] server-input SKIP this process isn't trusted for Accessibility (System Settings › Privacy & Security › Accessibility)");
             return finish(failed);
@@ -337,7 +337,7 @@ mod self_checks {
             return finish(failed);
         }
         f.name.set(String::new());
-        if let Some(name) = named(&w, "Name") {
+        if let Some(name) = named(w.ns(), "Name") {
             input::server_click(&name);
         }
         later(300, move || {

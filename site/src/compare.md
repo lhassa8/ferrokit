@@ -11,7 +11,7 @@ Ferrokit is written by the same person as this page, so read it with that in min
 
 | | How it draws on the Mac | Platforms | Maturity (2026-11-11) |
 | --- | --- | --- | --- |
-| **Ferrokit** | Stock AppKit controls (`NSTableView`, `NSTextView`…) | macOS 15+ | 0.14, alpha; started Oct 2026; one maintainer; no outside users yet |
+| **Ferrokit** | Stock AppKit controls (`NSTableView`, `NSTextView`…) | macOS 15+ | 0.15, alpha; started Oct 2026; one maintainer; no outside users yet |
 | **[egui](https://github.com/emilk/egui)** | Its own renderer (immediate mode, wgpu/OpenGL) | Mac, Windows, Linux, web, Android | 0.37 (Oct 2026); ~32k stars; very active |
 | **[Iced](https://github.com/iced-rs/iced)** | Its own renderer (wgpu or CPU) | Mac, Windows, Linux, web | 0.14 (Dec 2025); ~32k stars; active; calls itself experimental |
 | **[Slint](https://github.com/slint-ui/slint)** | Its own renderer; the `cupertino` style imitates macOS | Desktop, mobile, web, embedded | 1.18 (Sep 2026); ~25k stars; active; commercial company behind it |
@@ -27,7 +27,7 @@ Ferrokit is written by the same person as this page, so read it with that in min
 | --- | --- | --- | --- | --- |
 | **Ferrokit** | AppKit's own tree | The system's (`NSTextView`, `NSTextField`) | Yes (the system's) | `NSTableView`, virtualised |
 | **egui** | Via AccessKit, on by default; custom widgets describe themselves ([docs](https://github.com/emilk/egui/blob/main/docs/accessibility.md)) | Supported, fixes still landing ([#8681](https://github.com/emilk/egui/pull/8681)) | Not found | `egui_extras::TableBuilder` lays out visible rows only |
-| **Iced** | Not in a release yet ([#1849](https://github.com/iced-rs/iced/pull/1849)) | Added in 0.14 | Not found | `table` widget (0.14); virtualisation not found |
+| **Iced** | Not in a release yet ([#1849](https://github.com/iced-rs/iced/pull/1849)) | Added in 0.14 | Not found | `table` widget (0.15); virtualisation not found |
 | **Slint** | Via AccessKit, `accessible-*` properties | Not confirmed on desktop | Not found | `StandardTableView`, visible rows only ([docs](https://docs.slint.dev/latest/docs/slint/reference/std-widgets/views/standardtableview/)) |
 | **Tauri** | What WebKit and your HTML provide | What WebKit provides | What WebKit provides | A JavaScript grid library of your choice |
 | **GPUI + GPUI Component** | Via AccessKit, built into its interaction layer ([README](https://github.com/longbridge/gpui-kit)) | Not stated in the README | Not stated | Data table with virtual scrolling, "hundreds of thousands of rows" |

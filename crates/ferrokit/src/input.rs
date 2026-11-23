@@ -104,7 +104,8 @@ fn post(event: Option<Retained<NSEvent>>) {
 /// It stays false while the screen is locked, or when macOS doesn't let
 /// the app take the front from the one in use: nothing is wrong with the
 /// app then, and a check prints `SKIP` instead of sending input.
-pub fn ready(window: &NSWindow) -> bool {
+pub fn ready(window: &crate::WindowRef) -> bool {
+    let window = window.ns();
     let app = NSApplication::sharedApplication(crate::mtm());
     if !app.isActive() {
         #[allow(deprecated)]
@@ -173,7 +174,8 @@ pub fn double_click(view: &NSView) -> bool {
 
 /// Presses `key` with `mods` in `window` (to its first responder, or the
 /// menus' key equivalents when ⌘ is held).
-pub fn key(window: &NSWindow, key: Key, mods: &[crate::Modifier]) {
+pub fn key(window: &crate::WindowRef, key: Key, mods: &[crate::Modifier]) {
+    let window = window.ns();
     let (code, chars, function) = key.parts();
     let mut f = flags(mods);
     if function {
@@ -198,7 +200,7 @@ pub fn key(window: &NSWindow, key: Key, mods: &[crate::Modifier]) {
 
 /// Types `text` into `window`'s first responder, a key at a time (capitals
 /// with ⇧, line breaks as Return).
-pub fn type_text(window: &NSWindow, text: &str) {
+pub fn type_text(window: &crate::WindowRef, text: &str) {
     for c in text.chars() {
         match c {
             '\n' => key(window, Key::Return, &[]),

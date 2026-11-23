@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.15.0 (unreleased): the third step to 1.0's API
+
+Windows get a Ferrokit type, so 1.0's everyday API names no AppKit types and objc2's yearly releases don't become Ferrokit major versions.
+
+- **Changed: windows are `WindowRef`s.** `open`, `open_with`, `open_tab`, `open_settings`, `windows`, `focused_window`, `welcome_window`, `new_document`, `open_document`, `Document::window` and `SheetHandle::window` return a `WindowRef` instead of `Retained<NSWindow>`, and the functions that took `&NSWindow` take `&WindowRef`: the dialogs (`alert`, `open_panel`, `save_panel`, `sheet`, `sheet_with` and their `_async` forms), the document functions, `close_window`, `toggle_full_screen`, `is_full_screen`, `perform_in`, `can_perform_in`, `focused_value_in`, `undoable_in`, `on_frame`, `print`, and `testing`'s window functions (`press_sheet_button`, `view_labeled`, `ax_tree`, `ax_elements`, `ax_audit`, `shortcut`, `capture_window`, `input::ready`, `input::key`, `input::type_text`). Code that passes a window it got from Ferrokit along (`alert(&w, …)`) doesn't change. Write `WindowRef` where you wrote `Retained<NSWindow>`, and `&WindowRef` for `&NSWindow`.
+- **Added: `WindowRef`'s own methods**: `title`, `set_title`, `size`, `set_size`, `close`, `is_open`, `is_key`, `bring_to_front`. It's `Clone`, `Eq` and `Hash` (two handles to the same window are equal) and `Debug`.
+- **Escape hatch: `WindowRef::ns()`** gives the `NSWindow` for AppKit calls Ferrokit doesn't wrap (`w.ns().contentView()`), and `WindowRef::from_ns(&ns_window)` makes a handle from one.
+- **Removed: the `NSWindow` re-export.** Code that names AppKit's type writes `objc2_app_kit::NSWindow` (with objc2-app-kit in its `Cargo.toml`). `Retained` is still re-exported, for the escape hatches.
+- **Said plainly: items that name objc2 types follow objc2's versions** (README, Stability).
+- **Fixed: `set_recent_documents` in the App Sandbox** keeps a bookmark to each file it lists, so the list still reaches them after a relaunch.
+
 ## 0.14.1 (2026-11-23): Open Recent and outlines on cards
 
 - **Added: `set_recent_documents`**, to replace File ▸ Open Recent's list (an app leaving out files of its own, such as a capture run's scratch databases). Found in Rowboat, whose cleanup had cleared AppKit's list, which Ferrokit's menu doesn't read.

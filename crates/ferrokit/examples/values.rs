@@ -140,39 +140,39 @@ mod self_checks {
     }
 
     pub fn run() {
-        let w = windows().into_iter().find(|w| w.title().to_string() == "Values").unwrap();
+        let w = windows().into_iter().find(|w| w.title() == "Values").unwrap();
         let s = STATE.with(Cell::get).unwrap();
         let failed = std::rc::Rc::new(Cell::new(0));
         let f = failed.clone();
         let c = move |n: &str, p: bool, note: String| check(&f, n, p, note);
         let c = std::rc::Rc::new(c);
         // Before.
-        let count = field(&w, "Count").unwrap();
-        let card = field(&w, "Card").unwrap();
-        let card_bg = surface_behind(&w, &card).and_then(|v| v.layer()).and_then(|l| l.backgroundColor()).map(|c| objc2_core_graphics::CGColor::alpha(Some(&c)));
-        c("text-fixed-and-computed", count.stringValue().to_string() == "Count 0" && field(&w, "Values").is_some(), format!("{:?}", count.stringValue()));
-        let styled = field(&w, "Styled after padding").unwrap();
+        let count = field(w.ns(), "Count").unwrap();
+        let card = field(w.ns(), "Card").unwrap();
+        let card_bg = surface_behind(w.ns(), &card).and_then(|v| v.layer()).and_then(|l| l.backgroundColor()).map(|c| objc2_core_graphics::CGColor::alpha(Some(&c)));
+        c("text-fixed-and-computed", count.stringValue().to_string() == "Count 0" && field(w.ns(), "Values").is_some(), format!("{:?}", count.stringValue()));
+        let styled = field(w.ns(), "Styled after padding").unwrap();
         let font = styled.font().map(|f| (f.pointSize(), f.fontDescriptor().symbolicTraits().contains(objc2_app_kit::NSFontDescriptorSymbolicTraits::TraitBold)));
         let color = styled.textColor().and_then(|c| Color::from_ns(&c));
         c("font-and-color-after-modifier", font.is_some_and(|(_, bold)| bold) && color == Some(Color::Orange), format!("font {font:?}, colour {color:?}"));
-        let long = field(&w, "A very long name").unwrap();
-        let end = field(&w, "end").unwrap();
+        let long = field(w.ns(), "A very long name").unwrap();
+        let end = field(w.ns(), "end").unwrap();
         let fits = long.frame().size.width + end.frame().size.width <= 161.0 && long.lineBreakMode() == objc2_app_kit::NSLineBreakMode::ByTruncatingTail;
         c("truncate", fits, format!("long {:.0} + end {:.0} in 160", long.frame().size.width, end.frame().size.width));
-        let status = field(&w, "Status: 12,909").unwrap().frame().size.width;
-        let other = field(&w, "Another long neighbour").unwrap().frame().size.width;
+        let status = field(w.ns(), "Status: 12,909").unwrap().frame().size.width;
+        let other = field(w.ns(), "Another long neighbour").unwrap().frame().size.width;
         c("truncate-min-width", (110.0..=111.0).contains(&status) && other > 50.0 && status + other <= 221.0, format!("status {status:.0} (minimum 110), neighbour {other:.0}, in 220"));
-        let (label, inner, outer) = (field(&w, "Fixed label").unwrap().frame(), field(&w, "Inner text").unwrap().frame(), field(&w, "Outer text").unwrap().frame());
-        let boxed = field(&w, "Boxed:").unwrap().frame().size.width;
+        let (label, inner, outer) = (field(w.ns(), "Fixed label").unwrap().frame(), field(w.ns(), "Inner text").unwrap().frame(), field(w.ns(), "Outer text").unwrap().frame());
+        let boxed = field(w.ns(), "Boxed:").unwrap().frame().size.width;
         c(
             "truncate-nested-floors",
             (label.size.width - 90.0).abs() < 1.0 && inner.origin.x >= label.origin.x + 89.0 && outer.origin.x >= inner.origin.x + inner.size.width - 0.5 && outer.size.width > 20.0 && (100.0..=101.0).contains(&boxed),
             format!("label {:.0} wide; inner at {:.0}, {:.0} wide; outer at {:.0}, {:.0} wide; the boxed text {boxed:.0} (minimum 100)", label.size.width, inner.origin.x, inner.size.width, outer.origin.x, outer.size.width),
         );
-        let min = field(&w, "Min").unwrap();
-        let min_bg = surface_behind(&w, &min).map(|v| v.frame().size.width);
+        let min = field(w.ns(), "Min").unwrap();
+        let min_bg = surface_behind(w.ns(), &min).map(|v| v.frame().size.width);
         c("min-width", min_bg.is_some_and(|wd| wd >= 119.5), format!("{min_bg:?}"));
-        let tip = field(&w, "Tip").unwrap();
+        let tip = field(w.ns(), "Tip").unwrap();
         let tip_now = |tip: &objc2_app_kit::NSTextField| {
             let shown = tip.toolTip().map(|t| t.to_string());
             let named = objc2_app_kit::NSAccessibility::accessibilityLabel(tip).map(|l| l.to_string());
@@ -180,16 +180,35 @@ mod self_checks {
         };
         let before = tip_now(&tip);
         c("tooltip-and-label-from-closures", before == (Some("Count is 0".into()), Some("Tip 0".into())), format!("{before:?}"));
-        let bar = views(&w).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSProgressIndicator>().ok()).map(|b| b.doubleValue());
-        let level = views(&w).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSLevelIndicator>().ok()).map(|g| g.doubleValue());
+        let bar = views(w.ns()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSProgressIndicator>().ok()).map(|b| b.doubleValue());
+        let level = views(w.ns()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSLevelIndicator>().ok()).map(|g| g.doubleValue());
         c("progress-and-gauge-fixed", bar == Some(0.25) && level == Some(3.0), format!("progress {bar:?}, gauge {level:?}"));
         let (a, b) = (TableModel::<String>::new(Vec::new()), TextModel::new(""));
         let (ia, ib) = (format!("{a:?}"), format!("{b:?}"));
         c("model-ids-chosen", ia != ib && !ia.contains("ViewId(1)") && !ib.contains("ViewId(1)"), format!("{ia}, {ib}"));
+        // A window handle: the same window compares equal however it was
+        // reached; title and size read and set; closed, it's no longer open.
+        let other = open(Window::new("Handle").size(300.0, 200.0).view(text("A second window")));
+        let listed = windows().into_iter().find(|x| x.title() == "Handle");
+        other.set_title("Handle 2");
+        let size0 = other.size();
+        other.set_size(320.0, 180.0);
+        let size1 = other.size();
+        let distinct: std::collections::HashSet<WindowRef> = [w.clone(), other.clone(), WindowRef::from_ns(other.ns())].into_iter().collect();
+        let debug = format!("{other:?}");
+        let open_before = other.is_open();
+        other.close();
+        let closed = !other.is_open() && !windows().contains(&other) && w.is_open();
+        w.bring_to_front();
+        c(
+            "window-handle",
+            listed.as_ref() == Some(&other) && other.title() == "Handle 2" && size0 == (300.0, 200.0) && size1 == (320.0, 180.0) && distinct.len() == 2 && debug.contains("Handle 2") && open_before && closed,
+            format!("listed {}; size {size0:?} → {size1:?}; {} distinct of 3 handles; {debug}; open {open_before}, after close: {closed}", listed.is_some(), distinct.len()),
+        );
         s.popped.set(true);
-        let rows = (1..=3).all(|i| field(&w, &format!("Row {i}")).is_some());
+        let rows = (1..=3).all(|i| field(w.ns(), &format!("Row {i}")).is_some());
         c("lone-for-each", rows, "three rows from vstack(for_each(..))".into());
-        let buttons: Vec<Retained<objc2_app_kit::NSButton>> = views(&w).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).collect();
+        let buttons: Vec<Retained<objc2_app_kit::NSButton>> = views(w.ns()).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).collect();
         let play = buttons.iter().find(|b| b.title().to_string() == "Play").cloned();
         let never = buttons.iter().find(|b| b.title().to_string() == "Never").cloned();
         c("button-disabled-fixed", never.as_ref().is_some_and(|b| !b.isEnabled()), String::new());
@@ -203,7 +222,7 @@ mod self_checks {
             let red = count.textColor().and_then(|c| Color::from_ns(&c));
             let after = tip_now(&tip);
             c2("tooltip-and-label-follow", after == (Some("Count is 2".into()), Some("Tip 2".into())), format!("{after:?}"));
-            let popped = field(&w, "Popped").is_some() || objc2_app_kit::NSApplication::sharedApplication(objc2::MainThreadMarker::new().unwrap()).windows().iter().any(|win| win.contentView().is_some_and(|v| {
+            let popped = field(w.ns(), "Popped").is_some() || objc2_app_kit::NSApplication::sharedApplication(objc2::MainThreadMarker::new().unwrap()).windows().iter().any(|win| win.contentView().is_some_and(|v| {
                 fn has(v: &NSView) -> bool {
                     v.downcast_ref::<objc2_app_kit::NSTextField>().is_some_and(|f| f.stringValue().to_string() == "Popped") || v.subviews().iter().any(|s| has(&s))
                 }
@@ -211,7 +230,7 @@ mod self_checks {
             }));
             c2("popover-on-any-view", popped, String::new());
             c2("text-follows", count.stringValue().to_string() == "Count 2" && red == Some(Color::Primary), format!("{:?}, {red:?}", count.stringValue()));
-            let bg = surface_behind(&w, &card).and_then(|v| v.layer()).and_then(|l| l.backgroundColor()).map(|c| objc2_core_graphics::CGColor::alpha(Some(&c)));
+            let bg = surface_behind(w.ns(), &card).and_then(|v| v.layer()).and_then(|l| l.backgroundColor()).map(|c| objc2_core_graphics::CGColor::alpha(Some(&c)));
             let faded = card.alphaValue();
             c2("background-and-opacity-follow", bg.is_some() && bg != card_bg && (faded - 0.5).abs() < 0.01, format!("background alpha {card_bg:?} → {bg:?}; opacity {faded}"));
             let titled = play.as_ref().map(|b| b.title().to_string());
@@ -227,7 +246,7 @@ mod self_checks {
                 format!("{:?}, enabled {}, state {}", item.title(), item.isEnabled(), item.state()),
             );
             // The clickable view's accessibility value.
-            let tap = views(&w).into_iter().find(|v| v.class().name().to_string_lossy() == "FerrokitInteraction");
+            let tap = views(w.ns()).into_iter().find(|v| v.class().name().to_string_lossy() == "FerrokitInteraction");
             let value = tap.as_ref().and_then(|v| objc2_app_kit::NSAccessibility::accessibilityValue(&**v)).map(|v| unsafe { objc2::msg_send![&*v, description] }).map(|d: Retained<objc2_foundation::NSString>| d.to_string());
             c2("accessibility-value", value.as_deref() == Some("2 taps"), format!("{value:?}"));
             let named = tap.as_ref().and_then(|v| objc2_app_kit::NSAccessibility::accessibilityLabel(&**v)).map(|l| l.to_string());

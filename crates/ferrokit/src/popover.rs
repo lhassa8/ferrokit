@@ -241,7 +241,7 @@ pub fn toolbar_popover<V: crate::View>(id: &str, label: &str, symbol: &str, cont
             return;
         }
         // The item in the window this press acts in.
-        let item = crate::focused_window().and_then(|w| w.toolbar()).and_then(|t| t.items().iter().find(|i| i.itemIdentifier().to_string() == item_id));
+        let item = crate::commands::focused_ns().and_then(|w| w.toolbar()).and_then(|t| t.items().iter().find(|i| i.itemIdentifier().to_string() == item_id));
         if let Some(item) = item {
             present(&delegate, &content).showRelativeToToolbarItem(&item);
         }

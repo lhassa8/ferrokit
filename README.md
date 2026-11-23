@@ -146,7 +146,7 @@ If Claude Code, Cursor or Codex writes most of your code, it can learn Ferrokit 
 
 **Not yet, if:**
 - you need Windows or Linux. Ferrokit is Mac only for now, and Windows is the planned second platform. Cross-platform toolkits such as Tauri, egui, Iced, Slint and GPUI are the tools for that today; they draw their own widgets or use a web view.
-- you need a stable API. It's an alpha (0.14), and the API will still change.
+- you need a stable API. It's an alpha (0.15), and the API will still change.
 - you're happy in Swift and have no Rust code to reuse, or you want iOS too. Then Swift with AppKit or SwiftUI is the better choice: Apple's own tools, documentation and sample code, and a stable API.
 
 ## Testing it like you mean it
@@ -170,13 +170,14 @@ Use [`ferrokit`](crates/ferrokit), with [`cargo ferrokit`](crates/cargo-ferrokit
 | [`ferrokit-build`](crates/ferrokit-build) | Compiles your app's Swift (and SwiftUI) code from `build.rs`, for views only SwiftUI has. |
 | [`ferrokit-core`](crates/ferrokit-core) | The AppKit layer under `ferrokit`. You don't need to depend on it yourself. |
 
-The crates share one version number and are released together, so use matching versions. The current version is **0.14.1**. It needs macOS 15 or later.
+The crates share one version number and are released together, so use matching versions. The current version is **0.15.0**. It needs macOS 15 or later.
 
 ## Stability
 
 Ferrokit is an alpha. It promises the following.
 
 - **Versions:** while it's 0.x, a minor release (0.4 → 0.5) may change the API; a patch release (0.4.0 → 0.4.1) never does. Every change that breaks code is listed in the CHANGELOG with what to write instead, and a renamed item keeps working, deprecated, for one minor release where it can.
+- **AppKit types:** the everyday API names no AppKit or objc2 types (windows are `WindowRef`s). What does is an escape hatch: `WindowRef::ns`, `native(..)`, `TableModel::table_view`, `TextModel::text_view`, `Color::ns`, `Font::ns`, the `Stored` trait and the view lookups in `testing`. Those follow objc2's versions: when Ferrokit moves to a new objc2-app-kit, they may change in a minor release.
 - **One version:** the crates are released together under one version; `ferrokit` pins `ferrokit-core` exactly.
 - **macOS:** 15 or later. Checked on macOS 15 and the current release (CI), and on the newest beta locally. Each macOS release is checked when it ships; AppKit changes (macOS 27 turned column browser cells into text cells) are fixed in a patch.
 - **Rust:** the latest stable; the minimum (`rust-version`, 1.88) only rises in a minor release.

@@ -32,10 +32,10 @@ fn main() {
                 // Launched with files (from the Finder or `open`): report the
                 // windows once they're open, then quit.
                 spawn(|| std::thread::sleep(std::time::Duration::from_millis(1500)), |()| {
-                    let titles: Vec<String> = windows().iter().filter(|w| w.isVisible()).map(|w| w.title().to_string()).collect();
+                    let titles: Vec<String> = windows().iter().filter(|w| w.ns().isVisible()).map(|w| w.title().to_string()).collect();
                     eprintln!("[opened] {titles:?}");
-                    for w in windows().iter().filter(|w| w.isVisible()) {
-                        let f = w.frame();
+                    for w in windows().iter().filter(|w| w.ns().isVisible()) {
+                        let f = w.ns().frame();
                         eprintln!("[frame] {} {:.0},{:.0} {:.0}x{:.0}", w.title(), f.origin.x, f.origin.y, f.size.width, f.size.height);
                     }
                     std::process::exit(0);
@@ -75,14 +75,14 @@ mod self_checks {
         }
     }
 
-    fn text_view(w: &NSWindow) -> Retained<NSTextView> {
+    fn text_view(w: &objc2_app_kit::NSWindow) -> Retained<NSTextView> {
         let mut all = Vec::new();
         views(&w.contentView().unwrap(), &mut all);
         all.into_iter().find_map(|v| v.downcast::<NSTextView>().ok()).unwrap()
     }
 
     /// Types `text` at the end, as one undoable step.
-    fn type_text(w: &NSWindow, text: &str) {
+    fn type_text(w: &objc2_app_kit::NSWindow, text: &str) {
         let tv = text_view(w);
         let um = tv.undoManager().unwrap();
         um.setGroupsByEvent(false);
@@ -94,20 +94,20 @@ mod self_checks {
 
     /// The sheet's button titles, sorted (the views' order isn't the order
     /// they were added in).
-    fn sheet_titles(w: &NSWindow) -> Vec<String> {
+    fn sheet_titles(w: &objc2_app_kit::NSWindow) -> Vec<String> {
         let mut t: Vec<String> = sheet_buttons(w).iter().map(|b| b.title().to_string()).collect();
         t.sort();
         t
     }
 
-    fn sheet_buttons(w: &NSWindow) -> Vec<Retained<NSButton>> {
+    fn sheet_buttons(w: &objc2_app_kit::NSWindow) -> Vec<Retained<NSButton>> {
         let Some(sheet) = w.attachedSheet() else { return Vec::new() };
         let mut all = Vec::new();
         views(&sheet.contentView().unwrap(), &mut all);
         all.into_iter().filter_map(|v| v.downcast::<NSButton>().ok()).filter(|b| !b.title().to_string().is_empty()).collect()
     }
 
-    fn press(w: &NSWindow, title: &str) -> bool {
+    fn press(w: &objc2_app_kit::NSWindow, title: &str) -> bool {
         match sheet_buttons(w).into_iter().find(|b| b.title().to_string() == title) {
             Some(b) => {
                 unsafe { b.performClick(None) };
@@ -121,8 +121,8 @@ mod self_checks {
         windows().iter().map(|w| w.title().to_string()).collect()
     }
 
-    fn find(title: &str) -> Option<Retained<NSWindow>> {
-        windows().into_iter().find(|w| w.title().to_string() == title)
+    fn find(title: &str) -> Option<WindowRef> {
+        windows().into_iter().find(|w| w.title() == title)
     }
 
     /// Runs `f` after the run loop has handled pending work (model events,
@@ -156,12 +156,12 @@ mod self_checks {
         let problems = ax_audit(&w1);
         check("accessibility-audit", problems.is_empty(), format!("{problems:?}"));
 
-        type_text(&w1, "Hello there");
+        type_text(w1.ns(), "Hello there");
         then(move || {
-            let edited = document_edited(&w1) && w1.isDocumentEdited();
-            text_view(&w1).undoManager().unwrap().undo();
+            let edited = document_edited(&w1) && w1.ns().isDocumentEdited();
+            text_view(w1.ns()).undoManager().unwrap().undo();
             then(move || {
-                let back = !document_edited(&w1) && !w1.isDocumentEdited() && text_view(&w1).string().length() == 0;
+                let back = !document_edited(&w1) && !w1.ns().isDocumentEdited() && text_view(w1.ns()).string().length() == 0;
                 check("edited-and-undo", edited && back, format!("typing marks it edited (and the dot): {edited}; undoing back to the saved text clears both: {back}"));
                 save_checks(w1, dir);
             });
@@ -174,28 +174,28 @@ mod self_checks {
         (0..file.numberOfItems()).map(|i| file.itemAtIndex(i).unwrap().title().to_string()).collect()
     }
 
-    fn save_checks(w1: Retained<NSWindow>, dir: PathBuf) {
+    fn save_checks(w1: WindowRef, dir: PathBuf) {
         let a = dir.join("a.txt");
-        type_text(&w1, "First draft");
+        type_text(w1.ns(), "First draft");
         then(move || {
             let saved = save_document_as(&w1, &a).is_ok();
             then(move || {
-                let url = w1.representedURL().and_then(|u| u.path()).map(|p| p.to_string());
+                let url = w1.ns().representedURL().and_then(|u| u.path()).map(|p| p.to_string());
                 check(
                     "save-as",
-                    saved && read(&a) == "First draft" && w1.title().to_string() == "a.txt" && !document_edited(&w1) && url.is_some_and(|u| u.ends_with("a.txt")),
-                    format!("file {:?}; title {:?}; edited {}; proxy icon for a.txt: {}", read(&a), w1.title(), document_edited(&w1), w1.representedURL().is_some()),
+                    saved && read(&a) == "First draft" && w1.title() == "a.txt" && !document_edited(&w1) && url.is_some_and(|u| u.ends_with("a.txt")),
+                    format!("file {:?}; title {:?}; edited {}; proxy icon for a.txt: {}", read(&a), w1.title(), document_edited(&w1), w1.ns().representedURL().is_some()),
                 );
-                type_text(&w1, ", revised");
+                type_text(w1.ns(), ", revised");
                 then(move || {
                     let edited = document_edited(&w1);
                     let ok = save_document(&w1).is_ok();
                     check("save", edited && ok && read(&a) == "First draft, revised" && !document_edited(&w1), format!("edited {edited} → saved: file {:?}", read(&a)));
-                    type_text(&w1, " THROW AWAY");
+                    type_text(w1.ns(), " THROW AWAY");
                     then(move || {
                         let ok = revert_document(&w1).is_ok();
                         then(move || {
-                            let text = text_view(&w1).string().to_string();
+                            let text = text_view(w1.ns()).string().to_string();
                             check("revert", ok && text == "First draft, revised" && !document_edited(&w1), format!("after revert the editor shows {text:?}; edited {}", document_edited(&w1)));
                             open_checks(w1, dir, a);
                         });
@@ -205,14 +205,14 @@ mod self_checks {
         });
     }
 
-    fn open_checks(w1: Retained<NSWindow>, dir: PathBuf, a: PathBuf) {
+    fn open_checks(w1: WindowRef, dir: PathBuf, a: PathBuf) {
         let before = windows().len();
-        let again = open_document(&a).map(|w| Retained::as_ptr(&w) == Retained::as_ptr(&w1)).unwrap_or(false);
+        let again = open_document(&a).map(|w| w == w1).unwrap_or(false);
         check("open-already-open", again && windows().len() == before, format!("opening a.txt again brings its window: {again}; windows {} → {}", before, windows().len()));
         let b = dir.join("b.md");
         std::fs::write(&b, "# Notes\nfrom elsewhere").unwrap();
         let opened = open_document(&b);
-        let shows = opened.as_ref().map(|w| text_view(w).string().to_string()).unwrap_or_default();
+        let shows = opened.as_ref().map(|w| text_view(w.ns()).string().to_string()).unwrap_or_default();
         check("open-file", opened.is_ok() && shows == "# Notes\nfrom elsewhere" && find("b.md").is_some(), format!("b.md opens in a window showing {shows:?}"));
         let bad = dir.join("binary.txt");
         std::fs::write(&bad, [0xff, 0xfe, 0x00, 0x80]).unwrap();
@@ -250,13 +250,13 @@ mod self_checks {
         close_checks(w1, a);
     }
 
-    fn close_checks(w1: Retained<NSWindow>, a: PathBuf) {
+    fn close_checks(w1: WindowRef, a: PathBuf) {
         let wb = find("b.md").unwrap();
-        type_text(&wb, "\nmore");
+        type_text(wb.ns(), "\nmore");
         then(move || {
-            wb.performClose(None);
-            let buttons = sheet_titles(&wb);
-            let cancelled = press(&wb, "Cancel");
+            wb.ns().performClose(None);
+            let buttons = sheet_titles(wb.ns());
+            let cancelled = press(wb.ns(), "Cancel");
             then(move || {
                 let still = find("b.md").is_some() && document_edited(&wb);
                 check(
@@ -264,16 +264,16 @@ mod self_checks {
                     buttons == ["Cancel", "Don't Save", "Save"] && cancelled && still,
                     format!("close with changes → a sheet with {buttons:?}; Cancel keeps it open and edited: {still}"),
                 );
-                wb.performClose(None);
-                let pressed = press(&wb, "Don't Save");
+                wb.ns().performClose(None);
+                let pressed = press(wb.ns(), "Don't Save");
                 then(move || {
-                    let gone = find("b.md").is_none() && !wb.isVisible();
+                    let gone = find("b.md").is_none() && !wb.ns().isVisible();
                     let file = std::fs::read_to_string(wb_path()).unwrap_or_default();
                     check("close-dont-save", pressed && gone && file == "# Notes\nfrom elsewhere", format!("Don't Save closes it: {gone}; the file is unchanged: {:?}", file));
-                    type_text(&w1, "!");
+                    type_text(w1.ns(), "!");
                     then(move || {
-                        w1.performClose(None);
-                        let pressed = press(&w1, "Save");
+                        w1.ns().performClose(None);
+                        let pressed = press(w1.ns(), "Save");
                         then(move || {
                             let gone = find("a.txt").is_none();
                             check("close-save", pressed && gone && read(&a) == "First draft, revised!", format!("Save writes and closes: file {:?}, closed {gone}", read(&a)));
@@ -300,7 +300,7 @@ mod self_checks {
         std::fs::write(&d, "dee").unwrap();
         let (wc, _) = (open_document(&c).unwrap(), open_document(&d).unwrap());
         // Somewhere it wouldn't open by itself.
-        wc.setFrame_display(objc2_foundation::NSRect::new(objc2_foundation::NSPoint::new(137.0, 211.0), objc2_foundation::NSSize::new(520.0, 333.0)), true);
+        wc.ns().setFrame_display(objc2_foundation::NSRect::new(objc2_foundation::NSPoint::new(137.0, 211.0), objc2_foundation::NSSize::new(520.0, 333.0)), true);
         ferrokit::testing::probes::remember_open_documents();
         let launch = |keep: &str| {
             let out = std::process::Command::new(std::env::current_exe().unwrap()).env("CHECK", "opened").args(["-NSQuitAlwaysKeepsWindows", keep]).output();
@@ -333,14 +333,14 @@ mod self_checks {
     /// Quitting with an edited document asks; Cancel keeps the app running.
     fn quit_check() {
         let w2 = find("Untitled 2").unwrap();
-        type_text(&w2, "unsaved");
+        type_text(w2.ns(), "unsaved");
         then(move || {
             // quit() starts on the next pass; AppKit then waits for the
             // review's answers in a nested run loop, where this runs.
             quit();
             then(move || {
-                let buttons = sheet_titles(&w2);
-                let cancelled = press(&w2, "Cancel");
+                let buttons = sheet_titles(w2.ns());
+                let cancelled = press(w2.ns(), "Cancel");
                 then(move || {
                     let alive = find("Untitled 2").is_some() && document_edited(&w2);
                     check(
@@ -359,21 +359,21 @@ mod self_checks {
     /// AppKit doesn't start a quit under a sheet, so nothing is asked
     /// twice and the app isn't left waiting on one. After Cancel, a quit
     /// asks as usual.
-    fn quit_under_sheet_check(w2: Retained<NSWindow>) {
-        w2.performClose(None);
+    fn quit_under_sheet_check(w2: WindowRef) {
+        w2.ns().performClose(None);
         then(move || {
             quit();
             then(move || {
-                let cancelled = press(&w2, "Cancel");
+                let cancelled = press(w2.ns(), "Cancel");
                 then(move || {
-                    let again = w2.attachedSheet().is_some();
+                    let again = w2.ns().attachedSheet().is_some();
                     if again {
-                        press(&w2, "Cancel");
+                        press(w2.ns(), "Cancel");
                     }
                     quit();
                     then(move || {
-                        let asks = sheet_titles(&w2);
-                        press(&w2, "Cancel");
+                        let asks = sheet_titles(w2.ns());
+                        press(w2.ns(), "Cancel");
                         then(move || {
                             let alive = find("Untitled 2").is_some() && document_edited(&w2);
                             check(

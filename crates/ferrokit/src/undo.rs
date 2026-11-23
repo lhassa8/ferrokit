@@ -141,7 +141,7 @@ fn target_window() -> Option<Retained<NSWindow>> {
     let app = NSApplication::sharedApplication(MainThreadMarker::new().expect("main thread"));
     app.keyWindow()
         .or_else(|| app.mainWindow())
-        .or_else(|| crate::windows().into_iter().rev().find(|w| w.isVisible()))
+        .or_else(|| crate::windows_ns().into_iter().rev().find(|w| w.isVisible()))
 }
 
 /// Makes a change the user can undo: runs `apply` now (in a [`batch`]) and
@@ -149,13 +149,14 @@ fn target_window() -> Option<Retained<NSWindow>> {
 /// ("Rename", "Delete Row"…). ⌘Z runs `revert`, ⇧⌘Z runs `apply` again.
 pub fn undoable(title: &str, apply: impl Fn() + 'static, revert: impl Fn() + 'static) {
     match target_window() {
-        Some(w) => undoable_in(&w, title, apply, revert),
+        Some(w) => undoable_in(&crate::WindowRef::from_ns(&w), title, apply, revert),
         None => batch(apply),
     }
 }
 
 /// As [`undoable`], in `window`'s undo history.
-pub fn undoable_in(window: &NSWindow, title: &str, apply: impl Fn() + 'static, revert: impl Fn() + 'static) {
+pub fn undoable_in(window: &crate::WindowRef, title: &str, apply: impl Fn() + 'static, revert: impl Fn() + 'static) {
+    let window = window.ns();
     batch(&apply);
     if let Some(manager) = window.undoManager() {
         register(&manager, title, Rc::new(revert), Rc::new(apply));

@@ -6,12 +6,12 @@ Some of Apple's views exist only in SwiftUI: Swift Charts, `Gauge`'s styles, Map
 
 ```toml
 [dependencies]
-ferrokit = "0.14"
+ferrokit = "0.15"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = ["NSResponder", "NSView"] }
 
 [build-dependencies]
-ferrokit-build = "0.14"
+ferrokit-build = "0.15"
 ```
 
 ```rust,ignore

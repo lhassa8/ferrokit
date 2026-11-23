@@ -1124,14 +1124,14 @@ mod self_checks {
         }
     }
 
-    fn all(w: &NSWindow) -> Vec<Retained<NSView>> {
+    fn all(w: &objc2_app_kit::NSWindow) -> Vec<Retained<NSView>> {
         let mut out = Vec::new();
         views(&w.contentView().unwrap(), &mut out);
         out
     }
 
     /// The results table (not the sidebar, an NSOutlineView).
-    fn results(w: &NSWindow) -> Retained<NSTableView> {
+    fn results(w: &objc2_app_kit::NSWindow) -> Retained<NSTableView> {
         all(w).into_iter().filter_map(|v| v.downcast::<NSTableView>().ok()).find(|t| t.downcast_ref::<NSOutlineView>().is_none()).unwrap()
     }
 
@@ -1180,7 +1180,7 @@ mod self_checks {
         move || untrack(|| !b.results.loading())
     }
 
-    fn run_query(w: &NSWindow, b: Browser, sql: &str) {
+    fn run_query(w: &WindowRef, b: Browser, sql: &str) {
         b.query.set(sql.into());
         perform_in(Some(w), RUN);
     }
@@ -1215,8 +1215,8 @@ mod self_checks {
         let welcome = welcome_window().map(|w| w.title().to_string());
         check("l10n-welcome", welcome.as_deref() == Some("Willkommen bei SQL Browser"), format!("{welcome:?}"));
         let w = new_document().unwrap();
-        let toolbar: Vec<String> = w.toolbar().map(|t| t.items().iter().map(|i| i.label().to_string()).filter(|l| !l.is_empty()).collect()).unwrap_or_default();
-        check("l10n-window", w.title().to_string() == "Ohne Titel" && toolbar == ["Ausführen", "Diagramm", "Inspektor"], format!("title {:?}; toolbar {toolbar:?}", w.title()));
+        let toolbar: Vec<String> = w.ns().toolbar().map(|t| t.items().iter().map(|i| i.label().to_string()).filter(|l| !l.is_empty()).collect()).unwrap_or_default();
+        check("l10n-window", w.title() == "Ohne Titel" && toolbar == ["Ausführen", "Diagramm", "Inspektor"], format!("title {:?}; toolbar {toolbar:?}", w.title()));
         let b = BROWSERS.with_borrow(|all| all.last().unwrap().0);
         let view = bar.itemAtIndex(4).unwrap().submenu().unwrap();
         view.update();
@@ -1228,11 +1228,11 @@ mod self_checks {
         );
         run_query(&w, b, "SELECT 1 AS a");
         let w2 = w.clone();
-        when(move || idle(b)() && results(&w2).numberOfRows() == 1, 5000, move |_| {
+        when(move || idle(b)() && results(w2.ns()).numberOfRows() == 1, 5000, move |_| {
             let one = untrack(|| b.status());
             run_query(&w, b, "SELECT 1 AS a UNION ALL SELECT 2");
             let w3 = w.clone();
-            when(move || idle(b)() && results(&w3).numberOfRows() == 2, 5000, move |_| {
+            when(move || idle(b)() && results(w3.ns()).numberOfRows() == 2, 5000, move |_| {
                 let two = untrack(|| b.status());
                 check("l10n-plural-status", one.starts_with("1 Zeile · Abfrage") && two.starts_with("2 Zeilen · Abfrage"), format!("{one:?}; {two:?}"));
                 let failed = FAILED.with(Cell::get);
@@ -1245,13 +1245,13 @@ mod self_checks {
     /// The welcome window the app starts with, and the Window menu's item
     /// that brings it back.
     fn welcome_checks() {
-        let shown: Vec<Retained<NSWindow>> = windows().into_iter().filter(|w| w.isVisible()).collect();
+        let shown: Vec<WindowRef> = windows().into_iter().filter(|w| w.ns().isVisible()).collect();
         let w = welcome_window();
         let titles: Vec<String> = shown.iter().map(|w| w.title().to_string()).collect();
-        let words = w.as_ref().map(|w| labels(w)).unwrap_or_default();
+        let words = w.as_ref().map(|w| labels(w.ns())).unwrap_or_default();
         let want = ["SQL Browser", "Open the Sample", "Open a Database…", "New Scratch Database", "Recent"];
         let missing: Vec<&str> = want.iter().copied().filter(|t| !words.iter().any(|w| w == t)).collect();
-        let problems = w.as_ref().map(|w| ax_audit(w)).unwrap_or_default();
+        let problems = w.as_ref().map(ax_audit).unwrap_or_default();
         check(
             "welcome-window",
             titles == ["Welcome to SQL Browser"] && missing.is_empty() && problems.is_empty(),
@@ -1286,12 +1286,12 @@ mod self_checks {
         let before = footprint_mb();
         // (Captured now: at launch it isn't on screen yet.)
         if let (Ok(snap), Some(w)) = (std::env::var("SNAP"), welcome_window()) {
-            save_capture(&w, &format!("{snap}/sql_browser-welcome.png"));
+            save_capture(w.ns(), &format!("{snap}/sql_browser-welcome.png"));
         }
         let untitled = windows().iter().map(|w| w.title().to_string()).collect::<Vec<_>>();
         let opened = open_document(&path);
         // The untouched Untitled window the app started with goes.
-        let left = windows().iter().filter(|w| w.isVisible()).map(|w| w.title().to_string()).collect::<Vec<_>>();
+        let left = windows().iter().filter(|w| w.ns().isVisible()).map(|w| w.title().to_string()).collect::<Vec<_>>();
         check(
             "open-database",
             opened.is_ok() && untitled == ["Welcome to SQL Browser"] && left == ["sample.sqlite"] && welcome_window().is_none(),
@@ -1300,22 +1300,22 @@ mod self_checks {
         let w = opened.unwrap();
         // Brought back, the welcome window lists the database just opened.
         show_welcome();
-        let recent = welcome_window().map(|w| labels(&w)).unwrap_or_default();
+        let recent = welcome_window().map(|w| labels(w.ns())).unwrap_or_default();
         check("welcome-recent", recent.iter().any(|t| t == "sample.sqlite"), format!("{recent:?}"));
         if let Some(welcome) = welcome_window() {
             welcome.close();
         }
-        w.makeKeyAndOrderFront(None);
+        w.ns().makeKeyAndOrderFront(None);
         let b = BROWSERS.with_borrow(|all| all.last().unwrap().0);
         let w2 = w.clone();
-        when(move || untrack(|| b.schema.get().is_some()) && idle(b)() && results(&w2).numberOfRows() > 0, 5000, move |ms| {
+        when(move || untrack(|| b.schema.get().is_some()) && idle(b)() && results(w2.ns()).numberOfRows() > 0, 5000, move |ms| {
             let side = sidebar_titles(&b);
             let want = ["Tables", "customers", "orders", "products", "Views", "big_orders", "Indexes", "orders_by_customer (on orders)"];
             check("schema-sidebar", want.iter().all(|t| side.contains(&t.to_string())) && side.contains(&"total  real".to_string()), format!("{side:?}"));
-            let t = results(&w);
+            let t = results(w.ns());
             check(
                 "first-table",
-                w.title().to_string() == "sample.sqlite" && untrack(|| b.query.get()) == "SELECT * FROM \"customers\";" && t.numberOfRows() == 10_000 && titles(&t) == ["id", "name", "city", "since"],
+                w.title() == "sample.sqlite" && untrack(|| b.query.get()) == "SELECT * FROM \"customers\";" && t.numberOfRows() == 10_000 && titles(&t) == ["id", "name", "city", "since"],
                 format!("title {:?}; query {:?}; {} rows, columns {:?} after {ms:.0} ms", w.title(), untrack(|| b.query.get()), t.numberOfRows(), titles(&t)),
             );
             let editor = BROWSERS.with_borrow(|all| all.last().unwrap().1.clone());
@@ -1324,19 +1324,19 @@ mod self_checks {
             check("sql-highlight", select == keyword && name == TextStyle::new(), format!("SELECT {select:?}; the quoted \"customers\" {name:?}"));
             let problems = ax_audit(&w);
             check("accessibility-audit", problems.is_empty(), format!("{problems:?}"));
-            let stacked = all(&w).into_iter().filter_map(|v| v.downcast::<NSSplitView>().ok()).any(|s| !s.isVertical());
+            let stacked = all(w.ns()).into_iter().filter_map(|v| v.downcast::<NSSplitView>().ok()).any(|s| !s.isVertical());
             check("stacked-split", stacked, "the editor sits over the results in a stacked split".into());
             million(w, b, dir, before);
         });
     }
 
-    fn million(w: Retained<NSWindow>, b: Browser, dir: PathBuf, before: f64) {
-        let table = results(&w);
+    fn million(w: WindowRef, b: Browser, dir: PathBuf, before: f64) {
+        let table = results(w.ns());
         let ptr = Retained::as_ptr(&table);
         run_query(&w, b, "SELECT * FROM orders");
         let w2 = w.clone();
-        when(move || idle(b)() && results(&w2).numberOfRows() == 1_000_000, 30_000, move |ms| {
-            let t = results(&w);
+        when(move || idle(b)() && results(w2.ns()).numberOfRows() == 1_000_000, 30_000, move |ms| {
+            let t = results(w.ns());
             let (query_ms, fill_ms) = untrack(|| (b.results.get().map(|r| r.ms).unwrap_or(0.0), b.fill_ms.get()));
             let grew = footprint_mb() - before;
             check(
@@ -1371,11 +1371,11 @@ mod self_checks {
         });
     }
 
-    fn errors(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
+    fn errors(w: WindowRef, b: Browser, dir: PathBuf) {
         run_query(&w, b, "SELEC nothing");
         when(idle(b), 5000, move |_| {
             let status = untrack(|| b.status());
-            let kept = results(&w).numberOfRows() == 1_000_000;
+            let kept = results(w.ns()).numberOfRows() == 1_000_000;
             check("query-error", status.contains("syntax error") && kept, format!("status {status:?}; the last result stays: {kept}"));
             cancel(w, b, dir);
         });
@@ -1383,15 +1383,15 @@ mod self_checks {
 
     /// A slow query, then a quick one before it ends: the quick one shows
     /// and the slow one was interrupted.
-    fn cancel(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
+    fn cancel(w: WindowRef, b: Browser, dir: PathBuf) {
         let slow = "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 500000000) SELECT count(*) FROM n";
         run_query(&w, b, slow);
         let start = Instant::now();
         let w2 = w.clone();
         spawn(|| std::thread::sleep(std::time::Duration::from_millis(200)), move |()| {
             run_query(&w2, b, "SELECT 6 * 7 AS answer");
-            when(move || idle(b)() && titles(&results(&w2)) == ["answer"], 10_000, move |_| {
-                let t = results(&w);
+            when(move || idle(b)() && titles(&results(w2.ns())) == ["answer"], 10_000, move |_| {
+                let t = results(w.ns());
                 let total = start.elapsed().as_secs_f64() * 1e3;
                 check("cancel-stale", cell(&t, 0, 0) == "42" && total < 2000.0, format!("the newer query shows {:?} after {total:.0} ms (the slow one alone takes many seconds)", cell(&t, 0, 0)));
                 writes(w, b, dir);
@@ -1399,7 +1399,7 @@ mod self_checks {
         });
     }
 
-    fn writes(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
+    fn writes(w: WindowRef, b: Browser, dir: PathBuf) {
         run_query(&w, b, "CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT); INSERT INTO notes (body) VALUES ('first'), ('second'), (NULL);");
         when(move || idle(b)() && sidebar_titles(&b).contains(&"notes".to_string()), 5000, move |ms| {
             let status = untrack(|| b.status());
@@ -1407,8 +1407,8 @@ mod self_checks {
             // Selecting a table in the sidebar shows its rows.
             b.selected.set(Some("table:notes".into()));
             let w2 = w.clone();
-            when(move || idle(b)() && results(&w2).numberOfRows() == 3, 5000, move |_| {
-                let t = results(&w);
+            when(move || idle(b)() && results(w2.ns()).numberOfRows() == 3, 5000, move |_| {
+                let t = results(w.ns());
                 check(
                     "sidebar-select",
                     untrack(|| b.query.get()) == "SELECT * FROM \"notes\";" && titles(&t) == ["id", "body"] && cell(&t, 2, 1) == "NULL",
@@ -1422,8 +1422,8 @@ mod self_checks {
     }
 
     /// Saves `w` as the window server shows it (needs screen recording).
-    fn save_capture(w: &NSWindow, path: &str) {
-        let png = capture_window(w).and_then(|rep| unsafe { rep.representationUsingType_properties(objc2_app_kit::NSBitmapImageFileType::PNG, &objc2_foundation::NSDictionary::new()) });
+    fn save_capture(w: &objc2_app_kit::NSWindow, path: &str) {
+        let png = capture_window(&WindowRef::from_ns(w)).and_then(|rep| unsafe { rep.representationUsingType_properties(objc2_app_kit::NSBitmapImageFileType::PNG, &objc2_foundation::NSDictionary::new()) });
         if let Some(png) = png {
             png.writeToFile_atomically(&objc2_foundation::NSString::from_str(path), true);
         }
@@ -1435,16 +1435,16 @@ mod self_checks {
     }
 
     /// The window's three-pane split (sidebar, query and results, inspector).
-    fn outer(w: &NSWindow) -> Retained<NSSplitView> {
+    fn outer(w: &objc2_app_kit::NSWindow) -> Retained<NSSplitView> {
         all(w).into_iter().filter_map(|v| v.downcast::<NSSplitView>().ok()).find(|s| s.isVertical() && s.arrangedSubviews().count() == 3).unwrap()
     }
 
-    fn pane_widths(w: &NSWindow) -> Vec<f64> {
+    fn pane_widths(w: &objc2_app_kit::NSWindow) -> Vec<f64> {
         outer(w).arrangedSubviews().iter().map(|p| if p.isHidden() { 0.0 } else { p.frame().size.width.round() }).collect()
     }
 
     /// Where the window's title starts, in window points.
-    fn title_x(w: &NSWindow) -> Option<f64> {
+    fn title_x(w: &objc2_app_kit::NSWindow) -> Option<f64> {
         fn find(v: &NSView, title: &str) -> Option<f64> {
             for s in v.subviews().iter() {
                 if let Ok(f) = s.clone().downcast::<objc2_app_kit::NSTextField>()
@@ -1464,18 +1464,18 @@ mod self_checks {
         find(&frame, &w.title().to_string())
     }
 
-    fn buttons(w: &NSWindow) -> Vec<String> {
+    fn buttons(w: &objc2_app_kit::NSWindow) -> Vec<String> {
         all(w).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).map(|b| b.title().to_string()).collect()
     }
 
-    fn press_button(w: &NSWindow, title: &str) {
+    fn press_button(w: &objc2_app_kit::NSWindow, title: &str) {
         if let Some(b) = all(w).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).find(|b| b.title().to_string() == title) {
             // SAFETY: a button of ours, on the main thread.
             unsafe { b.performClick(None) };
         }
     }
 
-    fn labels(w: &NSWindow) -> Vec<String> {
+    fn labels(w: &objc2_app_kit::NSWindow) -> Vec<String> {
         all(w).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSTextField>().ok()).map(|f| f.stringValue().to_string()).collect()
     }
 
@@ -1489,20 +1489,20 @@ mod self_checks {
 
     /// The inspector, collapsing the sidebar and inspector (menu, toolbar
     /// command, a drag), and the history popover.
-    fn panes(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
-        let before = pane_widths(&w);
+    fn panes(w: WindowRef, b: Browser, dir: PathBuf) {
+        let before = pane_widths(w.ns());
         check("three-panes", before.len() == 3 && before.iter().all(|&x| x > 50.0) && (before[2] - 260.0).abs() <= 2.0, format!("sidebar, content, inspector widths {before:?}"));
         // The title starts beside the sidebar, as in Apple's apps: the
         // toolbar's first item follows the sidebar's divider.
-        let title_x = title_x(&w);
+        let title_x = title_x(w.ns());
         let beside = title_x.is_some_and(|x| (x - before[0] - 18.0).abs() <= 2.0);
         check("title-beside-sidebar", beside, format!("sidebar {:.0} wide; title starts at {title_x:?}", before[0]));
         // Select the second row of notes through AppKit, as a click would.
-        let t = results(&w);
+        let t = results(w.ns());
         t.selectRowIndexes_byExtendingSelection(&objc2_foundation::NSIndexSet::indexSetWithIndex(1), false);
         let w2 = w.clone();
         when(move || untrack(|| b.row.get()) == Some(1), 2000, move |_| {
-            let shown = labels(&w2);
+            let shown = labels(w2.ns());
             check(
                 "inspector-row",
                 // Where the row is from, which row, then its fields.
@@ -1514,13 +1514,13 @@ mod self_checks {
             perform_in(Some(&w2), super::TOGGLE_INSPECTOR);
             let w3 = w2.clone();
             then(move || {
-                let hidden = pane_widths(&w3);
+                let hidden = pane_widths(w3.ns());
                 let title_after = view_item("Inspector");
                 perform_in(Some(&w3), super::TOGGLE_INSPECTOR);
                 let w4 = w3.clone();
                 let before = before.clone();
                 then(move || {
-                    let back = pane_widths(&w4);
+                    let back = pane_widths(w4.ns());
                     check(
                         "inspector-toggle",
                         hidden[2] == 0.0 && hidden[1] > before[1] + 200.0 && (back[2] - before[2]).abs() <= 2.0 && title == "Hide Inspector" && title_after == "Show Inspector",
@@ -1532,14 +1532,14 @@ mod self_checks {
         });
     }
 
-    fn sidebar_checks(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
+    fn sidebar_checks(w: WindowRef, b: Browser, dir: PathBuf) {
         // ⌃⌘S through the menu bar hides the sidebar; the content keeps
         // the room, the inspector its width.
-        let before = pane_widths(&w);
+        let before = pane_widths(w.ns());
         let fired = menu_key("s", &[ferrokit::Modifier::Command, ferrokit::Modifier::Control]);
         let w2 = w.clone();
         then(move || {
-            let hidden = pane_widths(&w2);
+            let hidden = pane_widths(w2.ns());
             check(
                 "sidebar-shortcut",
                 fired && untrack(|| b.no_sidebar.get()) && hidden[0] == 0.0 && (hidden[2] - before[2]).abs() <= 2.0 && view_item("Sidebar") == "Show Sidebar",
@@ -1548,9 +1548,9 @@ mod self_checks {
             b.no_sidebar.set(false);
             let w3 = w2.clone();
             then(move || {
-                let back = pane_widths(&w3);
+                let back = pane_widths(w3.ns());
                 // Dragging the divider shut collapses it and sets the signal.
-                outer(&w3).setPosition_ofDividerAtIndex(0.0, 0);
+                outer(w3.ns()).setPosition_ofDividerAtIndex(0.0, 0);
                 let w4 = w3.clone();
                 then(move || {
                     let dragged = untrack(|| b.no_sidebar.get());
@@ -1566,13 +1566,13 @@ mod self_checks {
         });
     }
 
-    fn popover_windows() -> Vec<Retained<NSWindow>> {
+    fn popover_windows() -> Vec<WindowRef> {
         // AppKit's own popover windows (not in the app's `windows()`).
         let app = objc2_app_kit::NSApplication::sharedApplication(objc2::MainThreadMarker::new().unwrap());
-        app.windows().iter().filter(|w| w.isVisible() && w.class().name().to_string_lossy().contains("Popover")).collect()
+        app.windows().iter().filter(|w| w.isVisible() && w.class().name().to_string_lossy().contains("Popover")).map(|w| ferrokit::WindowRef::from_ns(&w)).collect()
     }
 
-    fn popover_checks(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
+    fn popover_checks(w: WindowRef, b: Browser, dir: PathBuf) {
         let live = ferrokit::testing::live_signals();
         b.history_shown.set(true);
         let w2 = w.clone();
@@ -1580,7 +1580,7 @@ mod self_checks {
             let pops = popover_windows();
             let buttons: Vec<Retained<objc2_app_kit::NSButton>> = pops
                 .iter()
-                .flat_map(|p| all(p))
+                .flat_map(|p| all(p.ns()))
                 .filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok())
                 .collect();
             let titles: Vec<String> = buttons.iter().map(|b| b.title().to_string()).collect();
@@ -1590,9 +1590,9 @@ mod self_checks {
                 format!("shown after {ms:.0} ms with {} queries, newest {:?}", titles.len(), titles.first()),
             );
             if let Ok(snap) = std::env::var("SNAP") {
-                save_capture(&w2, &format!("{snap}/sql_browser-panes.png"));
+                save_capture(w2.ns(), &format!("{snap}/sql_browser-panes.png"));
                 if let Some(p) = pops.first() {
-                    save_capture(p, &format!("{snap}/sql_browser-history.png"));
+                    save_capture(p.ns(), &format!("{snap}/sql_browser-history.png"));
                 }
             }
             // Choosing one puts it in the editor and closes the popover.
@@ -1620,7 +1620,7 @@ mod self_checks {
                             objc2_foundation::NSPoint::ZERO,
                             NSEventModifierFlags::empty(),
                             0.0,
-                            p.windowNumber(),
+                            p.ns().windowNumber(),
                             None,
                             &objc2_foundation::NSString::from_str("\u{1b}"),
                             &objc2_foundation::NSString::from_str("\u{1b}"),
@@ -1630,7 +1630,7 @@ mod self_checks {
                         .unwrap();
                         // Handed to the popover's content, as its window does
                         // with a key press there (a background app gets none).
-                        let root = p.contentView().into_iter().chain(all(p)).find(|v| v.class().name().to_string_lossy() == "FerrokitRootView");
+                        let root = p.ns().contentView().into_iter().chain(all(p.ns())).find(|v| v.class().name().to_string_lossy() == "FerrokitRootView");
                         if let Some(root) = root {
                             let _: () = unsafe { objc2::msg_send![&*root, keyDown: &*esc] };
                         }
@@ -1646,12 +1646,12 @@ mod self_checks {
 
     /// C11: the Filter… popover builds a WHERE for the table shown, from
     /// its columns; the rows that pass show.
-    fn filter_check(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
+    fn filter_check(w: WindowRef, b: Browser, dir: PathBuf) {
         // As the sidebar does when the table is picked.
         b.selected.set(Some("table:customers".into()));
         b.show("customers");
         let w2 = w.clone();
-        when(move || idle(b)() && results(&w2).numberOfRows() == 10_000, 5000, move |_| {
+        when(move || idle(b)() && results(w2.ns()).numberOfRows() == 10_000, 5000, move |_| {
             b.filter.set(Filter {
                 combine: Match::All,
                 rules: vec![
@@ -1662,14 +1662,14 @@ mod self_checks {
             b.filter_shown.set(true);
             let w3 = w.clone();
             when(|| !popover_windows().is_empty(), 3000, move |_| {
-                let editor = popover_windows().iter().flat_map(|p| all(p)).find_map(|v| v.downcast::<objc2_app_kit::NSPredicateEditor>().ok());
+                let editor = popover_windows().iter().flat_map(|p| all(p.ns())).find_map(|v| v.downcast::<objc2_app_kit::NSPredicateEditor>().ok());
                 let shown = editor.as_ref().and_then(|e| e.predicate()).map(|p| p.predicateFormat().to_string()).unwrap_or_default();
                 b.apply_filter();
                 let w4 = w3.clone();
                 when(move || idle(b)() && !untrack(|| b.query.get()).ends_with("\"customers\";"), 5000, move |_| {
                     let query = untrack(|| b.query.get());
-                    let rows = results(&w4).numberOfRows();
-                    let names = (0..rows.min(50)).all(|r| cell(&results(&w4), r, 1).starts_with('D'));
+                    let rows = results(w4.ns()).numberOfRows();
+                    let names = (0..rows.min(50)).all(|r| cell(&results(w4.ns()), r, 1).starts_with('D'));
                     let still = untrack(|| b.filter_source()).as_deref() == Some("customers");
                     check(
                         "filter-rows",
@@ -1683,11 +1683,11 @@ mod self_checks {
     }
 
     /// The chart pane's canvas, while it's shown.
-    fn chart_view(w: &NSWindow) -> Option<Retained<NSView>> {
+    fn chart_view(w: &objc2_app_kit::NSWindow) -> Option<Retained<NSView>> {
         all(w).into_iter().find(|v| canvas_drawing(v).is_some())
     }
 
-    fn drawing(w: &NSWindow) -> Vec<String> {
+    fn drawing(w: &objc2_app_kit::NSWindow) -> Vec<String> {
         chart_view(w).and_then(|v| canvas_drawing(&v)).unwrap_or_default()
     }
 
@@ -1710,20 +1710,20 @@ mod self_checks {
 
     /// Bars of a grouped query, a line through a million rows, the values
     /// on hover, and VoiceOver's summary.
-    fn chart_checks(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
+    fn chart_checks(w: WindowRef, b: Browser, dir: PathBuf) {
         perform_in(Some(&w), super::TOGGLE_CHART);
         // A result without numbers: the chart says what it needs and offers
         // to count the rows by a column, which it can draw.
         run_query(&w, b, "SELECT * FROM customers WHERE name LIKE 'D%';");
         let w1 = w.clone();
-        when(move || idle(b)() && buttons(&w1).iter().any(|t| t.starts_with("Count Rows by")), 5000, move |_| {
-            let offered = buttons(&w).into_iter().find(|t| t.starts_with("Count Rows by"));
-            let explained = labels(&w).iter().any(|l| l == "No Chart");
-            press_button(&w, offered.as_deref().unwrap_or_default());
+        when(move || idle(b)() && buttons(w1.ns()).iter().any(|t| t.starts_with("Count Rows by")), 5000, move |_| {
+            let offered = buttons(w.ns()).into_iter().find(|t| t.starts_with("Count Rows by"));
+            let explained = labels(w.ns()).iter().any(|l| l == "No Chart");
+            press_button(w.ns(), offered.as_deref().unwrap_or_default());
             let w2 = w.clone();
-            when(move || idle(b)() && results(&w2).numberOfRows() > 1 && untrack(|| b.query.get()).starts_with("SELECT \"city\""), 5000, move |ms| {
-                let rows = results(&w).numberOfRows();
-                let bars = drawing(&w).iter().filter(|d| d.starts_with("fill rect") && d.ends_with("Blue")).count();
+            when(move || idle(b)() && results(w2.ns()).numberOfRows() > 1 && untrack(|| b.query.get()).starts_with("SELECT \"city\""), 5000, move |ms| {
+                let rows = results(w.ns()).numberOfRows();
+                let bars = drawing(w.ns()).iter().filter(|d| d.starts_with("fill rect") && d.ends_with("Blue")).count();
                 check(
                     "chart-count-by",
                     explained && offered.as_deref() == Some("Count Rows by city") && bars as isize == rows,
@@ -1734,44 +1734,44 @@ mod self_checks {
         });
     }
 
-    fn chart_bars(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
+    fn chart_bars(w: WindowRef, b: Browser, dir: PathBuf) {
         run_query(&w, b, "SELECT substr(ordered_at, 1, 7) AS month, round(sum(total)) AS sales FROM orders GROUP BY month ORDER BY month");
         let w2 = w.clone();
-        when(move || idle(b)() && drawing(&w2).iter().filter(|d| d.starts_with("fill rect") && d.ends_with("Blue")).count() == 72, 10_000, move |ms| {
-            let d = drawing(&w);
+        when(move || idle(b)() && drawing(w2.ns()).iter().filter(|d| d.starts_with("fill rect") && d.ends_with("Blue")).count() == 72, 10_000, move |ms| {
+            let d = drawing(w.ns());
             let bars = d.iter().filter(|d| d.starts_with("fill rect") && d.ends_with("Blue")).count();
-            let label = chart_view(&w).and_then(|v| v.accessibilityLabel()).map(|l| l.to_string()).unwrap_or_default();
+            let label = chart_view(w.ns()).and_then(|v| v.accessibilityLabel()).map(|l| l.to_string()).unwrap_or_default();
             check(
                 "chart-bars",
                 bars == 72 && untrack(|| !b.no_chart.get()) && d.iter().any(|t| t == "text \"2020-01\" 11pt") && label.starts_with("Bar chart, 72 bars, from "),
                 format!("{bars} bars {ms:.0} ms after Run; VoiceOver: {label:?}; drew {:?}", d.iter().take(6).collect::<Vec<_>>()),
             );
             // Hovering a bar highlights it and shows its value.
-            let view = chart_view(&w).unwrap();
+            let view = chart_view(w.ns()).unwrap();
             let size = view.frame().size;
             let _: () = unsafe { objc2::msg_send![&*view, mouseMoved: &*mouse(&view, objc2_app_kit::NSEventType::MouseMoved, size.width * 0.5, size.height * 0.5)] };
             let w2 = w.clone();
             then(move || {
-                let d = drawing(&w2);
+                let d = drawing(w2.ns());
                 let lit = d.iter().filter(|t| t.ends_with("Indigo")).count();
                 let tip = d.iter().find(|t| t.starts_with("text \"202")  && t.contains(": ")).cloned();
                 // An export while hovering leaves the readout out, and the
                 // readout is back on screen afterwards.
                 let hovered_png = canvas_png(&view).unwrap_or_default();
-                let kept = drawing(&w2).iter().filter(|t| t.ends_with("Indigo")).count() == 1;
+                let kept = drawing(w2.ns()).iter().filter(|t| t.ends_with("Indigo")).count() == 1;
                 let _: () = unsafe { objc2::msg_send![&*view, mouseExited: &*mouse(&view, objc2_app_kit::NSEventType::MouseMoved, -5.0, -5.0)] };
                 let w3 = w2.clone();
                 then(move || {
-                    let gone = !drawing(&w3).iter().any(|t| t.ends_with("Indigo"));
+                    let gone = !drawing(w3.ns()).iter().any(|t| t.ends_with("Indigo"));
                     check("chart-hover", lit == 1 && tip.is_some() && gone, format!("hovering: {lit} bar highlighted, readout {tip:?}; leaving clears it: {gone}"));
-                    let plain_png = chart_view(&w3).and_then(|v| canvas_png(&v)).unwrap_or_default();
+                    let plain_png = chart_view(w3.ns()).and_then(|v| canvas_png(&v)).unwrap_or_default();
                     check(
                         "chart-export-no-hover",
                         !hovered_png.is_empty() && hovered_png == plain_png && kept,
                         format!("exported while hovering: {} bytes, the same as with no hover: {}; readout back on screen after: {kept}", hovered_png.len(), hovered_png == plain_png),
                     );
                     if let Ok(snap) = std::env::var("SNAP") {
-                        save_capture(&w3, &format!("{snap}/sql_browser-chart.png"));
+                        save_capture(w3.ns(), &format!("{snap}/sql_browser-chart.png"));
                     }
                     line_check(w3, b, dir);
                 });
@@ -1779,15 +1779,15 @@ mod self_checks {
         });
     }
 
-    fn line_check(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
+    fn line_check(w: WindowRef, b: Browser, dir: PathBuf) {
         run_query(&w, b, "SELECT id, total FROM orders");
         let w2 = w.clone();
         let start = Instant::now();
-        when(move || idle(b)() && drawing(&w2).iter().any(|d| d.starts_with("stroke path") && d.ends_with("Blue")), 20_000, move |ms| {
-            let d = drawing(&w);
+        when(move || idle(b)() && drawing(w2.ns()).iter().any(|d| d.starts_with("stroke path") && d.ends_with("Blue")), 20_000, move |ms| {
+            let d = drawing(w.ns());
             let points: usize = d.iter().filter(|t| t.starts_with("stroke path") && t.ends_with("Blue")).filter_map(|t| t.split(' ').nth(2)?.parse::<usize>().ok()).sum();
-            let width = chart_view(&w).map(|v| v.frame().size.width).unwrap_or(0.0);
-            let label = chart_view(&w).and_then(|v| v.accessibilityLabel()).map(|l| l.to_string()).unwrap_or_default();
+            let width = chart_view(w.ns()).map(|v| v.frame().size.width).unwrap_or(0.0);
+            let label = chart_view(w.ns()).and_then(|v| v.accessibilityLabel()).map(|l| l.to_string()).unwrap_or_default();
             let _ = start;
             check(
                 "chart-line-million",
@@ -1800,22 +1800,22 @@ mod self_checks {
 
     /// C9: pinching the million-point line zooms in (the line still drawn
     /// at a few points per pixel column), and pinching out shows it all.
-    fn zoom_check(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
-        let Some(view) = chart_view(&w) else { return legend_check(w, b, dir) };
+    fn zoom_check(w: WindowRef, b: Browser, dir: PathBuf) {
+        let Some(view) = chart_view(w.ns()) else { return legend_check(w, b, dir) };
         let (cw, ch) = (view.frame().size.width, view.frame().size.height);
         let start = Instant::now();
         let used = ferrokit::testing::canvas_magnify(&view, 9.0, cw / 2.0, ch / 2.0);
         let label = |v: &NSView| v.accessibilityLabel().map(|l| l.to_string()).unwrap_or_default();
         let w2 = w.clone();
-        when(move || chart_view(&w2).is_some_and(|v| label(&v).contains("showing x from")), 5_000, move |_| {
+        when(move || chart_view(w2.ns()).is_some_and(|v| label(&v).contains("showing x from")), 5_000, move |_| {
             let ms = start.elapsed().as_secs_f64() * 1000.0;
-            let d = drawing(&w);
+            let d = drawing(w.ns());
             let points: usize = d.iter().filter(|t| t.starts_with("stroke path") && t.ends_with("Blue")).filter_map(|t| t.split(' ').nth(2)?.parse::<usize>().ok()).sum();
             let zoomed = label(&view);
             let out = ferrokit::testing::canvas_magnify(&view, -0.95, cw / 2.0, ch / 2.0);
             let w3 = w.clone();
-            when(move || chart_view(&w3).is_some_and(|v| !label(&v).contains("showing")), 5_000, move |_| {
-                let all = chart_view(&w).map(|v| label(&v)).unwrap_or_default();
+            when(move || chart_view(w3.ns()).is_some_and(|v| !label(&v).contains("showing")), 5_000, move |_| {
+                let all = chart_view(w.ns()).map(|v| label(&v)).unwrap_or_default();
                 // A tenth of the ids, around the pointer.
                 let span = zoomed.split("showing x from ").nth(1).and_then(|r| {
                     let (a, b) = r.split_once(" to ")?;
@@ -1833,11 +1833,11 @@ mod self_checks {
 
     /// Two number columns after a text one: grouped bars, a colour each, and
     /// a legend naming them.
-    fn legend_check(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
+    fn legend_check(w: WindowRef, b: Browser, dir: PathBuf) {
         run_query(&w, b, "SELECT category, sum(quantity) / 1000 AS items, round(avg(total)) AS average FROM orders JOIN products ON products.id = product_id GROUP BY category ORDER BY category");
         let w2 = w.clone();
-        when(move || idle(b)() && drawing(&w2).iter().any(|d| d.contains("\"average\"")), 20_000, move |ms| {
-            let d = drawing(&w);
+        when(move || idle(b)() && drawing(w2.ns()).iter().any(|d| d.contains("\"average\"")), 20_000, move |ms| {
+            let d = drawing(w.ns());
             let fills = |colour: &str| d.iter().filter(|t| t.starts_with("fill") && t.ends_with(colour)).count();
             let (blue, orange) = (fills("Blue"), fills("Orange"));
             let legend = d.iter().any(|t| t.contains("\"items\"")) && d.iter().any(|t| t.contains("\"average\""));
@@ -1848,24 +1848,24 @@ mod self_checks {
                 return;
             };
             // Captures in light and dark, of this window and the welcome window.
-            save_capture(&w, &format!("{snap}/sql_browser-legend.png"));
+            save_capture(w.ns(), &format!("{snap}/sql_browser-legend.png"));
             set_appearance(Appearance::Dark);
             show_welcome();
             when(|| false, 500, move |_| {
-                save_capture(&w, &format!("{snap}/sql_browser-legend-dark.png"));
+                save_capture(w.ns(), &format!("{snap}/sql_browser-legend-dark.png"));
                 if let Some(welcome) = welcome_window() {
-                    save_capture(&welcome, &format!("{snap}/sql_browser-welcome-dark.png"));
+                    save_capture(welcome.ns(), &format!("{snap}/sql_browser-welcome-dark.png"));
                     welcome.close();
                 }
                 set_appearance(Appearance::System);
-                w.makeKeyAndOrderFront(None);
+                w.ns().makeKeyAndOrderFront(None);
                 when(|| false, 300, move |_| transfer_checks(w, b, dir));
             });
         });
     }
 
     /// The stacked split of the results table over the chart.
-    fn results_split(w: &NSWindow) -> Retained<NSSplitView> {
+    fn results_split(w: &objc2_app_kit::NSWindow) -> Retained<NSSplitView> {
         all(w).into_iter().filter_map(|v| v.downcast::<NSSplitView>().ok()).filter(|s| !s.isVertical() && s.arrangedSubviews().count() == 2).last().unwrap()
     }
 
@@ -1905,9 +1905,9 @@ mod self_checks {
     /// Exporting: the chart as an image (copied, dragged out as a file),
     /// the results as CSV (quoting, a million rows, the dragged chip), and
     /// a database dropped on the window opening.
-    fn transfer_checks(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
+    fn transfer_checks(w: WindowRef, b: Browser, dir: PathBuf) {
         // The line chart of a million rows, as a PNG and as a dragged file.
-        let chart = chart_view(&w).unwrap();
+        let chart = chart_view(w.ns()).unwrap();
         let png = canvas_png(&chart).unwrap_or_default();
         let size = png_size(&png);
         let dragged = canvas_drag(&chart).map(|item| fulfil(&item, &dir));
@@ -1925,12 +1925,12 @@ mod self_checks {
         );
         // Where the table pane ended while the chart was shown: hiding the
         // chart used to leave a line across the table there.
-        let edge = results_split(&w).arrangedSubviews().objectAtIndex(0).frame().size.height;
+        let edge = results_split(w.ns()).arrangedSubviews().objectAtIndex(0).frame().size.height;
         perform_in(Some(&w), super::TOGGLE_CHART);
         // CSV quoting.
         run_query(&w, b, "SELECT 1 AS n, 'x,y' AS comma, 'say \"hi\"' AS quote, NULL AS empty, 'two\nlines' AS multi");
         let w2 = w.clone();
-        when(move || idle(b)() && titles(&results(&w2)).len() == 5, 5000, move |_| {
+        when(move || idle(b)() && titles(&results(w2.ns())).len() == 5, 5000, move |_| {
             let r = untrack(|| b.results.get()).unwrap();
             let text = super::csv(&r);
             check(
@@ -1940,8 +1940,8 @@ mod self_checks {
             );
             run_query(&w, b, "SELECT * FROM orders");
             let w3 = w.clone();
-            when(move || idle(b)() && results(&w3).numberOfRows() == 1_000_000, 20_000, move |_| {
-                let pane = results_split(&w).arrangedSubviews().objectAtIndex(0);
+            when(move || idle(b)() && results(w3.ns()).numberOfRows() == 1_000_000, 20_000, move |_| {
+                let pane = results_split(w.ns()).arrangedSubviews().objectAtIndex(0);
                 match capture_window(&w) {
                     Some(rep) => {
                         let line = thin_line(&rep, &pane, edge);
@@ -1962,7 +1962,7 @@ mod self_checks {
                     format!("1,000,000 rows written in {ms:.0} ms ({} MB, {lines} lines)", text.len() / 1_000_000),
                 );
                 // The chip: a promised results.csv with the same content.
-                let chip = all(&w).into_iter().find(|v| canvas_drag(v).is_some_and(|d| matches!(&d, DragItem::Promise { name, .. } if name == "results.csv")));
+                let chip = all(w.ns()).into_iter().find(|v| canvas_drag(v).is_some_and(|d| matches!(&d, DragItem::Promise { name, .. } if name == "results.csv")));
                 let promised = chip.as_ref().and_then(|c| canvas_drag(c)).map(|item| {
                     let sub = dir.join("drop");
                     let _ = std::fs::create_dir_all(&sub);
@@ -1977,7 +1977,7 @@ mod self_checks {
 
     /// Files dropped on a document window: a database opens, other files
     /// aren't taken.
-    fn drop_checks(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
+    fn drop_checks(w: WindowRef, b: Browser, dir: PathBuf) {
         let other = dir.join("other.sqlite");
         {
             let conn = rusqlite::Connection::open(&other).unwrap();
@@ -1985,7 +1985,7 @@ mod self_checks {
         }
         let text_file = dir.join("readme.txt");
         std::fs::write(&text_file, "hello").unwrap();
-        let content = w.contentView().unwrap();
+        let content = w.ns().contentView().unwrap();
         let refused = {
             let clip = Clipboard::private();
             clip.set_files(&[text_file]);
@@ -1996,8 +1996,8 @@ mod self_checks {
             clip.set_files(std::slice::from_ref(&other));
             drop_on_view(&content, clip.pasteboard())
         };
-        when(|| windows().iter().any(|x| x.title().to_string() == "other.sqlite"), 3000, move |ms| {
-            let opened = windows().into_iter().find(|x| x.title().to_string() == "other.sqlite");
+        when(|| windows().iter().any(|x| x.title() == "other.sqlite"), 3000, move |ms| {
+            let opened = windows().into_iter().find(|x| x.title() == "other.sqlite");
             check(
                 "drop-opens-database",
                 refused && taken && opened.is_some(),
@@ -2006,15 +2006,15 @@ mod self_checks {
             if let Some(o) = opened {
                 // With the new window in front, this window's toolbar
                 // button still acts here (as when VoiceOver presses it).
-                o.makeKeyAndOrderFront(None);
+                o.ns().makeKeyAndOrderFront(None);
                 let before = untrack(|| b.no_inspector.get());
-                let item = w.toolbar().and_then(|t| t.items().iter().find(|i| i.itemIdentifier().to_string() == "inspector"));
+                let item = w.ns().toolbar().and_then(|t| t.items().iter().find(|i| i.itemIdentifier().to_string() == "inspector"));
                 if let Some(item) = &item {
                     // SAFETY: the item's own target and action, as AppKit sends them.
                     unsafe { objc2_app_kit::NSApplication::sharedApplication(objc2::MainThreadMarker::new().unwrap()).sendAction_to_from(item.action().unwrap(), item.target().as_deref(), Some(item)) };
                 }
                 let after = untrack(|| b.no_inspector.get());
-                let enabled: Vec<(String, bool)> = w.toolbar().map(|t| t.items().iter().map(|i| (i.itemIdentifier().to_string(), i.isEnabled())).collect()).unwrap_or_default();
+                let enabled: Vec<(String, bool)> = w.ns().toolbar().map(|t| t.items().iter().map(|i| (i.itemIdentifier().to_string(), i.isEnabled())).collect()).unwrap_or_default();
                 check("toolbar-own-window", item.is_some() && after != before && enabled.iter().all(|e| e.1), format!("key window {:?}; the inspector button toggled this window's inspector: {}; enabled {enabled:?}", o.title(), after != before));
                 untrack(|| b.no_inspector.set(before));
                 close_window(&o);
@@ -2025,7 +2025,7 @@ mod self_checks {
 
     /// Real input: a query typed into the editor, ⌘R, then a click on a
     /// result row and ↓, as a user does them.
-    fn input_checks(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
+    fn input_checks(w: WindowRef, b: Browser, dir: PathBuf) {
         use ferrokit::testing::input::{self, Key};
         input::ready(&w);
         when(|| false, 300, move |_| {
@@ -2033,7 +2033,7 @@ mod self_checks {
                 check("input-ready", false, "the window couldn't become key".into());
                 return scratch(w, dir);
             }
-            let editor = all(&w).into_iter().find(|v| objc2_app_kit::NSAccessibility::accessibilityLabel(&**v).is_some_and(|l| l.to_string() == "Query"));
+            let editor = all(w.ns()).into_iter().find(|v| objc2_app_kit::NSAccessibility::accessibilityLabel(&**v).is_some_and(|l| l.to_string() == "Query"));
             if let Some(e) = &editor {
                 input::click(e);
             }
@@ -2044,9 +2044,9 @@ mod self_checks {
                 input::type_text(&w2, "SELECT name, city FROM customers WHERE id <= 3");
                 input::key(&w2, Key::Char('r'), &[ferrokit::Modifier::Command]);
                 let w3 = w2.clone();
-                when(move || idle(b)() && results(&w3).numberOfRows() == 3, 5000, move |ms| {
+                when(move || idle(b)() && results(w3.ns()).numberOfRows() == 3, 5000, move |ms| {
                     let typed = untrack(|| b.query.get());
-                    let t = results(&w2);
+                    let t = results(w2.ns());
                     check(
                         "input-type-and-run",
                         typed == "SELECT name, city FROM customers WHERE id <= 3" && t.numberOfRows() == 3 && titles(&t) == ["name", "city"],
@@ -2061,7 +2061,7 @@ mod self_checks {
                         input::key(&w4, Key::Down, &[]);
                         when(|| false, 300, move |_| {
                             let after = untrack(|| b.row.get());
-                            let shown = labels(&w4);
+                            let shown = labels(w4.ns());
                             check(
                                 "input-table-row",
                                 clicked == Some(0) && after == Some(1) && shown.contains(&"Row 2 of 3".to_string()),
@@ -2077,9 +2077,9 @@ mod self_checks {
 
     /// Typing in the middle of the query, a key at a time: the caret stays
     /// where the typing is (the developer found it jumping to the end).
-    fn input_edit_middle(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
+    fn input_edit_middle(w: WindowRef, b: Browser, dir: PathBuf) {
         use ferrokit::testing::input;
-        let Some(editor) = all(&w).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSTextView>().ok().filter(|t| objc2_app_kit::NSAccessibility::accessibilityLabel(&**t).is_some_and(|l| l.to_string() == "Query"))) else {
+        let Some(editor) = all(w.ns()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSTextView>().ok().filter(|t| objc2_app_kit::NSAccessibility::accessibilityLabel(&**t).is_some_and(|l| l.to_string() == "Query"))) else {
             check("input-type-in-middle", false, "no query editor".into());
             return scratch(w, dir);
         };
@@ -2127,13 +2127,13 @@ mod self_checks {
         });
     }
 
-    fn scratch(w: Retained<NSWindow>, dir: PathBuf) {
+    fn scratch(w: WindowRef, dir: PathBuf) {
         let s = new_document().unwrap();
         let b = BROWSERS.with_borrow(|all| all.last().unwrap().0);
         run_query(&s, b, "CREATE TABLE t (x); INSERT INTO t VALUES (1), (2.5), ('three'); SELECT x, typeof(x) AS type FROM t;");
         let s2 = s.clone();
-        when(move || idle(b)() && results(&s2).numberOfRows() == 3, 5000, move |_| {
-            let t = results(&s);
+        when(move || idle(b)() && results(s2.ns()).numberOfRows() == 3, 5000, move |_| {
+            let t = results(s.ns());
             let got: Vec<String> = (0..3).map(|r| format!("{}:{}", cell(&t, r, 0), cell(&t, r, 1))).collect();
             check("scratch-database", s.title().to_string().starts_with("Untitled") && got == ["1:integer", "2.5:real", "three:text"], format!("{:?}: {got:?}", s.title()));
             let bad = dir.join("not.sqlite");
@@ -2145,7 +2145,7 @@ mod self_checks {
     }
 
     /// Closing a window frees its state (signals and the connection).
-    fn teardown(w: Retained<NSWindow>, s: Retained<NSWindow>, dir: PathBuf) {
+    fn teardown(w: WindowRef, s: WindowRef, dir: PathBuf) {
         let live = ferrokit::testing::live_signals();
         close_window(&s);
         spawn(|| std::thread::sleep(std::time::Duration::from_millis(200)), move |()| {
@@ -2203,8 +2203,8 @@ mod soak {
     }
 
     /// The sample database's window (the soak's own copy).
-    fn main_window() -> Option<Retained<NSWindow>> {
-        windows().into_iter().find(|w| w.title().to_string() == "soak.sqlite" && w.isVisible() && w.attachedSheet().is_none())
+    fn main_window() -> Option<WindowRef> {
+        windows().into_iter().find(|w| w.title() == "soak.sqlite" && w.ns().isVisible() && w.ns().attachedSheet().is_none())
     }
 
     fn results(w: &NSWindow) -> Option<Retained<objc2_app_kit::NSTableView>> {
@@ -2228,7 +2228,7 @@ mod soak {
         let actions = vec![
             action("type-and-run", 6, |r: &mut Rng| {
                 let Some(w) = main_window() else { return };
-                let Some(editor) = views(&w).into_iter().find(|v| objc2_app_kit::NSAccessibility::accessibilityLabel(&**v).is_some_and(|l| l.to_string() == "Query")) else { return };
+                let Some(editor) = views(w.ns()).into_iter().find(|v| objc2_app_kit::NSAccessibility::accessibilityLabel(&**v).is_some_and(|l| l.to_string() == "Query")) else { return };
                 input::click(&editor);
                 input::key(&w, Key::Char('a'), &[ferrokit::Modifier::Command]);
                 input::type_text(&w, QUERIES[r.below(QUERIES.len())]);
@@ -2243,7 +2243,7 @@ mod soak {
             }),
             action("row-click", 4, |r: &mut Rng| {
                 let Some(w) = main_window() else { return };
-                if let Some(t) = results(&w).filter(|t| t.numberOfRows() > 0) {
+                if let Some(t) = results(w.ns()).filter(|t| t.numberOfRows() > 0) {
                     let visible = t.rowsInRect(t.visibleRect());
                     let row = visible.location as isize + r.below(visible.length.max(1)) as isize;
                     let rect = t.rectOfRow(row);
@@ -2257,7 +2257,7 @@ mod soak {
             }),
             action("sidebar-click", 3, |r: &mut Rng| {
                 let Some(w) = main_window() else { return };
-                if let Some(o) = views(&w).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSOutlineView>().ok()) {
+                if let Some(o) = views(w.ns()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSOutlineView>().ok()) {
                     let rect = o.rectOfRow(r.below(o.numberOfRows().max(1) as usize) as isize);
                     input::click_at(&o, rect.origin.x + 50.0, rect.origin.y + rect.size.height / 2.0);
                 }
@@ -2272,7 +2272,7 @@ mod soak {
             }),
             action("history", 1, |_: &mut Rng| {
                 let Some(w) = main_window() else { return };
-                if let Some(b) = views(&w).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).find(|b| b.title().to_string() == "History") {
+                if let Some(b) = views(w.ns()).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).find(|b| b.title().to_string() == "History") {
                     input::click(&b);
                     later(400, move || {
                         if let Some(w) = main_window() {
@@ -2283,7 +2283,7 @@ mod soak {
             }),
             action("scratch-database", 1, |r: &mut Rng| {
                 // A new window, a write, a moment, then closed again.
-                if windows().iter().filter(|w| w.isVisible()).count() > 3 {
+                if windows().iter().filter(|w| w.ns().isVisible()).count() > 3 {
                     return;
                 }
                 let Some(s) = new_document() else { return };
@@ -2301,9 +2301,9 @@ mod soak {
             }),
             action("resize", 1, |r: &mut Rng| {
                 if let Some(w) = main_window() {
-                    let f = w.frame();
+                    let f = w.ns().frame();
                     let size = objc2_foundation::NSSize::new(800.0 + r.below(600) as f64, 560.0 + r.below(400) as f64);
-                    w.setFrame_display(objc2_foundation::NSRect::new(f.origin, size), true);
+                    w.ns().setFrame_display(objc2_foundation::NSRect::new(f.origin, size), true);
                 }
             }),
             action("appearance", 1, |r: &mut Rng| {
@@ -2325,15 +2325,15 @@ mod demo {
 
     use super::tour::{at, place, play, type_slowly, views};
 
-    fn doc() -> Option<Retained<NSWindow>> {
-        windows().into_iter().find(|w| w.title().to_string() == "ferrokit-sample.sqlite" && w.isVisible())
+    fn doc() -> Option<WindowRef> {
+        windows().into_iter().find(|w| w.title() == "ferrokit-sample.sqlite" && w.ns().isVisible())
     }
 
     fn results(w: &NSWindow) -> Option<Retained<NSTableView>> {
         views(w).into_iter().filter_map(|v| v.downcast::<NSTableView>().ok()).find(|t| t.downcast_ref::<NSOutlineView>().is_none())
     }
 
-    fn with_doc(f: impl FnOnce(&NSWindow) + 'static) -> Box<dyn FnOnce()> {
+    fn with_doc(f: impl FnOnce(&WindowRef) + 'static) -> Box<dyn FnOnce()> {
         Box::new(move || {
             if let Some(w) = doc() {
                 f(&w)
@@ -2344,7 +2344,7 @@ mod demo {
     /// Clicks the sidebar row showing `name`.
     fn sidebar(name: &'static str) -> Box<dyn FnOnce()> {
         with_doc(move |w| {
-            let Some(o) = views(w).into_iter().find_map(|v| v.downcast::<NSOutlineView>().ok()) else { return };
+            let Some(o) = views(w.ns()).into_iter().find_map(|v| v.downcast::<NSOutlineView>().ok()) else { return };
             let row = (0..o.numberOfRows()).find(|&r| {
                 o.viewAtColumn_row_makeIfNecessary(0, r, true)
                     .and_then(|v| v.downcast::<NSTableCellView>().ok())
@@ -2361,12 +2361,12 @@ mod demo {
 
     pub fn run() {
         set_appearance(Appearance::Light);
-        if let Some(w) = windows().into_iter().find(|w| w.isVisible()) {
+        if let Some(w) = windows().into_iter().find(|w| w.ns().isVisible()) {
             place(&w, 800.0, 460.0);
         }
         let mut steps = vec![at(1700, || {
             for w in windows() {
-                if let Some(row) = views(&w).into_iter().find(|v| v.accessibilityLabel().is_some_and(|l| l.to_string() == "Open the Sample")) {
+                if let Some(row) = views(w.ns()).into_iter().find(|v| v.accessibilityLabel().is_some_and(|l| l.to_string() == "Open the Sample")) {
                     input::click(&row);
                 }
             }
@@ -2378,7 +2378,7 @@ mod demo {
             steps.push((
                 380,
                 with_doc(move |w| {
-                    if let Some(t) = results(w) {
+                    if let Some(t) = results(w.ns()) {
                         t.scrollRowToVisible(row);
                     }
                 }),
@@ -2388,7 +2388,7 @@ mod demo {
         steps.push((
             700,
             with_doc(|w| {
-                let Some(t) = results(w) else { return };
+                let Some(t) = results(w.ns()) else { return };
                 if t.tableColumns().count() > 4
                     && let Some(d) = t.tableColumns().objectAtIndex(4).sortDescriptorPrototype()
                 {
@@ -2401,7 +2401,7 @@ mod demo {
         steps.push((
             1200,
             with_doc(|w| {
-                if let Some(editor) = views(w).into_iter().find(|v| v.accessibilityLabel().is_some_and(|l| l.to_string() == "Query")) {
+                if let Some(editor) = views(w.ns()).into_iter().find(|v| v.accessibilityLabel().is_some_and(|l| l.to_string() == "Query")) {
                     input::click(&editor);
                     input::key(w, Key::Char('a'), &[ferrokit::Modifier::Command]);
                 }
@@ -2414,7 +2414,7 @@ mod demo {
         steps.push((
             1500,
             with_doc(|w| {
-                if let Some(t) = results(w).filter(|t| t.numberOfRows() > 6) {
+                if let Some(t) = results(w.ns()).filter(|t| t.numberOfRows() > 6) {
                     let rect = t.rectOfRow(5);
                     input::click_at(&t, rect.origin.x + 30.0, rect.origin.y + rect.size.height / 2.0);
                 }
@@ -2424,7 +2424,7 @@ mod demo {
         steps.push((
             900,
             with_doc(|w| {
-                if let Some(t) = results(w).filter(|t| t.numberOfRows() > 12) {
+                if let Some(t) = results(w.ns()).filter(|t| t.numberOfRows() > 12) {
                     let rect = t.rectOfRow(11);
                     input::click_at(&t, rect.origin.x + 30.0, rect.origin.y + rect.size.height / 2.0);
                 }

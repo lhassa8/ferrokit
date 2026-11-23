@@ -231,7 +231,7 @@ impl Viewer {
     }
 
     /// Starts following `path` (replacing what was shown).
-    fn open(&self, path: &Path, window: &objc2_app_kit::NSWindow) {
+    fn open(&self, path: &Path, window: &WindowRef) {
         self.tail.borrow_mut().take();
         self.pending.lock().unwrap().clear();
         self.lines.borrow_mut().clear();
@@ -271,8 +271,8 @@ impl Viewer {
         self.log.borrow_mut().push((Instant::now(), total, t.elapsed().as_secs_f64() * 1e6));
     }
 
-    fn choose(&self, window: &objc2_app_kit::NSWindow) {
-        let (v, w) = (self.clone(), objc2::rc::Retained::from(window));
+    fn choose(&self, window: &WindowRef) {
+        let (v, w) = (self.clone(), window.clone());
         open_panel(window, OpenOptions::new(), move |paths| {
             if let Some(p) = paths.and_then(|p| p.into_iter().next()) {
                 v.open(&p, &w);

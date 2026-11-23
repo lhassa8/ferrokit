@@ -742,7 +742,7 @@ fn export(node: &mut Node, view: &Retained<CanvasView>, name: &str, mtm: objc2::
         crate::chrome::menu_item(crate::t("Save Image…"), move || {
             let Some(v) = save.load() else { return };
             let (Some(png), Some(window)) = (png(&v), v.window()) else { return };
-            crate::dialogs::save_panel(&window, &file, None, move |path| {
+            crate::dialogs::save_panel(&crate::WindowRef::from_ns(&window), &file, None, move |path| {
                 if let Some(path) = path
                     && let Err(e) = std::fs::write(&path, &png)
                 {

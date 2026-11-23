@@ -140,12 +140,12 @@ mod self_checks {
         });
     }
 
-    fn checks(w: Retained<NSWindow>, active: bool) {
+    fn checks(w: WindowRef, active: bool) {
         let dir = std::env::temp_dir().join(format!("ferrokit-journal-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let m = editor(&w);
+        let m = editor(w.ns());
         let tv = m.text_view();
-        w.makeFirstResponder(Some(&tv));
+        w.ns().makeFirstResponder(Some(&tv));
         check(
             "rich-editor",
             m.is_rich() && m.has_format_bar() && !m.is_ruler_visible() && ax_audit(&w).is_empty(),
@@ -181,7 +181,7 @@ mod self_checks {
         });
     }
 
-    fn save_checks(w: Retained<NSWindow>, m: TextModel, dir: PathBuf) {
+    fn save_checks(w: WindowRef, m: TextModel, dir: PathBuf) {
         let path = dir.join("Lofoten.rtf");
         let saved = save_document_as(&w, &path).is_ok();
         let file = std::fs::read(&path).unwrap_or_default();
@@ -198,7 +198,7 @@ mod self_checks {
             let opened = open_document(&path);
             then(move || {
                 let w2 = opened.ok();
-                let back = w2.as_ref().map(|w| editor(w));
+                let back = w2.as_ref().map(|w| editor(w.ns()));
                 let ok = back.as_ref().is_some_and(|m| m.text() == "Ferry to Reine at dawn" && m.style_at(10).bold && !m.style_at(2).bold);
                 check("open-rtf", ok, format!("reopened: text {:?}, bold kept {}", back.as_ref().map(|m| m.text()), back.as_ref().is_some_and(|m| m.style_at(10).bold)));
                 html_checks(back, &path);

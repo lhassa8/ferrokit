@@ -737,7 +737,7 @@ thread_local! {
 
 /// The New Habit sheet: a name, a symbol and a colour.
 fn new_habit(t: Tracker) {
-    let Some(w) = focused_window().or_else(|| windows().into_iter().find(|w| w.title().to_string() == "Habits")) else { return };
+    let Some(w) = focused_window().or_else(|| windows().into_iter().find(|w| w.title() == "Habits")) else { return };
     // The sheet's signals are made in its builder: freed when it closes.
     let handle = sheet_with(
         &w,
@@ -1030,8 +1030,8 @@ mod soak {
         objc2_app_kit::NSAccessibility::accessibilityLabel(v).map(|l| l.to_string()).unwrap_or_default()
     }
 
-    fn main_window() -> Option<Retained<NSWindow>> {
-        windows().into_iter().find(|w| w.title().to_string() == "Habits" && w.isVisible())
+    fn main_window() -> Option<WindowRef> {
+        windows().into_iter().find(|w| w.title() == "Habits" && w.ns().isVisible())
     }
 
     fn later(ms: u64, f: impl FnOnce() + 'static) {
@@ -1049,17 +1049,17 @@ mod soak {
         let Some(w) = main_window() else { return };
         let mtm = objc2::MainThreadMarker::new().unwrap();
         // Most of the screen, centred.
-        if let Some(screen) = w.screen().or_else(|| objc2_app_kit::NSScreen::mainScreen(mtm)) {
+        if let Some(screen) = w.ns().screen().or_else(|| objc2_app_kit::NSScreen::mainScreen(mtm)) {
             let v = screen.visibleFrame();
             let (wd, ht) = ((v.size.width * 0.97).min(1180.0), (v.size.height * 0.97).min(800.0));
             let origin = objc2_foundation::NSPoint::new(v.origin.x + (v.size.width - wd) / 2.0, v.origin.y + (v.size.height - ht) / 2.0);
             let frame = objc2_foundation::NSRect::new(origin, objc2_foundation::NSSize::new(wd, ht));
-            w.setFrame_display(frame, true);
+            w.ns().setFrame_display(frame, true);
             eprintln!("demo window {:.0} × {:.0} on a {:.0} × {:.0} screen", wd, ht, v.size.width, v.size.height);
             // For scripts/record-demo.sh: points from the screen's top left.
-            let f = w.frame();
+            let f = w.ns().frame();
             eprintln!("[demo] frame {:.0} {:.0} {:.0} {:.0}", f.origin.x, screen.frame().size.height - f.origin.y - f.size.height, f.size.width, f.size.height);
-            eprintln!("[demo] window {}", w.windowNumber());
+            eprintln!("[demo] window {}", w.ns().windowNumber());
         }
         set_appearance(Appearance::Light);
         // No pointer in the recording (the tour's clicks don't move it).
@@ -1075,7 +1075,7 @@ mod soak {
         let card = move |name: String| -> Box<dyn FnOnce()> {
             Box::new(move || {
                 if let Some(w) = main_window()
-                    && let Some(c) = views(&w).into_iter().find(|v| v.class().name().to_string_lossy() == "FerrokitInteraction" && label_of(v).starts_with(&format!("{name}, ")))
+                    && let Some(c) = views(w.ns()).into_iter().find(|v| v.class().name().to_string_lossy() == "FerrokitInteraction" && label_of(v).starts_with(&format!("{name}, ")))
                 {
                     input::click(&c);
                 }
@@ -1093,7 +1093,7 @@ mod soak {
             Box::new(move || {
                 let mut r = Rng::new(seed);
                 let Some(w) = main_window() else { return };
-                if let Some(c) = views(&w).into_iter().find(|v| label_of(v).contains(": done ")) {
+                if let Some(c) = views(w.ns()).into_iter().find(|v| label_of(v).contains(": done ")) {
                     let b = c.bounds();
                     for _ in 0..n {
                         input::click_at(&c, 30.0 + r.below((b.size.width - 40.0).max(1.0) as usize) as f64, 18.0 + r.below(130) as f64);
@@ -1113,7 +1113,7 @@ mod soak {
         // A real click on Insights in the sidebar (so the arrow keys go to it).
         steps.push((700, Box::new(|| {
             let Some(w) = main_window() else { return };
-            if let Some(o) = views(&w).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSOutlineView>().ok()) {
+            if let Some(o) = views(w.ns()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSOutlineView>().ok()) {
                 let row = (0..o.numberOfRows()).find(|&r| {
                     o.viewAtColumn_row_makeIfNecessary(0, r, true)
                         .and_then(|v| v.downcast::<objc2_app_kit::NSTableCellView>().ok())
@@ -1148,12 +1148,12 @@ mod soak {
         // A new habit through the sheet: a name, a symbol, a colour.
         steps.push((1500, key(Key::Char('n'), &[ferrokit::Modifier::Command])));
         steps.push((600, Box::new(|| {
-            if let Some(s) = main_window().map(|_| ()).and(windows().into_iter().find_map(|w| w.attachedSheet())) {
-                input::type_text(&s, "Piano");
+            if let Some(s) = main_window().map(|_| ()).and(windows().into_iter().find_map(|w| w.ns().attachedSheet())) {
+                input::type_text(&ferrokit::WindowRef::from_ns(&s), "Piano");
             }
         })));
         steps.push((700, Box::new(|| {
-            if let Some(s) = windows().into_iter().find_map(|w| w.attachedSheet()) {
+            if let Some(s) = windows().into_iter().find_map(|w| w.ns().attachedSheet()) {
                 // The music note, then pink.
                 let picks: Vec<_> = views(&s).into_iter().filter(|v| v.class().name().to_string_lossy() == "FerrokitInteraction").collect();
                 if let Some(v) = picks.get(8) {
@@ -1166,7 +1166,7 @@ mod soak {
             }
         })));
         steps.push((900, Box::new(|| {
-            if let Some(s) = windows().into_iter().find_map(|w| w.attachedSheet())
+            if let Some(s) = windows().into_iter().find_map(|w| w.ns().attachedSheet())
                 && let Some(b) = button_in(&s, "Add")
             {
                 input::click(&b);
@@ -1221,18 +1221,18 @@ mod soak {
         input::ready(&w);
         // Every action works on the window as it is now (a sheet or alert
         // may be up: those actions just do nothing).
-        let win = || main_window().filter(|w| w.attachedSheet().is_none());
+        let win = || main_window().filter(|w| w.ns().attachedSheet().is_none());
         let actions = vec![
             action("toggle-card", 6, move |r: &mut Rng| {
                 let Some(w) = win() else { return };
-                let cards: Vec<_> = views(&w).into_iter().filter(|v| v.class().name().to_string_lossy() == "FerrokitInteraction" && label_of(v).contains(", ")).collect();
+                let cards: Vec<_> = views(w.ns()).into_iter().filter(|v| v.class().name().to_string_lossy() == "FerrokitInteraction" && label_of(v).contains(", ")).collect();
                 if !cards.is_empty() {
                     input::click(&cards[r.below(cards.len())]);
                 }
             }),
             action("sidebar-click", 4, move |r: &mut Rng| {
                 let Some(w) = win() else { return };
-                if let Some(o) = views(&w).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSOutlineView>().ok()) {
+                if let Some(o) = views(w.ns()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSOutlineView>().ok()) {
                     let row = r.below(o.numberOfRows().max(1) as usize) as isize;
                     let rect = o.rectOfRow(row);
                     input::click_at(&o, rect.origin.x + 40.0, rect.origin.y + rect.size.height / 2.0);
@@ -1250,13 +1250,13 @@ mod soak {
             }),
             action("calendar-click", 3, move |r: &mut Rng| {
                 let Some(w) = win() else { return };
-                if let Some(c) = views(&w).into_iter().find(|v| label_of(v).contains(": done ")) {
+                if let Some(c) = views(w.ns()).into_iter().find(|v| label_of(v).contains(": done ")) {
                     let b = c.bounds();
                     input::click_at(&c, 30.0 + r.below((b.size.width - 30.0).max(1.0) as usize) as f64, 18.0 + r.below(133) as f64);
                 }
             }),
             action("reminder", 1, move |_: &mut Rng| {
-                if let Some(b) = win().and_then(|w| button_in(&w, "Remind me every day at")) {
+                if let Some(b) = win().and_then(|w| button_in(w.ns(), "Remind me every day at")) {
                     input::click(&b);
                 }
             }),
@@ -1269,8 +1269,8 @@ mod soak {
                 let name = r.pick(&["Stretch", "Journal", "No sugar", "Floss", "Call a friend", "Piano"]).to_string();
                 let add = r.chance(0.7);
                 later(500, move || {
-                    let Some(s) = main_window().and_then(|w| w.attachedSheet()) else { return };
-                    input::type_text(&s, &name);
+                    let Some(s) = main_window().and_then(|w| w.ns().attachedSheet()) else { return };
+                    input::type_text(&ferrokit::WindowRef::from_ns(&s), &name);
                     later(300, move || {
                         if let Some(b) = button_in(&s, if add { "Add" } else { "Cancel" }) {
                             input::click(&b);
@@ -1288,11 +1288,11 @@ mod soak {
                 untrack(|| t.page.set(Page::Habit(last)));
                 later(500, move || {
                     let Some(w) = main_window() else { return };
-                    if let Some(b) = button_in(&w, "Delete…") {
+                    if let Some(b) = button_in(w.ns(), "Delete…") {
                         input::click(&b);
                     }
                     later(500, move || {
-                        if let Some(alert) = main_window().and_then(|w| w.attachedSheet())
+                        if let Some(alert) = main_window().and_then(|w| w.ns().attachedSheet())
                             && let Some(b) = button_in(&alert, "Delete")
                         {
                             input::click(&b);
@@ -1303,9 +1303,9 @@ mod soak {
             }),
             action("resize", 1, move |r: &mut Rng| {
                 if let Some(w) = win() {
-                    let f = w.frame();
+                    let f = w.ns().frame();
                     let size = objc2_foundation::NSSize::new(760.0 + r.below(600) as f64, 560.0 + r.below(400) as f64);
-                    w.setFrame_display(objc2_foundation::NSRect::new(f.origin, size), true);
+                    w.ns().setFrame_display(objc2_foundation::NSRect::new(f.origin, size), true);
                 }
             }),
             action("appearance", 1, move |r: &mut Rng| {
@@ -1428,7 +1428,7 @@ mod self_checks {
 
     fn snap(w: &NSWindow, name: &str) {
         let Ok(dir) = std::env::var("SNAP") else { return };
-        let Some(rep) = ferrokit::testing::capture_window(w) else { return };
+        let Some(rep) = ferrokit::testing::capture_window(&WindowRef::from_ns(w)) else { return };
         // SAFETY: encoding a bitmap as PNG with no options.
         if let Some(png) = unsafe { rep.representationUsingType_properties(objc2_app_kit::NSBitmapImageFileType::PNG, &objc2_foundation::NSDictionary::new()) } {
             png.writeToFile_atomically(&objc2_foundation::NSString::from_str(&format!("{dir}/habits-{name}.png")), true);
@@ -1436,7 +1436,7 @@ mod self_checks {
     }
 
     pub fn run() {
-        let w = windows().into_iter().find(|w| w.title().to_string() == "Habits").unwrap();
+        let w = windows().into_iter().find(|w| w.title() == "Habits").unwrap();
         let (t, data) = STATE.with(|s| s.borrow_mut().take()).unwrap();
         let failed = Rc::new(Cell::new(0));
         let check: Check = {
@@ -1448,33 +1448,33 @@ mod self_checks {
         };
         let problems = ax_audit(&w);
         check("accessibility", problems.is_empty(), format!("{problems:?}"));
-        let shown = texts(&w);
+        let shown = texts(w.ns());
         let date = format_date(super::now(), "EEEEdMMMM");
         check("today-header", shown.contains(&date) && shown.contains(&"2 of 5 done".to_string()), format!("{date:?} and \"2 of 5 done\" in {:?}", &shown[..shown.len().min(12)]));
-        let ring = canvases(&w, "40%").into_iter().next();
+        let ring = canvases(w.ns(), "40%").into_iter().next();
         let arc = ring.as_ref().and_then(|r| canvas_drawing(r)).and_then(|d| d.into_iter().find(|o| o.starts_with("stroke arc")));
         check("progress-ring", arc.as_deref().is_some_and(|a| a.contains(" 0-144 ")), format!("{arc:?} (0-144 degrees: 2 of 5)"));
         let streaks = ["12 days", "5 days"].iter().all(|s| shown.contains(&s.to_string()));
         check("streaks", streaks && untrack(|| t.streak(1)) == 12 && untrack(|| t.best_streak(1)) >= 12, format!("walk {} (best {}), read {}", untrack(|| t.streak(1)), untrack(|| t.best_streak(1)), untrack(|| t.streak(2))));
-        snap(&w, "today");
+        snap(w.ns(), "today");
         // A done card keeps its colour under the pointer.
-        let row = clickable(&w, "Walk 8,000 steps", true);
-        let before = row.as_ref().and_then(|r| row_fill(&w, r));
+        let row = clickable(w.ns(), "Walk 8,000 steps", true);
+        let before = row.as_ref().and_then(|r| row_fill(w.ns(), r));
         if let Some(r) = &row {
             ferrokit::testing::hover(r, true);
         }
 
         // Clicking a card marks it done: the summary, ring, card colour and storage follow.
         let today = untrack(|| t.today.get());
-        let card = clickable(&w, "Read 20 pages", true);
+        let card = clickable(w.ns(), "Read 20 pages", true);
         if let Some(c) = &card {
             click(c);
         }
         let check2 = check.clone();
         later_ms(400, move || {
-            let shown = texts(&w);
-            let arc = canvases(&w, "60%").into_iter().next().and_then(|r| canvas_drawing(&r)).and_then(|d| d.into_iter().find(|o| o.starts_with("stroke arc")));
-            let after = row.as_ref().and_then(|r| row_fill(&w, r));
+            let shown = texts(w.ns());
+            let arc = canvases(w.ns(), "60%").into_iter().next().and_then(|r| canvas_drawing(&r)).and_then(|d| d.into_iter().find(|o| o.starts_with("stroke arc")));
+            let after = row.as_ref().and_then(|r| row_fill(w.ns(), r));
             check2("hover-keeps-background", before.is_some_and(|b| b > 0.1) && after == before, format!("done card {before:?}, hovered {after:?}"));
             if let Some(r) = &row {
                 ferrokit::testing::hover(r, false);
@@ -1517,10 +1517,10 @@ mod self_checks {
         });
     }
 
-    fn habit_phase(w: Retained<NSWindow>, t: Tracker, check: Check, failed: Rc<Cell<u32>>) {
-        w.makeKeyAndOrderFront(None);
+    fn habit_phase(w: WindowRef, t: Tracker, check: Check, failed: Rc<Cell<u32>>) {
+        w.ns().makeKeyAndOrderFront(None);
         // The sidebar is AppKit's: select the row as a click (or arrow key) would.
-        let (outline, row, tint) = sidebar_row(&w, "Walk 8,000 steps");
+        let (outline, row, tint) = sidebar_row(w.ns(), "Walk 8,000 steps");
         if let (Some(o), Some(r)) = (&outline, row) {
             o.selectRowIndexes_byExtendingSelection(&objc2_foundation::NSIndexSet::indexSetWithIndex(r), false);
         }
@@ -1531,11 +1531,11 @@ mod self_checks {
         );
         later_ms(500, move || {
             let page = untrack(|| t.page.get());
-            let shown = texts(&w);
+            let shown = texts(w.ns());
             let stats = ["Current streak", "Best streak", "Last 30 days", "12 days"].iter().all(|s| shown.contains(&s.to_string()));
             check("habit-page", page == Page::Habit(1) && stats, format!("page {page:?}; stats {stats}"));
-            snap(&w, "habit");
-            let cal = canvases(&w, "Walk 8,000 steps: done").into_iter().next();
+            snap(w.ns(), "habit");
+            let cal = canvases(w.ns(), "Walk 8,000 steps: done").into_iter().next();
             let today = untrack(|| t.today.get());
             let first = super::first_shown(today);
             let done_shown = (first..=today).filter(|&d| untrack(|| t.is_done(1, d))).count();
@@ -1549,7 +1549,7 @@ mod self_checks {
             check("calendar-click", clicked && untrack(|| t.is_done(1, day)) != was, format!("clicked {clicked}; {was} → {}", untrack(|| t.is_done(1, day))));
             // The reminder.
             let boxes: Vec<Retained<objc2_app_kit::NSButton>> =
-                views(&w).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).filter(|b| b.title().to_string() == "Remind me every day at").collect();
+                views(w.ns()).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).filter(|b| b.title().to_string() == "Remind me every day at").collect();
             if let Some(b) = boxes.first() {
                 // SAFETY: as above.
                 unsafe { b.performClick(None) };
@@ -1564,7 +1564,7 @@ mod self_checks {
                 );
                 // A time with minutes, picked as the user does: the reminder moves to it.
                 use objc2_foundation::{NSCalendar, NSCalendarOptions};
-                let time_picker = views(&w).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSDatePicker>().ok());
+                let time_picker = views(w.ns()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSDatePicker>().ok());
                 if let Some(p) = &time_picker
                     && let Some(d) = NSCalendar::currentCalendar().dateBySettingHour_minute_second_ofDate_options(7, 45, 0, &p.dateValue(), NSCalendarOptions::empty())
                 {
@@ -1587,10 +1587,10 @@ mod self_checks {
         });
     }
 
-    fn new_phase(w: Retained<NSWindow>, t: Tracker, check: Check, failed: Rc<Cell<u32>>) {
+    fn new_phase(w: WindowRef, t: Tracker, check: Check, failed: Rc<Cell<u32>>) {
         perform_in(Some(&w), super::NEW_HABIT);
         later_ms(600, move || {
-            let sheet = w.attachedSheet();
+            let sheet = w.ns().attachedSheet();
             let fields: Vec<Retained<objc2_app_kit::NSTextField>> =
                 sheet.as_ref().map(|s| views(s)).unwrap_or_default().into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSTextField>().ok()).filter(|f| f.isEditable()).collect();
             if let Some(f) = fields.first() {
@@ -1616,7 +1616,7 @@ mod self_checks {
                     let page = untrack(|| t.page.get());
                     check(
                         "new-habit",
-                        enabled && habits.len() == 6 && new.as_ref().is_some_and(|h| h.name == "Stretch") && page == Page::Habit(6) && w.attachedSheet().is_none() && texts(&w).contains(&"Stretch".to_string()),
+                        enabled && habits.len() == 6 && new.as_ref().is_some_and(|h| h.name == "Stretch") && page == Page::Habit(6) && w.ns().attachedSheet().is_none() && texts(w.ns()).contains(&"Stretch".to_string()),
                         format!("Add enabled {enabled}; {} habits, last {:?}; page {page:?}", habits.len(), new.map(|h| h.name)),
                     );
                     // The menu bar's panel, built at launch with 5 rows, fits the 6th.
@@ -1651,18 +1651,18 @@ mod self_checks {
         });
     }
 
-    fn insights_phase(w: Retained<NSWindow>, t: Tracker, check: Check, failed: Rc<Cell<u32>>) {
+    fn insights_phase(w: WindowRef, t: Tracker, check: Check, failed: Rc<Cell<u32>>) {
         untrack(|| t.page.set(Page::Insights));
         later_ms(600, move || {
-            let charts: Vec<String> = views(&w)
+            let charts: Vec<String> = views(w.ns())
                 .into_iter()
                 .filter_map(|v| objc2_app_kit::NSAccessibility::accessibilityLabel(&*v).map(|l| l.to_string()))
                 .filter(|l| l.contains("chart"))
                 .collect();
-            let all_drawn: Vec<String> = views(&w).iter().filter_map(|v| canvas_drawing(v)).flatten().collect();
+            let all_drawn: Vec<String> = views(w.ns()).iter().filter_map(|v| canvas_drawing(v)).flatten().collect();
             let legend = ["Walk 8,000 steps", "Meditate", "In bed by 23:00"].iter().all(|n| all_drawn.iter().any(|d| d.contains(&format!("\"{n}\""))));
             check("insights", charts.len() >= 3 && legend, format!("charts {charts:?}; legend {legend}"));
-            snap(&w, "insights");
+            snap(w.ns(), "insights");
             // The report as a PDF.
             let data = pdf_data(super::report(t));
             // SAFETY: PDFKit's initialiser; None when unreadable.
@@ -1679,7 +1679,7 @@ mod self_checks {
 
     /// Real clicks and keys: a card, the calendar, the sidebar's arrow
     /// keys, and the New Habit sheet by ⌘N, typing and a click on Add.
-    fn input_phase(w: Retained<NSWindow>, t: Tracker, check: Check, failed: Rc<Cell<u32>>) {
+    fn input_phase(w: WindowRef, t: Tracker, check: Check, failed: Rc<Cell<u32>>) {
         use ferrokit::testing::input::{self, Key};
         input::ready(&w);
         untrack(|| t.page.set(Page::Today));
@@ -1690,13 +1690,13 @@ mod self_checks {
             }
             let today = untrack(|| t.today.get());
             let was = untrack(|| t.is_done(4, today));
-            if let Some(card) = clickable(&w, "Meditate", true) {
+            if let Some(card) = clickable(w.ns(), "Meditate", true) {
                 input::click(&card);
             }
             later_ms(400, move || {
                 check("input-card", untrack(|| t.is_done(4, today)) != was, format!("Meditate done {was} → {}", untrack(|| t.is_done(4, today))));
                 // The sidebar: a click on Insights, then ↓ (past the Habits heading).
-                let (outline, row, _) = sidebar_row(&w, "Insights");
+                let (outline, row, _) = sidebar_row(w.ns(), "Insights");
                 if let (Some(o), Some(r)) = (&outline, row) {
                     let rect = o.rectOfRow(r as isize);
                     input::click_at(o, rect.origin.x + 40.0, rect.origin.y + rect.size.height / 2.0);
@@ -1708,7 +1708,7 @@ mod self_checks {
                         let after = untrack(|| t.page.get());
                         check("input-sidebar", clicked == Page::Insights && after == Page::Habit(1), format!("click {clicked:?}, then ↓ {after:?}"));
                         // The calendar: a real click on a day two weeks ago.
-                        let cal = canvases(&w, "Walk 8,000 steps: done").into_iter().next();
+                        let cal = canvases(w.ns(), "Walk 8,000 steps: done").into_iter().next();
                         let day = today - 14;
                         let first = super::first_shown(today);
                         let was = untrack(|| t.is_done(1, day));
@@ -1720,13 +1720,13 @@ mod self_checks {
                             // ⌘N, typing a name, a click on Add.
                             input::key(&w, Key::Char('n'), &[ferrokit::Modifier::Command]);
                             later_ms(700, move || {
-                                let sheet = w.attachedSheet();
+                                let sheet = w.ns().attachedSheet();
                                 if let Some(s) = &sheet {
                                     // Every symbol and colour is a button VoiceOver can name and press.
-                                    let buttons = ferrokit::testing::ax_elements(s).into_iter().filter(|e| e.role == "AXButton").count();
-                                    let problems = ax_audit(s);
+                                    let buttons = ferrokit::testing::ax_elements(&ferrokit::WindowRef::from_ns(s)).into_iter().filter(|e| e.role == "AXButton").count();
+                                    let problems = ax_audit(&ferrokit::WindowRef::from_ns(s));
                                     check("new-habit-sheet-ax", buttons == super::SYMBOLS.len() + super::PALETTE.len() + 2 && problems.is_empty(), format!("{buttons} buttons; {problems:?}"));
-                                    input::type_text(s, "Yoga");
+                                    input::type_text(&ferrokit::WindowRef::from_ns(s), "Yoga");
                                 }
                                 later_ms(300, move || {
                                     // A click on Add. (A posted Return doesn't press a
@@ -1737,7 +1737,7 @@ mod self_checks {
                                     }
                                     later_ms(800, move || {
                                         let last = untrack(|| t.habits.get()).last().map(|h| h.name.clone());
-                                        check("input-new-habit", sheet.is_some() && last.as_deref() == Some("Yoga") && w.attachedSheet().is_none(), format!("sheet {}; last habit {last:?}", sheet.is_some()));
+                                        check("input-new-habit", sheet.is_some() && last.as_deref() == Some("Yoga") && w.ns().attachedSheet().is_none(), format!("sheet {}; last habit {last:?}", sheet.is_some()));
                                         if let Some(id) = untrack(|| t.habits.get()).last().filter(|h| h.name == "Yoga").map(|h| h.id) {
                                             untrack(|| t.delete(id));
                                         }
@@ -1753,7 +1753,7 @@ mod self_checks {
     }
 
     /// An animated page change back to Today shows every card's text.
-    fn transition_phase(w: Retained<NSWindow>, t: Tracker, check: Check, failed: Rc<Cell<u32>>) {
+    fn transition_phase(w: WindowRef, t: Tracker, check: Check, failed: Rc<Cell<u32>>) {
         untrack(|| t.page.set(Page::Insights));
         later_ms(500, move || {
             untrack(|| animated(|| t.page.set(Page::Today)));
@@ -1777,7 +1777,7 @@ mod self_checks {
                     }
                     false
                 };
-                let fields: Vec<Retained<objc2_app_kit::NSTextField>> = views(&w).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSTextField>().ok()).filter(|f| !in_sidebar(f)).collect();
+                let fields: Vec<Retained<objc2_app_kit::NSTextField>> = views(w.ns()).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSTextField>().ok()).filter(|f| !in_sidebar(f)).collect();
                 let mut bad = Vec::new();
                 for n in &names {
                     // The card's title (not the sidebar's row).
@@ -1802,20 +1802,20 @@ mod self_checks {
         });
     }
 
-    fn dark_phase(w: Retained<NSWindow>, t: Tracker, check: Check, failed: Rc<Cell<u32>>) {
+    fn dark_phase(w: WindowRef, t: Tracker, check: Check, failed: Rc<Cell<u32>>) {
         if std::env::var("SNAP").is_err() {
             return finish(failed);
         }
         set_appearance(Appearance::Dark);
         untrack(|| t.page.set(Page::Today));
         later_ms(700, move || {
-            snap(&w, "today-dark");
+            snap(w.ns(), "today-dark");
             untrack(|| t.page.set(Page::Habit(1)));
             later_ms(600, move || {
-                snap(&w, "habit-dark");
+                snap(w.ns(), "habit-dark");
                 untrack(|| t.page.set(Page::Insights));
                 later_ms(600, move || {
-                    snap(&w, "insights-dark");
+                    snap(w.ns(), "insights-dark");
                     set_appearance(Appearance::System);
                     let _ = check;
                     finish(failed);

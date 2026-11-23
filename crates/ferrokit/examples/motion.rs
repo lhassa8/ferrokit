@@ -193,7 +193,7 @@ mod demo {
 
     pub fn run() {
         let Some(state) = super::self_checks::STATE.with(|s| s.get()) else { return };
-        let Some(w) = windows().into_iter().find(|w| w.title().to_string() == "Packing") else { return };
+        let Some(w) = windows().into_iter().find(|w| w.title() == "Packing") else { return };
         set_appearance(Appearance::Light);
         place(&w, 560.0, 500.0);
         // Packs (or unpacks) an item, as a click on its row does.
@@ -274,7 +274,7 @@ mod self_checks {
         // Changes made here land when this callback's batch ends, so each
         // step reads its results a moment later.
         // Not animated: a change lands at once.
-        let boots = field(&w, "Boots");
+        let boots = field(w.ns(), "Boots");
         let before = boots.frame();
         state.details.set(true);
         let (c, w2) = (check.clone(), w.clone());
@@ -288,8 +288,8 @@ mod self_checks {
     }
 
     /// Animated: the list moves down over the second; the panel fades in.
-    fn animate_details(w: Retained<NSWindow>, state: State, check: Check, failed: Rc<Cell<u32>>) {
-        let boots = field(&w, "Boots");
+    fn animate_details(w: WindowRef, state: State, check: Check, failed: Rc<Cell<u32>>) {
+        let boots = field(w.ns(), "Boots");
         let start = presented(&boots).origin.y;
         animated_with(slow(), || state.details.set(true));
         let started = std::time::Instant::now();
@@ -297,7 +297,7 @@ mod self_checks {
         let c = check.clone();
         later_ms(40, move || {
             let end = model(&boots).origin.y;
-            let panel = field(&w, "Three days on the coast trail; huts each night, so no tent.");
+            let panel = field(w.ns(), "Three days on the coast trail; huts each night, so no tent.");
             later_ms(300, move || {
                 let mid = presented(&boots).origin.y;
                 let between = (mid - start) * (mid - end) < 0.0;
@@ -321,14 +321,14 @@ mod self_checks {
     }
 
     /// Rows: slide in, fade when packed, slide out and go.
-    fn step_rows(w: Retained<NSWindow>, state: State, check: Check, failed: Rc<Cell<u32>>) {
+    fn step_rows(w: WindowRef, state: State, check: Check, failed: Rc<Cell<u32>>) {
         animated_with(slow(), || {
             state.next.set(1);
             state.items.update(|v| v.push(super::Item { id: 100, name: "Map".into(), symbol: "map.fill" }));
         });
         let c = check.clone();
         later_ms(40, move || {
-            let map = field(&w, "Map");
+            let map = field(w.ns(), "Map");
             let end_x = model(&map).origin.x;
             later_ms(300, move || {
                 let x = presented(&map).origin.x;
@@ -339,10 +339,10 @@ mod self_checks {
         });
     }
 
-    fn click_and_hover(w: Retained<NSWindow>, state: State, c: Check, failed: Rc<Cell<u32>>) {
+    fn click_and_hover(w: WindowRef, state: State, c: Check, failed: Rc<Cell<u32>>) {
         // Click "Boots": it dims while pressed, then packs (fading to 0.45).
-        let boots = field(&w, "Boots");
-        let Some(row) = interaction_of(&w, "Boots") else {
+        let boots = field(w.ns(), "Boots");
+        let Some(row) = interaction_of(w.ns(), "Boots") else {
             c("click-row", false, "no interaction view".into());
             return finish(failed);
         };
@@ -359,11 +359,11 @@ mod self_checks {
             let name = ax_tree(&w2).into_iter().find(|t| t.0 == "AXButton" && t.2.starts_with("Boots")).map(|t| t.2);
             c2("button-name-follows-text", name.as_deref() == Some("Boots, Packed"), format!("{name:?}"));
             // The details panel's background follows the packed list.
-            let panel = field(&w2, "Three days on the coast trail; huts each night, so no tent.");
+            let panel = field(w2.ns(), "Three days on the coast trail; huts each night, so no tent.");
             let tint = surface_under_view(&panel).and_then(|s| bg_rgba(&s));
             c2("background-when", tint.is_some_and(|(r, g, b, _)| g > r && g > b), format!("panel background {tint:.2?} (green once something's packed)"));
             // Hover: the row's highlight comes on.
-            let water = interaction_of(&w2, "Water bottle").unwrap();
+            let water = interaction_of(w2.ns(), "Water bottle").unwrap();
             let surface = surface_under(&water);
             // A real pointer resting where the window opened may have hovered
             // it already: start from no hover.
@@ -381,8 +381,8 @@ mod self_checks {
         });
     }
 
-    fn remove_packed(w: Retained<NSWindow>, state: State, check: Check, failed: Rc<Cell<u32>>) {
-        let boots = field(&w, "Boots");
+    fn remove_packed(w: WindowRef, state: State, check: Check, failed: Rc<Cell<u32>>) {
+        let boots = field(w.ns(), "Boots");
         animated_with(slow(), || {
             let packed = state.packed.get();
             state.items.update(|v| v.retain(|i| !packed.contains(&i.id)));
@@ -396,7 +396,7 @@ mod self_checks {
             let o = opacity(&boots);
             c("slide-out", still && ferrokit::testing::probes::leaving_views() > 0 && o < 0.45 && o > 0.0, format!("still shown {still}, {} views leaving; presented opacity {o:.2}", ferrokit::testing::probes::leaving_views()));
             later_ms(900, move || {
-                let gone = !shown(&boots) && ferrokit::testing::probes::leaving_views() == 0 && field_opt(&w, "Boots").is_none();
+                let gone = !shown(&boots) && ferrokit::testing::probes::leaving_views() == 0 && field_opt(w.ns(), "Boots").is_none();
                 c("removed-after-transition", gone, format!("removed {}; leaving {}", !shown(&boots), ferrokit::testing::probes::leaving_views()));
                 springs(w, state, c, failed);
             });
@@ -411,15 +411,15 @@ mod self_checks {
     /// C14: the details spring open (the list overshoots and settles), the
     /// trail's name starts where the header's was; the bar springs to the
     /// packed share; the shake goes through its keyframes.
-    fn springs(w: Retained<NSWindow>, state: State, check: Check, failed: Rc<Cell<u32>>) {
+    fn springs(w: WindowRef, state: State, check: Check, failed: Rc<Cell<u32>>) {
         batch(|| state.details.set(false));
         later_ms(80, move || {
-            let badge = in_window(&field(&w, "Coast trail"));
-            let water = field(&w, "Water bottle");
+            let badge = in_window(&field(w.ns(), "Coast trail"));
+            let water = field(w.ns(), "Water bottle");
             let y0 = model(&water).origin.y;
             animated_with(Animation::bouncy(), || state.details.set(true));
             later_ms(20, move || {
-                let start = in_window(&field(&w, "Coast trail"));
+                let start = in_window(&field(w.ns(), "Coast trail"));
                 // The spring's course, in steps of 20 ms.
                 let ys: Vec<f64> = (0..60).map(|_| {
                     ferrokit::testing::probes::step_motion(0.02);
@@ -427,7 +427,7 @@ mod self_checks {
                 }).collect();
                 ferrokit::testing::probes::step_motion(4.0);
                 let end = model(&water).origin.y;
-                let title = in_window(&field(&w, "Coast trail"));
+                let title = in_window(&field(w.ns(), "Coast trail"));
                 let travel = end - y0;
                 let peak = ys.iter().map(|y| (y - y0) / travel).fold(f64::MIN, f64::max);
                 check(
@@ -461,7 +461,7 @@ mod self_checks {
                     );
                     // Nothing packed: Remove packed shakes the bar.
                     batch(|| state.packed.set(Vec::new()));
-                    let remove = all(&w).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).find(|b| b.title().to_string() == "Remove packed").unwrap();
+                    let remove = all(w.ns()).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).find(|b| b.title().to_string() == "Remove packed").unwrap();
                     // Its action now (performClick shows the press first, a moment the shake would run on).
                     ferrokit::testing::send_action(&remove);
                     let path: Vec<f64> = (0..40).map(|_| {
@@ -482,16 +482,16 @@ mod self_checks {
     }
 
     /// With Reduce Motion: layout lands at once, slides only fade.
-    fn reduce(w: Retained<NSWindow>, state: State, check: Check, failed: Rc<Cell<u32>>) {
+    fn reduce(w: WindowRef, state: State, check: Check, failed: Rc<Cell<u32>>) {
         set_reduce_motion(Some(true));
-        let water = field(&w, "Water bottle");
+        let water = field(w.ns(), "Water bottle");
         animated_with(slow(), || {
             state.details.set(false);
             state.items.update(|v| v.push(super::Item { id: 200, name: "Snacks".into(), symbol: "takeoutbag.and.cup.and.straw.fill" }));
         });
         let c = check.clone();
         later_ms(40, move || {
-            let snacks = field(&w, "Snacks");
+            let snacks = field(w.ns(), "Snacks");
             let end_x = model(&snacks).origin.x;
             let moved_at_once = no_position_animation(&water);
             later_ms(300, move || {

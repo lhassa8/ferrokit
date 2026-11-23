@@ -107,6 +107,7 @@ pub mod updates;
 mod value;
 pub mod testing;
 mod view;
+mod window_ref;
 
 use ferrokit_core::kept::{UiCell, UiLocal};
 use std::any::Any;
@@ -173,10 +174,11 @@ pub use value::{IntoValue, Value};
 pub use transfer::{Clipboard, DragItem, WriteFile};
 pub use l10n::{format_date, format_number, format_number_for, local_day, local_day_start, today, weekday, language, parse_strings, plural_category, set_language, t, t_plural, t_with};
 pub use charts::{Chart, Format, Rule, Series, area_chart, bar_chart, heatmap, histogram, line_chart, pie_chart, scatter_chart, sparkline, stacked_bar_chart};
-/// The AppKit window type the window functions take and return.
-pub use objc2_app_kit::NSWindow;
-/// The owning pointer to an AppKit object (as returned by [`open`]).
+pub use window_ref::WindowRef;
+/// The owning pointer to an AppKit object (what the escape hatches, such as
+/// [`WindowRef::ns`]'s callers and `testing`'s view lookups, hold).
 pub use objc2::rc::Retained;
+use objc2_app_kit::NSWindow;
 pub use view::{
     Align, AnyView, Axis, Cx, Dynamic, ForEach, Grid, Identifiable, Modified, Node, Size, Spacer, Stack, View, ViewExt, Views,
     dynamic, for_each, grid, hstack, zstack, Layers, spacer, vstack, watch, Watch,
@@ -1261,7 +1263,7 @@ impl App {
         let settings = self.settings.map(|w| {
             SETTINGS.with_borrow_mut(|s| *s = Some(Err(w)));
             Retained::into_super(appkit_views::ActionTarget::new(mtm, || {
-                open_settings();
+                open_settings_ns();
             }))
         });
         let about = self.about.map(|(credits, link)| Retained::into_super(appkit_views::ActionTarget::new(mtm, move || show_about(&credits, link.as_ref()))));
@@ -1415,21 +1417,24 @@ thread_local! {
 
 /// Opens `window` as a new tab of `beside` (the tab bar's + and a "New
 /// Tab" command use this).
-pub fn open_tab(beside: &NSWindow, window: Window) -> Retained<NSWindow> {
-    let w = open(window);
+pub fn open_tab(beside: &WindowRef, window: Window) -> WindowRef {
+    let beside = beside.ns();
+    let w = open_ns(window);
     beside.addTabbedWindow_ordered(&w, objc2_app_kit::NSWindowOrderingMode::Above);
     w.makeKeyAndOrderFront(None);
-    w
+    WindowRef::new(w)
 }
 
 /// Puts `window` into full screen, or takes it out (as the green button
 /// and View ▸ Enter Full Screen do).
-pub fn toggle_full_screen(window: &NSWindow) {
+pub fn toggle_full_screen(window: &crate::WindowRef) {
+    let window = window.ns();
     window.toggleFullScreen(None);
 }
 
 /// Whether `window` is in full screen.
-pub fn is_full_screen(window: &NSWindow) -> bool {
+pub fn is_full_screen(window: &crate::WindowRef) -> bool {
+    let window = window.ns();
     window.styleMask().contains(NSWindowStyleMask::FullScreen)
 }
 
@@ -1460,12 +1465,12 @@ pub fn dock_badge() -> Option<String> {
 /// });
 /// # let _ = add;
 /// ```
-pub fn open_with(make: impl FnOnce() -> Window) -> Retained<NSWindow> {
+pub fn open_with(make: impl FnOnce() -> Window) -> WindowRef {
     let owner = signal::Owner::new();
     let window = owner.with(make);
-    let w = open(window);
+    let w = open_ns(window);
     keep_until_closed(&w, owner);
-    w
+    WindowRef::new(w)
 }
 
 thread_local! {
@@ -1480,7 +1485,11 @@ pub(crate) fn keep_until_closed(window: &NSWindow, value: impl std::any::Any) {
 }
 
 /// Opens `window` now (while the app runs) and returns it.
-pub fn open(window: Window) -> Retained<NSWindow> {
+pub fn open(window: Window) -> WindowRef {
+    WindowRef::new(open_ns(window))
+}
+
+pub(crate) fn open_ns(window: Window) -> Retained<NSWindow> {
     let mtm = mtm();
     objc2::rc::autoreleasepool(|_| {
         let w = window.open(mtm);
@@ -1497,7 +1506,11 @@ thread_local! {
 
 /// Opens the app's Settings window (see [`App::settings`]), or brings it to
 /// the front, and returns it. `None` if the app has none.
-pub fn open_settings() -> Option<Retained<NSWindow>> {
+pub fn open_settings() -> Option<WindowRef> {
+    open_settings_ns().map(WindowRef::new)
+}
+
+pub(crate) fn open_settings_ns() -> Option<Retained<NSWindow>> {
     let mtm = mtm();
     let pending = SETTINGS.with_borrow_mut(|s| match s.take() {
         Some(Err(w)) => Some(w),
@@ -1525,7 +1538,8 @@ pub fn open_settings() -> Option<Retained<NSWindow>> {
 ///
 /// The close button and ⌘W do the same (except for the Settings window,
 /// which is kept and reused).
-pub fn close_window(window: &NSWindow) {
+pub fn close_window(window: &crate::WindowRef) {
+    let window = window.ns();
     window.close();
     teardown(window);
 }
@@ -1583,7 +1597,11 @@ pub(crate) fn teardown(window: &NSWindow) {
 }
 
 /// The app's windows, in the order they were opened.
-pub fn windows() -> Vec<Retained<NSWindow>> {
+pub fn windows() -> Vec<WindowRef> {
+    windows_ns().into_iter().map(WindowRef::new).collect()
+}
+
+pub(crate) fn windows_ns() -> Vec<Retained<NSWindow>> {
     WINDOWS.with_borrow(|w| w.clone())
 }
 

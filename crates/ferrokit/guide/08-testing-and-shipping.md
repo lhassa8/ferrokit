@@ -109,7 +109,7 @@ apps need a person.
 use ferrokit::testing::input::{self, Key};
 use ferrokit::*;
 
-fn check(window: &NSWindow, field: &objc2_app_kit::NSView) {
+fn check(window: &WindowRef, field: &objc2_app_kit::NSView) {
     if input::ready(window) {
         input::click(field);
         input::type_text(window, "Ada Lovelace");
@@ -144,14 +144,12 @@ use ferrokit::testing::input::{self, Key};
 use ferrokit::testing::soak::{self, Rng, Settings, action};
 use ferrokit::*;
 
-fn start(window: Retained<NSWindow>) {
+fn start(window: WindowRef) {
     let w = window.clone();
     soak::run(Settings::from_env(), vec![
         action("arrow", 3, move |r: &mut Rng| input::key(&w, *r.pick(&[Key::Up, Key::Down]), &[])),
         action("resize", 1, move |r: &mut Rng| {
-            let f = window.frame();
-            let size = objc2_foundation::NSSize::new(600.0 + r.below(400) as f64, 400.0 + r.below(300) as f64);
-            window.setFrame_display(objc2_foundation::NSRect::new(f.origin, size), true);
+            window.set_size(600.0 + r.below(400) as f64, 400.0 + r.below(300) as f64);
         }),
     ]);
 }

@@ -160,7 +160,7 @@ mod self_checks {
             }
             None
         }
-        find(&windows()[0].contentView().unwrap()).unwrap()
+        find(&windows()[0].ns().contentView().unwrap()).unwrap()
     }
 
     fn selected_rows(cv: &NSCollectionView) -> Vec<usize> {
@@ -239,8 +239,8 @@ mod self_checks {
 
     fn accessibility(g: Gallery, cv: Retained<NSCollectionView>) {
         let w = cv.window().unwrap();
-        let problems = ax_audit(&w);
-        let names: Vec<String> = ax_elements(&w).into_iter().filter(|e| e.role == "AXImage").map(|e| e.name).collect();
+        let problems = ax_audit(&WindowRef::from_ns(&w));
+        let names: Vec<String> = ax_elements(&WindowRef::from_ns(&w)).into_iter().filter(|e| e.role == "AXImage").map(|e| e.name).collect();
         let first = super::describe(&g.all[0]).title;
         check("accessibility", problems.is_empty() && names.first() == Some(&first) && names.len() >= 4, format!("unnamed {problems:?}; items read as {:?}…", names.iter().take(3).collect::<Vec<_>>()));
         scale(g, cv);

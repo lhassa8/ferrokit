@@ -374,12 +374,12 @@ let info = button("Info", move || shown.set(true))
 ```rust,no_run
 use ferrokit::*;
 
-fn delete(window: &NSWindow) {
+fn delete(window: &WindowRef) {
     let alert_box = Alert::new("Delete the note?", "This can't be undone.").button("Delete").button("Cancel").destructive(0);
     alert(window, alert_box, |index| if index == 0 { println!("deleted") });
 }
 
-fn rename(window: &NSWindow) {
+fn rename(window: &WindowRef) {
     // Built in `sheet_with`: the sheet's signals are freed when it closes.
     let handle = sheet_with(window, || {
         let name = Signal::new(String::from("Untitled"));
@@ -389,7 +389,7 @@ fn rename(window: &NSWindow) {
     # let _ = handle;
 }
 
-fn choose(window: &NSWindow) {
+fn choose(window: &WindowRef) {
     open_panel(window, OpenOptions::new().extensions(&["csv"]), |paths| {
         println!("{paths:?}");
     });
@@ -398,8 +398,10 @@ fn choose(window: &NSWindow) {
 # fn main() {}
 ```
 
-`NSWindow` is AppKit's window type, re-exported by `ferrokit`;
-`windows()` returns the app's open windows.
+A `WindowRef` is a handle to one of the app's windows: `open` returns
+one, `windows()` lists them and `focused_window()` gives the one commands
+go to. It has the window's title, size and `close()`; `.ns()` reaches
+AppKit's `NSWindow` for anything else.
 
 **Where signals live.** A signal belongs to what was being built when it
 was made, and goes with it: a window's view, a row of a list. One made in

@@ -52,13 +52,13 @@ mod self_checks {
     fn first() {
         let window = windows()[0].clone();
         // (t: "Untitled" in the user's language.)
-        check("untitled-window", window.title().to_string() == t("Untitled"), format!("{:?}", window.title()));
+        check("untitled-window", window.title() == t("Untitled"), format!("{:?}", window.title()));
         let problems = ax_audit(&window);
         check("accessibility", problems.is_empty(), format!("{problems:?}"));
         // Save and open a file through the document machinery.
         let path = std::env::temp_dir().join(format!("{}-check-{}.txt", env!("CARGO_PKG_NAME"), std::process::id()));
         std::fs::write(&path, "hello # a comment").unwrap();
-        let opened = open_document(&path).map(|w| w.title().to_string());
+        let opened = open_document(&path).map(|w| w.title());
         check("open-file", opened.as_deref().is_ok_and(|t| t.ends_with(".txt")), format!("{opened:?}"));
         let _ = std::fs::remove_file(&path);
     }
