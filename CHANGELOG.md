@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased: the rest of async ([#2](https://github.com/lhassa8/ferrokit/issues/2))
+
+- **Added: awaitable dialogs.** `alert_async`, `open_panel_async`, `save_panel_async` and `sheet_async` return an `Answer` future to await in a `spawn_local` task instead of taking a callback. `alert_async` gives `Option<usize>` (`None` when the alert ends without a button and has no Cancel button); `sheet_async(&window, |reply| Window::new(..))` shows your own sheet, whose buttons answer with `reply.send(value)` or `reply.cancel()`. If the task is cancelled while it waits (its window closed, `Task::cancel`), the sheet closes. Checks `async-alert`, `async-sheet`, `async-dialog-cancel`, `async-panels`.
+- **Added: `Resource::new_async`**: a resource whose load is a future, run on the main thread (not `Send`); a newer load drops the older one's future at its `.await`, so there's no `Cancel` to check, and a `sleep` at its start debounces. A panic in a load is reported and makes it a failed load. Checks `async-resource-load`, `async-resource-error`, `async-resource-owner`.
+- **Added: the `tokio` feature, with `on_runtime(&handle, future)`**: runs a future on the app's own tokio runtime (reqwest, sqlx) and awaits it from a `spawn_local` task. The runtime task is aborted when the awaiting task is cancelled, and a panic on the runtime is reported like one in the task, so there's no `JoinError` to unwrap. Ferrokit still has no runtime of its own; tokio is only a dependency with the feature on. Unit tests in `task`.
+
 ## 0.11.1 (2026-11-23): Icon Composer icons
 
 - **Added: Icon Composer icons in `cargo ferrokit bundle`**: `icon = "AppIcon.icon"` (a document from Xcode's Icon Composer) is compiled with `actool` into `Assets.car` and `AppIcon.icns`, and `CFBundleIconName` set, so macOS 26 shows the icon's dark, tinted and clear looks and earlier systems the `.icns`. Needs Xcode 26 or later (the Xcode in /Applications is used when `xcode-select` points at the command line tools; an older Xcode gets a clear error). Unit test `icon_composer_document`.

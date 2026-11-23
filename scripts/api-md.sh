@@ -5,7 +5,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 RUSTC_BOOTSTRAP=1 RUSTDOCFLAGS="-Z unstable-options --output-format json" \
-  cargo doc -q -p ferrokit -p ferrokit-core --no-deps --target-dir target/apijson
+  cargo doc -q -p ferrokit -p ferrokit-core --no-deps --features ferrokit/tokio --target-dir target/apijson
 if [ "${1:-}" = "--check" ]; then
   out=$(mktemp)
   python3 scripts/api-md.py target/apijson/doc "$out" >/dev/null

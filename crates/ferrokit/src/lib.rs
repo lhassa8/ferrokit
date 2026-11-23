@@ -130,7 +130,9 @@ pub use store::{Stored, read_stored, remove_stored, stored, write_stored};
 pub use undo::{set_undoable, undoable, undoable_in};
 pub use commands::{Command, can_perform, can_perform_in, focused_value, focused_value_in, focused_window, menu_command, perform, perform_in, toolbar_command};
 pub use resource::{Cancel, Load, Resource};
-pub use task::{Background, Sleep, Task, background, sleep, spawn_local};
+pub use task::{Answer, Background, Sleep, Task, background, sleep, spawn_local};
+#[cfg(feature = "tokio")]
+pub use task::{OnRuntime, on_runtime};
 pub use signal::{Effect, Memo, Signal, after_batch, batch, effect_runs, live_signals, untrack};
 pub use controls::{
     ColorWell, ComboBox, DatePicker, SearchField, Segmented, TimePicker, color_well, combo_box, combo_box_with, date_picker, search_field, segmented, segmented_with, time_picker,
@@ -138,7 +140,7 @@ pub use controls::{
     stepper, text_field, toggle,
 };
 pub use chrome::{MenuItem, Modifier, Split, customize_toolbar_item, dynamic_submenu, format_menu, submenu, ToolbarItem, menu_item, menu_separator, split, toolbar_button, toolbar_fixed_space, toolbar_group, toolbar_picker, toolbar_search, toolbar_space};
-pub use dialogs::{Alert, OpenOptions, SheetHandle, alert, open_panel, save_panel, sheet, sheet_with};
+pub use dialogs::{Alert, OpenOptions, Reply, SheetHandle, alert, alert_async, open_panel, open_panel_async, save_panel, save_panel_async, sheet, sheet_async, sheet_with};
 pub use documents::{
     Document, DocumentType, choose_documents, document_edited, new_document, open_document, recent_documents, regain_access, remember_access, revert_document, save_document, save_document_as, show_welcome, welcome_window,
 };

@@ -934,9 +934,13 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 ## dialogs
 
 - `pub fn alert(window: &NSWindow, alert: Alert, on_response: impl FnOnce(usize) + 'static)`: Shows `alert` as a sheet on `window`; `on_response` gets the index of the button chosen.
+- `pub fn alert_async(window: &NSWindow, alert: Alert) -> crate::Answer<Option<usize>>`: Shows `alert` as a sheet on `window`, and returns a future for the index of the button chosen: `alert` for a `spawn_local` task. `None` when the alert ends without a button (its window closed) and it has no Cancel button to answer as; dropping the future (the task was cancelled) closes the alert.
 - `pub fn open_panel(window: &NSWindow, options: OpenOptions, on_done: impl FnOnce(Option<Vec<PathBuf>>) + 'static)`: Shows the Open panel as a sheet on `window`; `on_done` gets the chosen paths, or `None` if cancelled.
+- `pub fn open_panel_async(window: &NSWindow, options: OpenOptions) -> crate::Answer<Option<Vec<PathBuf>>>`: Shows the Open panel as a sheet on `window`, and returns a future for the chosen paths (`None` if cancelled): `open_panel` for a `spawn_local` task. Dropping the future (the task was cancelled) closes the panel.
 - `pub fn save_panel(window: &NSWindow, name: &str, directory: Option<&std::path::Path>, on_done: impl FnOnce(Option<PathBuf>) + 'static)`: Shows the Save panel as a sheet on `window`, proposing `name` (in `directory`, if given); `on_done` gets the chosen path, or `None` if cancelled. Nothing is written: saving is the app's job.
+- `pub fn save_panel_async(window: &NSWindow, name: &str, directory: Option<&std::path::Path>) -> crate::Answer<Option<PathBuf>>`: Shows the Save panel as a sheet on `window`, and returns a future for the chosen path (`None` if cancelled): `save_panel` for a `spawn_local` task. Dropping the future (the task was cancelled) closes the panel.
 - `pub fn sheet(parent: &NSWindow, content: Window, on_close: impl FnOnce() + 'static) -> SheetHandle`: Shows `content` (a `Window` built as usual: size and view) as a sheet on `parent`. `on_close` runs when it closes; the view tree is then dropped.
+- `pub fn sheet_async<T: 'static>(parent: &NSWindow, make: impl FnOnce(Reply<T>) -> crate::Window) -> crate::Answer<Option<T>>`: Shows the window `make` builds as a sheet on `parent`, and returns a future for its answer: `make` gets a `Reply` for the sheet's buttons to send a value with (or cancel). `None` if it was cancelled or closed another way; dropping the future (the task was cancelled) closes the sheet. As with `sheet_with`, the signals `make` creates belong to the sheet.
 - `pub fn sheet_with(parent: &NSWindow, make: impl FnOnce() -> crate::Window, on_close: impl FnOnce() + 'static) -> SheetHandle`: `sheet` for the window `make` builds: the signals `make` creates (the sheet's fields) belong to the sheet and are freed when it closes, not kept for the app's life as signals made in an action would be.
 
 ### `Alert`
@@ -955,6 +959,13 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub extensions: Vec<String>`: File name extensions to allow (e.g. `["csv", "txt"]`); empty: any.
 - `pub multiple: bool`: Allow choosing several files.
 - `pub directories: bool`: Choose folders instead of files.
+
+### `Reply`
+
+`pub struct Reply<T>`: The way a sheet from `sheet_async` answers: `send` a value, or `cancel`. Either closes the sheet. A cheap `Clone` handle, for the sheet's buttons.
+
+- `pub fn send(&self, value: T)`: Answers with `value` and closes the sheet (the first answer counts).
+- `pub fn cancel(&self)`: Closes the sheet with no answer: the future gives `None`.
 
 ### `SheetHandle`
 
@@ -1019,6 +1030,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 `pub struct Resource<T>`: A value loaded on a background thread from inputs read on the main thread. When the signals `source` reads change, a new load starts and the one running is cancelled: only the newest result is ever shown, so search-as-you-type can't show an older query's rows. The last value stays readable while a new one loads.
 
 - `pub fn new<S, E>(source: impl Fn() -> S + 'static, fetch: impl Fn(S, &Cancel) -> Result<T, E> + Send + Sync + 'static) -> Self where S: Send + 'static, E: fmt::Display`: Loads with `fetch(source())` on a background thread, again whenever the signals `source` reads change. Call from the main thread.
+- `pub fn new_async<S, F, E>(source: impl Fn() -> S + 'static, fetch: impl Fn(S) -> F + 'static) -> Self where S: 'static, F: Future<Output = Result<T, E>> + 'static, E: fmt::Display`: `Resource::new` with an async load: `fetch(source())` returns a future, run on the main thread as a `spawn_local` task (so neither it nor its result needs to be `Send`). Await `background` for blocking work, and your runtime for I/O (`on_runtime`, with the `tokio` feature). Call from the main thread.
 - `pub fn get(&self) -> Option<T>`: The latest loaded value (kept while a newer load runs), subscribing the running effect. `None` until the first load succeeds.
 - `pub fn get_untracked(&self) -> Option<T>`: The latest value, without subscribing (for event handlers).
 - `pub fn with<R>(&self, f: impl FnOnce(Option<&T>) -> R) -> R`: Reads the latest value through `f` without copying it.
@@ -1032,6 +1044,11 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn background<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Background<T>`: Runs `work` on a background thread now, and returns a future for its result, to await in a `spawn_local` task: `spawn` for async code. Call from the main thread.
 - `pub fn sleep(duration: Duration) -> Sleep`: A future that's ready after `duration`, timed on the main run loop (in the common modes, so it fires while a menu is open). The timer starts at the first poll. Call from the main thread; await it in a `spawn_local` task.
 - `pub fn spawn_local(future: impl Future<Output = ()> + 'static) -> Task`: Runs `future` on the main thread, as a task of the main run loop: it can read and set signals and touch views between its `.await`s, so it needn't be `Send`. Call from the main thread. The first poll is on a later pass of the run loop, not inside this call.
+- `pub fn on_runtime<F>(handle: &tokio::runtime::Handle, future: F) -> OnRuntime<F::Output> where F: Future + Send + 'static, F::Output: Send + 'static`: Runs `future` on the tokio runtime `handle` (your app's own, for I/O such as reqwest or sqlx), and returns a future for its output, to await in a `spawn_local` task. Needs the `tokio` feature.
+
+### `Answer`
+
+`pub struct Answer<T>`: A future for an answer that comes later, from a dialog or a sheet: `alert_async`, `open_panel_async`, `save_panel_async`, `sheet_async`. Await it in a `spawn_local` task.
 
 ### `Background`
 
@@ -1048,6 +1065,10 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn cancel(self)`: Stops the task: its future is dropped now (at the `.await` it's waiting at; called from inside the task, as soon as its current poll returns). Work a `background` call already started on its thread runs to the end; its result is dropped. Nothing happens if the task has finished.
 - `pub fn detach(self)`: Keeps the task running after its owner goes (a closed window, a removed view), until it finishes or is cancelled.
 - `pub fn is_finished(self) -> bool`: Whether the task is over: its future finished, panicked or was cancelled (also by its owner going).
+
+### `OnRuntime`
+
+`pub struct OnRuntime<T>`: A future for a task on a tokio runtime, from `on_runtime`.
 
 ## documents
 

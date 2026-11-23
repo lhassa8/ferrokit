@@ -7,7 +7,14 @@
 //! so tasks go on while a menu is open or a window is being resized. Each
 //! poll runs inside a [`batch`](crate::batch), with the task's owner
 //! current. Ferrokit has no I/O runtime of its own: run I/O on your app's
-//! runtime (tokio or another) and await its join handle from the task.
+//! runtime (tokio or another) and await its join handle from the task, or
+//! use `on_runtime` (the `tokio` feature).
+//!
+//! AppKit's callback APIs have awaitable versions that return an
+//! [`Answer`]: [`alert_async`](crate::alert_async),
+//! [`open_panel_async`](crate::open_panel_async),
+//! [`save_panel_async`](crate::save_panel_async) and
+//! [`sheet_async`](crate::sheet_async).
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -369,5 +376,230 @@ impl Drop for Sleep {
                 let () = msg_send![&*timer, invalidate];
             }
         }
+    }
+}
+
+struct AnswerState<T> {
+    value: RefCell<Option<T>>,
+    /// Answered (the value may have been taken by the poll since).
+    answered: Cell<bool>,
+    waker: RefCell<Option<Waker>>,
+}
+
+/// A future for an answer that comes later, from a dialog or a sheet:
+/// [`alert_async`](crate::alert_async),
+/// [`open_panel_async`](crate::open_panel_async),
+/// [`save_panel_async`](crate::save_panel_async),
+/// [`sheet_async`](crate::sheet_async). Await it in a [`spawn_local`]
+/// task.
+///
+/// Dropping it before the answer comes (the task was cancelled, or its
+/// owner went) closes the dialog it waits for, as Cancel would.
+#[must_use = "the dialog's answer is dropped unless it's awaited"]
+pub struct Answer<T> {
+    state: Rc<AnswerState<T>>,
+    on_drop: Option<Box<dyn FnOnce()>>,
+}
+
+impl<T> fmt::Debug for Answer<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Answer").field("answered", &self.state.answered.get()).finish()
+    }
+}
+
+/// The sending side of an [`Answer`].
+pub(crate) struct Responder<T>(Rc<AnswerState<T>>);
+
+impl<T> Responder<T> {
+    /// Gives the answer (the first one counts) and wakes the task awaiting it.
+    pub(crate) fn send(&self, value: T) {
+        if self.0.answered.replace(true) {
+            return;
+        }
+        *self.0.value.borrow_mut() = Some(value);
+        let waker = self.0.waker.borrow_mut().take();
+        if let Some(w) = waker {
+            w.wake();
+        }
+    }
+}
+
+/// A new answer and its sender; `on_drop` runs if the answer is dropped
+/// before it comes (to close the dialog).
+pub(crate) fn answer<T>(on_drop: impl FnOnce() + 'static) -> (Answer<T>, Responder<T>) {
+    let state = Rc::new(AnswerState { value: RefCell::new(None), answered: Cell::new(false), waker: RefCell::new(None) });
+    (Answer { state: state.clone(), on_drop: Some(Box::new(on_drop)) }, Responder(state))
+}
+
+impl<T> Future for Answer<T> {
+    type Output = T;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<T> {
+        if let Some(value) = self.state.value.borrow_mut().take() {
+            return Poll::Ready(value);
+        }
+        *self.state.waker.borrow_mut() = Some(cx.waker().clone());
+        Poll::Pending
+    }
+}
+
+impl<T> Drop for Answer<T> {
+    fn drop(&mut self) {
+        if !self.state.answered.get()
+            && let Some(close) = self.on_drop.take()
+        {
+            // Closing the dialog answers it (into this dropped answer).
+            close();
+        }
+    }
+}
+
+/// A future for a task on a tokio runtime, from [`on_runtime`].
+#[cfg(feature = "tokio")]
+#[must_use = "the result is dropped unless it's awaited (the runtime task still runs until then)"]
+pub struct OnRuntime<T> {
+    join: tokio::task::JoinHandle<T>,
+}
+
+#[cfg(feature = "tokio")]
+impl<T> fmt::Debug for OnRuntime<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OnRuntime").field("finished", &self.join.is_finished()).finish()
+    }
+}
+
+/// Runs `future` on the tokio runtime `handle` (your app's own, for I/O
+/// such as reqwest or sqlx), and returns a future for its output, to await
+/// in a [`spawn_local`] task. Needs the `tokio` feature.
+///
+/// Unlike awaiting tokio's `JoinHandle` directly:
+/// - **Cancelling goes both ways:** when the awaiting task is cancelled
+///   (its window closed, [`Task::cancel`]), the runtime task is aborted at
+///   its next `.await`.
+/// - **No `JoinError` to unwrap:** a panic in the runtime task is reported
+///   like one in the awaiting task (see
+///   [`App::on_error`](crate::App::on_error)), and ends that task. So is the
+///   runtime task being cancelled from outside (its runtime shut down).
+///
+/// ```no_run
+/// use ferrokit::*;
+///
+/// let runtime = tokio::runtime::Runtime::new().unwrap(); // kept for the app's life
+/// let handle = runtime.handle().clone();
+/// let status = Signal::new(String::new());
+/// spawn_local(async move {
+///     status.set("Loading…".into());
+///     let n = on_runtime(&handle, async {
+///         // reqwest, sqlx, tokio::fs… run here, on the runtime
+///         42
+///     })
+///     .await;
+///     status.set(format!("{n} items"));
+/// });
+/// # std::mem::forget(runtime);
+/// ```
+#[cfg(feature = "tokio")]
+pub fn on_runtime<F>(handle: &tokio::runtime::Handle, future: F) -> OnRuntime<F::Output>
+where
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    OnRuntime { join: handle.spawn(future) }
+}
+
+#[cfg(feature = "tokio")]
+impl<T> Future for OnRuntime<T> {
+    type Output = T;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<T> {
+        match Pin::new(&mut self.join).poll(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(value)) => Poll::Ready(value),
+            // Carried into the awaiting task, which reports it and ends.
+            Poll::Ready(Err(e)) if e.is_panic() => std::panic::resume_unwind(e.into_panic()),
+            Poll::Ready(Err(_)) => panic!("its task on the tokio runtime was cancelled (did the runtime shut down?)"),
+        }
+    }
+}
+
+#[cfg(feature = "tokio")]
+impl<T> Drop for OnRuntime<T> {
+    fn drop(&mut self) {
+        self.join.abort();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Polls `f` to the end on this thread, parking between polls.
+    fn block_on<F: Future>(f: F) -> F::Output {
+        struct Unpark(std::thread::Thread);
+        impl Wake for Unpark {
+            fn wake(self: Arc<Self>) {
+                self.0.unpark();
+            }
+        }
+        let waker = Waker::from(Arc::new(Unpark(std::thread::current())));
+        let mut f = std::pin::pin!(f);
+        loop {
+            if let Poll::Ready(v) = f.as_mut().poll(&mut Context::from_waker(&waker)) {
+                return v;
+            }
+            std::thread::park_timeout(Duration::from_millis(50));
+        }
+    }
+
+    #[test]
+    fn an_answer_is_ready_once_sent_and_the_first_answer_counts() {
+        let closed = Rc::new(Cell::new(false));
+        let c = closed.clone();
+        let (answer, responder) = answer::<u32>(move || c.set(true));
+        responder.send(7);
+        responder.send(8);
+        assert_eq!(block_on(answer), 7);
+        assert!(!closed.get(), "an answered dialog isn't closed again");
+    }
+
+    #[test]
+    fn dropping_an_unanswered_answer_closes_its_dialog() {
+        let closed = Rc::new(Cell::new(false));
+        let c = closed.clone();
+        let (answer, responder) = answer::<u32>(move || c.set(true));
+        drop(answer);
+        assert!(closed.get());
+        responder.send(1); // the dialog's late answer goes nowhere
+    }
+
+    #[cfg(feature = "tokio")]
+    #[test]
+    fn on_runtime_gives_the_output_and_carries_a_panic() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        assert_eq!(block_on(on_runtime(rt.handle(), async { 6 * 7 })), 42);
+        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| block_on(on_runtime(rt.handle(), async { panic!("boom") }))));
+        let payload = caught.expect_err("the panic reaches the awaiting side");
+        assert_eq!(payload.downcast_ref::<&str>(), Some(&"boom"));
+    }
+
+    #[cfg(feature = "tokio")]
+    #[test]
+    fn dropping_on_runtime_aborts_the_runtime_task() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let finished = Arc::new(AtomicBool::new(false));
+        let f = finished.clone();
+        let started = Arc::new(AtomicBool::new(false));
+        let s = started.clone();
+        let fut = on_runtime(rt.handle(), async move {
+            s.store(true, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            f.store(true, Ordering::SeqCst);
+        });
+        while !started.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        drop(fut);
+        std::thread::sleep(Duration::from_millis(500));
+        assert!(!finished.load(Ordering::SeqCst), "the runtime task was aborted");
     }
 }

@@ -12,6 +12,12 @@ categories = ["gui", "os::macos-apis"]
 
 [package.metadata.docs.rs]
 default-target = "aarch64-apple-darwin"
+all-features = true
+
+[features]
+# `on_runtime`: await a task on the app's own tokio runtime, cancelled with
+# the Ferrokit task that awaits it.
+tokio = ["dep:tokio"]
 
 [dependencies]
 ferrokit-core = { path = "../ferrokit-core", version = "=0.11.1" }
@@ -30,9 +36,12 @@ objc2-pdf-kit = { version = "0.3", default-features = false, features = ["std", 
 objc2-av-kit = { version = "0.3", default-features = false, features = ["std", "objc2-app-kit", "objc2-av-foundation", "AVPlayerView", "AVKitTypes"] }
 objc2-av-foundation = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-core-media", "AVPlayer", "AVPlayerItem", "AVAsset", "AVTime", "AVAnimation", "dispatch2"] }
 objc2-core-media = { version = "0.3", default-features = false, features = ["std", "CMTime"] }
+tokio = { version = "1", optional = true, default-features = false, features = ["rt"] }
 objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "UNUserNotificationCenter", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSound", "UNNotificationSettings", "UNNotificationTrigger", "UNError"] }
 
 [dev-dependencies]
+# The tokio feature's tests run a runtime.
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "time"] }
 # The SQL browser example (H4). SQLite is compiled in ("bundled"): macOS
 # 15's own is too old for rusqlite's progress handler (it lacks
 # sqlite3_set_clientdata, from SQLite 3.44).

@@ -556,7 +556,126 @@ fn async_nested_wake_check(events: Rc<RefCell<Vec<AppEvent>>>) {
             format!("the timer fired inside the poll's nested run loop: {}; the task resumed afterwards: {}", woken_inside.get(), done.get()),
         );
         let events = events.clone();
-        later(move || command_checks(events.clone()));
+        later(move || async_resource_checks(events.clone()));
+    });
+}
+
+/// Async resources (`Resource::new_async`): loads as main-thread futures
+/// (not `Send`), the stale one dropped at its `.await`, errors and panics
+/// as failed loads, and the running load dropped when its window closes.
+fn async_resource_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use ferrokit::{Load, Resource, sleep};
+    use std::time::Duration;
+    let main_thread = std::thread::current().id();
+    let q = Signal::new(1i64);
+    let on_main = Rc::new(Cell::new(true));
+    let stale_dropped = Rc::new(Cell::new(false));
+    let (om, sd) = (on_main.clone(), stale_dropped.clone());
+    let r = Resource::new_async(move || q.get(), move |q: i64| {
+        // An `Rc` held across the awaits: the load needn't be `Send`.
+        let (om, flag) = (om.clone(), Rc::new(DropFlag(sd.clone())));
+        async move {
+            if std::thread::current().id() != main_thread {
+                om.set(false);
+            }
+            if q == 99 {
+                panic!("a load that panics");
+            }
+            if q < 0 {
+                return Err("negative");
+            }
+            sleep(Duration::from_millis(if q == 2 { 300 } else { 20 })).await;
+            // Finished: not dropped, so its flag mustn't count.
+            std::mem::forget(flag);
+            if std::thread::current().id() != main_thread {
+                om.set(false);
+            }
+            Ok(q * 10)
+        }
+    });
+    let shown = Rc::new(RefCell::new(Vec::new()));
+    let sh = shown.clone();
+    let watcher = Effect::new(move || {
+        if let Some(v) = r.get() {
+            sh.borrow_mut().push(v);
+        }
+    });
+    let first = (r.state(), r.loading());
+    wait(150, move || {
+        let loaded = (r.get(), r.loading());
+        q.set(2);
+        let (stale_dropped, shown, on_main) = (stale_dropped.clone(), shown.clone(), on_main.clone());
+        let events = events.clone();
+        wait(50, move || {
+            let reloading = (r.get(), r.loading());
+            stale_dropped.set(false); // only the slow load's drop counts from here
+            q.set(3);
+            let (stale_dropped, shown, on_main) = (stale_dropped.clone(), shown.clone(), on_main.clone());
+            let events = events.clone();
+            wait(450, move || {
+                let seen = shown.borrow().clone();
+                check(
+                    "async-resource-load",
+                    first == (Load::Loading, true) && loaded == (Some(10), false) && reloading == (Some(10), true) && seen == [10, 30] && stale_dropped.get() && on_main.get(),
+                    format!("before {first:?}; loaded {loaded:?}; while reloading {reloading:?}; values shown {seen:?}; the slow load dropped: {}; on main: {}", stale_dropped.get(), on_main.get()),
+                );
+                q.set(-1);
+                let events = events.clone();
+                wait(150, move || {
+                    let failed = (r.state(), r.get());
+                    let reported = ferrokit::testing::failures().len();
+                    q.set(99);
+                    let events = events.clone();
+                    wait(150, move || {
+                        let _ = &watcher;
+                        let panicked = r.state();
+                        let reported_now = ferrokit::testing::failures().len();
+                        check(
+                            "async-resource-error",
+                            failed == (Load::Failed("negative".into()), Some(30))
+                                && matches!(&panicked, Load::Failed(e) if e.contains("a load that panicked") || e.contains("a load that panics"))
+                                && reported_now > reported
+                                && !r.loading(),
+                            format!("an Err → {failed:?}; a panic → {panicked:?} (reported: {})", reported_now > reported),
+                        );
+                        async_resource_owner_check(events.clone());
+                    });
+                });
+            });
+        });
+    });
+}
+
+fn async_resource_owner_check(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use ferrokit::{Resource, sleep};
+    let dropped = Rc::new(Cell::new(false));
+    let d = dropped.clone();
+    let signals = ferrokit::live_signals();
+    let w = open(Window::new("Async Resource Owner").size(200.0, 80.0).view(dynamic(move || {
+        let d = d.clone();
+        let r = Resource::new_async(|| (), move |()| {
+            let flag = DropFlag(d.clone());
+            async move {
+                sleep(std::time::Duration::from_secs(5)).await;
+                std::mem::forget(flag);
+                Ok::<_, String>(1)
+            }
+        });
+        text(move || if r.loading() { "loading".into() } else { "done".into() })
+    })));
+    wait(50, move || {
+        ferrokit::close_window(&w);
+        let (dropped, events) = (dropped.clone(), events.clone());
+        wait(100, move || {
+            let left = ferrokit::live_signals() as i64 - signals as i64;
+            check(
+                "async-resource-owner",
+                dropped.get() && left == 0,
+                format!("closing the window dropped the running load: {}; signals left {left}", dropped.get()),
+            );
+            let events = events.clone();
+            later(move || command_checks(events.clone()));
+        });
     });
 }
 
@@ -6941,7 +7060,166 @@ fn panel_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                 format!("proposed {name:?} in {folder:?} (expected folder: {folder_ok}); Cancel → {got:?}"),
             );
             let events = events.clone();
-            after_events(move || menu_checks(events.clone()));
+            after_events(move || async_dialog_checks(events.clone()));
+        });
+    });
+}
+
+/// Awaitable dialogs (#2): an alert, a sheet and the Open and Save panels
+/// awaited in `spawn_local` tasks; a cancelled task closes what it waits for.
+fn async_dialog_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use ferrokit::{alert_async, spawn_local};
+    let w = dialogs_window();
+    w.makeKeyAndOrderFront(None);
+    // An alert: the button chosen; and one ended with no button (its only
+    // button isn't Cancel) answers None.
+    let got: Rc<RefCell<Vec<Option<usize>>>> = Rc::default();
+    let g = got.clone();
+    let win = w.clone();
+    let task = spawn_local(async move {
+        let first = alert_async(&win, Alert::new("Delete “report.csv”?", "This can't be undone.").button("Delete").button("Cancel").destructive(0)).await;
+        g.borrow_mut().push(first);
+        let second = alert_async(&win, Alert::new("Done", "Exported.").button("OK")).await;
+        g.borrow_mut().push(second);
+    });
+    let has_sheet = || dialogs_window().attachedSheet().is_some();
+    until(has_sheet, 2000, move || {
+        let pressed = ferrokit::testing::press_sheet_button(&dialogs_window(), "Delete");
+        let got = got.clone();
+        let events = events.clone();
+        let g2 = got.clone();
+        until(move || g2.borrow().len() == 1 && dialogs_window().attachedSheet().is_some(), 2000, move || {
+            let w = dialogs_window();
+            if let Some(s) = w.attachedSheet() {
+                w.endSheet(&s); // no button: an abort
+            }
+            let got = got.clone();
+            let events = events.clone();
+            until(move || task.is_finished(), 2000, move || {
+                let answers = got.borrow().clone();
+                check(
+                    "async-alert",
+                    pressed && answers == [Some(0), None] && dialogs_window().attachedSheet().is_none(),
+                    format!("Delete pressed: {pressed}; answers {answers:?} (Delete, then an alert ended with no button)"),
+                );
+                async_sheet_checks(events.clone());
+            });
+        });
+    });
+}
+
+fn async_sheet_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use ferrokit::{Reply, alert_async, sheet_async, spawn_local};
+    let nodes0 = live_nodes();
+    let got: Rc<RefCell<Vec<Option<String>>>> = Rc::default();
+    let g = got.clone();
+    let win = dialogs_window();
+    let rename = move |win: Retained<objc2_app_kit::NSWindow>| {
+        sheet_async(&win, |reply: Reply<String>| {
+            let name = Signal::new("final.csv".to_string());
+            let (ok, cancel) = (reply.clone(), reply);
+            Window::new("Rename").size(300.0, 100.0).view(
+                vstack((text_field(&name), hstack((spacer(), button("Cancel", move || cancel.cancel()), button("Rename", move || ok.send(name.get_untracked()))))))
+                    .spacing(12.0)
+                    .padding(16.0),
+            )
+        })
+    };
+    let task = spawn_local(async move {
+        let first = rename(win.clone()).await;
+        g.borrow_mut().push(first);
+        let second = rename(win.clone()).await;
+        g.borrow_mut().push(second);
+    });
+    let has_sheet = || dialogs_window().attachedSheet().is_some();
+    until(has_sheet, 2000, move || {
+        let nodes_open = live_nodes();
+        let renamed = ferrokit::testing::press_sheet_button(&dialogs_window(), "Rename");
+        let (got, g2) = (got.clone(), got.clone());
+        let events = events.clone();
+        until(move || g2.borrow().len() == 1 && dialogs_window().attachedSheet().is_some(), 2000, move || {
+            let cancelled = ferrokit::testing::press_sheet_button(&dialogs_window(), "Cancel");
+            let got = got.clone();
+            let events = events.clone();
+            until(move || task.is_finished(), 2000, move || {
+                let answers = got.borrow().clone();
+                let nodes_after = live_nodes();
+                // A cancelled task closes the alert it awaits.
+                let win = dialogs_window();
+                let dropped = spawn_local(async move {
+                    let _ = alert_async(&win, Alert::new("Waiting", "A task awaits this.").button("OK")).await;
+                });
+                let events = events.clone();
+                until(|| dialogs_window().attachedSheet().is_some(), 2000, move || {
+                    let shown = dialogs_window().attachedSheet().is_some();
+                    dropped.cancel();
+                    let events = events.clone();
+                    after_events(move || {
+                        let closed = dialogs_window().attachedSheet().is_none();
+                        check(
+                            "async-sheet",
+                            renamed && cancelled && answers == [Some("final.csv".to_string()), None] && nodes_open > nodes0 && nodes_after == nodes0,
+                            format!("Rename → {:?}, Cancel → {:?}; nodes {nodes0} → {nodes_open} open → {nodes_after} after", answers.first(), answers.get(1)),
+                        );
+                        check("async-dialog-cancel", shown && closed && dropped.is_finished(), format!("alert shown: {shown}; the task cancelled closed it: {closed}"));
+                        async_panel_checks(events.clone());
+                    });
+                });
+            });
+        });
+    });
+}
+
+fn async_panel_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
+    use ferrokit::{open_panel_async, save_panel_async, spawn_local};
+    let got: Rc<RefCell<Vec<String>>> = Rc::default();
+    let g = got.clone();
+    let win = dialogs_window();
+    let task = spawn_local(async move {
+        let open = open_panel_async(&win, OpenOptions { extensions: vec!["csv".into()], multiple: false, directories: false }).await;
+        g.borrow_mut().push(format!("open {open:?}"));
+        let save = save_panel_async(&win, "export.csv", None).await;
+        g.borrow_mut().push(format!("save {save:?}"));
+    });
+    let cancel_panel = || {
+        if let Some(p) = dialogs_window().attachedSheet().and_then(|s| s.downcast::<objc2_app_kit::NSSavePanel>().ok()) {
+            unsafe { p.cancel(None) };
+            true
+        } else {
+            false
+        }
+    };
+    until(|| dialogs_window().attachedSheet().is_some(), 2000, move || {
+        let open_cancelled = cancel_panel();
+        let (got, g2) = (got.clone(), got.clone());
+        let events = events.clone();
+        until(move || g2.borrow().len() == 1 && dialogs_window().attachedSheet().is_some(), 2000, move || {
+            let save_cancelled = cancel_panel();
+            let got = got.clone();
+            let events = events.clone();
+            until(move || task.is_finished(), 2000, move || {
+                let answers = got.borrow().clone();
+                // A cancelled task closes the Open panel it awaits.
+                let win = dialogs_window();
+                let dropped = spawn_local(async move {
+                    let _ = open_panel_async(&win, OpenOptions::default()).await;
+                });
+                let events = events.clone();
+                until(|| dialogs_window().attachedSheet().is_some(), 2000, move || {
+                    dropped.cancel();
+                    let events = events.clone();
+                    after_events(move || {
+                        let closed = dialogs_window().attachedSheet().is_none();
+                        check(
+                            "async-panels",
+                            open_cancelled && save_cancelled && answers == ["open None", "save None"] && closed,
+                            format!("Open → {:?}; Save → {:?}; a cancelled task's Open panel closed: {closed}", answers.first(), answers.get(1)),
+                        );
+                        let events = events.clone();
+                        after_events(move || menu_checks(events.clone()));
+                    });
+                });
+            });
         });
     });
 }

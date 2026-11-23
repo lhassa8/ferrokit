@@ -132,7 +132,9 @@ batch. Inside a task:
 
 - `background(|| …).await` runs blocking work on another thread (it's
   `spawn` as a future);
-- `sleep(duration).await` pauses without blocking anything.
+- `sleep(duration).await` pauses without blocking anything;
+- `alert_async`, `open_panel_async`, `save_panel_async` and `sheet_async`
+  show a sheet and give its answer.
 
 ```rust,no_run
 use ferrokit::*;
@@ -162,20 +164,69 @@ let save = button("Save", move || {
 - A panic in a task, or in `background` work it awaits, is reported (see
   `App::on_error`) and ends that task only.
 - Ferrokit has no I/O runtime. Libraries such as reqwest and sqlx need
-  their own runtime (tokio). Keep one in your app, spawn the I/O on it, and
-  await the join handle from the task:
+  their own (tokio): see *tokio, reqwest and sqlx* below.
+
+### Awaiting a sheet
+
+The callback-taking dialogs have awaitable versions, so a flow of
+questions reads top to bottom:
+
+```rust,no_run
+use ferrokit::*;
+
+fn export(window: Retained<NSWindow>, csv: String, status: Signal<String>) {
+    spawn_local(async move {
+        let Some(path) = save_panel_async(&window, "export.csv", None).await else { return };
+        if path.exists() {
+            let ask = Alert::new("Replace “export.csv”?", "A file with that name exists.").button("Replace").button("Cancel");
+            if alert_async(&window, ask).await != Some(0) {
+                return;
+            }
+        }
+        match background(move || std::fs::write(&path, csv)).await {
+            Ok(()) => status.set("Exported".into()),
+            Err(e) => status.set(format!("Couldn't export: {e}")),
+        }
+    });
+}
+# let _ = export;
+```
+
+- `alert_async` gives the index of the button chosen, or `None` if the
+  alert ended without one (its window closed) and it has no Cancel button.
+- `open_panel_async` and `save_panel_async` give the paths, or `None` for
+  Cancel.
+- `sheet_async(&window, |reply| Window::new(..).view(..))` shows your own
+  sheet and gives what its buttons send: `reply.send(value)` closes it with
+  a value, `reply.cancel()` with `None`.
+- If the task is cancelled while it waits (its window closed,
+  `Task::cancel`), the sheet closes.
+
+### tokio, reqwest and sqlx
+
+Ferrokit has no I/O runtime and doesn't depend on one. Keep a tokio runtime
+in your app for the I/O, and with Ferrokit's `tokio` feature
+(`ferrokit = { version = "…", features = ["tokio"] }`) await work on it with
+`on_runtime`:
 
 ```rust,ignore
 let rt = tokio::runtime::Runtime::new()?; // kept for the app's lifetime
 let handle = rt.handle().clone();
 spawn_local(async move {
-    match handle.spawn(async move { reqwest::get(url).await?.text().await }).await {
-        Ok(Ok(body)) => page.set(body),
-        Ok(Err(e)) => error.set(Some(e.to_string())),
-        Err(e) => error.set(Some(e.to_string())), // the runtime task panicked
+    match on_runtime(&handle, async move { reqwest::get(url).await?.text().await }).await {
+        Ok(body) => page.set(body),
+        Err(e) => error.set(Some(e.to_string())),
     }
 });
 ```
+
+- When the task is cancelled (its window closed), the work on the runtime
+  is aborted too.
+- A panic on the runtime is reported like one in the task, and ends the
+  task: there's no `JoinError` to unwrap.
+- Without the feature, `handle.spawn(…).await` works as well: a tokio
+  `JoinHandle` is a plain future. It isn't aborted with the task, and its
+  result is a `Result<_, JoinError>`.
 
 Don't block inside a task: a poll runs on the main thread, and the UI waits
 for it.
@@ -223,6 +274,27 @@ let view = vstack((
 - An error keeps the last value: `get()` still returns it.
 - `refetch()` loads again with the same inputs.
 - A resource is owned like a signal: closing its window cancels its load.
+
+`Resource::new_async` takes a load that returns a future instead. It runs on
+the main thread as a task, so it needn't be `Send`, and a newer load drops
+the older one's future at its `.await` (no `Cancel` to check):
+
+```rust,no_run
+use ferrokit::*;
+use std::time::Duration;
+
+let query = Signal::new(String::new());
+let results = Resource::new_async(move || query.get(), |q: String| async move {
+    sleep(Duration::from_millis(200)).await; // typing on drops this load here
+    let words = background(|| std::fs::read_to_string("/usr/share/dict/words")).await.map_err(|e| e.to_string())?;
+    Ok::<_, String>(words.lines().filter(|w| w.starts_with(&q)).map(String::from).collect::<Vec<_>>())
+});
+# let _ = results;
+```
+
+The `sleep` at the start debounces: while the user keeps typing, each load
+is dropped before it reads anything. Await `on_runtime` in it for network
+I/O.
 
 ## Stored settings
 

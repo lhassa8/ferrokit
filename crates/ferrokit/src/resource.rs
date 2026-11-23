@@ -3,6 +3,7 @@
 
 use std::cell::Cell;
 use std::fmt;
+use std::future::Future;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -147,6 +148,108 @@ impl<T: Clone + Send + 'static> Resource<T> {
         });
         keep_with_owner(effect);
         resource
+    }
+}
+
+impl<T: Clone + 'static> Resource<T> {
+    /// [`Resource::new`] with an async load: `fetch(source())` returns a
+    /// future, run on the main thread as a [`spawn_local`](crate::spawn_local)
+    /// task (so neither it nor its result needs to be `Send`). Await
+    /// [`background`](crate::background) for blocking work, and your
+    /// runtime for I/O (`on_runtime`, with the `tokio`
+    /// feature). Call from the main thread.
+    ///
+    /// When the inputs change, the running load's future is dropped: it
+    /// stops at the `.await` it's waiting at, so there's no [`Cancel`] to
+    /// check. A panic in the load is reported (see
+    /// [`App::on_error`](crate::App::on_error)) and makes it a failed load.
+    ///
+    /// ```no_run
+    /// use ferrokit::*;
+    /// use std::time::Duration;
+    ///
+    /// let query = Signal::new(String::new());
+    /// let matches = Resource::new_async(move || query.get(), |q: String| async move {
+    ///     sleep(Duration::from_millis(200)).await; // debounce: a newer query drops this one here
+    ///     let words = background(|| std::fs::read_to_string("/usr/share/dict/words")).await.map_err(|e| e.to_string())?;
+    ///     Ok::<_, String>(words.lines().filter(|w| w.starts_with(&q)).count())
+    /// });
+    /// let status = text(move || match matches.state() {
+    ///     Load::Loading => "Searching…".into(),
+    ///     Load::Ready(n) => format!("{n} words"),
+    ///     Load::Failed(e) => format!("Couldn't search: {e}"),
+    /// });
+    /// # let _ = status;
+    /// ```
+    pub fn new_async<S, F, E>(source: impl Fn() -> S + 'static, fetch: impl Fn(S) -> F + 'static) -> Self
+    where
+        S: 'static,
+        F: Future<Output = Result<T, E>> + 'static,
+        E: fmt::Display,
+    {
+        let resource = Resource { value: Signal::new(None), error: Signal::new(None), loading: Signal::new(true), reload: Signal::new(0) };
+        let Resource { value, error, loading, reload } = resource;
+        let running: Rc<Cell<Option<crate::Task>>> = Rc::default();
+        let guard = CancelTaskOnDrop(running.clone());
+        let effect = Effect::new(move || {
+            let _ = &guard;
+            reload.get();
+            let input = source();
+            untrack(|| {
+                if let Some(old) = running.take() {
+                    old.cancel();
+                }
+                loading.set_if_changed(true);
+                let load = Caught { inner: Box::pin(fetch(input)) };
+                let task = crate::spawn_local(async move {
+                    // Only the newest load gets here: older ones are dropped
+                    // at an `.await` when a newer one starts.
+                    match load.await {
+                        Ok(v) => {
+                            value.set(Some(v));
+                            error.set_if_changed(None);
+                        }
+                        Err(e) => error.set(Some(e)),
+                    }
+                    loading.set_if_changed(false);
+                });
+                // The resource, not the owner current now, decides when it stops.
+                task.detach();
+                running.set(Some(task));
+            });
+        });
+        keep_with_owner(effect);
+        resource
+    }
+}
+
+/// Cancels the running async load when the resource's effect goes.
+struct CancelTaskOnDrop(Rc<Cell<Option<crate::Task>>>);
+
+impl Drop for CancelTaskOnDrop {
+    fn drop(&mut self) {
+        if let Some(t) = self.0.take() {
+            t.cancel();
+        }
+    }
+}
+
+/// An async load whose panic is reported and becomes its error.
+struct Caught<F> {
+    inner: std::pin::Pin<Box<F>>,
+}
+
+impl<T, E: fmt::Display, F: Future<Output = Result<T, E>>> Future for Caught<F> {
+    type Output = Result<T, String>;
+
+    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
+        let inner = self.inner.as_mut();
+        crate::failure::guard("an async resource's load", None, || Some(inner.poll(cx)))
+            .map(|p| p.map(|r| r.map_err(|e| e.to_string())))
+            .unwrap_or_else(|| {
+                let message = crate::failure::caught().last().map(|f| f.message.clone()).unwrap_or_default();
+                std::task::Poll::Ready(Err(format!("the load panicked: {message}")))
+            })
     }
 }
 

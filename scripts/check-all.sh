@@ -138,6 +138,8 @@ step build_alone sh -c 'cargo check --release -p ferrokit-core && cargo check --
 if [ -n "$lint" ]; then
   step clippy cargo clippy --release --workspace --examples -- -D warnings
   step tests cargo test --workspace --release
+  step tokio_feature cargo clippy --release -p ferrokit --features tokio --all-targets -- -D warnings
+  step tokio_tests cargo test --release -p ferrokit --features tokio --lib task::
   step docs env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
   step api_md scripts/api-md.sh --check
   step agents_md scripts/agents-md.sh --check

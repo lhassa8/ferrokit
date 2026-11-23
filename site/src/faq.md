@@ -34,7 +34,7 @@ Yes: as a second binary in the same package, behind a feature, so the CLI's buil
 
 ## Does Ferrokit work with async code, tokio and reqwest?
 
-Yes. `spawn_local` runs a future on the main thread, where it can set signals between `.await`s; `background` runs blocking work on another thread. For tokio libraries, keep a tokio runtime in the app and await its join handles. See [Async code in a native Mac app](async-in-a-mac-app.md).
+Yes. `spawn_local` runs a future on the main thread, where it can set signals between `.await`s; `background` runs blocking work on another thread. Alerts, the Open and Save panels and sheets can be awaited (`alert_async`, `save_panel_async`…). For tokio libraries, keep a tokio runtime in the app and await work on it with `on_runtime` (the `tokio` feature), which is aborted when the task is. See [Async code in a native Mac app](async-in-a-mac-app.md).
 
 ## Can I use SwiftUI views, like Swift Charts?
 
