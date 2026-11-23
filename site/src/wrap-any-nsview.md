@@ -10,7 +10,7 @@ The `objc2` crates go in your `Cargo.toml`, with the features for the classes yo
 
 ```toml
 [dependencies]
-ferrokit = "0.13"
+ferrokit = "0.14"
 objc2-app-kit = { version = "0.3", features = ["NSResponder", "NSView", "NSControl", "NSLevelIndicator"] }
 ```
 

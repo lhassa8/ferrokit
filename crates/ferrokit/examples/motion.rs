@@ -236,7 +236,7 @@ mod self_checks {
     use std::cell::Cell;
     use std::rc::Rc;
 
-    use ferrokit::testing::{ax_audit, ax_tree, has_ax, hover, is_pressed, leaving_views, press, set_reduce_motion};
+    use ferrokit::testing::{ax_audit, ax_tree, has_ax, hover, press, set_reduce_motion};
     use ferrokit::*;
     use objc2::rc::Retained;
     use objc2_app_kit::{NSTextField, NSView, NSWindow};
@@ -347,7 +347,7 @@ mod self_checks {
             return finish(failed);
         };
         press(&row, true);
-        let dimmed = (boots.alphaValue() - 0.55).abs() < 0.01 && is_pressed(&row) == Some(true);
+        let dimmed = (boots.alphaValue() - 0.55).abs() < 0.01 && ferrokit::testing::probes::is_pressed(&row) == Some(true);
         // The release clicks, inside `animated` (default timing).
         press(&row, false);
         let (w2, c2) = (w.clone(), c.clone());
@@ -394,10 +394,10 @@ mod self_checks {
         later_ms(350, move || {
             let still = shown(&boots);
             let o = opacity(&boots);
-            c("slide-out", still && leaving_views() > 0 && o < 0.45 && o > 0.0, format!("still shown {still}, {} views leaving; presented opacity {o:.2}", leaving_views()));
+            c("slide-out", still && ferrokit::testing::probes::leaving_views() > 0 && o < 0.45 && o > 0.0, format!("still shown {still}, {} views leaving; presented opacity {o:.2}", ferrokit::testing::probes::leaving_views()));
             later_ms(900, move || {
-                let gone = !shown(&boots) && leaving_views() == 0 && field_opt(&w, "Boots").is_none();
-                c("removed-after-transition", gone, format!("removed {}; leaving {}", !shown(&boots), leaving_views()));
+                let gone = !shown(&boots) && ferrokit::testing::probes::leaving_views() == 0 && field_opt(&w, "Boots").is_none();
+                c("removed-after-transition", gone, format!("removed {}; leaving {}", !shown(&boots), ferrokit::testing::probes::leaving_views()));
                 springs(w, state, c, failed);
             });
         });
@@ -412,7 +412,6 @@ mod self_checks {
     /// trail's name starts where the header's was; the bar springs to the
     /// packed share; the shake goes through its keyframes.
     fn springs(w: Retained<NSWindow>, state: State, check: Check, failed: Rc<Cell<u32>>) {
-        use ferrokit::testing::{motion_running, step_motion};
         batch(|| state.details.set(false));
         later_ms(80, move || {
             let badge = in_window(&field(&w, "Coast trail"));
@@ -423,10 +422,10 @@ mod self_checks {
                 let start = in_window(&field(&w, "Coast trail"));
                 // The spring's course, in steps of 20 ms.
                 let ys: Vec<f64> = (0..60).map(|_| {
-                    step_motion(0.02);
+                    ferrokit::testing::probes::step_motion(0.02);
                     model(&water).origin.y
                 }).collect();
-                step_motion(4.0);
+                ferrokit::testing::probes::step_motion(4.0);
                 let end = model(&water).origin.y;
                 let title = in_window(&field(&w, "Coast trail"));
                 let travel = end - y0;
@@ -451,14 +450,14 @@ mod self_checks {
                 let first = state.items.get()[0].id;
                 batch(|| state.packed.set(vec![first]));
                 later_ms(20, move || {
-                    step_motion(0.03);
+                    ferrokit::testing::probes::step_motion(0.03);
                     let partway = state.progress.get();
-                    step_motion(3.0);
+                    ferrokit::testing::probes::step_motion(3.0);
                     let landed = state.progress.get();
                     check(
                         "animate-value",
-                        partway > 0.0 && partway < landed && (landed - 1.0 / n).abs() < 1e-9 && motion_running() == 0,
-                        format!("on its way {partway:.3}, landed {landed:.3} (1/{n}); still running {}", motion_running()),
+                        partway > 0.0 && partway < landed && (landed - 1.0 / n).abs() < 1e-9 && ferrokit::testing::probes::motion_running() == 0,
+                        format!("on its way {partway:.3}, landed {landed:.3} (1/{n}); still running {}", ferrokit::testing::probes::motion_running()),
                     );
                     // Nothing packed: Remove packed shakes the bar.
                     batch(|| state.packed.set(Vec::new()));
@@ -466,10 +465,10 @@ mod self_checks {
                     // Its action now (performClick shows the press first, a moment the shake would run on).
                     ferrokit::testing::send_action(&remove);
                     let path: Vec<f64> = (0..40).map(|_| {
-                        step_motion(0.01);
+                        ferrokit::testing::probes::step_motion(0.01);
                         state.shake.get()
                     }).collect();
-                    step_motion(2.0);
+                    ferrokit::testing::probes::step_motion(2.0);
                     let (hi, lo) = (path.iter().copied().fold(f64::MIN, f64::max), path.iter().copied().fold(f64::MAX, f64::min));
                     check(
                         "keyframes",

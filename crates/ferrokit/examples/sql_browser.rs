@@ -1536,7 +1536,7 @@ mod self_checks {
         // ⌃⌘S through the menu bar hides the sidebar; the content keeps
         // the room, the inspector its width.
         let before = pane_widths(&w);
-        let fired = menu_key("s", NSEventModifierFlags::Command | NSEventModifierFlags::Control);
+        let fired = menu_key("s", &[ferrokit::Modifier::Command, ferrokit::Modifier::Control]);
         let w2 = w.clone();
         then(move || {
             let hidden = pane_widths(&w2);

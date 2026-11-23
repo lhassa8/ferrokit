@@ -277,36 +277,12 @@ pub fn post_edit(field: &NSTextField, text: &str) {
 pub fn send_action(control: &objc2_app_kit::NSControl) -> bool {
     unsafe { control.sendAction_to(control.action(), control.target().as_deref()) }
 }
-/// Symbol effects running ([`Image::effect`](crate::Image::effect) while
-/// active) and one-shot effects played so far ([`Image::effect_on`](crate::Image::effect_on)).
-pub fn symbol_effects() -> (isize, usize) {
-    crate::controls::SYMBOL_EFFECTS.with(std::cell::Cell::get)
-}
-
-/// Moves the clock springs, [`animate`](crate::animate) and
-/// [`keyframes`](crate::keyframes) run on forward by `seconds` and runs a
-/// frame: what's animating lands where it would be that much later.
-pub fn step_motion(seconds: f64) {
-    crate::motion::step(seconds);
-}
 
 /// Lays out right to left (`Some(true)`), left to right, or as the app's
 /// language says (`None`): for checking a layout mirrors. Windows lay out
 /// again as they change; call it before opening the window to check.
 pub fn set_right_to_left(on: Option<bool>) {
     crate::force_right_to_left(on);
-}
-
-/// Remembers the documents open now, as quitting does (they reopen at the
-/// next launch when the user keeps windows: `NSQuitAlwaysKeepsWindows`,
-/// which a launch argument can set for one run).
-pub fn remember_open_documents() {
-    crate::documents::remember_open();
-}
-
-/// Value and spring animations running now.
-pub fn motion_running() -> usize {
-    crate::motion::running()
 }
 
 /// The failures caught where AppKit called in (exceptions and panics; the
@@ -347,49 +323,17 @@ pub fn snapshot_windows(dir: &str) {
         }
     }
 }
-/// Sends a ⌘-key equivalent through the main menu, as a key press would.
-pub fn key_equiv(w: &objc2_app_kit::NSWindow, chars: &str, shift: bool) -> bool {
-    use objc2_app_kit::{NSEvent, NSEventModifierFlags, NSEventType};
-    let mut flags = NSEventModifierFlags::Command;
-    // As a real key press: Shift shows in the characters (⇧⌘Z sends "Z").
-    let typed = if shift { chars.to_uppercase() } else { chars.to_string() };
-    if shift {
-        flags |= NSEventModifierFlags::Shift;
-    }
-    let event = {
-        NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
-            NSEventType::KeyDown,
-            objc2_foundation::NSPoint::new(0.0, 0.0),
-            flags,
-            0.0,
-            w.windowNumber(),
-            None,
-            &NSString::from_str(&typed),
-            &NSString::from_str(&typed),
-            false,
-            0,
-        )
-    }
-    .unwrap();
-    NSApplication::sharedApplication(mtm()).mainMenu().unwrap().performKeyEquivalent(&event)
-}
 
 /// How many times About {app} was shown with [`App::about`](crate::App::about)'s credits.
 pub fn about_shown() -> u32 {
     crate::ABOUT_SHOWN.with(|a| a.get())
 }
 
-/// The titles of the app menu's items (the first menu: About, Check for
-/// Updates…, Settings…, Hide, Quit), separators as `"-"`.
-pub fn app_menu_titles() -> Vec<String> {
-    let bar = NSApplication::sharedApplication(mtm()).mainMenu();
-    let menu = bar.and_then(|b| b.itemAtIndex(0)).and_then(|i| i.submenu());
-    menu.map(|m| m.itemArray().iter().map(|i| if i.isSeparatorItem() { "-".into() } else { i.title().to_string() }).collect()).unwrap_or_default()
-}
-
-/// Sends a key-down with `chars` and `modifiers` to the main menu's key
-/// equivalents (no window needed); true if an enabled item took it.
-pub fn menu_key(chars: &str, modifiers: objc2_app_kit::NSEventModifierFlags) -> bool {
+/// Sends a key-down with `chars` and `modifiers` (`&[Modifier::Command]`) to
+/// the main menu's key equivalents (no window needed); true if an enabled
+/// item took it.
+pub fn menu_key(chars: &str, modifiers: &[crate::Modifier]) -> bool {
+    let modifiers = input::flags(modifiers);
     use objc2_app_kit::{NSEvent, NSEventType};
     let event = NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
         NSEventType::KeyDown,
@@ -456,14 +400,6 @@ pub fn shortcut(window: &objc2_app_kit::NSWindow, chars: &str, shift: bool) -> b
     // SAFETY: standard responder-chain dispatch, the item as the sender (as
     // the menu sends it: Find's actions read their item's tag).
     window.firstResponder().is_some_and(|r| unsafe { r.tryToPerform_with(action, Some(&item)) })
-}
-
-/// Turns preview mode on or off for windows opened from now on, as
-/// `cargo ferrokit preview` does with `FERROKIT_PREVIEW=1`: a window
-/// without [`remember_frame`](crate::Window::remember_frame) keeps its frame
-/// under its title.
-pub fn set_preview_mode(on: bool) {
-    crate::set_preview_mode(on);
 }
 
 /// From now on, [`reveal_in_finder`](crate::reveal_in_finder) records what
@@ -889,11 +825,6 @@ pub fn set_reduce_motion(on: Option<bool>) {
     crate::motion::set_reduce_motion(on);
 }
 
-/// How many native views are still animating out after a transition.
-pub fn leaving_views() -> usize {
-    crate::motion::leaving()
-}
-
 /// Sends a view made with `on_hover` or `hover_highlight` (its interaction
 /// view, a `FerrokitInteraction`) the pointer entering or leaving. False if
 /// `view` isn't one.
@@ -906,12 +837,6 @@ pub fn hover(view: &objc2_app_kit::NSView, inside: bool) -> bool {
 /// release clicks. False if `view` isn't one.
 pub fn press(view: &objc2_app_kit::NSView, down: bool) -> bool {
     crate::interact::press(view, down)
-}
-
-/// Whether a clickable view's interaction is pressed (`None` if `view`
-/// isn't one).
-pub fn is_pressed(view: &objc2_app_kit::NSView) -> Option<bool> {
-    crate::interact::is_pressed(view)
 }
 
 /// Makes [`notify`](crate::notify) record notifications instead of posting
@@ -944,48 +869,129 @@ pub fn menu_bar_extras() -> Vec<(Retained<objc2_app_kit::NSStatusItem>, Option<R
     crate::status::EXTRAS.with_borrow(|e| e.iter().map(|i| (i.item.clone(), i.popover.clone())).collect())
 }
 
-// Diagnostics: counters Ferrokit keeps for leak and performance checks.
-
-/// Microseconds of the recent layout passes, oldest first (at least the last 10,000).
-pub fn layout_times_us() -> Vec<f64> {
-    #[allow(deprecated)]
-    crate::layout_times_us()
-}
-
-/// Layout passes so far. With [`layout_times_us`], the times of the passes since an earlier count: `let t = layout_times_us(); &t[t.len() - (layout_passes() - n0) as usize..]`.
-pub fn layout_passes() -> u64 {
-    #[allow(deprecated)]
-    crate::layout_passes()
-}
-
-/// Layout counters since the app started: nodes placed, subtrees skipped as
-/// clean, and ideal sizes computed (cache misses).
-pub fn layout_stats() -> (u64, u64, u64) {
-    #[allow(deprecated)]
-    crate::layout::layout_stats()
-}
-
-/// How many times effects have run, for checks that an update does only the work it should.
-pub fn effect_runs() -> u64 {
-    #[allow(deprecated)]
-    crate::signal::effect_runs()
-}
 
 /// Signals in existence, for leak checks (a closed window's signals are freed).
 pub fn live_signals() -> usize {
-    #[allow(deprecated)]
     crate::signal::live_signals()
 }
 
 /// View nodes in existence, for leak checks.
 pub fn live_nodes() -> usize {
-    #[allow(deprecated)]
     crate::view::live_nodes()
 }
 
-/// Collection cells made since launch: stays near a screenful however many
-/// items scroll past.
-pub fn collection_cells_made() -> u64 {
-    #[allow(deprecated)]
-    crate::collection::collection_cells_made()
+/// Probes for Ferrokit's own checks: counters and switches that look inside
+/// the framework (layout passes, effect runs, animations in flight). They
+/// are **outside the stability promise**: they may change or go in any
+/// release. An app's own checks need only what's in [`testing`](crate::testing)
+/// itself.
+pub mod probes {
+    #[allow(unused_imports)]
+    use super::*;
+
+    /// Symbol effects running ([`Image::effect`](crate::Image::effect) while
+    /// active) and one-shot effects played so far ([`Image::effect_on`](crate::Image::effect_on)).
+    pub fn symbol_effects() -> (isize, usize) {
+        crate::controls::SYMBOL_EFFECTS.with(std::cell::Cell::get)
+    }
+
+    /// Turns preview mode on or off for windows opened from now on, as
+    /// `cargo ferrokit preview` does with `FERROKIT_PREVIEW=1`: a window
+    /// without [`remember_frame`](crate::Window::remember_frame) keeps its frame
+    /// under its title.
+    pub fn set_preview_mode(on: bool) {
+        crate::set_preview_mode(on);
+    }
+
+    /// Sends a ⌘-key equivalent through the main menu, as a key press would.
+    pub fn key_equiv(w: &objc2_app_kit::NSWindow, chars: &str, shift: bool) -> bool {
+        use objc2_app_kit::{NSEvent, NSEventModifierFlags, NSEventType};
+        let mut flags = NSEventModifierFlags::Command;
+        // As a real key press: Shift shows in the characters (⇧⌘Z sends "Z").
+        let typed = if shift { chars.to_uppercase() } else { chars.to_string() };
+        if shift {
+            flags |= NSEventModifierFlags::Shift;
+        }
+        let event = {
+            NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+                NSEventType::KeyDown,
+                objc2_foundation::NSPoint::new(0.0, 0.0),
+                flags,
+                0.0,
+                w.windowNumber(),
+                None,
+                &NSString::from_str(&typed),
+                &NSString::from_str(&typed),
+                false,
+                0,
+            )
+        }
+        .unwrap();
+        NSApplication::sharedApplication(mtm()).mainMenu().unwrap().performKeyEquivalent(&event)
+    }
+
+    /// The titles of the app menu's items (the first menu: About, Check for
+    /// Updates…, Settings…, Hide, Quit), separators as `"-"`.
+    pub fn app_menu_titles() -> Vec<String> {
+        let bar = NSApplication::sharedApplication(mtm()).mainMenu();
+        let menu = bar.and_then(|b| b.itemAtIndex(0)).and_then(|i| i.submenu());
+        menu.map(|m| m.itemArray().iter().map(|i| if i.isSeparatorItem() { "-".into() } else { i.title().to_string() }).collect()).unwrap_or_default()
+    }
+
+    /// Layout counters since the app started: nodes placed, subtrees skipped as
+    /// clean, and ideal sizes computed (cache misses).
+    pub fn layout_stats() -> (u64, u64, u64) {
+            crate::layout::layout_stats()
+    }
+
+    /// How many times effects have run, for checks that an update does only the work it should.
+    pub fn effect_runs() -> u64 {
+            crate::signal::effect_runs()
+    }
+
+    /// Microseconds of the recent layout passes, oldest first (at least the last 10,000).
+    pub fn layout_times_us() -> Vec<f64> {
+            crate::layout_times_us()
+    }
+
+    /// Layout passes so far. With [`layout_times_us`], the times of the passes since an earlier count: `let t = layout_times_us(); &t[t.len() - (layout_passes() - n0) as usize..]`.
+    pub fn layout_passes() -> u64 {
+            crate::layout_passes()
+    }
+
+    /// Value and spring animations running now.
+    pub fn motion_running() -> usize {
+        crate::motion::running()
+    }
+
+    /// How many native views are still animating out after a transition.
+    pub fn leaving_views() -> usize {
+        crate::motion::leaving()
+    }
+
+    /// Whether a clickable view's interaction is pressed (`None` if `view`
+    /// isn't one).
+    pub fn is_pressed(view: &objc2_app_kit::NSView) -> Option<bool> {
+        crate::interact::is_pressed(view)
+    }
+
+    /// Moves the clock springs, [`animate`](crate::animate) and
+    /// [`keyframes`](crate::keyframes) run on forward by `seconds` and runs a
+    /// frame: what's animating lands where it would be that much later.
+    pub fn step_motion(seconds: f64) {
+        crate::motion::step(seconds);
+    }
+
+    /// Remembers the documents open now, as quitting does (they reopen at the
+    /// next launch when the user keeps windows: `NSQuitAlwaysKeepsWindows`,
+    /// which a launch argument can set for one run).
+    pub fn remember_open_documents() {
+        crate::documents::remember_open();
+    }
+
+    /// Collection cells made since launch: stays near a screenful however many
+    /// items scroll past.
+    pub fn collection_cells_made() -> u64 {
+            crate::collection::collection_cells_made()
+    }
 }

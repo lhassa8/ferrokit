@@ -81,8 +81,7 @@ thread_local! {
 
 /// Collection cells made since launch: stays near a screenful however many
 /// items scroll past (diagnostic).
-#[deprecated(since = "0.13.0", note = "moved to `ferrokit::testing::collection_cells_made`")]
-pub fn collection_cells_made() -> u64 {
+pub(crate) fn collection_cells_made() -> u64 {
     CELLS_MADE.with(Cell::get)
 }
 

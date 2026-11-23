@@ -138,9 +138,9 @@ fn run_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     }
     let per = t.elapsed().as_secs_f64() * 1e9 / 100_000.0;
     check("signal-update-cost", seen.get() == 100_000 && (per < 500.0 || on_ci()), format!("{per:.0} ns per set + effect run (budget 500{})", ci_note()));
-    let runs = ferrokit::testing::effect_runs();
+    let runs = ferrokit::testing::probes::effect_runs();
     batch(|| (0..1000).for_each(|i| n.set(i)));
-    check("signal-batch", ferrokit::testing::effect_runs() - runs == 1, format!("{} effect run(s) for 1,000 sets in one batch", ferrokit::testing::effect_runs() - runs));
+    check("signal-batch", ferrokit::testing::probes::effect_runs() - runs == 1, format!("{} effect run(s) for 1,000 sets in one batch", ferrokit::testing::probes::effect_runs() - runs));
     drop(effect);
 
     // spawn: work on a background thread, continuation on the main thread in one batch.
@@ -1425,16 +1425,15 @@ fn menu_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     file.update();
     let remove = file.itemWithTitle(&NSString::from_str("Remove Item")).unwrap();
     let off = !remove.isEnabled();
-    let cmd = NSEventModifierFlags::Command;
     // A disabled item's shortcut is taken (AppKit beeps) but doesn't run.
-    menu_key("n", cmd | NSEventModifierFlags::Option);
+    menu_key("n", &[ferrokit::Modifier::Command, ferrokit::Modifier::Option]);
     let blocked = m.items.get_untracked() == 0;
-    let new_key = menu_key("n", cmd);
+    let new_key = menu_key("n", &[ferrokit::Modifier::Command]);
     file.update();
     let on = remove.isEnabled();
-    let alt_key = menu_key("n", cmd | NSEventModifierFlags::Option);
+    let alt_key = menu_key("n", &[ferrokit::Modifier::Command, ferrokit::Modifier::Option]);
     let after = m.items.get_untracked();
-    let refresh = menu_key("R", cmd | NSEventModifierFlags::Shift);
+    let refresh = menu_key("R", &[ferrokit::Modifier::Command, ferrokit::Modifier::Shift]);
     // testing::shortcut runs the app's own items too (it used to send
     // their action along the responder chain, where nothing answered).
     let before = m.items.get_untracked();
@@ -1454,7 +1453,7 @@ fn menu_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let sidebar = view.itemWithTitle(&NSString::from_str("Show Sidebar")).unwrap();
     view.update();
     let checked0 = sidebar.state() == NSControlStateValueOn;
-    let toggled = menu_key("s", cmd | NSEventModifierFlags::Control);
+    let toggled = menu_key("s", &[ferrokit::Modifier::Command, ferrokit::Modifier::Control]);
     view.update();
     let checked1 = sidebar.state() == NSControlStateValueOn;
     let sort = view.itemWithTitle(&NSString::from_str("Sort By")).and_then(|i| i.submenu()).unwrap();
@@ -1472,7 +1471,7 @@ fn menu_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let app_items = menu_items("Checklist");
     let item_ok = has(&app_items, "Settings…", ",");
     let before = NSApplication::sharedApplication(mtm()).windows().count();
-    let fired = menu_key(",", cmd);
+    let fired = menu_key(",", &[ferrokit::Modifier::Command]);
     let s1 = NSApplication::sharedApplication(mtm()).windows().iter().find(|w| w.title().to_string() == "Settings");
     let built = NSApplication::sharedApplication(mtm()).windows().count();
     if let Some(w) = &s1 {
@@ -1908,9 +1907,9 @@ fn close_button_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     drop(w);
     let v = value;
     after_idle(move || {
-        let runs = ferrokit::testing::effect_runs();
+        let runs = ferrokit::testing::probes::effect_runs();
         batch(|| v.set(1));
-        let ran = ferrokit::testing::effect_runs() - runs;
+        let ran = ferrokit::testing::probes::effect_runs() - runs;
         let freed = weak.load().is_none();
         check(
             "close-button-teardown",
@@ -2731,7 +2730,6 @@ fn slider_kind_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 /// C3: SF Symbol effects: one running while a signal is true, one played
 /// when a value changes (not when the view is built).
 fn symbol_effect_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
-    use ferrokit::testing::symbol_effects;
     use ferrokit::{SymbolEffect, image};
     fn animating(layer: &objc2_quartz_core::CALayer) -> bool {
         // SAFETY: reading a layer's sublayers on the main thread.
@@ -2740,7 +2738,7 @@ fn symbol_effect_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     }
     let searching = Signal::new(false);
     let unread = Signal::new(0u32);
-    let before = symbol_effects();
+    let before = ferrokit::testing::probes::symbol_effects();
     let w = open(Window::new("Symbol effects").size(240.0, 100.0).view(
         hstack((
             image("wifi").symbol_size(28.0).effect(SymbolEffect::VariableColor, move || searching.get()).description("Wi-Fi"),
@@ -2750,15 +2748,15 @@ fn symbol_effect_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         .padding(20.0),
     ));
     let supported = objc2::runtime::AnyClass::get(c"NSSymbolBounceEffect").is_some();
-    let built = symbol_effects();
+    let built = ferrokit::testing::probes::symbol_effects();
     batch(|| searching.set(true));
-    let on = symbol_effects();
+    let on = ferrokit::testing::probes::symbol_effects();
     let wifi = all_views(&w.contentView().unwrap()).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSImageView>().ok());
     let layers = wifi.as_ref().and_then(|v| v.layer()).is_some_and(|l| animating(&l));
     batch(|| searching.set(false));
-    let off = symbol_effects();
+    let off = ferrokit::testing::probes::symbol_effects();
     batch(|| unread.set(3));
-    let bounced = symbol_effects();
+    let bounced = ferrokit::testing::probes::symbol_effects();
     check(
         "symbol-effects",
         supported && built == before && on.0 == before.0 + 1 && off.0 == before.0 && bounced.1 == before.1 + 1,
@@ -3356,7 +3354,7 @@ fn preview_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let key = NSString::from_str("NSWindow Frame ferrokit preview Preview Frame");
     let defaults = NSUserDefaults::standardUserDefaults();
     defaults.removeObjectForKey(&key);
-    ferrokit::testing::set_preview_mode(true);
+    ferrokit::testing::probes::set_preview_mode(true);
     let first = open(Window::new("Preview Frame").size(300.0, 160.0).view(text("Where it was")));
     let moved = NSRect::new(NSPoint::new(140.0, 180.0), NSSize::new(420.0, 260.0));
     first.setFrame_display(moved, true);
@@ -3368,7 +3366,7 @@ fn preview_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         let back = again.frame();
         ferrokit::close_window(&again);
         // Outside a preview, a window without `remember_frame` opens centred at its size.
-        ferrokit::testing::set_preview_mode(false);
+        ferrokit::testing::probes::set_preview_mode(false);
         let plain = open(Window::new("Preview Frame").size(300.0, 160.0).view(text("Where it was")));
         let plain_size = plain.contentRectForFrameRect(plain.frame()).size;
         ferrokit::close_window(&plain);
@@ -4786,9 +4784,9 @@ fn view_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     // dynamic: switching tears the old subtree down and stops its effects.
     let nodes_on = ferrokit::testing::live_nodes();
     batch(|| st.flag.set(false));
-    let runs = ferrokit::testing::effect_runs();
+    let runs = ferrokit::testing::probes::effect_runs();
     batch(|| st.inner.set(5));
-    let stopped = ferrokit::testing::effect_runs() == runs;
+    let stopped = ferrokit::testing::probes::effect_runs() == runs;
     check(
         "dynamic-teardown",
         find_label("off").is_some() && find_label("on").is_none() && find_label("inner 0").is_none() && stopped,
@@ -4921,9 +4919,9 @@ fn layout_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     // A label that changes width moves its sibling; the rest of the window is skipped.
     let wide = WIDE.with(Clone::clone);
     let before = f("after").origin.x;
-    let (p0, s0, _) = ferrokit::testing::layout_stats();
+    let (p0, s0, _) = ferrokit::testing::probes::layout_stats();
     batch(|| wide.set("a considerably longer text".into()));
-    let (p1, s1, _) = ferrokit::testing::layout_stats();
+    let (p1, s1, _) = ferrokit::testing::probes::layout_stats();
     let after = f("after").origin.x;
     check(
         "subtree-relayout",
@@ -4954,22 +4952,22 @@ fn layout_bench(events: Rc<RefCell<Vec<AppEvent>>>) {
     let w = open(Window::new("Bench").size(700.0, 700.0).view(vstack(rows).padding(12.0)));
     let build_ms = t.elapsed().as_secs_f64() * 1e3;
     let views = w.contentView().unwrap().subviews().len();
-    let n0 = ferrokit::testing::layout_passes();
+    let n0 = ferrokit::testing::probes::layout_passes();
     for k in 0..200 {
         w.setContentSize(objc2_foundation::NSSize::new(600.0 + (k % 40) as f64 * 10.0, 700.0));
     }
-    let times = ferrokit::testing::layout_times_us();
-    let new = ((ferrokit::testing::layout_passes() - n0) as usize).min(times.len());
+    let times = ferrokit::testing::probes::layout_times_us();
+    let new = ((ferrokit::testing::probes::layout_passes() - n0) as usize).min(times.len());
     let mut resize: Vec<f64> = times[times.len() - new..].to_vec();
     resize.sort_by(|a, b| a.total_cmp(b));
     let mut upd = Vec::new();
-    let (p0, _, _) = ferrokit::testing::layout_stats();
+    let (p0, _, _) = ferrokit::testing::probes::layout_stats();
     for _ in 0..500 {
         let t = std::time::Instant::now();
         batch(|| counter.update(|v| *v += 1));
         upd.push(t.elapsed().as_secs_f64() * 1e6);
     }
-    let (p1, _, _) = ferrokit::testing::layout_stats();
+    let (p1, _, _) = ferrokit::testing::probes::layout_stats();
     upd.sort_by(|a, b| a.total_cmp(b));
     let p = |v: &[f64], q: usize| v[(v.len() - 1) * q / 100];
     check(

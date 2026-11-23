@@ -1,6 +1,8 @@
 # Views and layout
 
-A view is a value that builds native views once (`View::build`). Layout is
+A view is a value that builds its native views once, the first time it is
+shown, and updates them in place after. Make your own views by composing
+these, or wrap a native view with `native(..)`. Layout is
 done in Rust: stacks and grids size their children from the controls'
 natural sizes, and only the part of the tree that changed is laid out
 again.

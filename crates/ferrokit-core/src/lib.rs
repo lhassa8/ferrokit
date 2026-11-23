@@ -5,6 +5,9 @@
 //! keyboard in step with `ferrokit`'s layout. [`table::TableModel`] and
 //! [`text::TextModel`], which `ferrokit` re-exports, are documented here.
 //!
+//! Its own API isn't covered by Ferrokit's stability promise: apps use what
+//! `ferrokit` re-exports, and the rest may change in any release.
+//!
 //! Main thread only. Every function panics off the main thread.
 
 #![warn(missing_docs)]

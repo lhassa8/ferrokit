@@ -645,7 +645,7 @@ fn agents(args: &[String]) -> Result<()> {
 }
 
 /// The ferrokit that new apps depend on.
-const FERROKIT_VERSION: &str = "0.13";
+const FERROKIT_VERSION: &str = "0.14";
 
 // ---- bundle ----
 

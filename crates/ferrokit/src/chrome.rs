@@ -637,7 +637,11 @@ pub(crate) fn menu_host(view: &NSView) -> Retained<NSView> {
 /// An item of a window's toolbar: made by [`toolbar_button`],
 /// [`toolbar_group`], [`toolbar_picker`], [`toolbar_search`],
 /// [`toolbar_space`] or [`toolbar_fixed_space`].
-pub enum ToolbarItem {
+pub struct ToolbarItem(pub(crate) Item);
+
+/// What a [`ToolbarItem`] is (kept inside, so items can gain options
+/// without breaking apps).
+pub(crate) enum Item {
     /// A button with an SF Symbol and a label.
     Button {
         /// Stable identifier.
@@ -687,62 +691,62 @@ pub enum ToolbarItem {
         choose: Box<dyn Fn(usize)>,
     },
     /// An item the user can add from the customisation sheet, not in the
-    /// toolbar at first (see [`ToolbarItem::optional`]).
+    /// toolbar at first (see [`Item::optional`]).
     Optional(Box<ToolbarItem>),
 }
 
 impl ToolbarItem {
     /// Disabled: `true`, or a closure reading signals.
     pub fn disabled(self, when: impl crate::IntoValue<bool>) -> Self {
-        match self {
-            ToolbarItem::Button { id, label, symbol, action, .. } => {
+        ToolbarItem(match self.0 {
+            Item::Button { id, label, symbol, action, .. } => {
                 let when = when.into_value();
-                ToolbarItem::Button { id, label, symbol, action, disabled: Some(Box::new(move || when.get())) }
+                Item::Button { id, label, symbol, action, disabled: Some(Box::new(move || when.get())) }
             }
-            ToolbarItem::Optional(item) => ToolbarItem::Optional(Box::new(item.disabled(when))),
+            Item::Optional(item) => Item::Optional(Box::new(item.disabled(when))),
             other => other,
-        }
+        })
     }
 
     /// Offered in the customisation sheet (with
     /// [`Window::customizable_toolbar`](crate::Window::customizable_toolbar)),
     /// but not in the toolbar until the user adds it.
     pub fn optional(self) -> Self {
-        match self {
-            ToolbarItem::Optional(_) => self,
-            other => ToolbarItem::Optional(Box::new(other)),
+        match self.0 {
+            Item::Optional(_) => self,
+            other => ToolbarItem(Item::Optional(Box::new(ToolbarItem(other)))),
         }
     }
 
     fn id(&self) -> String {
         // SAFETY: AppKit's identifier constants.
-        match self {
-            ToolbarItem::Button { id, .. } | ToolbarItem::Search { id, .. } | ToolbarItem::Group { id, .. } | ToolbarItem::Picker { id, .. } => id.clone(),
-            ToolbarItem::FlexibleSpace => unsafe { objc2_app_kit::NSToolbarFlexibleSpaceItemIdentifier }.to_string(),
-            ToolbarItem::Space => unsafe { objc2_app_kit::NSToolbarSpaceItemIdentifier }.to_string(),
-            ToolbarItem::Optional(item) => item.id(),
+        match &self.0 {
+            Item::Button { id, .. } | Item::Search { id, .. } | Item::Group { id, .. } | Item::Picker { id, .. } => id.clone(),
+            Item::FlexibleSpace => unsafe { objc2_app_kit::NSToolbarFlexibleSpaceItemIdentifier }.to_string(),
+            Item::Space => unsafe { objc2_app_kit::NSToolbarSpaceItemIdentifier }.to_string(),
+            Item::Optional(item) => item.id(),
         }
     }
 }
 
 /// A toolbar button: identifier, label, SF Symbol, action.
 pub fn toolbar_button(id: &str, label: &str, symbol: &str, action: impl Fn() + 'static) -> ToolbarItem {
-    ToolbarItem::Button { id: id.into(), label: label.into(), symbol: symbol.into(), action: Box::new(action), disabled: None }
+    ToolbarItem(Item::Button { id: id.into(), label: label.into(), symbol: symbol.into(), action: Box::new(action), disabled: None })
 }
 
 /// Flexible space in the toolbar.
 pub fn toolbar_space() -> ToolbarItem {
-    ToolbarItem::FlexibleSpace
+    ToolbarItem(Item::FlexibleSpace)
 }
 
 /// A fixed space in the toolbar.
 pub fn toolbar_fixed_space() -> ToolbarItem {
-    ToolbarItem::Space
+    ToolbarItem(Item::Space)
 }
 
 /// A toolbar search field bound two ways to `query`.
 pub fn toolbar_search(id: &str, query: &Signal<String>) -> ToolbarItem {
-    ToolbarItem::Search { id: id.into(), query: *query }
+    ToolbarItem(Item::Search { id: id.into(), query: *query })
 }
 
 /// Related buttons in one capsule (zoom out and in, back and forward), made
@@ -760,7 +764,7 @@ pub fn toolbar_search(id: &str, query: &Signal<String>) -> ToolbarItem {
 /// # let _ = item;
 /// ```
 pub fn toolbar_group(id: &str, label: &str, buttons: Vec<ToolbarItem>) -> ToolbarItem {
-    ToolbarItem::Group { id: id.into(), label: label.into(), buttons }
+    ToolbarItem(Item::Group { id: id.into(), label: label.into(), buttons })
 }
 
 /// A choice of one in the toolbar, as segments with SF Symbols (Finder's
@@ -781,7 +785,7 @@ pub fn toolbar_picker<T: Clone + PartialEq + 'static>(id: &str, label: &str, val
     let value = *value;
     let values: Rc<Vec<T>> = Rc::new(choices.iter().map(|c| c.2.clone()).collect());
     let v2 = values.clone();
-    ToolbarItem::Picker {
+    ToolbarItem(Item::Picker {
         id: id.into(),
         label: label.into(),
         choices: choices.iter().map(|(l, s, _)| (l.to_string(), s.to_string())).collect(),
@@ -791,7 +795,7 @@ pub fn toolbar_picker<T: Clone + PartialEq + 'static>(id: &str, label: &str, val
                 value.set(v.clone());
             }
         }),
-    }
+    })
 }
 
 /// A toolbar item as the delegate keeps it, to make it again (for the
@@ -818,14 +822,14 @@ impl ToolbarEntry {
             let f = crate::signal::with_current_owner(f);
             Rc::new(move |_| f())
         };
-        let (spec, optional) = match item {
-            ToolbarItem::Optional(item) => (ToolbarEntry::new(*item).spec, true),
-            ToolbarItem::Button { label, symbol, action, disabled, .. } => (Spec::Button { label, symbol, action: act(action), disabled: disabled.map(Rc::from) }, false),
-            ToolbarItem::Search { query, .. } => (Spec::Search { query }, false),
-            ToolbarItem::Group { label, buttons, .. } => {
+        let (spec, optional) = match item.0 {
+            Item::Optional(item) => (ToolbarEntry::new(*item).spec, true),
+            Item::Button { label, symbol, action, disabled, .. } => (Spec::Button { label, symbol, action: act(action), disabled: disabled.map(Rc::from) }, false),
+            Item::Search { query, .. } => (Spec::Search { query }, false),
+            Item::Group { label, buttons, .. } => {
                 let (mut shown, mut actions) = (Vec::new(), Vec::new());
                 for b in buttons {
-                    if let ToolbarItem::Button { label, symbol, action, .. } = b {
+                    if let Item::Button { label, symbol, action, .. } = b.0 {
                         shown.push((label, symbol));
                         actions.push(action);
                     }
@@ -838,11 +842,11 @@ impl ToolbarEntry {
                 };
                 (Spec::Group { label, buttons: shown, action: Rc::new(action) }, false)
             }
-            ToolbarItem::Picker { label, choices, selected, choose, .. } => {
+            Item::Picker { label, choices, selected, choose, .. } => {
                 let choose: Rc<dyn Fn(usize)> = Rc::from(choose);
                 (Spec::Picker { label, choices, selected: Rc::from(selected), choose: Rc::new(move |i| choose(i.max(0) as usize)) }, false)
             }
-            ToolbarItem::FlexibleSpace | ToolbarItem::Space => (Spec::Standard, false),
+            Item::FlexibleSpace | Item::Space => (Spec::Standard, false),
         };
         ToolbarEntry { id, spec, optional }
     }

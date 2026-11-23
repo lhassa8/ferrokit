@@ -551,7 +551,7 @@ mod self_checks {
         let w = windows()[0].clone();
         batch(|| b.group.set(None));
         // Resize: the layout pass with the full app on screen.
-        let n0 = ferrokit::testing::layout_passes();
+        let n0 = ferrokit::testing::probes::layout_passes();
         let mut total = Vec::new();
         for k in 0..200 {
             let t = std::time::Instant::now();
@@ -559,8 +559,8 @@ mod self_checks {
             w.displayIfNeeded();
             total.push(t.elapsed().as_secs_f64() * 1e3);
         }
-        let times = ferrokit::testing::layout_times_us();
-        let new = ((ferrokit::testing::layout_passes() - n0) as usize).min(times.len());
+        let times = ferrokit::testing::probes::layout_times_us();
+        let new = ((ferrokit::testing::probes::layout_passes() - n0) as usize).min(times.len());
         let mut layout: Vec<f64> = times[times.len() - new..].iter().map(|us| us / 1e3).collect();
         layout.sort_by(|a, b| a.total_cmp(b));
         total.sort_by(|a, b| a.total_cmp(b));

@@ -84,6 +84,7 @@ pub struct FrameLoop {
 }
 
 impl FrameLoop {
+    #[doc(hidden)]
     /// Calls so far: (driven by display frames, by the stand-in timer).
     pub fn counts(&self) -> (u64, u64) {
         let t = self.target.ivars();

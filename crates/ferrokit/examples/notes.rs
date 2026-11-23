@@ -54,7 +54,7 @@ mod self_checks {
     use ferrokit::testing::{ax_audit, menu_key};
     use ferrokit::*;
     use objc2::rc::Retained;
-    use objc2_app_kit::{NSApplication, NSButton, NSEventModifierFlags, NSTextView, NSView};
+    use objc2_app_kit::{NSApplication, NSButton, NSTextView, NSView};
     use objc2_foundation::NSString;
 
     thread_local! {
@@ -151,7 +151,7 @@ mod self_checks {
             menu == ["New", "Open…", "Open Recent", "", "Close", "Close All", "Save", "Save As…", "Revert to Saved"].map(String::from),
             format!("{menu:?}"),
         );
-        let fired = menu_key("n", NSEventModifierFlags::Command);
+        let fired = menu_key("n", &[ferrokit::Modifier::Command]);
         check("new-document", fired && titles() == ["Untitled", "Untitled 2"], format!("⌘N → {:?}", titles()));
         let problems = ax_audit(&w1);
         check("accessibility-audit", problems.is_empty(), format!("{problems:?}"));
@@ -295,7 +295,7 @@ mod self_checks {
         let (wc, _) = (open_document(&c).unwrap(), open_document(&d).unwrap());
         // Somewhere it wouldn't open by itself.
         wc.setFrame_display(objc2_foundation::NSRect::new(objc2_foundation::NSPoint::new(137.0, 211.0), objc2_foundation::NSSize::new(520.0, 333.0)), true);
-        ferrokit::testing::remember_open_documents();
+        ferrokit::testing::probes::remember_open_documents();
         let launch = |keep: &str| {
             let out = std::process::Command::new(std::env::current_exe().unwrap()).env("CHECK", "opened").args(["-NSQuitAlwaysKeepsWindows", keep]).output();
             // (A crash at exit counts: it once aborted there, unseen.)

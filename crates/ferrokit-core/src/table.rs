@@ -159,7 +159,7 @@ impl<T> Column<T> {
         Self::new(id, title, Kind::Number { decimals: 0 }, Box::new(move |row| Value::Number(value(row))))
     }
 
-    /// A checkbox column. Clicking a checkbox emits [`TableEvent::Toggle`];
+    /// A checkbox column. Clicking a checkbox is reported to `Table::on_toggle`;
     /// the model doesn't change the row itself.
     pub fn check(id: &str, title: &str, value: impl Fn(&T) -> bool + 'static) -> Self {
         Self::new(id, title, Kind::Check, Box::new(move |row| Value::Bool(value(row)))).width(60.0)
@@ -227,7 +227,7 @@ impl<T> Column<T> {
     }
 
     /// Makes the [`icon`](Self::icon) a button: clicking it reports
-    /// [`TableEvent::IconClicked`] (and doesn't select the row), as the
+    /// `Table::on_icon_click` (and doesn't select the row), as the
     /// arrow beside a linked value that opens what it links to. `label` is
     /// what VoiceOver says for it ("Open the linked row").
     pub fn icon_action(mut self, label: &str) -> Self {
@@ -277,7 +277,7 @@ impl<T> Column<T> {
 
     /// Lets the user edit this column's text or number cells (double-click,
     /// or Return on the selected row's cell). Finishing an edit (Return, Tab
-    /// or a click elsewhere; not Escape) emits [`TableEvent::Edit`]; the model doesn't change the row: apply it with
+    /// or a click elsewhere; not Escape) is reported to `Table::on_edit`; the model doesn't change the row: apply it with
     /// [`TableModel::update_row`]. No effect on checkbox columns.
     pub fn editable(mut self, editable: bool) -> Self {
         self.editable = editable;
@@ -369,6 +369,7 @@ pub struct ColumnState {
     pub width: f64,
 }
 
+#[doc(hidden)]
 /// Something the user did in the table. Row indices are model indices
 /// (positions in the rows given to [`TableModel::set_rows`]), whatever the sort.
 #[derive(Debug, Clone, PartialEq)]
@@ -457,7 +458,7 @@ pub enum TableEvent {
 struct Transfer {
     drag: bool,
     reorder: bool,
-    /// Bare keys reported as [`TableEvent::Key`].
+    /// Bare keys reported to `Table::on_key`.
     keys: Vec<TableKey>,
     /// File drops: `None` off; `Some(extensions)`, any file if empty.
     files: Option<Vec<String>>,
@@ -1790,14 +1791,10 @@ impl<T: 'static> TableModel<T> {
     /// it's added the first time it's shown). Create it once and update its
     /// rows in place.
     pub fn new(columns: Vec<Column<T>>) -> Self {
-        #[allow(deprecated)]
         Self::with_id(ViewId::next(), columns)
     }
 
-    /// [`new`](Self::new) with an id the caller chose (before 0.13, every
-    /// model took one).
-    #[deprecated(since = "0.13.0", note = "use `TableModel::new(columns)`: the id is chosen for you")]
-    pub fn with_id(id: ViewId, columns: Vec<Column<T>>) -> Self {
+    fn with_id(id: ViewId, columns: Vec<Column<T>>) -> Self {
         let mtm = mtm();
         crate::testing::LIVE_OBJC.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let source = Source::alloc(mtm).set_ivars(SourceIvars { data: RefCell::new(None), created: Cell::new(0) });
@@ -1859,6 +1856,7 @@ impl<T: 'static> TableModel<T> {
         self.inner.id
     }
 
+    #[doc(hidden)]
     /// Adds the table to the attached window if it isn't yet. Called by the
     /// host widget before placing it.
     pub fn ensure_mounted(&self) {
@@ -2022,7 +2020,7 @@ impl<T: 'static> TableModel<T> {
 
     /// Moves `rows` (model indices) to just above the row `before` (or to
     /// the end), keeping their order, as a drop reported by
-    /// [`TableEvent::RowsMoved`] asks. Returns their new model indices; they
+    /// `Table::reorderable` asks. Returns their new model indices; they
     /// end up selected.
     pub fn move_rows(&self, rows: &[usize], before: Option<usize>) -> Vec<usize> {
         let _focus = KeepFocus::new(&self.inner.table);
@@ -2050,6 +2048,7 @@ impl<T: 'static> TableModel<T> {
         moved
     }
 
+    #[doc(hidden)]
     /// Lets rows be dragged out: each carries its cells as tab-separated
     /// text (for other apps), and its model index for
     /// [`set_reorderable`](Self::set_reorderable). Off by default (a drag
@@ -2060,9 +2059,10 @@ impl<T: 'static> TableModel<T> {
         self.register_drag_types();
     }
 
+    #[doc(hidden)]
     /// Lets the user drag rows to a new place (also turns on
     /// [`set_row_drag`](Self::set_row_drag)); each drop is reported as
-    /// [`TableEvent::RowsMoved`]. Refused while the table is sorted.
+    /// `Table::reorderable`. Refused while the table is sorted.
     pub fn set_reorderable(&self, on: bool) {
         if on {
             self.set_row_drag(true);
@@ -2072,14 +2072,16 @@ impl<T: 'static> TableModel<T> {
         self.register_drag_types();
     }
 
+    #[doc(hidden)]
     /// Accepts files dropped from the Finder: `Some(&["csv", "txt"])` for
     /// those extensions, `Some(&[])` for any file, `None` to stop. Each drop
-    /// is reported as [`TableEvent::FilesDropped`].
+    /// is reported to `Table::on_files_dropped`.
     pub fn set_file_drop(&self, extensions: Option<&[&str]>) {
         self.inner.transfer.borrow_mut().files = extensions.map(|e| e.iter().map(|s| s.to_string()).collect());
         self.register_drag_types();
     }
 
+    #[doc(hidden)]
     /// Rows added by [`insert`](Self::insert) and [`push`](Self::push), and
     /// removed by [`remove`](Self::remove), fade and slide in and out
     /// instead of appearing at once; the other rows keep their cells. Not
@@ -2089,30 +2091,34 @@ impl<T: 'static> TableModel<T> {
         self.inner.animates.set(on);
     }
 
+    #[doc(hidden)]
     /// Accepts web addresses dragged from a browser (a link, or the address
-    /// bar's icon). Each drop is reported as [`TableEvent::UrlsDropped`].
+    /// bar's icon). Each drop is reported to `Table::on_urls_dropped`.
     /// Off by default.
     pub fn set_url_drop(&self, on: bool) {
         self.inner.transfer.borrow_mut().urls = on;
         self.register_drag_types();
     }
 
-    /// Reports ⌘V on the table as [`TableEvent::Paste`] (and enables Paste
+    #[doc(hidden)]
+    /// Reports ⌘V on the table as `Table::on_paste` (and enables Paste
     /// in the Edit menu while there is text to paste). Off by default.
     pub fn set_pastes(&self, on: bool) {
         self.inner.transfer.borrow_mut().pastes = on;
     }
 
+    #[doc(hidden)]
     /// Reports these keys, pressed without ⌘, ⌥ or ⌃ while rows are
-    /// selected, as [`TableEvent::Key`] instead of AppKit's handling
+    /// selected, to `Table::on_key` instead of AppKit's handling
     /// (Space would type-select, Delete beep). None by default.
     pub fn set_keys(&self, keys: &[TableKey]) {
         self.inner.transfer.borrow_mut().keys = keys.to_vec();
     }
 
+    #[doc(hidden)]
     /// Cell focus, as in a spreadsheet: the table keeps a focused column,
     /// which a click on a cell moves to its column and ← and → move one
-    /// column at a time ([`TableEvent::FocusedColumn`]). The focused cell of
+    /// column at a time (`Table::cell_focus`). The focused cell of
     /// each selected row is outlined. With the selection it names the cells
     /// an action applies to (Set to NULL, Copy Cell). Off by default.
     pub fn set_cell_focus(&self, on: bool) {
@@ -2142,6 +2148,7 @@ impl<T: 'static> TableModel<T> {
         self.inner.set_focus(column.filter(|_| index >= 0).map(str::to_string), false);
     }
 
+    #[doc(hidden)]
     /// The focused cell's outline in row `view_row` (a view position), in
     /// the row's coordinates, if the row is shown, selected and a column is
     /// focused. For checks.
@@ -2190,7 +2197,7 @@ impl<T: 'static> TableModel<T> {
     }
 
     /// Pastes `pasteboard`'s text (what ⌘V does with the general
-    /// pasteboard): queues [`TableEvent::Paste`] if the table takes pastes.
+    /// pasteboard): goes to `Table::on_paste` if the table takes pastes.
     pub fn paste_from(&self, pasteboard: &NSPasteboard) -> bool {
         self.inner.table.paste_text(pasteboard)
     }
@@ -2263,7 +2270,7 @@ impl<T: 'static> TableModel<T> {
     }
 
     /// Built-in sorting (default on): header clicks reorder the rows here.
-    /// Turn it off to sort yourself on [`TableEvent::Sort`] (e.g. in a database)
+    /// Turn it off to sort yourself on `Table::on_sort` (e.g. in a database)
     /// and call [`TableModel::set_rows`].
     pub fn set_sorts_in_place(&self, on: bool) {
         self.inner.sorts_in_place.set(on);
@@ -2298,11 +2305,13 @@ impl<T: 'static> TableModel<T> {
         self.inner.events.borrow_mut().retain(|e| *e != TableEvent::ColumnsChanged);
     }
 
+    #[doc(hidden)]
     /// Takes the queued user events (for the host widget).
     pub fn drain_events(&self) -> Vec<TableEvent> {
         self.inner.events.borrow_mut().drain(..).collect()
     }
 
+    #[doc(hidden)]
     /// Diagnostics: cell views created so far (reuse keeps this near the
     /// number of visible cells).
     pub fn cells_created(&self) -> usize {

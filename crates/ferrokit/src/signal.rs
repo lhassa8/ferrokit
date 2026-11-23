@@ -179,8 +179,7 @@ pub(crate) fn with_weak_owner<R>(owner: Option<&Weak<OwnerInner>>, f: impl FnOnc
 }
 
 /// Live signals in the arena (diagnostic: freed ones are reused).
-#[deprecated(since = "0.13.0", note = "moved to `ferrokit::testing::live_signals`")]
-pub fn live_signals() -> usize {
+pub(crate) fn live_signals() -> usize {
     ARENA.with_borrow(|a| a.slots.len() - a.free.len())
 }
 
@@ -283,8 +282,7 @@ impl fmt::Debug for Effect {
 }
 
 /// Total effect runs on this thread so far (diagnostic).
-#[deprecated(since = "0.13.0", note = "moved to `ferrokit::testing::effect_runs`")]
-pub fn effect_runs() -> u64 {
+pub(crate) fn effect_runs() -> u64 {
     RUNS.with(Cell::get)
 }
 
@@ -939,9 +937,9 @@ mod tests {
                 let _ = s2.get();
             }));
         }
-        let before = crate::testing::effect_runs();
+        let before = crate::testing::probes::effect_runs();
         s.set(1);
-        assert_eq!(crate::testing::effect_runs() - before, 100);
+        assert_eq!(crate::testing::probes::effect_runs() - before, 100);
         keep.set(1);
         assert_eq!(runs.get(), 2);
         drop(live);

@@ -20,9 +20,17 @@ use objc2::rc::Retained;
 use crate::platform::{MainThread, Native, NativeObject, NativeScroll, NativeSplit, NativeView, Platform};
 use crate::signal::{Effect, Owner, Signal, untrack};
 
-/// Something that can be shown. Build-once: [`View::build`] creates native
-/// views and effects; it is never called again for the same place.
+/// Something that can be shown: every view Ferrokit makes (`text`,
+/// `button`, `table`, the stacks…) and anything built from them. Built
+/// once: its native views and effects are made the first time it's shown
+/// and updated in place after.
+///
+/// Make your own views by composing these (a function returning
+/// `impl View`) or by wrapping a native view with [`native`](crate::native);
+/// implementing `View` directly isn't supported, so its internals can
+/// change.
 pub trait View: 'static {
+    #[doc(hidden)]
     /// Creates the node (native views are added to `cx`'s container).
     fn build(self, cx: &mut Cx) -> Node;
 
@@ -63,6 +71,7 @@ impl View for AnyView {
     }
 }
 
+#[doc(hidden)]
 /// Where a view is being built: the native view its leaves are added to.
 pub struct Cx {
     pub(crate) container: NativeView,
@@ -183,8 +192,7 @@ pub enum Align {
 }
 
 /// Number of live nodes (diagnostic, for teardown checks).
-#[deprecated(since = "0.13.0", note = "moved to `ferrokit::testing::live_nodes`")]
-pub fn live_nodes() -> usize {
+pub(crate) fn live_nodes() -> usize {
     LIVE_NODES.with(Cell::get)
 }
 
@@ -251,6 +259,7 @@ pub(crate) enum Kind {
 /// node's metadata.
 pub(crate) type LeafFn<'a> = dyn FnMut(&NativeView, &Cell<Option<Size>>, &Rc<Meta>) + 'a;
 
+#[doc(hidden)]
 /// A built view: native views, effects and helper objects it owns.
 pub struct Node {
     pub(crate) kind: Kind,

@@ -248,7 +248,7 @@ mod self_checks {
 
     /// 100,000 swatches: built, scrolled end to end; cells are reused.
     fn scale(g: Gallery, cv: Retained<NSCollectionView>) {
-        let (cells0, heap0) = (ferrokit::testing::collection_cells_made(), heap_in_use_mb());
+        let (cells0, heap0) = (ferrokit::testing::probes::collection_cells_made(), heap_in_use_mb());
         let t = Instant::now();
         batch(|| g.mode.set(1));
         then(move || scale_measure(g, cv, cells0, heap0, t));
@@ -273,7 +273,7 @@ mod self_checks {
             worst = worst.max(s.elapsed().as_secs_f64() * 1e3);
         }
         let scroll_ms = t.elapsed().as_secs_f64() * 1e3;
-        let (cells, heap) = (ferrokit::testing::collection_cells_made() - cells0, heap_in_use_mb() - heap0);
+        let (cells, heap) = (ferrokit::testing::probes::collection_cells_made() - cells0, heap_in_use_mb() - heap0);
         let ci = std::env::var_os("CI").is_some();
         check(
             "scale",

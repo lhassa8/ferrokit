@@ -9,6 +9,6 @@ The AppKit layer under [`ferrokit`](https://crates.io/crates/ferrokit): it place
 - **Keyboard:** Tab order and edit shortcuts (with an optional Edit menu).
 - **Widgets:** `table::TableModel` (`NSTableView`) and `text::TextModel` (`NSTextView`). `ferrokit` re-exports them, and their methods are documented here.
 
-Depend on `ferrokit` instead; it pins this crate's version exactly. Part of [Ferrokit](https://github.com/lhassa8/ferrokit); released together with the other Ferrokit crates under one version number. macOS 15 or later. Main thread only.
+Depend on `ferrokit` instead; it pins this crate's version exactly. **This crate's own API isn't covered by Ferrokit's stability promise:** apps use what `ferrokit` re-exports (`TableModel`, `TextModel`, `Column`, `Color`…), and the rest may change in any release. Part of [Ferrokit](https://github.com/lhassa8/ferrokit); released together with the other Ferrokit crates under one version number. macOS 15 or later. Main thread only.
 
 License: MIT OR Apache-2.0.

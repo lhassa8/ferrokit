@@ -23,11 +23,6 @@ use objc2::rc::Retained;
 use objc2_app_kit::{NSApplication, NSEvent, NSEventModifierFlags, NSEventType, NSView, NSWindow};
 use objc2_foundation::{NSPoint, NSProcessInfo, NSString};
 
-/// A modifier key held with [`key`]: now [`Modifier`](crate::Modifier),
-/// the one type for menu shortcuts and posted input.
-#[deprecated(since = "0.13.0", note = "use `ferrokit::Modifier` (the same variants)")]
-pub type Mod = crate::Modifier;
-
 /// A key for [`key`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -79,7 +74,7 @@ impl Key {
     }
 }
 
-fn flags(mods: &[crate::Modifier]) -> NSEventModifierFlags {
+pub(crate) fn flags(mods: &[crate::Modifier]) -> NSEventModifierFlags {
     let mut f = NSEventModifierFlags::empty();
     for m in mods {
         f |= match m {

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.14.0 (2026-11-23): the second step to 1.0's API
+
+Hides what's internal, so 1.0 can promise the rest, and removes what 0.13 deprecated. Each change says what to write instead.
+
+- **Moved: Ferrokit's own probes to `testing::probes`**, outside the stability promise: `symbol_effects`, `step_motion`, `motion_running`, `leaving_views`, `is_pressed`, `set_preview_mode`, `remember_open_documents`, `key_equiv`, `app_menu_titles`, and the diagnostics 0.13 moved to `testing` (`layout_times_us`, `layout_passes`, `layout_stats`, `effect_runs`, `collection_cells_made`). Write `testing::probes::effect_runs()`. Everything else in `testing` (the checks, waits, accessibility, input, captures, notifications, leak checks with `live_signals` and `live_nodes`) is what an app's checks use, and stays.
+- **Changed: `testing::menu_key` takes `&[Modifier]`**: `menu_key("n", &[Modifier::Command, Modifier::Option])` instead of `NSEventModifierFlags`.
+- **Changed: `ToolbarItem` is opaque.** It was an enum whose variants and fields were public; it's made by `toolbar_button`, `toolbar_group`, `toolbar_picker`, `toolbar_search`, `toolbar_space`, `toolbar_fixed_space`, `toolbar_command` and `toolbar_popover` as before, and can now gain options without breaking apps.
+- **Hidden: the models' plumbing.** `TableModel::ensure_mounted`, `drain_events`, `focus_ring`, `cells_created` and the `set_*` switches the `Table` modifiers call (`set_row_drag`, `set_reorderable`, `set_file_drop`, `set_animates`, `set_url_drop`, `set_pastes`, `set_keys`, `set_cell_focus`), `TextModel::ensure_mounted` and `drain_events`, and the event types they return. They still exist for Ferrokit's own use; use the `Table` and `TextEditor` modifiers.
+- **Hidden: how a view is built** (`View::build`, `Cx`, `Node`). Make views by composing Ferrokit's (a function returning `impl View`) or with `native(..)`; implementing `View` directly was never workable and now isn't documented.
+- **Removed: what 0.13 deprecated**: `TableModel::with_id` and `TextModel::with_id` (write `new` without an id), `ViewId` from `ferrokit`, the diagnostics in the crate root (now in `testing` or `testing::probes`), and `input::Mod` (write `Modifier`).
+- **Said plainly: `ferrokit-core`'s own API isn't covered by the stability promise**; apps use what `ferrokit` re-exports.
+
 ## 0.13.0 (2026-11-23): the first step to 1.0's API
 
 The first of three releases that settle the API for 1.0: what should be removed goes, what will grow is marked so, and what's left over from the Iced embedding starts to go. Each change says what to write instead.

@@ -47,6 +47,11 @@ fn main() {
 | `snapshot_windows`, `capture_window`, `captured_pixels` | images of windows, in process or as the window server shows them |
 | `footprint_mb`, `peak_footprint_mb` | memory, as Activity Monitor shows it |
 | `is_misspelled`, `context_menu_for_word` | the text system |
+| `live_signals`, `live_nodes`, `heap_in_use_mb` | leak checks: what a closed window leaves behind |
+
+`testing::probes` holds counters that look inside Ferrokit itself (layout
+passes, effect runs, animations in flight), for its own suites. They're
+outside the stability promise; an app's checks shouldn't need them.
 
 `cargo ferrokit check` runs the app with `CHECK=all` and counts the
 `[check]` lines (a name may have several words); it shows only those lines,
