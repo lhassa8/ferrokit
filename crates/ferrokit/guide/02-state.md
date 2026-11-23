@@ -36,7 +36,7 @@ made, and is freed with it:
 Signals made outside any owner, such as app state created in `main`, live as
 long as the app. Reading a freed signal panics with a message saying so;
 setting it does nothing, and `try_get` and `is_alive` check first.
-`live_signals()` counts the signals in existence, for leak checks.
+`testing::live_signals()` counts the signals in existence, for leak checks.
 
 ## Values in views: fixed, or from signals
 

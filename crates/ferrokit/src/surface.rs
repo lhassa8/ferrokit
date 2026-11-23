@@ -15,6 +15,7 @@ use crate::Color;
 
 /// A drop shadow (see [`ViewExt::shadow`](crate::ViewExt::shadow)).
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub struct Shadow {
     /// Its colour (black at partial opacity, usually).
     pub color: Color,

@@ -51,10 +51,11 @@ impl MenuBarExtra {
         MenuBarExtra { symbol: symbol.into(), label: String::new(), title: None, content: Content::None }
     }
 
-    /// Text beside the icon, updated when the signals it reads change: a
-    /// timer, a count, a temperature.
-    pub fn title(mut self, title: impl Fn() -> String + 'static) -> Self {
-        self.title = Some(Box::new(title));
+    /// Text beside the icon: fixed, or a closure updated when the signals it
+    /// reads change (a timer, a count, a temperature).
+    pub fn title(mut self, title: impl crate::IntoValue<String>) -> Self {
+        let title = title.into_value();
+        self.title = Some(Box::new(move || title.get()));
         self
     }
 

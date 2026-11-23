@@ -27,7 +27,6 @@ fn main() {
 
     // Created once; the columns read from your own row type.
     let model = Rc::new(TableModel::new(
-        ViewId(1),
         vec![
             Column::number("id", "Order", |o: &Order| f64::from(o.id)).decimals(0),
             Column::text("customer", "Customer", |o: &Order| o.customer.clone()).width(200.0),

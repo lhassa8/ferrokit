@@ -11,7 +11,7 @@ Ferrokit is written by the same person as this page, so read it with that in min
 
 | | How it draws on the Mac | Platforms | Maturity (2026-11-11) |
 | --- | --- | --- | --- |
-| **Ferrokit** | Stock AppKit controls (`NSTableView`, `NSTextView`…) | macOS 15+ | 0.12, alpha; started Oct 2026; one maintainer; no outside users yet |
+| **Ferrokit** | Stock AppKit controls (`NSTableView`, `NSTextView`…) | macOS 15+ | 0.13, alpha; started Oct 2026; one maintainer; no outside users yet |
 | **[egui](https://github.com/emilk/egui)** | Its own renderer (immediate mode, wgpu/OpenGL) | Mac, Windows, Linux, web, Android | 0.37 (Oct 2026); ~32k stars; very active |
 | **[Iced](https://github.com/iced-rs/iced)** | Its own renderer (wgpu or CPU) | Mac, Windows, Linux, web | 0.14 (Dec 2025); ~32k stars; active; calls itself experimental |
 | **[Slint](https://github.com/slint-ui/slint)** | Its own renderer; the `cupertino` style imitates macOS | Desktop, mobile, web, embedded | 1.18 (Sep 2026); ~25k stars; active; commercial company behind it |

@@ -27,6 +27,7 @@ use crate::view::{Cx, Identifiable, Kind, Node, Size, View};
 
 /// What an item's image is.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum ItemImage {
     /// An SF Symbol by name.
     Symbol(String),
@@ -40,6 +41,7 @@ pub enum ItemImage {
 
 /// What a collection shows for one item.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct CollectionItem {
     /// The name under the image (and what VoiceOver reads).
     pub title: String,
@@ -79,6 +81,7 @@ thread_local! {
 
 /// Collection cells made since launch: stays near a screenful however many
 /// items scroll past (diagnostic).
+#[deprecated(since = "0.13.0", note = "moved to `ferrokit::testing::collection_cells_made`")]
 pub fn collection_cells_made() -> u64 {
     CELLS_MADE.with(Cell::get)
 }
@@ -359,6 +362,8 @@ impl GridSource {
 
 type Describe<T> = Rc<dyn Fn(&T) -> CollectionItem>;
 
+type Activate<T> = Rc<dyn Fn(&T)>;
+
 /// A grid of items (see [`collection`]).
 pub struct Collection<T: Identifiable + 'static> {
     items: Box<dyn Fn() -> Vec<T>>,
@@ -366,7 +371,7 @@ pub struct Collection<T: Identifiable + 'static> {
     item_size: (f64, f64),
     selection: Option<Signal<Vec<T::Id>>>,
     multiple: bool,
-    on_activate: Option<Rc<dyn Fn(T)>>,
+    on_activate: Option<Activate<T>>,
 }
 
 impl<T: Identifiable + Clone + 'static> Collection<T> {
@@ -390,7 +395,7 @@ impl<T: Identifiable + Clone + 'static> Collection<T> {
 
     /// Runs `f` with an item when it's double-clicked, or Return is pressed
     /// on it.
-    pub fn on_activate(mut self, f: impl Fn(T) + 'static) -> Self {
+    pub fn on_activate(mut self, f: impl Fn(&T) + 'static) -> Self {
         self.on_activate = Some(Rc::new(f));
         self
     }
@@ -445,7 +450,7 @@ impl<T: Identifiable + Clone + 'static> View for Collection<T> {
             state.borrow_mut().on_activate = Some(Box::new(move |i| {
                 let item = values.borrow().get(i).cloned();
                 if let Some(item) = item {
-                    f(item);
+                    f(&item);
                 }
             }));
         }

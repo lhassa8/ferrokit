@@ -47,7 +47,6 @@ fn main() {
     let entries = Signal::new(runtime().block_on(tally::load()).unwrap_or_default());
 
     let model = Rc::new(TableModel::new(
-        ViewId(1),
         vec![
             Column::text("project", "Project", |e: &tally::Entry| e.project.clone()).width(240.0),
             Column::number("minutes", "Minutes", |e: &tally::Entry| f64::from(e.minutes)),

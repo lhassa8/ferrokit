@@ -11,7 +11,7 @@ use ferrokit::*;
 
 // Lines from a background reader, applied each frame.
 let incoming: Arc<Mutex<Vec<String>>> = Arc::default();
-let model = Rc::new(TableModel::new(ViewId(1), vec![Column::text("line", "Line", |l: &String| l.clone())]));
+let model = Rc::new(TableModel::new(vec![Column::text("line", "Line", |l: &String| l.clone())]));
 
 let writer = incoming.clone();
 std::thread::spawn(move || loop {

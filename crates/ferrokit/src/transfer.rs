@@ -127,6 +127,7 @@ pub type WriteFile = Arc<dyn Fn(&Path) -> std::io::Result<()> + Send + Sync>;
 /// What a drag carries out of the app (see
 /// [`Canvas::draggable`](crate::Canvas::draggable)).
 #[derive(Clone)]
+#[non_exhaustive]
 pub enum DragItem {
     /// Text.
     Text(String),

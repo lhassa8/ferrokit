@@ -52,14 +52,14 @@ impl Browser {
             selected: Signal::new(None),
             shown: Signal::new(0),
             filter_ms: Signal::new(0.0),
-            notes: TextModel::new(ViewId(2), ""),
+            notes: TextModel::new(""),
             notes_by_record: Rc::default(),
         }
     }
 
     fn open(&self, window: &objc2_app_kit::NSWindow) {
         let b = self.clone();
-        open_panel(window, OpenOptions { extensions: vec!["csv".into()], ..Default::default() }, move |paths| {
+        open_panel(window, OpenOptions::new().extensions(&["csv"]), move |paths| {
             if let Some(path) = paths.and_then(|p| p.into_iter().next()) {
                 b.load(Some(path));
             }
@@ -89,7 +89,7 @@ impl Browser {
 }
 
 fn table_view(b: &Browser, d: Rc<data::Data>) -> AnyView {
-    let model = Rc::new(TableModel::new(ViewId(1), d.columns()));
+    let model = Rc::new(TableModel::new(d.columns()));
     let (b1, b2, b3, m1, m2) = (b.clone(), b.clone(), b.clone(), model.clone(), model.clone());
     // Re-filter when the query or the group changes.
     let filter = watch(move || {
@@ -551,7 +551,7 @@ mod self_checks {
         let w = windows()[0].clone();
         batch(|| b.group.set(None));
         // Resize: the layout pass with the full app on screen.
-        let n0 = layout_passes();
+        let n0 = ferrokit::testing::layout_passes();
         let mut total = Vec::new();
         for k in 0..200 {
             let t = std::time::Instant::now();
@@ -559,8 +559,8 @@ mod self_checks {
             w.displayIfNeeded();
             total.push(t.elapsed().as_secs_f64() * 1e3);
         }
-        let times = layout_times_us();
-        let new = ((layout_passes() - n0) as usize).min(times.len());
+        let times = ferrokit::testing::layout_times_us();
+        let new = ((ferrokit::testing::layout_passes() - n0) as usize).min(times.len());
         let mut layout: Vec<f64> = times[times.len() - new..].iter().map(|us| us / 1e3).collect();
         layout.sort_by(|a, b| a.total_cmp(b));
         total.sort_by(|a, b| a.total_cmp(b));

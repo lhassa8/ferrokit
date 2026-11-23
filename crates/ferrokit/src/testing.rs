@@ -598,6 +598,7 @@ pub fn captured_pixels(rep: &objc2_app_kit::NSBitmapImageRep, view: &objc2_app_k
 
 /// One accessibility element as VoiceOver gets it.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct AxElement {
     /// Nesting depth under the window's content view.
     pub depth: usize,
@@ -941,4 +942,50 @@ pub fn shared_items(button: &objc2_app_kit::NSButton) -> Option<Vec<crate::Share
 /// (for extras with a panel).
 pub fn menu_bar_extras() -> Vec<(Retained<objc2_app_kit::NSStatusItem>, Option<Retained<objc2_app_kit::NSPopover>>)> {
     crate::status::EXTRAS.with_borrow(|e| e.iter().map(|i| (i.item.clone(), i.popover.clone())).collect())
+}
+
+// Diagnostics: counters Ferrokit keeps for leak and performance checks.
+
+/// Microseconds of the recent layout passes, oldest first (at least the last 10,000).
+pub fn layout_times_us() -> Vec<f64> {
+    #[allow(deprecated)]
+    crate::layout_times_us()
+}
+
+/// Layout passes so far. With [`layout_times_us`], the times of the passes since an earlier count: `let t = layout_times_us(); &t[t.len() - (layout_passes() - n0) as usize..]`.
+pub fn layout_passes() -> u64 {
+    #[allow(deprecated)]
+    crate::layout_passes()
+}
+
+/// Layout counters since the app started: nodes placed, subtrees skipped as
+/// clean, and ideal sizes computed (cache misses).
+pub fn layout_stats() -> (u64, u64, u64) {
+    #[allow(deprecated)]
+    crate::layout::layout_stats()
+}
+
+/// How many times effects have run, for checks that an update does only the work it should.
+pub fn effect_runs() -> u64 {
+    #[allow(deprecated)]
+    crate::signal::effect_runs()
+}
+
+/// Signals in existence, for leak checks (a closed window's signals are freed).
+pub fn live_signals() -> usize {
+    #[allow(deprecated)]
+    crate::signal::live_signals()
+}
+
+/// View nodes in existence, for leak checks.
+pub fn live_nodes() -> usize {
+    #[allow(deprecated)]
+    crate::view::live_nodes()
+}
+
+/// Collection cells made since launch: stays near a screenful however many
+/// items scroll past.
+pub fn collection_cells_made() -> u64 {
+    #[allow(deprecated)]
+    crate::collection::collection_cells_made()
 }

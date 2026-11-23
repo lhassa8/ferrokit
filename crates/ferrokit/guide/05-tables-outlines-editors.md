@@ -22,7 +22,6 @@ struct Order {
 }
 
 let model = Rc::new(TableModel::new(
-    ViewId(1),
     vec![
         Column::text("customer", "Customer", |o: &Order| o.customer.clone()).width(200.0),
         Column::number("total", "Total", |o: &Order| o.total),
@@ -76,7 +75,6 @@ use ferrokit::*;
 struct Download { name: String, day: String, done: f64 }
 
 let model = Rc::new(TableModel::new(
-    ViewId(3),
     vec![
         Column::text("name", "Name", |d: &Download| d.name.clone())
             .icon(|_| Some(CellImage::Symbol("doc".into())))   // or CellImage::FileIcon(path)
@@ -94,7 +92,7 @@ let view = table(&model).accessibility_label("Downloads");
 - Row indices in every event stay model indices, never header positions. `row_at(view_row)` is `None` for a header.
 - A progress column sorts and copies as its number; VoiceOver reads the bar's value.
 - `.fit()` measures the column's longest values (by character count, with many rows) whenever the rows change.
-- `.style(|row| CellStyle { .. })` colours a text or number cell from its row: `color`, a `background` tint, `italic`, `strikethrough` (a changed value, a NULL, a row about to go). After changing what a style depends on, refresh the row with `update_row`.
+- `.style(|row| CellStyle::new()…)` colours a text or number cell from its row: `.color(..)`, a `.background(..)` tint, `.italic(..)`, `.strikethrough(..)`, each given the row's value (`CellStyle::new().strikethrough(o.done).color(o.done.then_some(Color::Secondary))`) (a changed value, a NULL, a row about to go). After changing what a style depends on, refresh the row with `update_row`.
 
 ### Copy, paste, drag and drop
 
@@ -257,7 +255,7 @@ dictation, input methods, Find, undo, the Services menu.
 ```rust,no_run
 use ferrokit::*;
 
-let notes = TextModel::new(ViewId(2), "Meeting notes\n");
+let notes = TextModel::new("Meeting notes\n");
 let text = Signal::new(String::new());
 let editor = text_editor(&notes)
     .bind(&text)                                   // keep a signal in step
@@ -292,7 +290,7 @@ its styles, and `set_rtf(..)` and `set_html(..)` load it.
 use ferrokit::*;
 
 let journal = DocumentType::new(&["rtf"], Vec::new, |doc: &Document<Vec<u8>>| {
-    let model = TextModel::new(ViewId(1), "");
+    let model = TextModel::new("");
     text_editor(&model).format_bar().bind_rtf(doc.content()).accessibility_label("Entry")
 })
 .read(|path| std::fs::read(path))
@@ -313,7 +311,7 @@ comments and numbers.
 ```rust,no_run
 use ferrokit::*;
 
-let query = TextModel::new(ViewId(3), "SELECT * FROM orders -- all of them");
+let query = TextModel::new("SELECT * FROM orders -- all of them");
 query.set_font(Some("Menlo"), 12.0);
 let editor = text_editor(&query).syntax(Syntax::sql()).accessibility_label("Query");
 # let _ = editor;
@@ -333,7 +331,7 @@ search term:
 ```rust,no_run
 use ferrokit::*;
 
-let doc = TextModel::new(ViewId(4), "");
+let doc = TextModel::new("");
 let term = Signal::new(String::from("TODO"));
 let rust = Syntax::rust();
 let editor = text_editor(&doc).highlight(move |text| {

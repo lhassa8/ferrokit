@@ -31,7 +31,7 @@ Read before guessing; names are regular, but behaviour has rules.
 
 - **State is signals.** `Signal::new(v)` is `Copy`: closures take it with `move`, never clone it. `get()` tracks (the view or effect re-runs when it changes), `get_untracked()` doesn't, `with(|v| …)` reads without cloning, `set`/`update` write. A signal is freed with the window, row or sheet that made it.
 - **Views are built once.** A view shows a value or a closure over signals (`text(move || format!(…))`); when the signals change, that one native view updates. Don't rebuild views to change them, and don't create native models per update.
-- **Deep widgets have models.** Create a `TableModel` (or `TextModel`, `TreeNode`s) once, wrapped in `Rc`, and push data into it from a `watch(move || model.set_rows(rows.get()))` placed in the view tree. The `ViewId` it takes can be any number unique in the window.
+- **Deep widgets have models.** Create a `TableModel` (or `TextModel`, `TreeNode`s) once, wrapped in `Rc`, and push data into it from a `watch(move || model.set_rows(rows.get()))` placed in the view tree.
 - **Row indices are model indices** (positions in what you passed to `set_rows`), whatever the sort. Text offsets are UTF-8 bytes.
 - **Menus and shortcuts are commands.** Declare `const ADD: Command = Command::new("add");`, put `menu_command("Add", ADD).key("n")` in `App::menu`, and handle it with `.on_command(ADD, …)` on a view (acts when the focus is in or under it) or `Window::on_command` (anywhere in the window). `on_command_when` greys the menu item out.
 - **Background work:** `spawn(work, |result| …)` runs `work` on another thread and hands the result back on the main thread; `Resource` for loading that a newer load replaces (`Resource::new_async` when the load is async: a newer load drops the old future).
@@ -165,7 +165,7 @@ fn as_undo_steps(window: &NSWindow, steps: &[&dyn Fn()]) {
 - `testing::ax_audit(&window)` lists controls VoiceOver can't name: give each `.accessibility_label(…)`.
 - A caught panic doesn't end the app; `check` stops 15 s after one if no more checks arrive. Look for `ferrokit: a panic in …` in the output.
 
-## Known limits (0.12)
+## Known limits (0.13)
 
 Work around these instead of searching for them:
 - Table rows animate only through `TableModel::insert`, `push` and `remove` (with `Table::animated()`), not `set_rows` or in a grouped table.

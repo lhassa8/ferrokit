@@ -2,7 +2,7 @@ use ferrokit::*;
 
 fn main() {
     let title = Signal::new(String::new());
-    let notes = TextModel::new(ViewId(1), "Spell-checked, with input methods, dictation and Find.\n");
+    let notes = TextModel::new("Spell-checked, with input methods, dictation and Find.\n");
     let checks = std::env::var("CHECK").is_ok_and(|v| v == "all");
 
     App::new("Notes")

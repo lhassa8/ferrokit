@@ -11,7 +11,7 @@ use ferrokit::*;
 
 fn document() -> DocumentType<String> {
     DocumentType::new(&["txt", "md"], String::new, |doc: &Document<String>| {
-        let model = TextModel::new(ViewId(1), &doc.content().get_untracked());
+        let model = TextModel::new(&doc.content().get_untracked());
         model.set_font(Some("Menlo"), 13.0);
         let body = *doc.content();
         vstack((

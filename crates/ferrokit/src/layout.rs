@@ -24,6 +24,7 @@ thread_local! {
 
 /// Layout counters since the app started: nodes placed, subtrees skipped as
 /// clean, and ideal sizes computed (cache misses). Diagnostic.
+#[deprecated(since = "0.13.0", note = "moved to `ferrokit::testing::layout_stats`")]
 pub fn layout_stats() -> (u64, u64, u64) {
     (PLACED.with(Cell::get), SKIPPED.with(Cell::get), MEASURED.with(Cell::get))
 }

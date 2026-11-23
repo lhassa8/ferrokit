@@ -90,7 +90,7 @@ apps need a person.
 - **Event-queue input** works whenever the app is active and the window
   key (`input::ready(&window)`). `input::click(&view)`, `click_at`,
   `double_click`, `type_text(&window, "Ada")` and
-  `key(&window, Key::Down, &[Mod::Command])` post events to the app's own
+  `key(&window, Key::Down, &[ferrokit::Modifier::Command])` post events to the app's own
   queue, so AppKit dispatches them as it does the window server's:
   hit-testing, the first responder, the field editor, the menus' key
   equivalents.
@@ -101,14 +101,14 @@ apps need a person.
   `SKIP` when it isn't.
 
 ```rust,no_run
-use ferrokit::testing::input::{self, Key, Mod};
+use ferrokit::testing::input::{self, Key};
 use ferrokit::*;
 
 fn check(window: &NSWindow, field: &objc2_app_kit::NSView) {
     if input::ready(window) {
         input::click(field);
         input::type_text(window, "Ada Lovelace");
-        input::key(window, Key::Char('s'), &[Mod::Command]);
+        input::key(window, Key::Char('s'), &[ferrokit::Modifier::Command]);
         // Look at the effect a moment later: events arrive on the next turns.
     }
 }

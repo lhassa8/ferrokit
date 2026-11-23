@@ -135,7 +135,7 @@ fn clip_tab(s: &State) -> impl View {
         hstack((
             button("Choose Clip…", move || {
                 let Some(w) = focused_window() else { return };
-                let options = OpenOptions { extensions: ["mov", "mp4", "m4v", "m4a", "aiff"].map(String::from).to_vec(), ..Default::default() };
+                let options = OpenOptions::new().extensions(&["mov", "mp4", "m4v", "m4a", "aiff"]);
                 open_panel(&w, options, move |paths| {
                     if let Some(p) = paths.and_then(|p| p.into_iter().next()) {
                         clip.set(Some(p));

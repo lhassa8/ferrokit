@@ -296,6 +296,7 @@ impl Notification {
 
 /// A sent notification's text, as [`testing::sent_notifications`](crate::testing::sent_notifications) reports it.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SentNotification {
     /// Its identifier.
     pub id: String,

@@ -183,6 +183,7 @@ pub enum Align {
 }
 
 /// Number of live nodes (diagnostic, for teardown checks).
+#[deprecated(since = "0.13.0", note = "moved to `ferrokit::testing::live_nodes`")]
 pub fn live_nodes() -> usize {
     LIVE_NODES.with(Cell::get)
 }
@@ -563,6 +564,11 @@ pub trait ViewExt: View + Sized {
         Modified::new(self).popover(shown, content)
     }
 
+    /// [`popover`](Self::popover) on a given side of the view.
+    fn popover_on<P: View>(self, edge: crate::Edge, shown: &Signal<bool>, content: impl Fn() -> P + 'static) -> Modified<Self> {
+        Modified::new(self).popover_on(edge, shown, content)
+    }
+
     /// A right-click menu on this view's native views.
     fn context_menu(self, items: Vec<crate::chrome::MenuItem>) -> Modified<Self> {
         Modified::new(self).context_menu(items)
@@ -570,8 +576,9 @@ pub trait ViewExt: View + Sized {
 
     /// The name VoiceOver reads for this view's native views ("Name",
     /// "Volume"), for controls whose visible label is a separate view or
-    /// that have none (a field after a `text("Name:")`, an icon button).
-    fn accessibility_label(self, label: &str) -> Modified<Self> {
+    /// that have none (a field after a `text("Name:")`, an icon button). A
+    /// closure keeps it current (`move || format!("{} unread", n.get())`).
+    fn accessibility_label(self, label: impl crate::IntoValue<String>) -> Modified<Self> {
         Modified::new(self).accessibility_label(label)
     }
 
@@ -638,20 +645,6 @@ pub trait ViewExt: View + Sized {
         Modified::new(self).glass(glass)
     }
 
-    /// A background following signals (now [`background`](Self::background)
-    /// takes a closure).
-    #[deprecated(since = "0.4.0", note = "`background` takes a closure: `.background(move || ..)`")]
-    fn background_when(self, color: impl Fn() -> crate::Color + 'static) -> Modified<Self> {
-        Modified::new(self).background(color)
-    }
-
-    /// Opacity following signals (now [`opacity`](Self::opacity) takes a
-    /// closure).
-    #[deprecated(since = "0.4.0", note = "`opacity` takes a closure: `.opacity(move || ..)`")]
-    fn opacity_when(self, opacity: impl Fn() -> f64 + 'static) -> Modified<Self> {
-        Modified::new(self).opacity(opacity)
-    }
-
     /// How the view comes and goes when it's added or removed (by
     /// [`dynamic`] or [`for_each`]) inside [`animated`](crate::animated).
     fn transition(self, transition: crate::Transition) -> Modified<Self> {
@@ -680,8 +673,9 @@ pub trait ViewExt: View + Sized {
     }
 
     /// A tooltip: `text` appears in a small box when the pointer rests on
-    /// the view (SwiftUI's `help`). VoiceOver reads it as the view's help.
-    fn tooltip(self, text: &str) -> Modified<Self> {
+    /// the view (SwiftUI's `help`). VoiceOver reads it as the view's help. A
+    /// closure keeps it current.
+    fn tooltip(self, text: impl crate::IntoValue<String>) -> Modified<Self> {
         Modified::new(self).tooltip(text)
     }
 
@@ -721,7 +715,7 @@ pub struct Modified<V> {
     view: V,
     ops: Vec<Op>,
     menu: Option<Vec<crate::chrome::MenuItem>>,
-    label: Option<String>,
+    label: Option<crate::Value<String>>,
     responds: crate::commands::Responds,
     popover: Option<crate::popover::PopoverSpec>,
     opacity: Option<f64>,
@@ -730,7 +724,7 @@ pub struct Modified<V> {
     matched: Option<Rc<str>>,
     hover: Option<Rc<dyn Fn(bool)>>,
     click: Option<Rc<dyn Fn()>>,
-    tooltip: Option<String>,
+    tooltip: Option<crate::Value<String>>,
     disabled: Option<crate::Value<bool>>,
     hidden: Option<crate::Value<bool>>,
     font: Option<crate::Font>,
@@ -808,8 +802,8 @@ impl<V: View> Modified<V> {
     }
 
     /// The name VoiceOver reads for this view's native views.
-    pub fn accessibility_label(mut self, label: &str) -> Self {
-        self.label = Some(label.into());
+    pub fn accessibility_label(mut self, label: impl crate::IntoValue<String>) -> Self {
+        self.label = Some(label.into_value());
         self
     }
 
@@ -933,18 +927,6 @@ impl<V: View> Modified<V> {
         self
     }
 
-    /// A background following signals (now `background` takes a closure).
-    #[deprecated(since = "0.4.0", note = "`background` takes a closure: `.background(move || ..)`")]
-    pub fn background_when(self, color: impl Fn() -> crate::Color + 'static) -> Self {
-        self.background(color)
-    }
-
-    /// Opacity following signals (now `opacity` takes a closure).
-    #[deprecated(since = "0.4.0", note = "`opacity` takes a closure: `.opacity(move || ..)`")]
-    pub fn opacity_when(self, opacity: impl Fn() -> f64 + 'static) -> Self {
-        self.opacity(opacity)
-    }
-
     /// Matched geometry (see [`ViewExt::matched_geometry`]).
     pub fn matched_geometry(mut self, id: &str) -> Self {
         self.matched = Some(id.into());
@@ -970,8 +952,8 @@ impl<V: View> Modified<V> {
     }
 
     /// A tooltip (see [`ViewExt::tooltip`]).
-    pub fn tooltip(mut self, text: &str) -> Self {
-        self.tooltip = Some(text.into());
+    pub fn tooltip(mut self, text: impl crate::IntoValue<String>) -> Self {
+        self.tooltip = Some(text.into_value());
         self
     }
 
@@ -1117,7 +1099,11 @@ impl<V: View> View for Modified<V> {
                 let mut leaves = Vec::new();
                 node.leaf_views(&mut leaves);
                 let texts = leaves.into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSTextField>().ok()).collect();
-                interaction.set_views(views, self.label.clone(), texts);
+                interaction.set_views(views, self.label.as_ref().map(|l| crate::signal::untrack(|| l.get())), texts);
+                if let Some(label) = self.label.clone().filter(|l| !l.is_fixed()) {
+                    let interaction = interaction.clone();
+                    node.own(Effect::new(move || interaction.set_label(Some(label.get()))));
+                }
             }
             let interaction: NativeView = objc2::rc::Retained::into_super(interaction);
             Native::add_subview(&cx.container, &interaction);
@@ -1191,19 +1177,37 @@ impl<V: View> View for Modified<V> {
                 }
             }));
         }
-        if let Some(tip) = &self.tooltip {
-            let tip = objc2_foundation::NSString::from_str(tip);
+        if let Some(tip) = self.tooltip {
+            // The leaves, a clickable view's interaction over them, and the
+            // leaves of branches built in later (held weakly).
+            let views: Rc<RefCell<Vec<objc2::rc::Weak<objc2_app_kit::NSView>>>> = Rc::default();
+            let now = Rc::new(RefCell::new(objc2_foundation::NSString::from_str(&crate::signal::untrack(|| tip.get()))));
             let mut leaves = Vec::new();
             node.leaf_views(&mut leaves);
-            // The leaves, and a clickable view's interaction over them.
             for v in leaves.iter().chain(node.decor.iter().filter(|d| d.class().name().to_string_lossy() == "FerrokitInteraction")) {
-                v.setToolTip(Some(&tip));
+                v.setToolTip(Some(&now.borrow()));
+                views.borrow_mut().push(objc2::rc::Weak::from_retained(v));
             }
+            let (list, text) = (views.clone(), now.clone());
             node.meta.on_new_branch(Rc::new(move |n| {
                 let mut leaves = Vec::new();
                 n.leaf_views(&mut leaves);
-                leaves.iter().for_each(|v| v.setToolTip(Some(&tip)));
+                for v in leaves {
+                    v.setToolTip(Some(&text.borrow()));
+                    list.borrow_mut().push(objc2::rc::Weak::from_retained(&v));
+                }
             }));
+            if !tip.is_fixed() {
+                let first = Cell::new(true);
+                node.own(Effect::new(move || {
+                    let text = objc2_foundation::NSString::from_str(&tip.get());
+                    if first.replace(false) {
+                        return;
+                    }
+                    live(&views).iter().for_each(|v| v.setToolTip(Some(&text)));
+                    *now.borrow_mut() = text;
+                }));
+            }
         }
         if let Some(id) = self.matched {
             crate::motion::matched_entering(&id, node.all_views());
@@ -1224,11 +1228,17 @@ impl<V: View> View for Modified<V> {
         }
         // A clickable view's label names its button (the interaction view),
         // not each view inside it.
-        if let Some(label) = self.label.as_ref().filter(|_| self.click.is_none()) {
+        if let Some(label) = self.label.filter(|_| self.click.is_none()) {
             let mut leaves = Vec::new();
             node.leaf_views(&mut leaves);
-            for v in leaves {
-                Native::set_accessibility_label(&v, label);
+            if label.is_fixed() {
+                let label = label.get();
+                leaves.iter().for_each(|v| Native::set_accessibility_label(v, &label));
+            } else {
+                node.own(Effect::new(move || {
+                    let label = label.get();
+                    leaves.iter().for_each(|v| Native::set_accessibility_label(v, &label));
+                }));
             }
         }
         {

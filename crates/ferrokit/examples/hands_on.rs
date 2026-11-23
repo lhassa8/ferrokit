@@ -30,7 +30,6 @@ fn record(log: &Signal<Vec<String>>, what: String) {
 
 fn main() {
     let model = Rc::new(TableModel::new(
-        ViewId(1),
         vec![
             Column::text("name", "Name", |r: &Row| r.name.clone()).width(160.0).sortable(false),
             Column::number("n", "Number", |r: &Row| r.n as f64).width(90.0).sortable(false),
@@ -39,7 +38,7 @@ fn main() {
     model.set_rows(rows());
     let log = Signal::new(vec!["Ready.".to_string()]);
     let name = Signal::new(String::new());
-    let notes = TextModel::new(ViewId(2), "Click here and type. Try Japanese input: toukyou → 東京.\n");
+    let notes = TextModel::new("Click here and type. Try Japanese input: toukyou → 東京.\n");
 
     let (m1, l1, l2, l3, l4, l5, l6, l7) = (model.clone(), log, log, log, log, log, log, log);
     let (m2, m3) = (model.clone(), model.clone());
@@ -78,7 +77,7 @@ fn main() {
         hstack((
             button("Open…", move || {
                 let l = l4;
-                open_panel(&windows()[0], OpenOptions { extensions: vec![], multiple: false, directories: false }, move |p| {
+                open_panel(&windows()[0], OpenOptions::new(), move |p| {
                     record(&l, format!("Open panel → {p:?}"));
                 })
             }),

@@ -407,11 +407,11 @@ fn columns(r: &Arc<Results>) -> Vec<Column<u32>> {
 fn database_view(doc: &Document<Db>) -> impl View + use<> {
     let db = doc.content().get_untracked();
     let b = Browser::new(&db);
-    let editor = TextModel::new(ViewId(1), "");
+    let editor = TextModel::new("");
     editor.set_font(Some("Menlo"), 12.0);
     editor.set_spell_checking(false);
     BROWSERS.with_borrow_mut(|all| all.push((b, editor.clone())));
-    let model = std::rc::Rc::new(TableModel::new(ViewId(2), Vec::new()));
+    let model = std::rc::Rc::new(TableModel::new(Vec::new()));
     let m = model.clone();
     // A new result replaces the columns and rows of the same native table.
     let fill = watch(move || {
@@ -460,7 +460,7 @@ fn database_view(doc: &Document<Db>) -> impl View + use<> {
                     dynamic(move || {
                         let headline = text(move || b.headline()).font(Font::body().weight(Weight::Semibold).monospaced_digits());
                         if b.failed() {
-                            AnyView::new(hstack((image("exclamationmark.triangle.fill").color(Color::Red).accessibility_label(&t("Error")), headline.color(Color::Red))).spacing(6.0))
+                            AnyView::new(hstack((image("exclamationmark.triangle.fill").color(Color::Red).accessibility_label(t("Error")), headline.color(Color::Red))).spacing(6.0))
                         } else {
                             AnyView::new(headline)
                         }
@@ -1573,7 +1573,7 @@ mod self_checks {
     }
 
     fn popover_checks(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
-        let live = live_signals();
+        let live = ferrokit::testing::live_signals();
         b.history_shown.set(true);
         let w2 = w.clone();
         when(|| !popover_windows().is_empty(), 3000, move |ms| {
@@ -1601,7 +1601,7 @@ mod self_checks {
                 unsafe { p.performClick(None) };
             }
             when(|| popover_windows().is_empty(), 3000, move |_| {
-                let freed = live_signals() <= live;
+                let freed = ferrokit::testing::live_signals() <= live;
                 check(
                     "history-pick",
                     pick.is_some() && untrack(|| b.query.get()) == "SELECT * FROM orders" && !untrack(|| b.history_shown.get()) && freed,
@@ -2026,7 +2026,7 @@ mod self_checks {
     /// Real input: a query typed into the editor, ⌘R, then a click on a
     /// result row and ↓, as a user does them.
     fn input_checks(w: Retained<NSWindow>, b: Browser, dir: PathBuf) {
-        use ferrokit::testing::input::{self, Key, Mod};
+        use ferrokit::testing::input::{self, Key};
         input::ready(&w);
         when(|| false, 300, move |_| {
             if !input::ready(&w) {
@@ -2040,9 +2040,9 @@ mod self_checks {
             let w2 = w.clone();
             when(|| false, 200, move |_| {
                 // Select all and type over it, then ⌘R.
-                input::key(&w2, Key::Char('a'), &[Mod::Command]);
+                input::key(&w2, Key::Char('a'), &[ferrokit::Modifier::Command]);
                 input::type_text(&w2, "SELECT name, city FROM customers WHERE id <= 3");
-                input::key(&w2, Key::Char('r'), &[Mod::Command]);
+                input::key(&w2, Key::Char('r'), &[ferrokit::Modifier::Command]);
                 let w3 = w2.clone();
                 when(move || idle(b)() && results(&w3).numberOfRows() == 3, 5000, move |ms| {
                     let typed = untrack(|| b.query.get());
@@ -2146,10 +2146,10 @@ mod self_checks {
 
     /// Closing a window frees its state (signals and the connection).
     fn teardown(w: Retained<NSWindow>, s: Retained<NSWindow>, dir: PathBuf) {
-        let live = live_signals();
+        let live = ferrokit::testing::live_signals();
         close_window(&s);
         spawn(|| std::thread::sleep(std::time::Duration::from_millis(200)), move |()| {
-            let freed = live - live_signals();
+            let freed = live - ferrokit::testing::live_signals();
             check("close-frees", freed > 5, format!("closing a window freed {freed} signals"));
             let _ = w;
             let _ = std::fs::remove_dir_all(&dir);
@@ -2163,7 +2163,7 @@ mod self_checks {
 /// The soak test's actions: queries typed and run, rows, panes, popovers,
 /// scratch databases, at random for a long time.
 mod soak {
-    use ferrokit::testing::input::{self, Key, Mod};
+    use ferrokit::testing::input::{self, Key};
     use ferrokit::testing::soak::{Rng, Settings, action};
     use ferrokit::*;
     use objc2::rc::Retained;
@@ -2230,15 +2230,15 @@ mod soak {
                 let Some(w) = main_window() else { return };
                 let Some(editor) = views(&w).into_iter().find(|v| objc2_app_kit::NSAccessibility::accessibilityLabel(&**v).is_some_and(|l| l.to_string() == "Query")) else { return };
                 input::click(&editor);
-                input::key(&w, Key::Char('a'), &[Mod::Command]);
+                input::key(&w, Key::Char('a'), &[ferrokit::Modifier::Command]);
                 input::type_text(&w, QUERIES[r.below(QUERIES.len())]);
-                input::key(&w, Key::Char('r'), &[Mod::Command]);
+                input::key(&w, Key::Char('r'), &[ferrokit::Modifier::Command]);
             }),
             action("rerun-twice", 1, |_: &mut Rng| {
                 // A newer run cancels the one running.
                 if let Some(w) = main_window() {
-                    input::key(&w, Key::Char('r'), &[Mod::Command]);
-                    input::key(&w, Key::Char('r'), &[Mod::Command]);
+                    input::key(&w, Key::Char('r'), &[ferrokit::Modifier::Command]);
+                    input::key(&w, Key::Char('r'), &[ferrokit::Modifier::Command]);
                 }
             }),
             action("row-click", 4, |r: &mut Rng| {
@@ -2265,9 +2265,9 @@ mod soak {
             action("toggle-pane", 2, |r: &mut Rng| {
                 let Some(w) = main_window() else { return };
                 match r.below(3) {
-                    0 => input::key(&w, Key::Char('s'), &[Mod::Command, Mod::Control]),
-                    1 => input::key(&w, Key::Char('i'), &[Mod::Command, Mod::Option]),
-                    _ => input::key(&w, Key::Char('k'), &[Mod::Command, Mod::Option]),
+                    0 => input::key(&w, Key::Char('s'), &[ferrokit::Modifier::Command, ferrokit::Modifier::Control]),
+                    1 => input::key(&w, Key::Char('i'), &[ferrokit::Modifier::Command, ferrokit::Modifier::Option]),
+                    _ => input::key(&w, Key::Char('k'), &[ferrokit::Modifier::Command, ferrokit::Modifier::Option]),
                 }
             }),
             action("history", 1, |_: &mut Rng| {
@@ -2290,7 +2290,7 @@ mod soak {
                 let keep = 1000 + r.below(3000) as u64;
                 later(400, move || {
                     input::type_text(&s, "CREATE TABLE t (x); INSERT INTO t VALUES (1), (2); SELECT * FROM t");
-                    input::key(&s, Key::Char('r'), &[Mod::Command]);
+                    input::key(&s, Key::Char('r'), &[ferrokit::Modifier::Command]);
                     later(keep, move || {
                         close_window(&s);
                         if let Some(w) = main_window() {
@@ -2317,7 +2317,7 @@ mod soak {
 }
 
 mod demo {
-    use ferrokit::testing::input::{self, Key, Mod};
+    use ferrokit::testing::input::{self, Key};
     use ferrokit::*;
     use objc2::rc::Retained;
     use objc2_app_kit::{NSAccessibility, NSOutlineView, NSTableCellView, NSTableView, NSWindow};
@@ -2403,13 +2403,13 @@ mod demo {
             with_doc(|w| {
                 if let Some(editor) = views(w).into_iter().find(|v| v.accessibilityLabel().is_some_and(|l| l.to_string() == "Query")) {
                     input::click(&editor);
-                    input::key(w, Key::Char('a'), &[Mod::Command]);
+                    input::key(w, Key::Char('a'), &[ferrokit::Modifier::Command]);
                 }
             }),
         ));
         steps.extend(type_slowly("SELECT substr(ordered_at, 1, 7) AS month, round(sum(total)) AS sales FROM orders GROUP BY month", 22));
-        steps.push((400, with_doc(|w| input::key(w, Key::Char('r'), &[Mod::Command]))));
-        steps.push((1300, with_doc(|w| input::key(w, Key::Char('k'), &[Mod::Command, Mod::Option]))));
+        steps.push((400, with_doc(|w| input::key(w, Key::Char('r'), &[ferrokit::Modifier::Command]))));
+        steps.push((1300, with_doc(|w| input::key(w, Key::Char('k'), &[ferrokit::Modifier::Command, ferrokit::Modifier::Option]))));
         // A row picked: the inspector shows it.
         steps.push((
             1500,

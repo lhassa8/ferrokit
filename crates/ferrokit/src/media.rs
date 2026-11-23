@@ -665,9 +665,11 @@ impl VideoPlayer {
         self
     }
 
-    /// Mutes the sound while `muted()` is true.
-    pub fn muted(mut self, muted: impl Fn() -> bool + 'static) -> Self {
-        self.muted = Some(Box::new(muted));
+    /// Mutes the sound while `muted` is true (a closure reading signals, or
+    /// a fixed value).
+    pub fn muted(mut self, muted: impl crate::IntoValue<bool>) -> Self {
+        let muted = muted.into_value();
+        self.muted = Some(Box::new(move || muted.get()));
         self
     }
 

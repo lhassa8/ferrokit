@@ -179,6 +179,7 @@ pub(crate) fn with_weak_owner<R>(owner: Option<&Weak<OwnerInner>>, f: impl FnOnc
 }
 
 /// Live signals in the arena (diagnostic: freed ones are reused).
+#[deprecated(since = "0.13.0", note = "moved to `ferrokit::testing::live_signals`")]
 pub fn live_signals() -> usize {
     ARENA.with_borrow(|a| a.slots.len() - a.free.len())
 }
@@ -282,6 +283,7 @@ impl fmt::Debug for Effect {
 }
 
 /// Total effect runs on this thread so far (diagnostic).
+#[deprecated(since = "0.13.0", note = "moved to `ferrokit::testing::effect_runs`")]
 pub fn effect_runs() -> u64 {
     RUNS.with(Cell::get)
 }
@@ -716,7 +718,7 @@ mod tests {
     #[test]
     fn the_owner_is_put_back_after_a_panic() {
         let outer = Owner::new();
-        let before = live_signals();
+        let before = crate::testing::live_signals();
         outer.with(|| {
             let inner = Owner::new();
             let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -729,11 +731,11 @@ mod tests {
             // Made after the panic: in `outer`, not in the owner that failed.
             Signal::new(2);
             drop(inner);
-            assert_eq!(live_signals(), before + 1, "the failed owner's signal went with it");
+            assert_eq!(crate::testing::live_signals(), before + 1, "the failed owner's signal went with it");
         });
         assert!(OWNER.with_borrow(Option::is_none));
         drop(outer);
-        assert_eq!(live_signals(), before);
+        assert_eq!(crate::testing::live_signals(), before);
     }
 
     #[test]
@@ -937,9 +939,9 @@ mod tests {
                 let _ = s2.get();
             }));
         }
-        let before = effect_runs();
+        let before = crate::testing::effect_runs();
         s.set(1);
-        assert_eq!(effect_runs() - before, 100);
+        assert_eq!(crate::testing::effect_runs() - before, 100);
         keep.set(1);
         assert_eq!(runs.get(), 2);
         drop(live);
@@ -947,7 +949,7 @@ mod tests {
 
     #[test]
     fn owners_free_their_signals() {
-        let before = live_signals();
+        let before = crate::testing::live_signals();
         let owner = Owner::new();
         let (a, m) = owner.with(|| {
             let a = Signal::new(1);
@@ -955,9 +957,9 @@ mod tests {
         });
         let outside = Signal::new(0);
         assert_eq!(m.get(), 2);
-        assert_eq!(live_signals(), before + 3);
+        assert_eq!(crate::testing::live_signals(), before + 3);
         drop(owner);
-        assert_eq!(live_signals(), before + 1);
+        assert_eq!(crate::testing::live_signals(), before + 1);
         assert!(!a.is_alive());
         assert_eq!(a.try_get(), None);
         a.set(5); // a no-op once freed
@@ -994,7 +996,7 @@ mod tests {
 
     #[test]
     fn effects_create_signals_in_their_owner() {
-        let before = live_signals();
+        let before = crate::testing::live_signals();
         let trigger = Signal::new(0);
         let made = Rc::new(Cell::new(0));
         let owner = Owner::new();
@@ -1011,7 +1013,7 @@ mod tests {
         assert_eq!(made.get(), 2);
         drop(effect);
         drop(owner);
-        assert_eq!(live_signals(), before + 1); // only `trigger`
+        assert_eq!(crate::testing::live_signals(), before + 1); // only `trigger`
     }
 
     #[test]

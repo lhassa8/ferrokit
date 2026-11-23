@@ -2,8 +2,9 @@
 
 Where Ferrokit is going, roughly in order. It changes as people tell us what they need; the "What I'm building" issues weigh most.
 
-## Now: 0.12
+## Now: 0.13
 
+- **Released in 0.13.0, the first step to 1.0's API:** the 0.4 deprecations removed, enums and structs that will grow marked so, builders for open-panel options and cell styles, tooltips and accessibility labels that follow signals, and table and text models that choose their own ids. Two more steps (0.14, 0.15) settle the API for 1.0.
 - **Released in 0.11.1:** `cargo ferrokit bundle` takes an Icon Composer `.icon` as the app icon, for macOS 26's dark, tinted and clear looks.
 - **Released in 0.11.0:** what building a showcase SQLite editor (Rowboat) needed: image cells from bytes, clickable cell icons, short dates and tighter cell spacing for data grids, ↑ and ↓ in a field that filters a list (`on_arrows`), fast column fitting over a million rows, and a memory reading that works in a sandboxed app.
 - **Released in 0.10.1:** from a second agent trial, self-checks that wait for slow work (`testing::wait_for`) and answer alerts (`testing::press_sheet_button`), element values in `testing::ax_elements`, and a table's last column that fills the width.

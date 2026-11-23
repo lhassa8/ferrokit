@@ -14,6 +14,7 @@ use ferrokit_core::text::Color;
 
 /// How a [`form`] lays out its rows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum FormStyle {
     /// As System Settings: each section a rounded box of rows, labels on
     /// the left and controls on the right, lines between rows.

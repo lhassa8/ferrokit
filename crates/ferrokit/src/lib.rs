@@ -133,6 +133,7 @@ pub use resource::{Cancel, Load, Resource};
 pub use task::{Answer, Background, Sleep, Task, background, sleep, spawn_local};
 #[cfg(feature = "tokio")]
 pub use task::{OnRuntime, on_runtime};
+#[allow(deprecated)]
 pub use signal::{Effect, Memo, Signal, after_batch, batch, effect_runs, live_signals, untrack};
 pub use controls::{
     ColorWell, ComboBox, DatePicker, SearchField, Segmented, TimePicker, color_well, combo_box, combo_box_with, date_picker, search_field, segmented, segmented_with, time_picker,
@@ -144,9 +145,11 @@ pub use dialogs::{Alert, OpenOptions, Reply, SheetHandle, alert, alert_async, op
 pub use documents::{
     Document, DocumentType, choose_documents, document_edited, new_document, open_document, recent_documents, regain_access, remember_access, revert_document, save_document, save_document_as, show_welcome, welcome_window,
 };
+#[allow(deprecated)]
 pub use layout::layout_stats;
 pub use models::{Table, TextEditor, table, text_editor};
 pub use outline::{Outline, TreeNode, outline, sidebar};
+#[allow(deprecated)]
 pub use collection::{Collection, CollectionItem, ItemImage, collection, collection_cells_made};
 pub use ferrokit_core::table::{CellImage, CellStyle, Column, ColumnState, Sort, TableKey, TableModel};
 pub use ferrokit_core::text::{Color, Completion, TextModel, TextStyle};
@@ -179,12 +182,13 @@ pub use ferrokit_core::ViewId;
 pub use objc2_app_kit::NSWindow;
 /// The owning pointer to an AppKit object (as returned by [`open`]).
 pub use objc2::rc::Retained;
+#[allow(deprecated)]
 pub use view::{
     Align, AnyView, Axis, Cx, Dynamic, ForEach, Grid, Identifiable, Modified, Node, Size, Spacer, Stack, View, ViewExt, Views,
     dynamic, for_each, grid, hstack, zstack, Layers, live_nodes, spacer, vstack, watch, Watch,
 };
 #[allow(deprecated)]
-pub use appkit_views::{Button, ButtonStyle, ControlSize, Divider, HelpButton, Label, MenuButton, Scroll, Text, button, divider, help_button, label, menu_button, scroll, text};
+pub use appkit_views::{Button, ButtonStyle, ControlSize, Divider, HelpButton, MenuButton, Scroll, Text, button, divider, help_button, menu_button, scroll, text};
 
 fn mtm() -> MainThreadMarker {
     MainThreadMarker::new().expect("ferrokit must be used on the main thread")
@@ -1022,12 +1026,14 @@ const LAYOUT_KEPT: usize = 10_000;
 
 /// Microseconds of the recent layout passes, oldest first (diagnostic; at
 /// least the last 10,000).
+#[deprecated(since = "0.13.0", note = "moved to `ferrokit::testing::layout_times_us`")]
 pub fn layout_times_us() -> Vec<f64> {
     LAYOUT_US.with_borrow(Clone::clone)
 }
 
 /// Layout passes so far. With [`layout_times_us`], the times of the passes
 /// since an earlier count: `let t = layout_times_us(); &t[t.len() - (layout_passes() - n0) as usize..]`.
+#[deprecated(since = "0.13.0", note = "moved to `ferrokit::testing::layout_passes`")]
 pub fn layout_passes() -> u64 {
     LAYOUT_PASSES.with(Cell::get)
 }

@@ -305,6 +305,7 @@ use objc2::Message as _;
 
 /// What the Open panel allows.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct OpenOptions {
     /// File name extensions to allow (e.g. `["csv", "txt"]`); empty: any.
     pub extensions: Vec<String>,
@@ -312,6 +313,31 @@ pub struct OpenOptions {
     pub multiple: bool,
     /// Choose folders instead of files.
     pub directories: bool,
+}
+
+impl OpenOptions {
+    /// Any one file.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Only files with one of these name extensions (`&["csv", "txt"]`).
+    pub fn extensions(mut self, extensions: &[&str]) -> Self {
+        self.extensions = extensions.iter().map(|e| e.to_string()).collect();
+        self
+    }
+
+    /// Lets the user choose several files.
+    pub fn multiple(mut self) -> Self {
+        self.multiple = true;
+        self
+    }
+
+    /// Folders instead of files.
+    pub fn directories(mut self) -> Self {
+        self.directories = true;
+        self
+    }
 }
 
 fn content_types(extensions: &[String]) -> Option<Retained<NSArray<objc2_uniform_type_identifiers::UTType>>> {

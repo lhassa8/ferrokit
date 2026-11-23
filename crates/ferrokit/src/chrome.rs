@@ -338,9 +338,12 @@ pub(crate) struct MenuAction {
     titled: Option<Box<dyn Fn() -> String>>,
 }
 
-/// A modifier key of a menu item's shortcut (Command is always included).
+/// A modifier key: of a menu item's shortcut (where Command is always
+/// included), and of the keys and clicks [`testing::input`](crate::testing::input) posts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Modifier {
+    /// ⌘ (a menu item's shortcut has it anyway).
+    Command,
     /// ⇧ (an uppercase key implies it too).
     Shift,
     /// ⌥
@@ -396,28 +399,6 @@ impl MenuItem {
         self
     }
 
-    /// Enabled while `f` returns true (now [`disabled`](Self::disabled)).
-    #[deprecated(since = "0.4.0", note = "use `.disabled(move || !..)`")]
-    pub fn enabled_when(self, f: impl Fn() -> bool + 'static) -> Self {
-        self.disabled(move || !f())
-    }
-
-    /// A checkmark while `f` returns true (now [`checked`](Self::checked)).
-    #[deprecated(since = "0.4.0", note = "`checked` takes a closure: `.checked(move || ..)`")]
-    pub fn checked_when(self, f: impl Fn() -> bool + 'static) -> Self {
-        self.checked(f)
-    }
-
-    /// The title `f` returns (now [`menu_item`] takes a closure as its title).
-    #[deprecated(since = "0.4.0", note = "`menu_item` takes a closure as its title")]
-    pub fn title_when(mut self, f: impl Fn() -> String + 'static) -> Self {
-        if let Entry::Action { title, titled, .. } = &mut self.0 {
-            *title = f();
-            *titled = Some(Box::new(f));
-        }
-        self
-    }
-
     /// A ⌘ shortcut: `"n"` is ⌘N, `"N"` is ⇧⌘N, `","` is ⌘,.
     ///
     /// Keys without a letter are their characters: `"\u{8}"` is ⌘⌫
@@ -433,6 +414,7 @@ impl MenuItem {
         let mut flags = NSEventModifierFlags::Command;
         for m in modifiers {
             flags |= match m {
+                Modifier::Command => NSEventModifierFlags::Command,
                 Modifier::Shift => NSEventModifierFlags::Shift,
                 Modifier::Option => NSEventModifierFlags::Option,
                 Modifier::Control => NSEventModifierFlags::Control,

@@ -30,6 +30,7 @@ pub enum Match {
 
 /// What a rule tests a field for.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum FilterTest {
     /// Text containing this (ignoring case).
     Contains(String),
@@ -213,6 +214,7 @@ impl FilterRule {
 
 /// What kind of values a [`FilterField`] has, and so its tests.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum FieldKind {
     /// Text: contains, begins with, ends with, is, is not.
     Text,
@@ -225,6 +227,7 @@ pub enum FieldKind {
 /// A field a [`filter_editor`] offers: its key (in the [`Filter`]), its
 /// title (in the editor) and its kind.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct FilterField {
     /// The key rules name it by.
     pub key: String,

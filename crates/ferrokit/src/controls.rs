@@ -534,11 +534,12 @@ impl View for Progress {
     }
 }
 
-/// A progress bar driven by `f` (reading signals): `Some(0.0..=1.0)` or
+/// A progress bar showing `value`, a closure reading signals or a fixed value: `Some(0.0..=1.0)` or
 /// `None` while the amount is unknown. [`spinner`](Progress::spinner) makes
 /// it a spinner.
-pub fn progress(f: impl Fn() -> Option<f64> + 'static) -> Progress {
-    Progress { f: Box::new(f), spinner: false, size: crate::ControlSize::Regular }
+pub fn progress(value: impl crate::IntoValue<Option<f64>>) -> Progress {
+    let value = value.into_value();
+    Progress { f: Box::new(move || value.get()), spinner: false, size: crate::ControlSize::Regular }
 }
 
 /// An image: an SF Symbol ([`image`]), or a picture from a file or bytes
@@ -556,6 +557,7 @@ pub struct Image {
 /// by AppKit (macOS 14; Wiggle, Rotate and Breathe from macOS 15; nothing
 /// on older systems). AppKit tones them down under Reduce motion.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[non_exhaustive]
 pub enum SymbolEffect {
     /// A bounce: a new message, an item added.
     Bounce,

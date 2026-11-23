@@ -15,7 +15,7 @@ thread_local! {
 
 fn journal() -> DocumentType<Vec<u8>> {
     DocumentType::new(&["rtf"], Vec::new, |doc: &Document<Vec<u8>>| {
-        let model = TextModel::new(ViewId(1), "");
+        let model = TextModel::new("");
         if std::env::var("CHECK").is_ok() {
             EDITORS.with_borrow_mut(|e| e.push(model.clone()));
         }

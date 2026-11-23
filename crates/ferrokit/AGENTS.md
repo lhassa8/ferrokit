@@ -1,6 +1,6 @@
 # Ferrokit for AI coding agents
 
-Read this before writing code with `ferrokit` 0.12. Ferrokit builds native Mac apps in Rust: every view is a real AppKit view (`NSTableView`, `NSTextView`…), built once and updated in place by signals. macOS 15 or later; everything runs on the main thread.
+Read this before writing code with `ferrokit` 0.13. Ferrokit builds native Mac apps in Rust: every view is a real AppKit view (`NSTableView`, `NSTextView`…), built once and updated in place by signals. macOS 15 or later; everything runs on the main thread.
 
 - **A new app:** `cargo install cargo-ferrokit`, then `cargo ferrokit new <name>` (`--document` for a document app). It comes with this file as its `AGENTS.md`, a working example and self-checks.
 - **An existing project** (a CLI or a library): `cargo install cargo-ferrokit`, then `cargo ferrokit agents` writes this file into it as `AGENTS.md`. Add `ferrokit` as *A GUI for an existing Rust project* (below) says: an optional dependency behind a `gui` feature, for a second binary, so the CLI's build doesn't change. The self-checks in a new app's `src/main.rs` (`cargo ferrokit new`) are the pattern to copy.
@@ -16,7 +16,7 @@ Read this before writing code with `ferrokit` 0.12. Ferrokit builds native Mac a
 
 When the project already has a library or a CLI, the app goes beside it:
 
-- **Where:** a second binary in the same package, behind a feature, so the CLI's build and `cargo install` don't change. In `Cargo.toml`: `ferrokit = { version = "0.12", optional = true }`, `[features] gui = ["dep:ferrokit"]`, and `[[bin]] name = "<name>-gui"`, `path = "src/bin/<name>-gui.rs"`, `required-features = ["gui"]` (list the CLI's own `[[bin]]` too). Then `bin = "<name>-gui"` under `[package.metadata.ferrokit]`: `cargo ferrokit run`, `check` and `bundle` build that binary with its features, and lint and test with them. In a workspace, a new member package that depends on the library works too; run `cargo ferrokit` in its folder.
+- **Where:** a second binary in the same package, behind a feature, so the CLI's build and `cargo install` don't change. In `Cargo.toml`: `ferrokit = { version = "0.13", optional = true }`, `[features] gui = ["dep:ferrokit"]`, and `[[bin]] name = "<name>-gui"`, `path = "src/bin/<name>-gui.rs"`, `required-features = ["gui"]` (list the CLI's own `[[bin]]` too). Then `bin = "<name>-gui"` under `[package.metadata.ferrokit]`: `cargo ferrokit run`, `check` and `bundle` build that binary with its features, and lint and test with them. In a workspace, a new member package that depends on the library works too; run `cargo ferrokit` in its folder.
 - **`main` belongs to Ferrokit.** The app's `main` is a plain `fn main` ending in `App::new(..).run()`, which runs AppKit on the main thread until the app quits. Don't put `#[tokio::main]` on it. To call the library's async functions, keep a tokio runtime in a `static OnceLock<tokio::runtime::Runtime>` (`Runtime::new()` needs tokio's `rt-multi-thread` feature; with only `rt`, build it with `Builder::new_current_thread().enable_all()`), and run them with `runtime().block_on(..)` inside `spawn` or `background` (or `runtime().spawn(..)` and `.await` the handle in `spawn_local`). Loading the data once before `App::new` with `block_on` is fine.
 - **Reuse the library, don't copy it:** call its types and functions from the app, and save through its own save function, so the CLI and the app write the same format.
 - **A data file the CLI changes while the app is open:** re-read it in a `spawn_local` loop started in `App::on_launch`, so it runs as long as the app (`sleep(Duration::from_secs(1)).await`, compare the file's modification time, `background` for the read), and set the signal only when the contents differ: `set_rows` clears a table's selection, so an unchanged reload shouldn't reach it.
@@ -25,16 +25,16 @@ When the project already has a library or a CLI, the app goes beside it:
 ## Where the docs are
 
 Read before guessing; names are regular, but behaviour has rules.
-- **The guide:** <https://docs.rs/ferrokit/latest/ferrokit/guide/>, 14 chapters with compiled examples. Also in the crate's source: `~/.cargo/registry/src/*/ferrokit-0.12.*/guide/`.
+- **The guide:** <https://docs.rs/ferrokit/latest/ferrokit/guide/>, 14 chapters with compiled examples. Also in the crate's source: `~/.cargo/registry/src/*/ferrokit-0.13.*/guide/`.
 - **Every public item on one page:** `API.md` in the same folder. Search it for what a type can do before reading source.
 - **Complete apps:** `examples/` in the same folder. `native_csv.rs` (sidebar, table, search, sheet, notes), `habits.rs` (cards, sheets, charts, a menu-bar panel), `notes.rs` (a document app), `sql_browser.rs` (the flagship).
-- `TableModel`, `Column` and `TextModel` are documented in `ferrokit-core` (re-exported by `ferrokit`): `~/.cargo/registry/src/*/ferrokit-core-0.12.*/src/table.rs` and `text.rs`.
+- `TableModel`, `Column` and `TextModel` are documented in `ferrokit-core` (re-exported by `ferrokit`): `~/.cargo/registry/src/*/ferrokit-core-0.13.*/src/table.rs` and `text.rs`.
 
 ## How a Ferrokit app is written
 
 - **State is signals.** `Signal::new(v)` is `Copy`: closures take it with `move`, never clone it. `get()` tracks (the view or effect re-runs when it changes), `get_untracked()` doesn't, `with(|v| …)` reads without cloning, `set`/`update` write. A signal is freed with the window, row or sheet that made it.
 - **Views are built once.** A view shows a value or a closure over signals (`text(move || format!(…))`); when the signals change, that one native view updates. Don't rebuild views to change them, and don't create native models per update.
-- **Deep widgets have models.** Create a `TableModel` (or `TextModel`, `TreeNode`s) once, wrapped in `Rc`, and push data into it from a `watch(move || model.set_rows(rows.get()))` placed in the view tree. The `ViewId` it takes can be any number unique in the window.
+- **Deep widgets have models.** Create a `TableModel` (or `TextModel`, `TreeNode`s) once, wrapped in `Rc`, and push data into it from a `watch(move || model.set_rows(rows.get()))` placed in the view tree.
 - **Row indices are model indices** (positions in what you passed to `set_rows`), whatever the sort. Text offsets are UTF-8 bytes.
 - **Menus and shortcuts are commands.** Declare `const ADD: Command = Command::new("add");`, put `menu_command("Add", ADD).key("n")` in `App::menu`, and handle it with `.on_command(ADD, …)` on a view (acts when the focus is in or under it) or `Window::on_command` (anywhere in the window). `on_command_when` greys the menu item out.
 - **Background work:** `spawn(work, |result| …)` runs `work` on another thread and hands the result back on the main thread; `Resource` for loading that a newer load replaces (`Resource::new_async` when the load is async: a newer load drops the old future).
@@ -168,7 +168,7 @@ fn as_undo_steps(window: &NSWindow, steps: &[&dyn Fn()]) {
 - `testing::ax_audit(&window)` lists controls VoiceOver can't name: give each `.accessibility_label(…)`.
 - A caught panic doesn't end the app; `check` stops 15 s after one if no more checks arrive. Look for `ferrokit: a panic in …` in the output.
 
-## Known limits (0.12)
+## Known limits (0.13)
 
 Work around these instead of searching for them:
 - Table rows animate only through `TableModel::insert`, `push` and `remove` (with `Table::animated()`), not `set_rows` or in a grouped table.

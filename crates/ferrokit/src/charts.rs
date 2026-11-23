@@ -35,6 +35,7 @@ const FONT: f64 = 11.0;
 /// One line of a [`line_chart`]: a name and its points (sorted by x or
 /// not; they're sorted for drawing).
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct Series {
     /// The name in the legend and the hover readout.
     pub name: String,

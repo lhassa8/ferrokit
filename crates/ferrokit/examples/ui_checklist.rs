@@ -6,10 +6,9 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use ferrokit::{
-    Align, App, AppEvent, Effect, Identifiable, Signal, View, ViewExt, Window, batch, button, segmented_with, read_stored, write_stored, remove_stored, checkbox, dynamic, effect_runs,
-    for_each, grid, hstack, later, layout_stats, layout_passes, layout_times_us, live_nodes, open, secure_field, spacer, spawn, text,
+    Align, App, AppEvent, Effect, Identifiable, Signal, View, ViewExt, Window, batch, button, segmented_with, read_stored, write_stored, remove_stored, checkbox, dynamic, for_each, grid, hstack, later, open, secure_field, spacer, spawn, text,
     text_field, toggle, vstack, windows, divider, image, picker, progress, scroll, slider, stepper, table, Column, Sort,
-    TableKey, TableModel, ViewId, TreeNode, outline, sidebar, TextModel, text_editor, split, toolbar_button, toolbar_space,
+    TableKey, TableModel, TreeNode, outline, sidebar, TextModel, text_editor, split, toolbar_button, toolbar_space,
     toolbar_search, menu_item, menu_separator, MenuItem, Modifier, submenu, stored, set_undoable, Alert, OpenOptions, SheetHandle, alert, open_panel, save_panel, sheet,
 };
 use objc2::MainThreadMarker;
@@ -139,9 +138,9 @@ fn run_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     }
     let per = t.elapsed().as_secs_f64() * 1e9 / 100_000.0;
     check("signal-update-cost", seen.get() == 100_000 && (per < 500.0 || on_ci()), format!("{per:.0} ns per set + effect run (budget 500{})", ci_note()));
-    let runs = effect_runs();
+    let runs = ferrokit::testing::effect_runs();
     batch(|| (0..1000).for_each(|i| n.set(i)));
-    check("signal-batch", effect_runs() - runs == 1, format!("{} effect run(s) for 1,000 sets in one batch", effect_runs() - runs));
+    check("signal-batch", ferrokit::testing::effect_runs() - runs == 1, format!("{} effect run(s) for 1,000 sets in one batch", ferrokit::testing::effect_runs() - runs));
     drop(effect);
 
     // spawn: work on a background thread, continuation on the main thread in one batch.
@@ -285,7 +284,7 @@ fn resource_owner_check(events: Rc<RefCell<Vec<AppEvent>>>) {
     let saw_cancel = Arc::new(AtomicBool::new(false));
     let finished = Arc::new(AtomicBool::new(false));
     let (sc, fin) = (saw_cancel.clone(), finished.clone());
-    let signals = ferrokit::live_signals();
+    let signals = ferrokit::testing::live_signals();
     let w = open(Window::new("Resource Owner").size(200.0, 80.0).view(dynamic(move || {
         let (sc, fin) = (sc.clone(), fin.clone());
         let r = Resource::new(|| (), move |(), cancel: &Cancel| {
@@ -304,7 +303,7 @@ fn resource_owner_check(events: Rc<RefCell<Vec<AppEvent>>>) {
     wait(50, move || {
         ferrokit::close_window(&w);
         wait(400, move || {
-            let left = ferrokit::live_signals() as i64 - signals as i64;
+            let left = ferrokit::testing::live_signals() as i64 - signals as i64;
             check(
                 "resource-owner",
                 saw_cancel.load(Ordering::Relaxed) && finished.load(Ordering::Relaxed) && left == 0,
@@ -415,7 +414,7 @@ fn async_owner_check(events: Rc<RefCell<Vec<AppEvent>>>) {
     use std::time::Duration;
     let (owned_dropped, owned_reached, detached_done) = (Rc::new(Cell::new(false)), Rc::new(Cell::new(false)), Rc::new(Cell::new(false)));
     let (od, or, dd) = (owned_dropped.clone(), owned_reached.clone(), detached_done.clone());
-    let signals = ferrokit::live_signals();
+    let signals = ferrokit::testing::live_signals();
     let w = open(Window::new("Async Owner").size(200.0, 80.0).view(dynamic(move || {
         let shown = Signal::new(0);
         let (od, or, dd) = (od.clone(), or.clone(), dd.clone());
@@ -435,7 +434,7 @@ fn async_owner_check(events: Rc<RefCell<Vec<AppEvent>>>) {
     wait(50, move || {
         ferrokit::close_window(&w);
         wait(400, move || {
-            let left = ferrokit::live_signals() as i64 - signals as i64;
+            let left = ferrokit::testing::live_signals() as i64 - signals as i64;
             check(
                 "async-task-owner",
                 owned_dropped.get() && !owned_reached.get() && detached_done.get() && left == 0,
@@ -650,7 +649,7 @@ fn async_resource_owner_check(events: Rc<RefCell<Vec<AppEvent>>>) {
     use ferrokit::{Resource, sleep};
     let dropped = Rc::new(Cell::new(false));
     let d = dropped.clone();
-    let signals = ferrokit::live_signals();
+    let signals = ferrokit::testing::live_signals();
     let w = open(Window::new("Async Resource Owner").size(200.0, 80.0).view(dynamic(move || {
         let d = d.clone();
         let r = Resource::new_async(|| (), move |()| {
@@ -667,7 +666,7 @@ fn async_resource_owner_check(events: Rc<RefCell<Vec<AppEvent>>>) {
         ferrokit::close_window(&w);
         let (dropped, events) = (dropped.clone(), events.clone());
         wait(100, move || {
-            let left = ferrokit::live_signals() as i64 - signals as i64;
+            let left = ferrokit::testing::live_signals() as i64 - signals as i64;
             check(
                 "async-resource-owner",
                 dropped.get() && left == 0,
@@ -833,7 +832,7 @@ fn command_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 fn styled_text_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     use ferrokit::{Syntax, Color, TextModel, TextStyle};
     let keyword = TextStyle::new().color(Color::Pink).bold();
-    let model = TextModel::new(ViewId(70), "let x = 42; // hi");
+    let model = TextModel::new("let x = 42; // hi");
     let term = Signal::new(String::new());
     let rust = Syntax::rust();
     let w = open(
@@ -1003,16 +1002,16 @@ fn popover_teardown_check(events: Rc<RefCell<Vec<AppEvent>>>) {
             .filter(|w| w.isVisible() && w.class().name().to_string_lossy().contains("Popover"))
             .count()
     };
-    let before = ferrokit::live_signals();
+    let before = ferrokit::testing::live_signals();
     open_pop.set(true);
     until(move || popovers() > 0, 3000, move || {
         let shown = popovers();
-        let inside = ferrokit::live_signals() > before;
+        let inside = ferrokit::testing::live_signals() > before;
         show_anchor.set(false);
         // It closes with an animation, slower on a busy machine (CI runners).
         until(move || popovers() == 0, 3000, move || {
             let closed = popovers() == 0;
-            let freed = ferrokit::live_signals() <= before;
+            let freed = ferrokit::testing::live_signals() <= before;
             check(
                 "popover-teardown",
                 shown == 1 && inside && closed && freed && !open_pop.get(),
@@ -1035,7 +1034,7 @@ fn table_icon_checks() {
     // An 8 × 8 PNG.
     const PNG: &str = "89504e470d0a1a0a0000000d49484452000000080000000808020000004b6d29dc0000006f49444154789c0d8e4111003008c3aa042528a91294a004253594eddbeb251112255a588c5871227f555145172ea6d8e28afcaf9a6aba7133cd36d7e41364cab4b119b3e64c3e57430d3d789861871bf26d5a6ae9c5cb2cbbdc92dfa0a38e3e7cccb1c71df9650a153a384cd8702179432f7441979c330f0000000049454e44ae426082";
     let bytes: std::sync::Arc<[u8]> = (0..PNG.len()).step_by(2).map(|i| u8::from_str_radix(&PNG[i..i + 2], 16).unwrap()).collect();
-    let model = Rc::new(TableModel::new(ViewId(975), vec![
+    let model = Rc::new(TableModel::new(vec![
         Column::text("photo", "Photo", |r: &(String, i64)| r.0.clone()).icon(move |_| Some(CellImage::Image(bytes.clone()))),
         Column::number("ref", "Ref", |r: &(String, i64)| r.1 as f64).icon(|r| (r.1 > 0).then(|| CellImage::Symbol("arrow.forward.circle".into()))).icon_action("Open the linked row"),
     ]));
@@ -1068,7 +1067,7 @@ fn table_icon_checks() {
     // Short dates: numbers only, shorter than the medium style.
     {
         let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000);
-        let dates = Rc::new(TableModel::new(ViewId(977), vec![
+        let dates = Rc::new(TableModel::new(vec![
             Column::date("long", "Long", |t: &std::time::SystemTime| Some(*t)).with_time(),
             Column::date("short", "Short", |t: &std::time::SystemTime| Some(*t)).with_time().short_dates(),
         ]));
@@ -1077,7 +1076,7 @@ fn table_icon_checks() {
         let tv = dates.table_view();
         let text = |c: isize| tv.viewAtColumn_row_makeIfNecessary(c, 0, true).and_then(|v| v.clone().downcast::<objc2_app_kit::NSTextField>().ok().map(|f| f.stringValue().to_string()).or_else(|| v.downcast::<objc2_app_kit::NSTableCellView>().ok().and_then(|c| unsafe { c.textField() }).map(|f| f.stringValue().to_string()))).unwrap_or_default();
         let (long, short) = (text(0), text(1));
-        let spaced = Rc::new(TableModel::new(ViewId(978), vec![Column::text("a", "A", |s: &String| s.clone())]));
+        let spaced = Rc::new(TableModel::new(vec![Column::text("a", "A", |s: &String| s.clone())]));
         let sw = open(Window::new("Spacing").size(200.0, 80.0).view(table(&spaced).column_lines().cell_spacing(8.0)));
         let spacing = spaced.table_view().intercellSpacing().width;
         check("table-cell-spacing", spacing == 8.0, format!("{spacing}"));
@@ -1087,7 +1086,7 @@ fn table_icon_checks() {
     }
     // A fitted column over a million rows: sized from a sample, quickly
     // (formatting every value took seconds per column).
-    let many = Rc::new(TableModel::new(ViewId(976), vec![Column::number("n", "N", |n: &u32| *n as f64).fit()]));
+    let many = Rc::new(TableModel::new(vec![Column::number("n", "N", |n: &u32| *n as f64).fit()]));
     let wm = open(Window::new("Fit many").size(200.0, 160.0).view(table(&many)));
     let start = std::time::Instant::now();
     many.set_rows((0..1_000_000u32).collect());
@@ -1575,8 +1574,8 @@ fn after_idle(f: impl Fn() + 'static) {
 /// groups everything registered in one event into a single undo step.
 fn undo_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let name = Signal::new("A".to_string());
-    let own = TextModel::new(ViewId(950), "");
-    let shared = TextModel::new(ViewId(951), "");
+    let own = TextModel::new("");
+    let shared = TextModel::new("");
     let window = open(
         Window::new("Undo").size(420.0, 320.0).view(
             vstack((text_field(&name), text_editor(&own), text_editor(&shared).shared_undo())).padding(12.0),
@@ -1770,7 +1769,7 @@ fn posted_steps(steps: Rc<Vec<Box<dyn Fn()>>>, i: usize, snap: Rc<dyn Fn(usize)>
 fn posted_event_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let m = MENU.with(Clone::clone);
     let field_text = Signal::new(String::new());
-    let shared = Rc::new(TextModel::new(ViewId(960), ""));
+    let shared = Rc::new(TextModel::new(""));
     let w = open(Window::new("Events").size(420.0, 260.0).view(vstack((text_field(&field_text), text_editor(&shared).shared_undo())).padding(12.0)));
     w.makeKeyAndOrderFront(None);
     w.makeFirstResponder(Some(&shared.text_view()));
@@ -1889,7 +1888,7 @@ fn closable_window(title: &str, value: &Signal<u32>) -> Window {
             ferrokit::AnyView::new(text(move || format!("{i}: {}", v.get())))
         })
         .collect();
-    let model = Rc::new(TableModel::new(ViewId(970), vec![Column::text("n", "N", |n: &u32| n.to_string())]));
+    let model = Rc::new(TableModel::new(vec![Column::text("n", "N", |n: &u32| n.to_string())]));
     model.set_rows((0..1000).collect());
     Window::new(title)
         .size(420.0, 400.0)
@@ -1901,31 +1900,31 @@ fn closable_window(title: &str, value: &Signal<u32>) -> Window {
 /// window down like close_window; Settings is kept.
 fn close_button_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let value = Signal::new(0u32);
-    let (n0, list0) = (live_nodes(), windows().len());
+    let (n0, list0) = (ferrokit::testing::live_nodes(), windows().len());
     let w = open(closable_window("Close Me", &value));
-    let built = live_nodes() - n0;
+    let built = ferrokit::testing::live_nodes() - n0;
     let weak = objc2::rc::Weak::from_retained(&w);
     w.performClose(None);
     drop(w);
     let v = value;
     after_idle(move || {
-        let runs = effect_runs();
+        let runs = ferrokit::testing::effect_runs();
         batch(|| v.set(1));
-        let ran = effect_runs() - runs;
+        let ran = ferrokit::testing::effect_runs() - runs;
         let freed = weak.load().is_none();
         check(
             "close-button-teardown",
-            built > 200 && live_nodes() == n0 && windows().len() == list0 && ran == 0 && freed,
+            built > 200 && ferrokit::testing::live_nodes() == n0 && windows().len() == list0 && ran == 0 && freed,
             format!(
                 "{built} nodes built; after the close button: {} left, listed windows {} (was {list0}), effects run on a change {ran}, window freed {freed}",
-                live_nodes() - n0,
+                ferrokit::testing::live_nodes() - n0,
                 windows().len()
             ),
         );
         action_owner_check();
         // Settings is reused: closing it keeps the same window and its views.
         let s1 = ferrokit::open_settings().unwrap();
-        let s_nodes = live_nodes();
+        let s_nodes = ferrokit::testing::live_nodes();
         s1.performClose(None);
         let s1p = Retained::as_ptr(&s1);
         drop(s1);
@@ -1933,7 +1932,7 @@ fn close_button_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         let events = events.clone();
         after_idle(move || {
             let s2 = ferrokit::open_settings().unwrap();
-            let same = Retained::as_ptr(&s2) == s1p && live_nodes() == s_nodes;
+            let same = Retained::as_ptr(&s2) == s1p && ferrokit::testing::live_nodes() == s_nodes;
             s2.close();
             check("close-settings-kept", same, format!("Settings after closing: same window and views {same}"));
             close_cycles(v, events.clone(), 0, 0.0);
@@ -2159,7 +2158,7 @@ fn cycles(round: u32, base: f64, cycle: Rc<dyn Fn()>, done: Rc<dyn Fn(f64)>) {
 /// window is freed, and memory stays flat.
 fn sheet_cycles(events: Rc<RefCell<Vec<AppEvent>>>) {
     let parent = open(Window::new("Sheets").size(480.0, 320.0).view(text("Sheet parent")));
-    let n0 = live_nodes();
+    let n0 = ferrokit::testing::live_nodes();
     let freed: Rc<RefCell<Vec<objc2::rc::Weak<objc2_app_kit::NSWindow>>>> = Rc::default();
     let (p, f) = (parent.clone(), freed.clone());
     let cycle: Rc<dyn Fn()> = Rc::new(move || {
@@ -2171,7 +2170,7 @@ fn sheet_cycles(events: Rc<RefCell<Vec<AppEvent>>>) {
     });
     let p2 = parent.clone();
     let done: Rc<dyn Fn(f64)> = Rc::new(move |per| {
-        let left = live_nodes() - n0;
+        let left = ferrokit::testing::live_nodes() - n0;
         let alive = freed.borrow().iter().filter(|w| w.load().is_some()).count();
         // The floor: plain AppKit sheets with the same controls, same counts.
         let (events, parent) = (events.clone(), p2.clone());
@@ -2223,13 +2222,13 @@ fn plain_sheet_cycle(parent: &objc2_app_kit::NSWindow) {
 /// Windows holding the deep widgets (a 10,000-row table, an outline, a text
 /// editor), opened and closed through the close button.
 fn deep_widget_cycles(events: Rc<RefCell<Vec<AppEvent>>>) {
-    let n0 = live_nodes();
+    let n0 = ferrokit::testing::live_nodes();
     let freed: Rc<RefCell<Vec<objc2::rc::Weak<objc2_app_kit::NSWindow>>>> = Rc::default();
     let f = freed.clone();
     let cycle: Rc<dyn Fn()> = Rc::new(move || {
-        let model = Rc::new(TableModel::new(ViewId(980), vec![Column::text("n", "N", |n: &u32| n.to_string())]));
+        let model = Rc::new(TableModel::new(vec![Column::text("n", "N", |n: &u32| n.to_string())]));
         model.set_rows((0..10_000).collect());
-        let notes = TextModel::new(ViewId(981), "Some notes\nover two lines");
+        let notes = TextModel::new("Some notes\nover two lines");
         let tree = || (0..20u32).map(|i| TreeNode { value: place(i, &format!("Group {i}"), None), children: (0..5).map(|j| TreeNode { value: place(1000 + i * 10 + j, "Leaf", None), children: vec![] }).collect() }).collect();
         let w = open(
             Window::new("Deep")
@@ -2249,7 +2248,7 @@ fn deep_widget_cycles(events: Rc<RefCell<Vec<AppEvent>>>) {
         w.performClose(None);
     });
     let done: Rc<dyn Fn(f64)> = Rc::new(move |per| {
-        let left = live_nodes() - n0;
+        let left = ferrokit::testing::live_nodes() - n0;
         let alive = freed.borrow().iter().filter(|w| w.load().is_some()).count();
         check(
             "deep-widget-cycles-memory",
@@ -2268,7 +2267,7 @@ fn deep_widget_cycles(events: Rc<RefCell<Vec<AppEvent>>>) {
 fn accessibility_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     use ferrokit::testing::{ax_audit, ax_elements};
     let (name, vol, pick, days, on) = (Signal::new("Ada".to_string()), Signal::new(0.5), Signal::new(1u8), Signal::new(3.0), Signal::new(true));
-    let notes = TextModel::new(ViewId(990), "");
+    let notes = TextModel::new("");
     let bare = Signal::new(String::new());
     let w = open(Window::new("Accessibility").size(420.0, 420.0).view(
         vstack((
@@ -3085,7 +3084,7 @@ fn native_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                                 AnyView::new(text("None"))
                             }
                         })));
-                        let nodes = live_nodes();
+                        let nodes = ferrokit::testing::live_nodes();
                         let mut peak = 0;
                         for _ in 0..3 {
                             show.set(true);
@@ -3095,7 +3094,7 @@ fn native_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                         let (events, removals, removed) = (events.clone(), removals.clone(), removed.clone());
                         after_events(move || {
                             let back = swatch::LIVE.with(Cell::get) - lives;
-                            let nodes_back = live_nodes() == nodes;
+                            let nodes_back = ferrokit::testing::live_nodes() == nodes;
                             check(
                                 "native-teardown",
                                 lives == lives_before && gone && after == 2 && removed.get() == 1 && peak == 100 && back == 0 && removals.get() == 300 && nodes_back,
@@ -3161,7 +3160,7 @@ fn native_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 
 /// L4: a table's selection bound to a signal, both ways.
 fn table_selection_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
-    let model = Rc::new(TableModel::new(ViewId(960), vec![Column::text("n", "N", |n: &u32| n.to_string())]));
+    let model = Rc::new(TableModel::new(vec![Column::text("n", "N", |n: &u32| n.to_string())]));
     model.set_rows((0..6).collect());
     let selected = Signal::new(Vec::<usize>::new());
     let pressed = Rc::new(RefCell::new(Vec::new()));
@@ -3224,7 +3223,6 @@ fn table_selection_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
                 // the user's format, copied as shown.
                 let day = |secs: u64| std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
                 let dated = Rc::new(TableModel::new(
-                    ViewId(961),
                     vec![Column::text("name", "Name", |r: &(&str, Option<std::time::SystemTime>)| r.0.to_string()), Column::date("when", "Date Modified", |r: &(&str, Option<std::time::SystemTime>)| r.1)],
                 ));
                 dated.set_rows(vec![("now", Some(std::time::SystemTime::now())), ("never", None), ("2020", Some(day(1_600_000_000))), ("2001", Some(day(1_000_000_000)))]);
@@ -3257,7 +3255,6 @@ fn table_selection_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 /// a signal holds it both ways, and a click focuses the clicked column.
 fn table_focus_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let model = Rc::new(TableModel::new(
-        ViewId(962),
         vec![Column::text("a", "A", |n: &u32| format!("a{n}")), Column::text("b", "B", |n: &u32| format!("b{n}")), Column::number("c", "C", |n: &u32| f64::from(*n))],
     ));
     model.set_rows((0..5).collect());
@@ -4078,7 +4075,6 @@ fn failure_boundary_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let poisoned = Rc::new(Cell::new(false));
     let p = poisoned.clone();
     let model = Rc::new(TableModel::new(
-        ViewId(9300),
         vec![Column::text("name", "Name", move |s: &String| {
             if p.get() {
                 panic!("a deliberate panic in a column");
@@ -4260,26 +4256,26 @@ fn rtl_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 /// makes are freed when it closes (`sheet_with`, `open_with`), where ones
 /// made in an action would live as long as the app.
 fn builder_owner_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
-    use ferrokit::{live_signals, open_with, sheet_with};
+    use ferrokit::{open_with, sheet_with};
     let parent = open(Window::new("Owner parent").size(360.0, 200.0).view(text("Parent")));
-    let before = live_signals();
+    let before = ferrokit::testing::live_signals();
     let build = || {
         let (a, b, c) = (Signal::new(String::new()), Signal::new(0usize), Signal::new(false));
         Window::new("Built").size(300.0, 120.0).view(vstack((text_field(&a), text(move || format!("{} {}", b.get(), c.get())))).padding(12.0))
     };
     let handle = sheet_with(&parent, build, || {});
-    let during = live_signals();
+    let during = ferrokit::testing::live_signals();
     handle.close();
     let p2 = parent.clone();
     after_events(move || {
-        let after_sheet = live_signals();
+        let after_sheet = ferrokit::testing::live_signals();
         let w = open_with(build);
-        let window_during = live_signals();
+        let window_during = ferrokit::testing::live_signals();
         ferrokit::close_window(&w);
         let p3 = p2.clone();
         let events = events.clone();
         after_events(move || {
-            let after_window = live_signals();
+            let after_window = ferrokit::testing::live_signals();
             check(
                 "builder-owns-signals",
                 during >= before + 3 && after_sheet == before && window_during >= before + 3 && after_window == before,
@@ -4310,7 +4306,6 @@ fn rich_table_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         .chain(std::iter::once(Task { name: "A much longer task name than the others".into(), group: "Today".into(), done: 1.0, size: 1.0 }))
         .collect();
     let model = Rc::new(TableModel::new(
-        ViewId(995),
         vec![
             Column::text("name", "Name", |t: &Task| t.name.clone()).icon(|t: &Task| Some(CellImage::Symbol(if t.done >= 1.0 { "checkmark.circle".into() } else { "circle".into() }))).fit(),
             Column::progress("done", "Done", |t: &Task| t.done),
@@ -4448,7 +4443,6 @@ fn rich_table_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 fn transfer_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     use ferrokit_core::testing::{drag_rows, drop_on_table, files_pasteboard, urls_pasteboard, pasteboard_text, private_pasteboard, release_pasteboard, set_pasteboard_text};
     let model = Rc::new(TableModel::new(
-        ViewId(960),
         vec![Column::text("name", "Name", |r: &Item2| r.name.clone()), Column::number("n", "N", |r: &Item2| r.n), Column::check("big", "Big", |r: &Item2| r.n >= 5.0)],
     ));
     model.set_rows((0..10).map(|i| Item2 { name: format!("Item {i}"), n: i as f64 }).collect());
@@ -4790,15 +4784,15 @@ fn view_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     );
 
     // dynamic: switching tears the old subtree down and stops its effects.
-    let nodes_on = live_nodes();
+    let nodes_on = ferrokit::testing::live_nodes();
     batch(|| st.flag.set(false));
-    let runs = effect_runs();
+    let runs = ferrokit::testing::effect_runs();
     batch(|| st.inner.set(5));
-    let stopped = effect_runs() == runs;
+    let stopped = ferrokit::testing::effect_runs() == runs;
     check(
         "dynamic-teardown",
         find_label("off").is_some() && find_label("on").is_none() && find_label("inner 0").is_none() && stopped,
-        format!("nodes {nodes_on} → {}; removed subtree's effect ran after removal: {}", live_nodes(), !stopped),
+        format!("nodes {nodes_on} → {}; removed subtree's effect ran after removal: {}", ferrokit::testing::live_nodes(), !stopped),
     );
     batch(|| st.flag.set(true));
     check("dynamic-rebuild", find_label("inner 5").is_some(), "rebuilt subtree reads the current value".into());
@@ -4812,7 +4806,7 @@ fn view_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     check("id-identity", kept && rebuilt, format!("tab 0→1 kept the node: {kept}; 1→2 rebuilt: {rebuilt}"));
 
     // Teardown: churn 1,000 × 10 items; nodes and subviews return to baseline.
-    let base_nodes = live_nodes();
+    let base_nodes = ferrokit::testing::live_nodes();
     let base_views = labels().len();
     // Warm-up: one full churn (first-time AppKit and allocator growth), then
     // measure a second one. A leak shows as growth; a one-off peak doesn't.
@@ -4834,10 +4828,10 @@ fn view_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         check(
             "teardown-churn",
             // AppKit keeps about 0.64 KB per view ever shown; budget 0.9 KB.
-            live_nodes() == base_nodes && labels().len() == base_views && removed_gone && rss1 - rss0 < 9.0,
+            ferrokit::testing::live_nodes() == base_nodes && labels().len() == base_views && removed_gone && rss1 - rss0 < 9.0,
             format!(
                 "10,000 rows built and removed in {ms:.0} ms; nodes {base_nodes} → {}; views {base_views} → {}; removed view deallocated: {removed_gone}; footprint {rss0:.0} → {rss1:.0} MB = {:.2} KB per view (AppKit's floor ≈ 0.64; budget 0.9)",
-                live_nodes(),
+                ferrokit::testing::live_nodes(),
                 labels().len(),
                 (rss1 - rss0) * 1024.0 / 10_000.0
             ),
@@ -4927,9 +4921,9 @@ fn layout_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     // A label that changes width moves its sibling; the rest of the window is skipped.
     let wide = WIDE.with(Clone::clone);
     let before = f("after").origin.x;
-    let (p0, s0, _) = layout_stats();
+    let (p0, s0, _) = ferrokit::testing::layout_stats();
     batch(|| wide.set("a considerably longer text".into()));
-    let (p1, s1, _) = layout_stats();
+    let (p1, s1, _) = ferrokit::testing::layout_stats();
     let after = f("after").origin.x;
     check(
         "subtree-relayout",
@@ -4960,22 +4954,22 @@ fn layout_bench(events: Rc<RefCell<Vec<AppEvent>>>) {
     let w = open(Window::new("Bench").size(700.0, 700.0).view(vstack(rows).padding(12.0)));
     let build_ms = t.elapsed().as_secs_f64() * 1e3;
     let views = w.contentView().unwrap().subviews().len();
-    let n0 = layout_passes();
+    let n0 = ferrokit::testing::layout_passes();
     for k in 0..200 {
         w.setContentSize(objc2_foundation::NSSize::new(600.0 + (k % 40) as f64 * 10.0, 700.0));
     }
-    let times = layout_times_us();
-    let new = ((layout_passes() - n0) as usize).min(times.len());
+    let times = ferrokit::testing::layout_times_us();
+    let new = ((ferrokit::testing::layout_passes() - n0) as usize).min(times.len());
     let mut resize: Vec<f64> = times[times.len() - new..].to_vec();
     resize.sort_by(|a, b| a.total_cmp(b));
     let mut upd = Vec::new();
-    let (p0, _, _) = layout_stats();
+    let (p0, _, _) = ferrokit::testing::layout_stats();
     for _ in 0..500 {
         let t = std::time::Instant::now();
         batch(|| counter.update(|v| *v += 1));
         upd.push(t.elapsed().as_secs_f64() * 1e6);
     }
-    let (p1, _, _) = layout_stats();
+    let (p1, _, _) = ferrokit::testing::layout_stats();
     upd.sort_by(|a, b| a.total_cmp(b));
     let p = |v: &[f64], q: usize| v[(v.len() - 1) * q / 100];
     check(
@@ -5345,7 +5339,7 @@ fn teardown_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     }
     // Every view in the form, AppKit's internal subviews included.
     let per_form = count(&w.contentView().unwrap()) - 1;
-    let (n0, v0, f0, s0) = (live_nodes(), w.contentView().unwrap().subviews().len(), footprint_mb(), ferrokit::live_signals());
+    let (n0, v0, f0, s0) = (ferrokit::testing::live_nodes(), w.contentView().unwrap().subviews().len(), footprint_mb(), ferrokit::testing::live_signals());
     let t = std::time::Instant::now();
     let cycles = || {
         for _ in 0..300 {
@@ -5362,7 +5356,7 @@ fn teardown_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     cycles();
     later(move || {
         let w = windows().into_iter().find(|w| w.title().to_string() == "Teardown").unwrap();
-        let (n1, v1, f1, s1) = (live_nodes(), w.contentView().unwrap().subviews().len(), footprint_mb(), ferrokit::live_signals());
+        let (n1, v1, f1, s1) = (ferrokit::testing::live_nodes(), w.contentView().unwrap().subviews().len(), footprint_mb(), ferrokit::testing::live_signals());
         let gone = weak.load().is_none();
         // AppKit keeps ~1 KB per view ever measured and added to a window
         // (plain AppKit, same form: 7.5 MB per 300 cycles); more is ours.
@@ -5397,15 +5391,14 @@ struct TableState {
 thread_local! {
     static TABLE: TableState = {
         let model = Rc::new(TableModel::new(
-            ViewId(500),
             vec![
                 Column::text("name", "Name", |o: &Order| o.name.clone()).width(180.0).editable(true),
-                Column::number("qty", "Qty", |o: &Order| o.qty).editable(true).style(|o: &Order| ferrokit::CellStyle {
+                Column::number("qty", "Qty", |o: &Order| o.qty).editable(true).style(|o: &Order| {
                     // Done orders struck through; the largest tinted.
-                    strikethrough: o.done,
-                    color: o.done.then_some(ferrokit::Color::Secondary),
-                    background: (o.qty >= 49.0).then_some(ferrokit::Color::Rgba(1.0, 0.6, 0.0, 0.3)),
-                    italic: false,
+                    ferrokit::CellStyle::new()
+                        .strikethrough(o.done)
+                        .color(o.done.then_some(ferrokit::Color::Secondary))
+                        .background((o.qty >= 49.0).then_some(ferrokit::Color::Rgba(1.0, 0.6, 0.0, 0.3)))
                 }),
                 Column::check("done", "Done", |o: &Order| o.done),
             ],
@@ -5725,7 +5718,7 @@ fn key_down(view: &objc2_app_kit::NSTextView, chars: &str, code: u16) {
 /// the completer's words, typing on filters them, Escape keeps what was
 /// typed, Return puts the word in.
 fn completion_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
-    let model = TextModel::new(ViewId(9100), "");
+    let model = TextModel::new("");
     const WORDS: [&str; 4] = ["select", "serial", "set", "update"];
     model.set_completer(Some(|text: &str, caret: usize| {
         let start = text[..caret].rfind(|c: char| !c.is_alphanumeric()).map_or(0, |i| i + 1);
@@ -5845,7 +5838,6 @@ fn dynamic_hidden_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 /// keep the views it replaced, a disabled view's later branches and rows
 /// are disabled too, and a `for_each` row's signals go with the row.
 fn tree_state_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
-    use ferrokit::live_signals;
     use objc2_app_kit::NSButton;
     // Rows that change under a cell edit: what was typed is never written
     // to another row, and the table keeps the keyboard.
@@ -5854,7 +5846,7 @@ fn tree_state_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         type Case = (&'static str, bool, String);
         let results: Rc<RefCell<Vec<Case>>> = Rc::default();
         for case in ["set_rows", "remove", "insert", "update_row"] {
-            let m = Rc::new(TableModel::new(ViewId(9320), vec![Column::text("name", "Name", |s: &String| s.clone()).editable(true)]));
+            let m = Rc::new(TableModel::new(vec![Column::text("name", "Name", |s: &String| s.clone()).editable(true)]));
             m.set_rows(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
             let edits: Rc<RefCell<Vec<(usize, String)>>> = Rc::default();
             let e2 = edits.clone();
@@ -5896,7 +5888,7 @@ fn tree_state_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         const EDIT_A: ferrokit::Command = ferrokit::Command::new("check-edit-a");
         const EDIT_B: ferrokit::Command = ferrokit::Command::new("check-edit-b");
         let text = Signal::new(String::from("one"));
-        let m = TextModel::new(ViewId(9330), "one");
+        let m = TextModel::new("one");
         let (m1, m2) = (m.clone(), m.clone());
         let bw = open(Window::new("Bound").size(260.0, 140.0).view(
             text_editor(&m).bind(&text).on_command(EDIT_A, move || m1.replace_selection("A")).on_command(EDIT_B, move || m2.replace_selection("B")),
@@ -5974,7 +5966,7 @@ fn tree_state_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     }
     let (outer, inner, which, off, own_off) = (Signal::new(true), Signal::new(false), Signal::new(0), Signal::new(true), Signal::new(true));
     let rows = Signal::new(vec![place(1, "Line 1", None)]);
-    let before = live_signals();
+    let before = ferrokit::testing::live_signals();
     let w = open(Window::new("Tree State").size(320.0, 220.0).view(
         vstack((
             vstack((text("Outer"), button("Nested", || {}).hidden(move || inner.get()))).hidden(move || outer.get()),
@@ -6002,14 +5994,14 @@ fn tree_state_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let enabled = |w: &objc2_app_kit::NSWindow, prefix: &str| find(w, prefix).iter().map(|b| b.isEnabled()).collect::<Vec<_>>();
     // A table sorted outside keeps the app's order; a changed row regroups.
     {
-        let m = TableModel::new(ViewId(9310), vec![Column::text("name", "Name", |s: &String| s.clone())]);
+        let m = TableModel::new(vec![Column::text("name", "Name", |s: &String| s.clone())]);
         m.set_sorts_in_place(false);
         m.set_sort(Some(ferrokit::Sort { column: "name".into(), ascending: true }));
         m.set_rows(vec!["b".to_string(), "a".to_string(), "c".to_string()]);
         m.select(&[0]);
         let at = m.table_view().selectedRow();
         check("table-sorted-outside", at == 0 && m.sort().is_some(), format!("rows b, a, c with built-in sorting off: b is shown at row {at}; the header's sort is kept {}", m.sort().is_some()));
-        let g = TableModel::new(ViewId(9311), vec![Column::text("name", "Name", |s: &String| s.clone())]);
+        let g = TableModel::new(vec![Column::text("name", "Name", |s: &String| s.clone())]);
         g.set_group_by(Some(Box::new(|s: &String| s[..1].to_string())));
         g.set_rows(vec!["a1".to_string(), "b1".to_string()]);
         let before = g.groups();
@@ -6094,11 +6086,11 @@ fn tree_state_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         format!("disabled: branch {form:?}, rows {lines:?}, own {own:?}; enabled: branch {form_on:?}, rows {lines_on:?}, a view disabled itself {own_still:?}, then {own_on:?}"),
     );
     // Rows that go take their signals.
-    let with_rows = live_signals();
+    let with_rows = ferrokit::testing::live_signals();
     for i in 3..=40 {
         batch(|| rows.set(vec![place(i, &format!("Line {i}"), None)]));
     }
-    let after_rows = live_signals();
+    let after_rows = ferrokit::testing::live_signals();
     check("foreach-row-signals", after_rows < with_rows && after_rows <= before + 16, format!("signals: {before} before the window, {with_rows} with two rows, {after_rows} after 38 replacements of the rows"));
     let w2 = w.clone();
     after_events(move || {
@@ -6113,7 +6105,7 @@ fn tree_state_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 /// An empty editable table cell is named after its column, so VoiceOver
 /// can read it (ax_audit finds nothing unnamed).
 fn empty_cell_ax_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
-    let model = Rc::new(TableModel::new(ViewId(9200), vec![Column::text("note", "Note", |s: &String| s.clone()).editable(true)]));
+    let model = Rc::new(TableModel::new(vec![Column::text("note", "Note", |s: &String| s.clone()).editable(true)]));
     model.set_rows(vec![String::new(), "kept".to_string()]);
     let w = open(Window::new("Empty Cells").size(300.0, 160.0).view(table(&model).alternating_rows(false).column_lines().animated().accessibility_label("Notes")));
     let w2 = w.clone();
@@ -6574,7 +6566,7 @@ struct EditorState {
 
 thread_local! {
     static EDITOR: EditorState = EditorState {
-        model: TextModel::new(ViewId(900), NOTES),
+        model: TextModel::new(NOTES),
         notes: Signal::new(NOTES.to_string()),
         changes: Signal::new(0),
         compositions: Signal::new(vec![]),
@@ -6741,7 +6733,7 @@ struct ChromeState {
 
 thread_local! {
     static CHROME: ChromeState = {
-        let model = Rc::new(TableModel::new(ViewId(950), vec![Column::text("name", "Name", |o: &Order| o.name.clone())]));
+        let model = Rc::new(TableModel::new(vec![Column::text("name", "Name", |o: &Order| o.name.clone())]));
         model.set_rows((0..50).map(|i| Order { name: format!("Row {i}"), qty: 0.0, done: false }).collect());
         ChromeState {
             adds: Signal::new(0),
@@ -6949,7 +6941,7 @@ fn dialog_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 
 fn view_sheet_check(events: Rc<RefCell<Vec<AppEvent>>>) {
     let w = dialogs_window();
-    let nodes0 = live_nodes();
+    let nodes0 = ferrokit::testing::live_nodes();
     let name = Signal::new("draft".to_string());
     let closed = Signal::new(false);
     let handle: Rc<RefCell<Option<SheetHandle>>> = Rc::default();
@@ -6967,7 +6959,7 @@ fn view_sheet_check(events: Rc<RefCell<Vec<AppEvent>>>) {
     let sheet_win = w.attachedSheet().unwrap();
     let field = sheet_win.contentView().unwrap().subviews().iter().filter_map(|v| v.downcast::<NSTextField>().ok()).find(|f| f.isEditable()).unwrap();
     let shown = field.stringValue().to_string();
-    let nodes_open = live_nodes();
+    let nodes_open = ferrokit::testing::live_nodes();
     post_edit(&field, "final.csv");
     let typed = name.get_untracked();
     let done = buttons_in(&sheet_win).into_iter().find(|b| b.title().to_string() == "Done").unwrap();
@@ -6976,11 +6968,11 @@ fn view_sheet_check(events: Rc<RefCell<Vec<AppEvent>>>) {
         let w = dialogs_window();
         check(
             "view-sheet",
-            shown == "draft" && typed == "final.csv" && closed.get_untracked() && w.attachedSheet().is_none() && live_nodes() == nodes0 && nodes_open > nodes0,
+            shown == "draft" && typed == "final.csv" && closed.get_untracked() && w.attachedSheet().is_none() && ferrokit::testing::live_nodes() == nodes0 && nodes_open > nodes0,
             format!(
                 "field showed {shown:?}; typed → {typed:?}; Done closed it: {}; nodes {nodes0} → {nodes_open} open → {} after",
                 closed.get_untracked(),
-                live_nodes()
+                ferrokit::testing::live_nodes()
             ),
         );
         // Escape presses a sheet's cancel button.
@@ -7020,7 +7012,7 @@ fn panel_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     // Open panel: configuration, then Cancel → None.
     let result = Signal::new(Some(None::<Vec<std::path::PathBuf>>));
     let r2 = result;
-    open_panel(&w, OpenOptions { extensions: vec!["csv".into(), "txt".into()], multiple: true, directories: false }, move |p| r2.set(Some(p)));
+    open_panel(&w, OpenOptions::new().extensions(&["csv", "txt"]).multiple(), move |p| r2.set(Some(p)));
     let panel = w.attachedSheet().and_then(|s| s.downcast::<objc2_app_kit::NSOpenPanel>().ok());
     let types = panel.as_ref().map_or(0, |p| p.allowedContentTypes().count());
     let multiple = panel.as_ref().is_some_and(|p| p.allowsMultipleSelection());
@@ -7110,7 +7102,7 @@ fn async_dialog_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
 
 fn async_sheet_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     use ferrokit::{Reply, alert_async, sheet_async, spawn_local};
-    let nodes0 = live_nodes();
+    let nodes0 = ferrokit::testing::live_nodes();
     let got: Rc<RefCell<Vec<Option<String>>>> = Rc::default();
     let g = got.clone();
     let win = dialogs_window();
@@ -7133,7 +7125,7 @@ fn async_sheet_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     });
     let has_sheet = || dialogs_window().attachedSheet().is_some();
     until(has_sheet, 2000, move || {
-        let nodes_open = live_nodes();
+        let nodes_open = ferrokit::testing::live_nodes();
         let renamed = ferrokit::testing::press_sheet_button(&dialogs_window(), "Rename");
         let (got, g2) = (got.clone(), got.clone());
         let events = events.clone();
@@ -7143,7 +7135,7 @@ fn async_sheet_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
             let events = events.clone();
             until(move || task.is_finished(), 2000, move || {
                 let answers = got.borrow().clone();
-                let nodes_after = live_nodes();
+                let nodes_after = ferrokit::testing::live_nodes();
                 // A cancelled task closes the alert it awaits.
                 let win = dialogs_window();
                 let dropped = spawn_local(async move {
@@ -7176,7 +7168,7 @@ fn async_panel_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
     let g = got.clone();
     let win = dialogs_window();
     let task = spawn_local(async move {
-        let open = open_panel_async(&win, OpenOptions { extensions: vec!["csv".into()], multiple: false, directories: false }).await;
+        let open = open_panel_async(&win, OpenOptions::new().extensions(&["csv"])).await;
         g.borrow_mut().push(format!("open {open:?}"));
         let save = save_panel_async(&win, "export.csv", None).await;
         g.borrow_mut().push(format!("save {save:?}"));

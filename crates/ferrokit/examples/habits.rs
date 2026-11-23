@@ -506,7 +506,7 @@ fn habit_view(t: Tracker, id: u32) -> AnyView {
                 .spacing(2.0)
                 .alignment(Align::Start),
                 spacer(),
-                share_button(move || vec![ShareItem::Text(share_text())]).tooltip(&tr("Share this streak")),
+                share_button(move || vec![ShareItem::Text(share_text())]).tooltip(tr("Share this streak")),
                 button(tr("Delete…"), move || confirm_delete(t, id, name.clone())),
             ))
             .spacing(16.0),
@@ -535,7 +535,7 @@ fn habit_view(t: Tracker, id: u32) -> AnyView {
             card(hstack((
                 image("bell.fill").color(Color::Orange),
                 checkbox(&tr("Remind me every day at"), &remind),
-                time_picker(&time).accessibility_label(&tr("Reminder time")).disabled(move || !remind.get()),
+                time_picker(&time).accessibility_label(tr("Reminder time")).disabled(move || !remind.get()),
                 spacer(),
             ))
             .spacing(8.0))
@@ -765,7 +765,7 @@ fn new_habit(t: Tracker) {
                         ))
                         .frame(36.0, 36.0)
                         .on_click(move || symbol.set(i))
-                        .accessibility_label(&tr(SYMBOL_NAMES[i]))
+                        .accessibility_label(tr(SYMBOL_NAMES[i]))
                         .accessibility_value(move || if symbol.get() == i { tr("Selected") } else { String::new() }),
                     )
                 })
@@ -786,14 +786,14 @@ fn new_habit(t: Tracker) {
                         .frame(30.0, 30.0)
                         // A button to VoiceOver, like the symbols (a canvas's own click is an image's).
                         .on_click(move || color.set(i))
-                        .accessibility_label(&tr(&format!("{c:?}")))
+                        .accessibility_label(tr(&format!("{c:?}")))
                         .accessibility_value(move || if color.get() == i { tr("Selected") } else { String::new() }),
                     )
                 })
                 .collect();
             let content = vstack((
                 text(tr("New Habit")).font(Font::title2().weight(Weight::Bold)),
-                text_field(&name).placeholder(&tr("Name, like “Stretch for 10 minutes”")).accessibility_label(&tr("Name")),
+                text_field(&name).placeholder(&tr("Name, like “Stretch for 10 minutes”")).accessibility_label(tr("Name")),
                 text(tr("Symbol")).font(Font::caption()).color(Color::Secondary),
                 hstack(symbols).spacing(4.0),
                 text(tr("Colour")).font(Font::caption()).color(Color::Secondary),
@@ -1000,7 +1000,7 @@ fn main() {
 mod soak {
     use std::cell::Cell;
 
-    use ferrokit::testing::input::{self, Key, Mod};
+    use ferrokit::testing::input::{self, Key};
     use ferrokit::testing::soak::{Rng, Settings, action};
     use ferrokit::*;
     use objc2::rc::Retained;
@@ -1081,7 +1081,7 @@ mod soak {
                 }
             })
         };
-        let key = |k: Key, mods: &'static [Mod]| -> Box<dyn FnOnce()> {
+        let key = |k: Key, mods: &'static [ferrokit::Modifier]| -> Box<dyn FnOnce()> {
             Box::new(move || {
                 if let Some(w) = main_window() {
                     input::key(&w, k, mods);
@@ -1133,9 +1133,9 @@ mod soak {
             steps.push((900, key(Key::Down, &[])));
         }
         // Insights, then dark, back through the pages.
-        steps.push((1400, key(Key::Char('2'), &[Mod::Command])));
+        steps.push((1400, key(Key::Char('2'), &[ferrokit::Modifier::Command])));
         steps.push((1600, Box::new(|| set_appearance(Appearance::Dark))));
-        steps.push((1400, key(Key::Char('1'), &[Mod::Command])));
+        steps.push((1400, key(Key::Char('1'), &[ferrokit::Modifier::Command])));
         for n in names.iter().take(3) {
             steps.push((380, card(n.clone())));
         }
@@ -1144,9 +1144,9 @@ mod soak {
         }
         steps.push((900, Box::new(move || untrack(|| t.page.set(Page::Habit(4))))));
         steps.push((600, paint(10, 99)));
-        steps.push((1200, key(Key::Char('2'), &[Mod::Command])));
+        steps.push((1200, key(Key::Char('2'), &[ferrokit::Modifier::Command])));
         // A new habit through the sheet: a name, a symbol, a colour.
-        steps.push((1500, key(Key::Char('n'), &[Mod::Command])));
+        steps.push((1500, key(Key::Char('n'), &[ferrokit::Modifier::Command])));
         steps.push((600, Box::new(|| {
             if let Some(s) = main_window().map(|_| ()).and(windows().into_iter().find_map(|w| w.attachedSheet())) {
                 input::type_text(&s, "Piano");
@@ -1245,7 +1245,7 @@ mod soak {
             }),
             action("page-shortcut", 2, move |r: &mut Rng| {
                 if let Some(w) = win() {
-                    input::key(&w, Key::Char(*r.pick(&['1', '2'])), &[Mod::Command]);
+                    input::key(&w, Key::Char(*r.pick(&['1', '2'])), &[ferrokit::Modifier::Command]);
                 }
             }),
             action("calendar-click", 3, move |r: &mut Rng| {
@@ -1265,7 +1265,7 @@ mod soak {
                 if untrack(|| t.habits.with(Vec::len)) >= 9 {
                     return;
                 }
-                input::key(&w, Key::Char('n'), &[Mod::Command]);
+                input::key(&w, Key::Char('n'), &[ferrokit::Modifier::Command]);
                 let name = r.pick(&["Stretch", "Journal", "No sugar", "Floss", "Call a friend", "Piano"]).to_string();
                 let add = r.chance(0.7);
                 later(500, move || {
@@ -1680,7 +1680,7 @@ mod self_checks {
     /// Real clicks and keys: a card, the calendar, the sidebar's arrow
     /// keys, and the New Habit sheet by ⌘N, typing and a click on Add.
     fn input_phase(w: Retained<NSWindow>, t: Tracker, check: Check, failed: Rc<Cell<u32>>) {
-        use ferrokit::testing::input::{self, Key, Mod};
+        use ferrokit::testing::input::{self, Key};
         input::ready(&w);
         untrack(|| t.page.set(Page::Today));
         later_ms(600, move || {
@@ -1718,7 +1718,7 @@ mod self_checks {
                         later_ms(400, move || {
                             check("input-calendar", cal.is_some() && untrack(|| t.is_done(1, day)) != was, format!("day {day}: {was} → {}", untrack(|| t.is_done(1, day))));
                             // ⌘N, typing a name, a click on Add.
-                            input::key(&w, Key::Char('n'), &[Mod::Command]);
+                            input::key(&w, Key::Char('n'), &[ferrokit::Modifier::Command]);
                             later_ms(700, move || {
                                 let sheet = w.attachedSheet();
                                 if let Some(s) = &sheet {

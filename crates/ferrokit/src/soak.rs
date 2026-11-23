@@ -158,7 +158,7 @@ pub fn run(settings: Settings, actions: Vec<Action>) {
     if let Some(w) = crate::windows().into_iter().rev().find(|w| w.isVisible()) {
         w.makeKeyAndOrderFront(None);
     }
-    let counts = (crate::live_nodes(), crate::live_signals());
+    let counts = (crate::testing::live_nodes(), crate::testing::live_signals());
     let state = Rc::new(RefCell::new(State {
         rng: Rng::new(settings.seed),
         actions,
@@ -198,7 +198,7 @@ fn sample(state: Rc<RefCell<State>>) {
     crate::spawn(super::footprint_mb, move |mb| {
         let mut s = state.borrow_mut();
         let minutes = s.start.elapsed().as_secs_f64() / 60.0;
-        s.last = (crate::live_nodes(), crate::live_signals());
+        s.last = (crate::testing::live_nodes(), crate::testing::live_signals());
         let (done, last) = (s.done, s.last);
         s.samples.push((done, mb, last.0, last.1));
         eprintln!("[soak] sample {minutes:.1} min footprint {mb:.0} MB nodes {} signals {} windows {} actions {}", s.last.0, s.last.1, crate::windows().len(), s.done);

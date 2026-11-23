@@ -232,9 +232,9 @@ fn mark_placed(view: &NSView) -> bool {
 }
 
 /// Runs `f` (as a [`batch`]) and animates what it changes: views that move
-/// or resize because of it, opacity and colours set by
-/// [`opacity_when`](crate::ViewExt::opacity_when) and
-/// [`background_when`](crate::ViewExt::background_when), and views with a
+/// or resize because of it, opacity and colours that
+/// [`opacity`](crate::ViewExt::opacity) and
+/// [`background`](crate::ViewExt::background) compute, and views with a
 /// [`transition`](crate::ViewExt::transition) that come or go. Over a
 /// quarter of a second, easing in and out.
 ///

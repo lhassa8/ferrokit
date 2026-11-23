@@ -18,7 +18,6 @@ const ADD: Command = Command::new("add-task");
 
 fn content(tasks: Signal<Vec<Task>>, draft: Signal<String>) -> impl View {
     let model = std::rc::Rc::new(TableModel::new(
-        ViewId(1),
         vec![
             Column::check("done", "Done", |t: &Task| t.done).width(50.0),
             Column::text("title", "Task", |t: &Task| t.title.clone()).width(320.0),

@@ -2,7 +2,9 @@
 //! value or a closure (`text`, `.color`, `.background`, `.opacity`,
 //! `.disabled`, `button`, `menu_item`); `font` and `color` after any
 //! modifier; truncating text; minimum sizes; button symbols; accessibility
-//! values; a lone `for_each` in a stack.
+//! values; a lone `for_each` in a stack. 0.13: tooltips and accessibility
+//! labels from closures, fixed values for `progress` and `gauge`,
+//! `popover_on` on any view, and model ids chosen by Ferrokit.
 //! `cargo run -p ferrokit --example values`; `CHECK=all` runs the checks.
 
 use ferrokit::*;
@@ -25,6 +27,7 @@ struct State {
     count: Signal<i32>,
     playing: Signal<bool>,
     rows: Signal<Vec<Row>>,
+    popped: Signal<bool>,
 }
 
 fn main() {
@@ -33,6 +36,7 @@ fn main() {
         count: Signal::new(0),
         playing: Signal::new(false),
         rows: Signal::new((1..=3).map(|id| Row { id, name: format!("Row {id}") }).collect()),
+        popped: Signal::new(false),
     };
     if checks {
         self_checks::STATE.with(|c| c.set(Some(s)));
@@ -63,17 +67,26 @@ fn main() {
             button(move || if s.playing.get() { "Pause".to_string() } else { "Play".to_string() }, move || s.playing.set(!s.playing.get()))
                 .symbol(move || if s.playing.get() { "pause.fill".to_string() } else { "play.fill".to_string() }),
             button("Never", || {}).disabled(true),
-            text("Tap me").padding(6.0).background(Color::QuaternaryFill).on_click(move || count.update(|c| *c += 1)).accessibility_value(move || format!("{} taps", count.get())),
+            text("Tap me").padding(6.0).background(Color::QuaternaryFill).on_click(move || count.update(|c| *c += 1)).accessibility_value(move || format!("{} taps", count.get())).accessibility_label(move || format!("Tapper {}", count.get())),
         ))
         .spacing(8.0),
         // A lone for_each.
         vstack(for_each(move || s.rows.get(), |r: Row| text(r.name))),
+        // 0.13: a tooltip and a VoiceOver name from closures, fixed values
+        // where closures were needed, and `popover_on` on a plain view.
+        hstack((
+            text("Tip").tooltip(move || format!("Count is {}", count.get())).accessibility_label(move || format!("Tip {}", count.get())),
+            progress(Some(0.25)).width(80.0),
+            gauge(3.0, 5.0).width(80.0),
+            text("Pop").popover_on(Edge::Above, &s.popped, || text("Popped")),
+        ))
+        .spacing(8.0),
     ))
     .spacing(10.0)
     .alignment(Align::Start)
     .padding(20.0);
     App::new("Values")
-        .window(Window::new("Values").size(420.0, 620.0).view(view))
+        .window(Window::new("Values").size(420.0, 680.0).view(view))
         .menu("Count", vec![menu_item(move || format!("Reset {}", count.get()), move || count.set(0)).disabled(move || count.get() == 0).checked(move || count.get() > 0)])
         .on_launch(move || {
             if checks {
@@ -159,6 +172,21 @@ mod self_checks {
         let min = field(&w, "Min").unwrap();
         let min_bg = surface_behind(&w, &min).map(|v| v.frame().size.width);
         c("min-width", min_bg.is_some_and(|wd| wd >= 119.5), format!("{min_bg:?}"));
+        let tip = field(&w, "Tip").unwrap();
+        let tip_now = |tip: &objc2_app_kit::NSTextField| {
+            let shown = tip.toolTip().map(|t| t.to_string());
+            let named = objc2_app_kit::NSAccessibility::accessibilityLabel(tip).map(|l| l.to_string());
+            (shown, named)
+        };
+        let before = tip_now(&tip);
+        c("tooltip-and-label-from-closures", before == (Some("Count is 0".into()), Some("Tip 0".into())), format!("{before:?}"));
+        let bar = views(&w).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSProgressIndicator>().ok()).map(|b| b.doubleValue());
+        let level = views(&w).into_iter().find_map(|v| v.downcast::<objc2_app_kit::NSLevelIndicator>().ok()).map(|g| g.doubleValue());
+        c("progress-and-gauge-fixed", bar == Some(0.25) && level == Some(3.0), format!("progress {bar:?}, gauge {level:?}"));
+        let (a, b) = (TableModel::<String>::new(Vec::new()), TextModel::new(""));
+        let (ia, ib) = (format!("{a:?}"), format!("{b:?}"));
+        c("model-ids-chosen", ia != ib && !ia.contains("ViewId(1)") && !ib.contains("ViewId(1)"), format!("{ia}, {ib}"));
+        s.popped.set(true);
         let rows = (1..=3).all(|i| field(&w, &format!("Row {i}")).is_some());
         c("lone-for-each", rows, "three rows from vstack(for_each(..))".into());
         let buttons: Vec<Retained<objc2_app_kit::NSButton>> = views(&w).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSButton>().ok()).collect();
@@ -173,6 +201,15 @@ mod self_checks {
         let failed2 = failed.clone();
         later(300, move || {
             let red = count.textColor().and_then(|c| Color::from_ns(&c));
+            let after = tip_now(&tip);
+            c2("tooltip-and-label-follow", after == (Some("Count is 2".into()), Some("Tip 2".into())), format!("{after:?}"));
+            let popped = field(&w, "Popped").is_some() || objc2_app_kit::NSApplication::sharedApplication(objc2::MainThreadMarker::new().unwrap()).windows().iter().any(|win| win.contentView().is_some_and(|v| {
+                fn has(v: &NSView) -> bool {
+                    v.downcast_ref::<objc2_app_kit::NSTextField>().is_some_and(|f| f.stringValue().to_string() == "Popped") || v.subviews().iter().any(|s| has(&s))
+                }
+                has(&v)
+            }));
+            c2("popover-on-any-view", popped, String::new());
             c2("text-follows", count.stringValue().to_string() == "Count 2" && red == Some(Color::Primary), format!("{:?}, {red:?}", count.stringValue()));
             let bg = surface_behind(&w, &card).and_then(|v| v.layer()).and_then(|l| l.backgroundColor()).map(|c| objc2_core_graphics::CGColor::alpha(Some(&c)));
             let faded = card.alphaValue();
@@ -193,6 +230,8 @@ mod self_checks {
             let tap = views(&w).into_iter().find(|v| v.class().name().to_string_lossy() == "FerrokitInteraction");
             let value = tap.as_ref().and_then(|v| objc2_app_kit::NSAccessibility::accessibilityValue(&**v)).map(|v| unsafe { objc2::msg_send![&*v, description] }).map(|d: Retained<objc2_foundation::NSString>| d.to_string());
             c2("accessibility-value", value.as_deref() == Some("2 taps"), format!("{value:?}"));
+            let named = tap.as_ref().and_then(|v| objc2_app_kit::NSAccessibility::accessibilityLabel(&**v)).map(|l| l.to_string());
+            c2("clickable-label-follows", named.as_deref() == Some("Tapper 2"), format!("{named:?}"));
             eprintln!("[check] done, {} failed", failed2.get());
             std::process::exit(if failed2.get() == 0 { 0 } else { 1 });
         });

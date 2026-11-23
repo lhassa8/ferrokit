@@ -464,12 +464,13 @@ impl View for Gauge {
     }
 }
 
-/// A level indicator showing `value()` out of `max` (0 to `max`), redrawn
+/// A level indicator showing `value` (a closure reading signals, or a fixed value) out of `max` (0 to `max`), redrawn
 /// when the signals it reads change: storage used, a battery, signal
 /// strength. Give it a [`warning`](Gauge::warning) and
 /// [`critical`](Gauge::critical) level to colour it.
-pub fn gauge(value: impl Fn() -> f64 + 'static, max: f64) -> Gauge {
-    Gauge { value: GaugeValue::Shown(Box::new(value)), max, style: NSLevelIndicatorStyle::ContinuousCapacity, warning: None, critical: None }
+pub fn gauge(value: impl crate::IntoValue<f64>, max: f64) -> Gauge {
+    let value = value.into_value();
+    Gauge { value: GaugeValue::Shown(Box::new(move || value.get())), max, style: NSLevelIndicatorStyle::ContinuousCapacity, warning: None, critical: None }
 }
 
 /// Stars from 0 to `max`, bound two ways to `value`: clicking a star sets

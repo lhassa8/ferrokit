@@ -74,7 +74,7 @@ macro_rules! fixed {
     )*};
 }
 
-fixed!(crate::Color, f64, bool, String);
+fixed!(crate::Color, f64, bool, String, Option<f64>);
 
 impl IntoValue<String> for &str {
     fn into_value(self) -> Value<String> {

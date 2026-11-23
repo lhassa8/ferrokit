@@ -78,6 +78,7 @@ type StyleFn<T> = Box<dyn Fn(&T) -> CellStyle>;
 /// How a cell's text looks (see [`Column::style`]): the default for each
 /// field is the table's own look.
 #[derive(Debug, Clone, Default, PartialEq)]
+#[non_exhaustive]
 pub struct CellStyle {
     /// The text's colour.
     pub color: Option<crate::text::Color>,
@@ -87,6 +88,39 @@ pub struct CellStyle {
     pub italic: bool,
     /// Struck-through text (a row about to be deleted).
     pub strikethrough: bool,
+}
+
+impl CellStyle {
+    /// The table's own look: change it with the other methods. Each takes a
+    /// value computed for the row, so a style reads as one expression:
+    /// `CellStyle::new().strikethrough(o.done).color(o.done.then_some(Color::Secondary))`.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The text's colour (`None`: the table's own).
+    pub fn color(mut self, color: impl Into<Option<crate::text::Color>>) -> Self {
+        self.color = color.into();
+        self
+    }
+
+    /// A tint behind the cell (`None`: no tint).
+    pub fn background(mut self, color: impl Into<Option<crate::text::Color>>) -> Self {
+        self.background = color.into();
+        self
+    }
+
+    /// Italic text, when `on`.
+    pub fn italic(mut self, on: bool) -> Self {
+        self.italic = on;
+        self
+    }
+
+    /// Struck-through text, when `on`.
+    pub fn strikethrough(mut self, on: bool) -> Self {
+        self.strikethrough = on;
+        self
+    }
 }
 
 /// A row's group (see [`TableModel::set_group_by`]).
@@ -1752,9 +1786,18 @@ impl<T: 'static> std::fmt::Debug for TableModel<T> {
 }
 
 impl<T: 'static> TableModel<T> {
-    /// Creates the native table (not yet in a window: it's added the first
-    /// time the host draws it, see [`TableModel::ensure_mounted`]).
-    pub fn new(id: ViewId, columns: Vec<Column<T>>) -> Self {
+    /// Creates the native table with these columns (not yet in a window:
+    /// it's added the first time it's shown). Create it once and update its
+    /// rows in place.
+    pub fn new(columns: Vec<Column<T>>) -> Self {
+        #[allow(deprecated)]
+        Self::with_id(ViewId::next(), columns)
+    }
+
+    /// [`new`](Self::new) with an id the caller chose (before 0.13, every
+    /// model took one).
+    #[deprecated(since = "0.13.0", note = "use `TableModel::new(columns)`: the id is chosen for you")]
+    pub fn with_id(id: ViewId, columns: Vec<Column<T>>) -> Self {
         let mtm = mtm();
         crate::testing::LIVE_OBJC.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let source = Source::alloc(mtm).set_ivars(SourceIvars { data: RefCell::new(None), created: Cell::new(0) });

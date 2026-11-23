@@ -408,6 +408,7 @@ type Runs = Vec<(Range<usize>, TextStyle)>;
 /// system's colours: they follow Dark Mode, Increase Contrast and the user's
 /// accent colour.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub enum Color {
     /// The text colour (what unstyled text uses).
     Primary,
@@ -901,7 +902,15 @@ impl TextModel {
     /// Creates the editor (added to the window the first time the host draws
     /// it). Defaults: plain text, system font 13 pt, continuous spell
     /// checking, find bar, undo, Tab inserts a tab (Ctrl-Tab moves focus on).
-    pub fn new(id: ViewId, text: &str) -> Self {
+    pub fn new(text: &str) -> Self {
+        #[allow(deprecated)]
+        Self::with_id(ViewId::next(), text)
+    }
+
+    /// [`new`](Self::new) with an id the caller chose (before 0.13, every
+    /// model took one).
+    #[deprecated(since = "0.13.0", note = "use `TextModel::new(text)`: the id is chosen for you")]
+    pub fn with_id(id: ViewId, text: &str) -> Self {
         let mtm = mtm();
         let size = NSSize::new(400.0, 300.0);
         let scroll = NSScrollView::initWithFrame(NSScrollView::alloc(mtm), NSRect::new(NSPoint::ZERO, size));

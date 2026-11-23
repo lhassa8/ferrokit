@@ -154,6 +154,11 @@ impl Interaction {
 
     /// The views a press dims, and the name VoiceOver reads for the button.
     /// VoiceOver reads `label`, or else the current text of `texts`.
+    /// Changes the name VoiceOver reads (a label computed from signals).
+    pub(crate) fn set_label(&self, label: Option<String>) {
+        *self.ivars().label.borrow_mut() = label;
+    }
+
     pub(crate) fn set_views(&self, views: Vec<Retained<NSView>>, label: Option<String>, texts: Vec<Retained<objc2_app_kit::NSTextField>>) {
         *self.ivars().views.borrow_mut() = views.into_iter().map(|v| (v, 1.0)).collect();
         *self.ivars().label.borrow_mut() = label;

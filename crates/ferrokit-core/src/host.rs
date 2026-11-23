@@ -15,6 +15,16 @@ use crate::geometry::{self, Rect};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ViewId(pub u64);
 
+impl ViewId {
+    /// A new id, different from every other `next` gives and from the small
+    /// numbers apps chose before 0.13 (`with_id`).
+    pub fn next() -> ViewId {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(1 << 40);
+        ViewId(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
 #[derive(Debug)]
 /// Why [`attach`] failed.
 pub enum AttachError {

@@ -12,6 +12,7 @@ use std::rc::Rc;
 /// Something that failed in the app's code or in AppKit, caught where
 /// AppKit called in (see [`App::on_error`](crate::App::on_error)).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Failure {
     /// What was running: "a control's action", "a timer"…
     pub place: &'static str,

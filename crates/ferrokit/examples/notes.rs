@@ -8,7 +8,7 @@ use ferrokit::*;
 
 fn text_document() -> DocumentType<String> {
     DocumentType::new(&["txt", "md"], String::new, |doc: &Document<String>| {
-        let model = TextModel::new(ViewId(1), &doc.content().get_untracked());
+        let model = TextModel::new(&doc.content().get_untracked());
         let words = *doc.content();
         vstack((
             text_editor(&model).bind(doc.content()).accessibility_label("Text"),

@@ -57,8 +57,8 @@ fn main() {
         query: Signal::new(String::new()),
         submits: Signal::new(0),
     };
-    let editor = TextModel::new(ViewId(1), "");
-    let cities = Rc::new(TableModel::new(ViewId(2), vec![
+    let editor = TextModel::new("");
+    let cities = Rc::new(TableModel::new(vec![
         Column::text("city", "City", |&(c, _): &(&str, &str)| c.to_string()),
         Column::text("country", "Country", |&(_, c): &(&str, &str)| c.to_string()),
     ]));
@@ -117,7 +117,7 @@ mod self_checks {
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
-    use ferrokit::testing::input::{self, Key, Mod};
+    use ferrokit::testing::input::{self, Key};
     use ferrokit::*;
     use objc2::rc::Retained;
     use objc2_app_kit::{NSView, NSWindow};
@@ -220,7 +220,7 @@ mod self_checks {
                     c2("delete-and-tab", untrack(|| f.name.get()) == "Ada Lovelac" && after == "Email", format!("name {:?}; focus on {after:?}", untrack(|| f.name.get())));
                     input::type_text(&w4, "ada@example.com");
                     // ⌘A then typing replaces it all.
-                    input::key(&w4, Key::Char('a'), &[Mod::Command]);
+                    input::key(&w4, Key::Char('a'), &[ferrokit::Modifier::Command]);
                     input::type_text(&w4, "a@b.c");
                 }),
                 Box::new({
@@ -262,7 +262,7 @@ mod self_checks {
                 Box::new(move || {
                     let typed = untrack(|| f.notes.get());
                     c4("type-editor", typed == "First line\nSecond" && editor2.text() == typed, format!("{typed:?}"));
-                    input::key(&w7, Key::Char('z'), &[Mod::Command]);
+                    input::key(&w7, Key::Char('z'), &[ferrokit::Modifier::Command]);
                 }),
                 Box::new(move || {
                     let undone = untrack(|| f.notes.get());
@@ -286,7 +286,7 @@ mod self_checks {
                     let (sub, plan, cards, saves) = untrack(|| (f.subscribe.get(), f.plan.get(), f.card_clicks.get(), f.saves.get()));
                     c6("click-controls", sub && plan == "team" && cards == 1 && saves == 1, format!("checkbox {sub}, plan {plan}, card {cards}, Save {saves}"));
                     // ⌘S through the menu's key equivalent.
-                    input::key(&w9, Key::Char('s'), &[Mod::Command]);
+                    input::key(&w9, Key::Char('s'), &[ferrokit::Modifier::Command]);
                     // The table: a click on the second row, then ↓.
                     if let Some(t) = views(&w9).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSTableView>().ok()).find(|t| t.downcast_ref::<objc2_app_kit::NSOutlineView>().is_none()) {
                         let r = t.rectOfRow(1);

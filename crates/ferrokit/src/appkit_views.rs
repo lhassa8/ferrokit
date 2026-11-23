@@ -170,10 +170,6 @@ pub struct Text {
     truncates: bool,
 }
 
-/// [`Text`]: `label(f)` was the name for text computed from signals; `text`
-/// takes a closure too.
-pub type Label = Text;
-
 impl Text {
     /// Its font: a text style (`Font::title()`, `Font::caption()`) or a
     /// custom one.
@@ -187,13 +183,6 @@ impl Text {
     pub fn color(mut self, color: impl crate::IntoValue<crate::Color>) -> Self {
         self.color = Some(color.into_value());
         self
-    }
-
-    /// A colour computed from signals (now [`color`](Self::color) takes a
-    /// closure).
-    #[deprecated(since = "0.4.0", note = "`color` takes a closure: `.color(move || ..)`")]
-    pub fn color_when(self, f: impl Fn() -> crate::Color + 'static) -> Self {
-        self.color(f)
     }
 
     /// On one line, shortened with "…" when there isn't room for it all,
@@ -282,12 +271,6 @@ pub fn text(content: impl crate::IntoValue<String>) -> Text {
     Text { content: content.into_value(), look: TextLook::default(), color: None, truncates: false }
 }
 
-/// Text computed from signals: the same as [`text`] with a closure.
-#[deprecated(since = "0.4.0", note = "`text` takes a closure: `text(move || ..)`")]
-pub fn label(f: impl Fn() -> String + 'static) -> Text {
-    text(f)
-}
-
 define_class!(
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
@@ -318,6 +301,7 @@ impl ActionTarget {
 
 /// How a button is drawn ([`Button::style`], [`MenuButton::style`]).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[non_exhaustive]
 pub enum ButtonStyle {
     /// The standard rounded push button.
     #[default]
@@ -355,6 +339,7 @@ impl ButtonStyle {
 /// A control's size, as in Apple's apps: small controls in inspectors and
 /// dense panels, large ones for a welcome window's main actions.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[non_exhaustive]
 pub enum ControlSize {
     /// The smallest, for tight spaces.
     Mini,

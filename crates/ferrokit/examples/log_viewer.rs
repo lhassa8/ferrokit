@@ -180,7 +180,6 @@ impl Viewer {
         let lines: Rc<RefCell<Vec<Line>>> = Rc::default();
         let (l1, l2, l3) = (lines.clone(), lines.clone(), lines.clone());
         let table = Rc::new(TableModel::new(
-            ViewId(1),
             vec![
                 Column::number("n", "#", |i: &u32| *i as f64 + 1.0).width(80.0).sortable(false),
                 Column::text("time", "Time", move |i: &u32| l1.borrow()[*i as usize].time().to_string()).width(170.0).sortable(false),
@@ -274,7 +273,7 @@ impl Viewer {
 
     fn choose(&self, window: &objc2_app_kit::NSWindow) {
         let (v, w) = (self.clone(), objc2::rc::Retained::from(window));
-        open_panel(window, OpenOptions { extensions: vec![], multiple: false, directories: false }, move |paths| {
+        open_panel(window, OpenOptions::new(), move |paths| {
             if let Some(p) = paths.and_then(|p| p.into_iter().next()) {
                 v.open(&p, &w);
             }

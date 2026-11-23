@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.13.0 (2026-11-23): the first step to 1.0's API
+
+The first of three releases that settle the API for 1.0: what should be removed goes, what will grow is marked so, and what's left over from the Iced embedding starts to go. Each change says what to write instead.
+
+- **Changed: `TableModel::new(columns)` and `TextModel::new(text)` choose their own ids.** Before, every model took a `ViewId` the app picked, a leftover from the Iced embedding; apps reused small numbers, and nothing checked they were unique. Write `TableModel::new(vec![..])` instead of `TableModel::new(ViewId(1), vec![..])`. `with_id` keeps the old form, deprecated, for one release (check `model-ids-chosen`).
+- **Removed: the names deprecated in 0.4**: `label(f)` and `Label` (write `text(f)`, `Text`), `Text::color_when` (`.color(f)`), `background_when` and `opacity_when` (`.background(f)`, `.opacity(f)`), and `MenuItem::enabled_when`, `checked_when`, `title_when` (`.disabled(move || !f())`, `.checked(f)`, `menu_item(f, ..)`).
+- **Changed: these are now `#[non_exhaustive]`**, so a `match` on them needs a `_` arm and they can grow without breaking code: the enums `Color`, `ButtonStyle`, `ControlSize`, `SymbolEffect`, `DragItem`, `ItemImage`, `FilterTest`, `FieldKind`, `FormStyle` and `input::Key`; the structs `OpenOptions`, `CellStyle`, `Failure`, `CollectionItem`, `Series`, `Shadow`, `FilterField`, `SentNotification` and `testing::AxElement` (made through their constructors, read through their fields).
+- **Added: `OpenOptions::new()` with `.extensions(&["csv"])`, `.multiple()` and `.directories()`**, since a struct literal no longer compiles outside Ferrokit. Write `OpenOptions::new().extensions(&["csv"])` instead of `OpenOptions { extensions: vec!["csv".into()], multiple: false, directories: false }`.
+- **Added: `CellStyle::new()` with `.color(..)`, `.background(..)`, `.italic(on)` and `.strikethrough(on)`**, each taking the row's value: `CellStyle::new().strikethrough(o.done).color(o.done.then_some(Color::Secondary))`.
+- **Changed: `.tooltip(..)` and `.accessibility_label(..)` take a value or a closure**, like the other modifiers, and follow the signals a closure reads, on a clickable view too (checks `tooltip-and-label-from-closures`, `tooltip-and-label-follow`, `clickable-label-follows`). A `&str` still works.
+- **Changed: `progress`, `gauge`, `VideoPlayer::muted` and `MenuBarExtra::title` take a value or a closure** (they took only closures): `progress(Some(0.25))`, `gauge(3.0, 5.0)` (check `progress-and-gauge-fixed`). Closures still work.
+- **Added: `popover_on` on every view** (it was only on modified views, so `text("x").popover_on(..)` didn't compile; check `popover-on-any-view`).
+- **Changed: `Collection::on_activate` gets `&T`**, as `ColumnBrowser::on_activate` does (it got `T`).
+- **Changed: one modifier-key type.** `Modifier` gains `Command` and is what `testing::input` takes; `input::Mod` is a deprecated alias for it. Write `Modifier::Command` instead of `Mod::Command`.
+- **Moved: diagnostics to `testing`.** `layout_times_us`, `layout_passes`, `layout_stats`, `effect_runs`, `live_signals`, `live_nodes` and `collection_cells_made` are `testing::layout_times_us` and so on; the old names in the crate root are deprecated and go in 0.14.
+
 ## 0.12.0 (2026-11-23): the rest of async ([#2](https://github.com/lhassa8/ferrokit/issues/2))
 
 - **Added: awaitable dialogs.** `alert_async`, `open_panel_async`, `save_panel_async` and `sheet_async` return an `Answer` future to await in a `spawn_local` task instead of taking a callback. `alert_async` gives `Option<usize>` (`None` when the alert ends without a button and has no Cancel button); `sheet_async(&window, |reply| Window::new(..))` shows your own sheet, whose buttons answer with `reply.send(value)` or `reply.cancel()`. If the task is cancelled while it waits (its window closed, `Task::cancel`), the sheet closes. Checks `async-alert`, `async-sheet`, `async-dialog-cancel`, `async-panels`.

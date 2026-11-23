@@ -63,7 +63,8 @@ def resolve_use(crate, use):
 
 
 def public(item):
-    return item.get("visibility") == "public"
+    # Deprecated items are left out: this page shows what to write now.
+    return item.get("visibility") == "public" and not item.get("deprecation")
 
 
 def members(crate, module):
@@ -80,6 +81,8 @@ def members(crate, module):
                 continue
             if inner(it)["is_glob"]:
                 out += members(*res)
+            elif res[1].get("deprecation"):
+                continue
             else:
                 out.append((res[0], res[1], inner(it)["name"]))
         else:

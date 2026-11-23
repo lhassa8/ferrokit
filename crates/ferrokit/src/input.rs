@@ -23,21 +23,14 @@ use objc2::rc::Retained;
 use objc2_app_kit::{NSApplication, NSEvent, NSEventModifierFlags, NSEventType, NSView, NSWindow};
 use objc2_foundation::{NSPoint, NSProcessInfo, NSString};
 
-/// A modifier key held with [`key`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Mod {
-    /// ⌘
-    Command,
-    /// ⇧
-    Shift,
-    /// ⌥
-    Option,
-    /// ⌃
-    Control,
-}
+/// A modifier key held with [`key`]: now [`Modifier`](crate::Modifier),
+/// the one type for menu shortcuts and posted input.
+#[deprecated(since = "0.13.0", note = "use `ferrokit::Modifier` (the same variants)")]
+pub type Mod = crate::Modifier;
 
 /// A key for [`key`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Key {
     /// A character key: a letter, digit or punctuation.
     Char(char),
@@ -86,14 +79,14 @@ impl Key {
     }
 }
 
-fn flags(mods: &[Mod]) -> NSEventModifierFlags {
+fn flags(mods: &[crate::Modifier]) -> NSEventModifierFlags {
     let mut f = NSEventModifierFlags::empty();
     for m in mods {
         f |= match m {
-            Mod::Command => NSEventModifierFlags::Command,
-            Mod::Shift => NSEventModifierFlags::Shift,
-            Mod::Option => NSEventModifierFlags::Option,
-            Mod::Control => NSEventModifierFlags::Control,
+            crate::Modifier::Command => NSEventModifierFlags::Command,
+            crate::Modifier::Shift => NSEventModifierFlags::Shift,
+            crate::Modifier::Option => NSEventModifierFlags::Option,
+            crate::Modifier::Control => NSEventModifierFlags::Control,
         };
     }
     f
@@ -136,7 +129,7 @@ fn in_window(view: &NSView, x: f64, y: f64) -> NSPoint {
     view.convertPoint_toView(NSPoint::new(b.origin.x + x, b.origin.y + y), None)
 }
 
-fn mouse(window: &NSWindow, kind: NSEventType, at: NSPoint, clicks: isize, mods: &[Mod]) {
+fn mouse(window: &NSWindow, kind: NSEventType, at: NSPoint, clicks: isize, mods: &[crate::Modifier]) {
     post(NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
         kind,
         at,
@@ -151,7 +144,7 @@ fn mouse(window: &NSWindow, kind: NSEventType, at: NSPoint, clicks: isize, mods:
 }
 
 /// Clicks `view` at `x, y` points from its top-left corner, holding `mods`.
-pub fn click_at_with(view: &NSView, x: f64, y: f64, mods: &[Mod]) -> bool {
+pub fn click_at_with(view: &NSView, x: f64, y: f64, mods: &[crate::Modifier]) -> bool {
     let Some(window) = view.window() else { return false };
     let at = in_window(view, x, y);
     mouse(&window, NSEventType::LeftMouseDown, at, 1, mods);
@@ -185,7 +178,7 @@ pub fn double_click(view: &NSView) -> bool {
 
 /// Presses `key` with `mods` in `window` (to its first responder, or the
 /// menus' key equivalents when ⌘ is held).
-pub fn key(window: &NSWindow, key: Key, mods: &[Mod]) {
+pub fn key(window: &NSWindow, key: Key, mods: &[crate::Modifier]) {
     let (code, chars, function) = key.parts();
     let mut f = flags(mods);
     if function {
@@ -215,7 +208,7 @@ pub fn type_text(window: &NSWindow, text: &str) {
         match c {
             '\n' => key(window, Key::Return, &[]),
             '\t' => key(window, Key::Tab, &[]),
-            c if c.is_uppercase() => key(window, Key::Char(c), &[Mod::Shift]),
+            c if c.is_uppercase() => key(window, Key::Char(c), &[crate::Modifier::Shift]),
             c => key(window, Key::Char(c), &[]),
         }
     }

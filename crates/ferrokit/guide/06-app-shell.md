@@ -108,7 +108,7 @@ launch, as in Apple's apps.
 use ferrokit::*;
 
 let text_files = DocumentType::new(&["txt", "md"], String::new, |doc: &Document<String>| {
-    let model = TextModel::new(ViewId(1), &doc.content().get_untracked());
+    let model = TextModel::new(&doc.content().get_untracked());
     text_editor(&model).bind(doc.content()).accessibility_label("Text")
 })
 .read(|path| std::fs::read_to_string(path))
@@ -390,7 +390,7 @@ fn rename(window: &NSWindow) {
 }
 
 fn choose(window: &NSWindow) {
-    open_panel(window, OpenOptions { extensions: vec!["csv".into()], multiple: false, directories: false }, |paths| {
+    open_panel(window, OpenOptions::new().extensions(&["csv"]), |paths| {
         println!("{paths:?}");
     });
     save_panel(window, "Untitled.csv", None, |path| println!("{path:?}"));
