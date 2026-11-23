@@ -687,6 +687,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 `pub struct Outline<T: Identifiable + 'static>`: A native outline view over a tree (see the module docs).
 
 - `pub fn expanded(mut self) -> Self`: Every item shown expanded, each time the tree changes (a plan, a document's outline: trees read whole).
+- `pub fn transparent_background(mut self) -> Self`: No background of its own: the rows sit on whatever is behind the outline (a card, a tinted panel), as a sidebar's do. Without it an outline draws the system's content background, which in Dark Mode differs from a card's control background.
 - `pub fn icon(mut self, f: impl Fn(&T) -> Option<String> + 'static) -> Self`: An SF Symbol per item (or `None`).
 - `pub fn icon_color(mut self, f: impl Fn(&T) -> Option<crate::Color> + 'static) -> Self`: A colour per item's icon (or `None` for the sidebar's own), as Mail's mailboxes and Reminders' lists show theirs.
 - `pub fn badge(mut self, f: impl Fn(&T) -> Option<String> + 'static) -> Self`: A badge per item (or `None`): a count or a short word at the end of its row, in secondary text, as Mail's unread counts are. It's read when the tree is, so a signal the tree reads updates it.
@@ -1038,6 +1039,7 @@ Conventions: views are built once and update from signals; models (`TableModel`,
 - `pub fn open_document(path: &Path) -> std::io::Result<Retained<NSWindow>>`: Opens the document at `path`, or brings its window to the front if it's already open.
 - `pub fn recent_documents() -> Vec<PathBuf>`: The recently opened or saved documents, newest first (that still exist).
 - `pub fn regain_access(path: &Path) -> bool`: Reaches `path` again in the App Sandbox through the bookmark `remember_access` kept, until the app quits (a folder's contents too). Whether the app can reach it: `true` outside the sandbox, `false` when no bookmark was kept or it no longer resolves (the folder was deleted): ask the user to choose it again.
+- `pub fn set_recent_documents(paths: &[PathBuf])`: Replaces the recent documents (File ▸ Open Recent), newest first: for an app that opens files of its own it doesn't want listed (a scratch copy, a capture run's files). Kept to the menu's ten; files no longer there are left out when the list is read.
 - `pub fn remember_access(path: &Path)`: Keeps the app's access to `path` (a folder or file the user chose in an Open panel, or dropped) for later launches: in the App Sandbox the app reaches it only while it runs, and this keeps a security-scoped bookmark to it in the app's defaults. Call `regain_access` for it after a relaunch, before reading it. Does nothing outside the sandbox (or for a path the app can't reach now). Documents opened through `DocumentType` are kept already.
 - `pub fn revert_document(window: &NSWindow) -> std::io::Result<()>`: Reads the document in `window` back from its file, dropping its changes.
 - `pub fn save_document(window: &NSWindow) -> std::io::Result<()>`: Saves the document in `window` to its file. An error if it has none yet (use `save_document_as`, or the Save menu item, which asks).

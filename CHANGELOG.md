@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Added: `set_recent_documents`**, to replace File ▸ Open Recent's list (an app leaving out files of its own, such as a capture run's scratch databases). Found in Rowboat, whose cleanup had cleared AppKit's list, which Ferrokit's menu doesn't read.
+- **Added: `Outline::transparent_background`**: an outline on a card or a tinted panel, without the content background that shows as a lighter rectangle in Dark Mode.
+
 ## 0.14.0 (2026-11-23): the second step to 1.0's API
 
 Hides what's internal, so 1.0 can promise the rest, and removes what 0.13 deprecated. Each change says what to write instead.

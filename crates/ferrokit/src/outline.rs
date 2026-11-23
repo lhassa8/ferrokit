@@ -398,6 +398,7 @@ pub struct Outline<T: Identifiable + 'static> {
     selection: Option<Signal<Option<T::Id>>>,
     sidebar: bool,
     expanded: bool,
+    transparent: bool,
 }
 
 /// An extra column of an outline (see [`Outline::column`]).
@@ -413,6 +414,15 @@ impl<T: Identifiable + 'static> Outline<T> {
     /// document's outline: trees read whole).
     pub fn expanded(mut self) -> Self {
         self.expanded = true;
+        self
+    }
+
+    /// No background of its own: the rows sit on whatever is behind the
+    /// outline (a card, a tinted panel), as a sidebar's do. Without it an
+    /// outline draws the system's content background, which in Dark Mode
+    /// differs from a card's control background.
+    pub fn transparent_background(mut self) -> Self {
+        self.transparent = true;
         self
     }
 
@@ -505,8 +515,11 @@ impl<T: Identifiable + 'static> View for Outline<T> {
         scroll.setDocumentView(Some(&ov));
         scroll.setHasVerticalScroller(true);
         scroll.setAutohidesScrollers(true);
-        if self.sidebar {
+        if self.sidebar || self.transparent {
             scroll.setDrawsBackground(false);
+        }
+        if self.transparent {
+            ov.setBackgroundColor(&objc2_app_kit::NSColor::clearColor());
         }
 
         let state = Rc::new(RefCell::new(State { group_roots: self.sidebar, ..State::default() }));
@@ -682,7 +695,7 @@ pub fn outline<T: Identifiable + 'static>(
     roots: impl Fn() -> Vec<TreeNode<T>> + 'static,
     title: impl Fn(&T) -> String + 'static,
 ) -> Outline<T> {
-    Outline { roots: Box::new(roots), title: Rc::new(title), icon: None, tint: None, badge: None, columns: Vec::new(), lazy: None, selection: None, sidebar: false, expanded: false }
+    Outline { roots: Box::new(roots), title: Rc::new(title), icon: None, tint: None, badge: None, columns: Vec::new(), lazy: None, selection: None, sidebar: false, expanded: false, transparent: false }
 }
 
 /// A Mac sidebar: an outline in the source-list style whose top-level items

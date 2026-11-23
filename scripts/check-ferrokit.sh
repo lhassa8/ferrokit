@@ -98,7 +98,7 @@ fn main() {
     App::new("Update Test")
         .window(Window::new("Update Test").view(text(concat!("Version ", env!("CARGO_PKG_VERSION")))))
         .on_launch(|| {
-            let menu = testing::app_menu_titles();
+            let menu = testing::probes::app_menu_titles();
             let ok = menu.iter().position(|t| t == "Check for Updates…") == Some(1);
             eprintln!("[update] menu {} {menu:?}", if ok { "ok" } else { "missing" });
             updates::on_event(|e| {

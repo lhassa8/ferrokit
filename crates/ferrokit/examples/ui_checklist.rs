@@ -6206,6 +6206,17 @@ fn outline_expanded_checks(events: Rc<RefCell<Vec<AppEvent>>>) {
         let after = ov.numberOfRows();
         check("outline-expanded", rows == 5 && after == 7, format!("{rows} rows shown of 5; after the tree grew {after} of 7"));
         ferrokit::close_window(&w);
+        // `transparent_background`: neither the outline nor its scroll view
+        // draws a background (a plain one does, the content background).
+        let leaf = || vec![TreeNode::leaf(Step("x".into()))];
+        let w = open(Window::new("Clear").size(300.0, 200.0).view(hstack((outline(leaf, |s: &Step| s.0.clone()), outline(leaf, |s: &Step| s.0.clone()).transparent_background()))));
+        let views: Vec<_> = all_views(&w.contentView().unwrap()).into_iter().filter_map(|v| v.downcast::<objc2_app_kit::NSOutlineView>().ok()).collect();
+        let clear = |ov: &objc2_app_kit::NSOutlineView| ov.backgroundColor().alphaComponent() == 0.0 && !ov.enclosingScrollView().unwrap().drawsBackground();
+        let found: Vec<bool> = views.iter().map(|ov| clear(ov)).collect();
+        let mut sorted = found.clone();
+        sorted.sort();
+        check("outline-transparent", sorted == [false, true], format!("plain and transparent outlines draw no background: {found:?}"));
+        ferrokit::close_window(&w);
         outline_lazy_checks(events.clone());
     });
 }

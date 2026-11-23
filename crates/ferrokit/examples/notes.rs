@@ -234,6 +234,12 @@ mod self_checks {
             recent.first() == Some(&canon(&b)) && recent.get(1) == Some(&canon(&a)) && items.starts_with(&["b.md".to_string(), "a.txt".to_string()]) && items.last().map(String::as_str) == Some("Clear Menu"),
             format!("recents {:?}; menu {items:?}", recent.iter().take(2).map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect::<Vec<_>>()),
         );
+        // An app's own list: one file left out, the order kept, then put back.
+        ferrokit::set_recent_documents(&[a.clone(), dir.join("gone.txt")]);
+        let set = recent_documents();
+        ferrokit::set_recent_documents(&recent);
+        let back = recent_documents();
+        check("set-recent", set == vec![canon(&a)] && back == recent, format!("set to a.txt and a missing file → {set:?}; put back: {}", back == recent));
         // A folder the user chose, kept for later launches (sandboxed: a
         // security-scoped bookmark, resolved and reached again).
         ferrokit::remember_access(&dir);

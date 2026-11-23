@@ -610,6 +610,22 @@ pub fn recent_documents() -> Vec<PathBuf> {
     }).collect()
 }
 
+/// Replaces the recent documents (File ▸ Open Recent), newest first: for
+/// an app that opens files of its own it doesn't want listed (a scratch
+/// copy, a capture run's files). Kept to the menu's ten; files no longer
+/// there are left out when the list is read.
+pub fn set_recent_documents(paths: &[PathBuf]) {
+    let mut list: Vec<PathBuf> = Vec::new();
+    for p in paths {
+        let p = p.canonicalize().unwrap_or_else(|_| p.clone());
+        if !list.contains(&p) {
+            list.push(p);
+        }
+    }
+    list.truncate(RECENTS_MAX);
+    set_recents(&list);
+}
+
 fn set_recents(list: &[PathBuf]) {
     let joined = list.iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>().join("\n");
     // SAFETY: an NSString value for a string key.

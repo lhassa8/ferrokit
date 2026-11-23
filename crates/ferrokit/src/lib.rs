@@ -142,7 +142,7 @@ pub use controls::{
 pub use chrome::{MenuItem, Modifier, Split, customize_toolbar_item, dynamic_submenu, format_menu, submenu, ToolbarItem, menu_item, menu_separator, split, toolbar_button, toolbar_fixed_space, toolbar_group, toolbar_picker, toolbar_search, toolbar_space};
 pub use dialogs::{Alert, OpenOptions, Reply, SheetHandle, alert, alert_async, open_panel, open_panel_async, save_panel, save_panel_async, sheet, sheet_async, sheet_with};
 pub use documents::{
-    Document, DocumentType, choose_documents, document_edited, new_document, open_document, recent_documents, regain_access, remember_access, revert_document, save_document, save_document_as, show_welcome, welcome_window,
+    Document, DocumentType, choose_documents, document_edited, new_document, open_document, recent_documents, regain_access, set_recent_documents, remember_access, revert_document, save_document, save_document_as, show_welcome, welcome_window,
 };
 pub use models::{Table, TextEditor, table, text_editor};
 pub use outline::{Outline, TreeNode, outline, sidebar};
