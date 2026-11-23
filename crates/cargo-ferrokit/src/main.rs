@@ -70,7 +70,7 @@ Settings, in the app's Cargo.toml:
     name = \"My App\"            # shown in the menu bar, Finder and Dock
     id = \"com.example.myapp\"   # bundle identifier
     icon = \"icon.png\"          # square PNG (1024 px), .icns, or an Icon Composer
-                                # .icon (macOS 26's dark, tinted and clear looks; needs Xcode)
+                                # .icon (macOS 26's dark, tinted and clear looks; needs Xcode 26)
     min-macos = \"15.0\"
     category = \"public.app-category.productivity\"
     languages = [\"de\", \"fr\"]     # its translations (see ferrokit's App::translations)
@@ -992,16 +992,14 @@ fn make_icon(icon: &Path, resources: &Path) -> Result<Icon> {
             ]
             .map(String::from);
             let args: Vec<&str> = args.iter().map(String::as_str).collect();
-            // actool comes with Xcode, not the command line tools: use the
-            // Xcode in /Applications when xcode-select points at those.
-            let mut cmd = Command::new("xcrun");
-            if output("xcrun", &["--find", "actool"], None).is_err() {
-                let xcode = Path::new("/Applications/Xcode.app/Contents/Developer");
-                if !xcode.exists() {
-                    let _ = std::fs::remove_dir_all(&tmp);
-                    return Err(format!("{} needs Xcode's actool (install Xcode, or use a PNG icon)", icon.display()));
-                }
-                cmd.env("DEVELOPER_DIR", xcode);
+            let Some((mut cmd, version)) = actool() else {
+                let _ = std::fs::remove_dir_all(&tmp);
+                return Err(format!("{} needs Xcode's actool (install Xcode, or use a PNG icon)", icon.display()));
+            };
+            if version < 26 {
+                // Older actools know no Icon Composer documents: they succeed and write nothing.
+                let _ = std::fs::remove_dir_all(&tmp);
+                return Err(format!("{} needs Xcode 26 or later to compile (its actool is {version}); or use a PNG icon", icon.display()));
             }
             eprintln!("    \x1b[2mxcrun {}\x1b[0m", args.join(" "));
             let result = cmd.args(&args).output().map_err(|e| format!("couldn't run actool: {e}"));
@@ -1031,6 +1029,30 @@ fn make_icon(icon: &Path, resources: &Path) -> Result<Icon> {
         }
         _ => Err(format!("the icon {} must be a .png, .icns or .icon", icon.display())),
     }
+}
+
+/// Xcode's actool, ready to run, and its major version. It comes with Xcode,
+/// not the command line tools: the Xcode in /Applications is used when
+/// xcode-select points at those.
+fn actool() -> Option<(Command, u32)> {
+    let xcode = Path::new("/Applications/Xcode.app/Contents/Developer");
+    let own = output("xcrun", &["--find", "actool"], None).is_ok();
+    if !own && !xcode.exists() {
+        return None;
+    }
+    let mut cmd = Command::new("xcrun");
+    if !own {
+        cmd.env("DEVELOPER_DIR", xcode);
+    }
+    let mut probe = Command::new("xcrun");
+    if !own {
+        probe.env("DEVELOPER_DIR", xcode);
+    }
+    let text = String::from_utf8(probe.args(["actool", "--version"]).output().ok()?.stdout).ok()?;
+    // <key>short-bundle-version</key> <string>26.1</string>
+    let after = text.split("short-bundle-version").nth(1)?;
+    let version = after.split("<string>").nth(1)?.split(['.', '<']).next()?.trim().parse().ok()?;
+    Some((cmd, version))
 }
 
 /// `<app>.zip` next to the app (ditto, as the Finder's Compress does).
@@ -1494,9 +1516,22 @@ mod tests {
     /// Xcode's actool; skipped without Xcode).
     #[test]
     fn icon_composer_document() {
-        if output("xcrun", &["--find", "actool"], None).is_err() && !Path::new("/Applications/Xcode.app").exists() {
-            eprintln!("SKIP: no Xcode for actool");
-            return;
+        match actool() {
+            Some((_, version)) if version >= 26 => {}
+            found => {
+                // Without Xcode 26 the document is refused with a clear message.
+                let version = found.map(|f| f.1);
+                eprintln!("SKIP: no Xcode 26 for actool ({version:?})");
+                if version.is_some() {
+                    let dir = std::env::temp_dir().join(format!("cargo-ferrokit-icon-old-{}", std::process::id()));
+                    std::fs::create_dir_all(dir.join("Old.icon")).unwrap();
+                    std::fs::write(dir.join("Old.icon/icon.json"), "{}").unwrap();
+                    let err = make_icon(&dir.join("Old.icon"), &dir).unwrap_err();
+                    assert!(err.contains("needs Xcode 26 or later"), "{err}");
+                    let _ = std::fs::remove_dir_all(&dir);
+                }
+                return;
+            }
         }
         let dir = std::env::temp_dir().join(format!("cargo-ferrokit-icon-test-{}", std::process::id()));
         let doc = dir.join("Mine.icon");
