@@ -4,6 +4,7 @@ Where Ferrokit is going, roughly in order. It changes as people tell us what the
 
 ## Now: 0.14
 
+- **Released in 0.14.1:** `set_recent_documents` (an app's own Open Recent list) and `Outline::transparent_background` (an outline on a card, without a lighter panel in Dark Mode).
 - **Released in 0.14.0, the second step to 1.0's API:** what's internal is hidden (the models' plumbing, how views are built, Ferrokit's own probes in `testing::probes`), toolbar items can gain options without breaking apps, and what 0.13 deprecated is gone. One more step (0.15) settles the API for 1.0.
 - **Released in 0.13.0, the first step to 1.0's API:** the 0.4 deprecations removed, enums and structs that will grow marked so, builders for open-panel options and cell styles, tooltips and accessibility labels that follow signals, and table and text models that choose their own ids. Two more steps (0.14, 0.15) settle the API for 1.0.
 - **Released in 0.11.1:** `cargo ferrokit bundle` takes an Icon Composer `.icon` as the app icon, for macOS 26's dark, tinted and clear looks.

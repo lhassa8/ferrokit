@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.14.1 (2026-11-23): Open Recent and outlines on cards
 
 - **Added: `set_recent_documents`**, to replace File ▸ Open Recent's list (an app leaving out files of its own, such as a capture run's scratch databases). Found in Rowboat, whose cleanup had cleared AppKit's list, which Ferrokit's menu doesn't read.
 - **Added: `Outline::transparent_background`**: an outline on a card or a tinted panel, without the content background that shows as a lighter rectangle in Dark Mode.
