@@ -2,7 +2,7 @@
 
 Where Ferrokit is going, roughly in order. It changes as people tell us what they need; the "What I'm building" issues weigh most.
 
-## Now: 0.11
+## Now: 0.12
 
 - **Released in 0.11.1:** `cargo ferrokit bundle` takes an Icon Composer `.icon` as the app icon, for macOS 26's dark, tinted and clear looks.
 - **Released in 0.11.0:** what building a showcase SQLite editor (Rowboat) needed: image cells from bytes, clickable cell icons, short dates and tighter cell spacing for data grids, ↑ and ↓ in a field that filters a list (`on_arrows`), fast column fitting over a million rows, and a memory reading that works in a sandboxed app.
@@ -11,7 +11,7 @@ Where Ferrokit is going, roughly in order. It changes as people tell us what the
 - **Released in 0.9.0:** SwiftUI views in a Ferrokit app (Swift Charts, `Gauge`'s styles, MapKit's SwiftUI `Map`) through `native(..)`, with a new crate, `ferrokit-build`, that compiles the app's Swift from `build.rs`; and Ferrokit's accessibility audit sees inside SwiftUI views.
 - **Being designed in [#7](https://github.com/lhassa8/ferrokit/issues/7):** the SwiftUI bridge, so a SwiftUI view needs one line naming it instead of hand-written glue.
 - **Released in 0.8.0:** links into the app (`myapp://`, [#1](https://github.com/lhassa8/ferrokit/issues/1)) and async tasks ([#2](https://github.com/lhassa8/ferrokit/issues/2)).
-- **Next release, the rest of async ([#2](https://github.com/lhassa8/ferrokit/issues/2)):** awaitable alerts, panels and sheets (`alert_async`, `sheet_async`…), async resources (`Resource::new_async`), and `on_runtime` for work on your tokio runtime (the `tokio` feature).
+- **Released in 0.12.0, the rest of async ([#2](https://github.com/lhassa8/ferrokit/issues/2)):** awaitable alerts, panels and sheets (`alert_async`, `sheet_async`…), async resources (`Resource::new_async`), and `on_runtime` for work on your tokio runtime (the `tokio` feature).
 - **Found by agents building apps in trials:** a toolbar button that shows an on/off state, a collapsed split pane that comes back at its old width, thousands grouping in number columns.
 - **Contributor experience:** starter issues, a guide page for people coming from egui, Iced or Slint.
 

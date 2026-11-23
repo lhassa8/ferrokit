@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased: the rest of async ([#2](https://github.com/lhassa8/ferrokit/issues/2))
+## 0.12.0 (2026-11-23): the rest of async ([#2](https://github.com/lhassa8/ferrokit/issues/2))
 
 - **Added: awaitable dialogs.** `alert_async`, `open_panel_async`, `save_panel_async` and `sheet_async` return an `Answer` future to await in a `spawn_local` task instead of taking a callback. `alert_async` gives `Option<usize>` (`None` when the alert ends without a button and has no Cancel button); `sheet_async(&window, |reply| Window::new(..))` shows your own sheet, whose buttons answer with `reply.send(value)` or `reply.cancel()`. If the task is cancelled while it waits (its window closed, `Task::cancel`), the sheet closes. Checks `async-alert`, `async-sheet`, `async-dialog-cancel`, `async-panels`.
 - **Added: `Resource::new_async`**: a resource whose load is a future, run on the main thread (not `Send`); a newer load drops the older one's future at its `.await`, so there's no `Cancel` to check, and a `sleep` at its start debounces. A panic in a load is reported and makes it a failed load. Checks `async-resource-load`, `async-resource-error`, `async-resource-owner`.
