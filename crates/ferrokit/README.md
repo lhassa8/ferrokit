@@ -8,6 +8,11 @@ updated in place by fine-grained signals. No virtual DOM, no diffing, no web
 view, no custom drawing. So VoiceOver, spell check, input methods and Mac
 text editing come with it.
 
+It's for putting a real Mac app on top of your Rust code: the UI calls your
+crates directly, in one `cargo` build, with no Swift layer or FFI bridge.
+Apps can check themselves through their real controls (`ferrokit::testing`),
+so you or your AI assistant can verify a change without clicking through it.
+
 ```rust,no_run
 use ferrokit::*;
 

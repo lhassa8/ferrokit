@@ -4,13 +4,15 @@
 
 **Mac apps in Rust that are actually Mac apps.**
 
-Ferrokit is a native macOS GUI framework for Rust: every view is a real AppKit control, built once and updated in place by fine-grained signals.
+Ferrokit is a native macOS GUI framework for Rust. It puts a real Mac app on top of your Rust code: every view is a real AppKit control, built once and updated in place by fine-grained signals.
 
-It builds your UI from the real thing: an actual `NSTableView`, `NSTextView`, `NSSplitView` and `NSPopover`. It isn't a web view, and it isn't a GPU renderer doing an impression of AppKit. So the details Mac users notice are right because they're Apple's own: scrolling, keyboard navigation, spell check, Dark Mode, VoiceOver.
+- **Your Rust code, a real Mac app on top.** The UI calls your crates directly, in one language and one `cargo` build. There's no Swift layer, no FFI bridge to generate, no types written twice and no Xcode project beside your `Cargo.toml`.
+- **The real controls, without the ceremony.** Tables are `NSTableView`, text is `NSTextView`, splits are `NSSplitView`: not a web view, and not a GPU renderer doing an impression of AppKit. So the details Mac users notice are Apple's own (scrolling, keyboard navigation, spell check, Dark Mode, VoiceOver), and you declare views and signals instead of writing data sources and delegates.
+- **Apps that check themselves.** A Ferrokit app can run its own checks through its real controls, unattended, and every project ships an `AGENTS.md`, so you or your AI assistant can build a change and know it works without clicking through it.
 
-It's built on [objc2](https://github.com/madsmtm/objc2) and `objc2-app-kit`, the Rust bindings generated from Apple's own SDK headers, so when you need an AppKit class Ferrokit doesn't wrap, you can still reach it. SwiftUI-only views, such as Swift Charts and MapKit's `Map`, go in too: `ferrokit-build` compiles your Swift into the app.
+**Built with it:** [Rowboat](https://apps.apple.com/us/app/rowboat-sqlite-editor/id6832358629), a SQLite editor [in the Mac App Store](https://apps.apple.com/us/app/rowboat-sqlite-editor/id6832358629) (free): about 17,000 lines of Rust, with a million rows on screen in a fifth of a second.
 
-[Rowboat](https://apps.apple.com/us/app/rowboat-sqlite-editor/id6832358629), a SQLite editor for the Mac, is built with Ferrokit and is [in the Mac App Store](https://apps.apple.com/us/app/rowboat-sqlite-editor/id6832358629) (free).
+It's built on [objc2](https://github.com/madsmtm/objc2) and `objc2-app-kit`, the Rust bindings generated from Apple's SDK headers, so when you need an AppKit class Ferrokit doesn't wrap, you can still reach it. SwiftUI-only views, such as Swift Charts and MapKit's `Map`, go in too: `ferrokit-build` compiles your Swift into the app. It's Mac only, and an alpha.
 
 ![The SQL browser example: a schema sidebar, a highlighted query, its results table, a bar chart of them and an inspector](assets/sql-browser.png)
 
@@ -137,6 +139,7 @@ If Claude Code, Cursor or Codex writes most of your code, it can learn Ferrokit 
 ## Is it for me?
 
 **Yes, if:**
+- you have Rust code (a CLI, a library, an engine) and want a Mac app on top of it without a Swift bridge;
 - you want a Mac app that feels like it came from Apple;
 - your app is heavy on data: tables, editors, outlines, logs, charts;
 - you'd rather write Rust than Swift.
@@ -144,6 +147,7 @@ If Claude Code, Cursor or Codex writes most of your code, it can learn Ferrokit 
 **Not yet, if:**
 - you need Windows or Linux. Ferrokit is Mac only for now, and Windows is the planned second platform. Cross-platform toolkits such as Tauri, egui, Iced, Slint and GPUI are the tools for that today; they draw their own widgets or use a web view.
 - you need a stable API. It's an alpha (0.12), and the API will still change.
+- you're happy in Swift and have no Rust code to reuse, or you want iOS too. Then Swift with AppKit or SwiftUI is the better choice: Apple's own tools, documentation and sample code, and a stable API.
 
 ## Testing it like you mean it
 

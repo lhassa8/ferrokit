@@ -26,7 +26,11 @@ They're cross-platform and draw their own controls (Tauri uses a web view); Ferr
 
 ## Why not write the Mac app in Swift?
 
-If you're happy in Swift, do. Ferrokit is for Rust developers who want the whole app in one language: no Swift layer, no FFI boundary between your UI and your logic, one `cargo` build. It's built on [objc2](https://github.com/madsmtm/objc2), the standard Rust bindings to Apple's frameworks.
+Because your code is in Rust. A Swift app on top of a Rust core needs a bridge: an FFI layer generated with uniffi or swift-bridge and kept in sync, the same types on both sides, async carried across the boundary, and an Xcode project beside your `Cargo.toml`. With Ferrokit the UI calls your crates directly, in one `cargo` build.
+
+You also get AppKit's own controls with a declarative API. Mac apps with big tables or serious text editing still use `NSTableView` and `NSTextView`, which from Swift means writing data sources and delegates; in Ferrokit you declare the views and signals. And the app can check itself through its real controls, which helps when an AI assistant writes the code.
+
+Pick Swift instead if you have no Rust code to reuse, if you want iOS as well, or if you want Apple's own tools, documentation and a stable API: Ferrokit is an alpha with one maintainer. It's built on [objc2](https://github.com/madsmtm/objc2), the standard Rust bindings to Apple's frameworks, so the two can meet: an `NSView` from anywhere goes into a Ferrokit window with `native(..)`, and SwiftUI views go in with `ferrokit-build`.
 
 ## Can I add a GUI to my existing Rust CLI or library?
 

@@ -41,7 +41,7 @@ echo "site: writing llms.txt, llms-full.txt"
   print
   print -r -- "> Ferrokit builds native Mac apps in Rust: every view is a real AppKit control (NSTableView, NSOutlineView, NSTextView, NSSplitView), built once and updated in place by fine-grained signals. VoiceOver, spell check, input methods and Mac text editing come from macOS itself. Mac only (macOS 15 or later); version $(grep -m1 '^version' Cargo.toml | cut -d'"' -f2), an alpha whose API still changes. Crate: ferrokit; tool: cargo-ferrokit (new, run, preview, check, bundle, notarize, appcast, bundle --app-store)."
   print
-  print -r -- "Use it for Mac-only apps that should look and behave like Mac apps, especially data-heavy ones (tables, outlines, text editors, logs, charts). Don't use it for apps that must also run on Windows, Linux, mobile or the web (egui, Iced, Slint, Tauri or NSH fit those), for games, or for a UI inside a GPU-rendered window."
+  print -r -- "Use it to put a Mac app on top of existing Rust code (a CLI, a library: the UI calls the crates directly, in one cargo build, with no Swift layer or FFI bridge), and for Mac-only apps that should look and behave like Mac apps, especially data-heavy ones (tables, outlines, text editors, logs, charts). An app can check itself through its real controls (ferrokit::testing, cargo ferrokit check), so an agent can verify its changes. Prefer Swift (AppKit or SwiftUI) when there's no Rust code to reuse or the app also targets iOS. Don't use it for apps that must also run on Windows, Linux, mobile or the web (egui, Iced, Slint, Tauri or NSH fit those), for games, or for a UI inside a GPU-rendered window."
   print
   print -r -- "## Docs for agents"
   print

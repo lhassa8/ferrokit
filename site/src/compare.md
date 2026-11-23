@@ -1,9 +1,9 @@
-# Ferrokit vs egui, Iced, Slint, Tauri, GPUI, NSH, cacao and objc2 on the Mac
+# Ferrokit vs Swift, egui, Iced, Slint, Tauri, GPUI, NSH, cacao and objc2 on the Mac
 
 Which Rust GUI should you use for a **Mac app**? It depends mostly on one question: does the app have to run anywhere else?
 
 - **Also Windows, Linux, mobile or the web:** use a cross-platform toolkit: egui, Iced, Slint, Tauri, GPUI or NSH. Ferrokit is Mac only.
-- **Mac only, and it should look and behave like a Mac app:** that's what Ferrokit is for. NSH and raw `objc2` are the other ways to get AppKit views from Rust.
+- **Mac only, and it should look and behave like a Mac app:** that's what Ferrokit is for, especially when the app's core is Rust. NSH and raw `objc2` are the other ways to get AppKit views from Rust, and Swift itself is the other way to a Mac app ([Or just Swift?](#or-just-swift)).
 
 Ferrokit is written by the same person as this page, so read it with that in mind. Facts about the other projects come from their own repositories and docs, checked **2026-11-11** (GPUI **2026-11-16**), with links. If something here is wrong or out of date, please [open an issue](https://github.com/lhassa8/ferrokit/issues).
 
@@ -11,7 +11,7 @@ Ferrokit is written by the same person as this page, so read it with that in min
 
 | | How it draws on the Mac | Platforms | Maturity (2026-11-11) |
 | --- | --- | --- | --- |
-| **Ferrokit** | Stock AppKit controls (`NSTableView`, `NSTextView`…) | macOS 15+ | 0.11, alpha; started Oct 2026; one maintainer; no outside users yet |
+| **Ferrokit** | Stock AppKit controls (`NSTableView`, `NSTextView`…) | macOS 15+ | 0.12, alpha; started Oct 2026; one maintainer; no outside users yet |
 | **[egui](https://github.com/emilk/egui)** | Its own renderer (immediate mode, wgpu/OpenGL) | Mac, Windows, Linux, web, Android | 0.37 (Oct 2026); ~32k stars; very active |
 | **[Iced](https://github.com/iced-rs/iced)** | Its own renderer (wgpu or CPU) | Mac, Windows, Linux, web | 0.14 (Dec 2025); ~32k stars; active; calls itself experimental |
 | **[Slint](https://github.com/slint-ui/slint)** | Its own renderer; the `cupertino` style imitates macOS | Desktop, mobile, web, embedded | 1.18 (Sep 2026); ~25k stars; active; commercial company behind it |
@@ -47,6 +47,14 @@ Ferrokit is written by the same person as this page, so read it with that in min
 | **NSH** | `nsh package` (ad hoc signed `.app`) | By hand, per its docs | Not found for macOS | Not found |
 | **egui, Iced, cacao, objc2** | Not in the project (community tools such as `cargo-bundle`) | By hand | By hand | By hand |
 
+## Or just Swift?
+
+For a Mac-only app, the real alternative to Ferrokit isn't another Rust toolkit: it's Swift, with AppKit or SwiftUI.
+
+- **Swift wins** when there's no Rust code to reuse, when the app should also run on iOS, and when you want Apple's own tools (Xcode, previews), documentation, sample code and a stable API. SwiftUI is the quickest way to a modern Mac UI; AppKit from Swift has everything Ferrokit has, and more.
+- **Ferrokit wins** when the app's core is Rust. The Swift route then needs a bridge (uniffi or swift-bridge), types on both sides, async across the boundary and two build systems; with Ferrokit the UI calls your crates directly, in one `cargo` build. It also gives AppKit's data-heavy controls (`NSTableView`, `NSOutlineView`, `NSTextView`) a declarative API, where Swift would use data sources and delegates or SwiftUI's simpler `Table` and `List`.
+- **Both:** an app can be Swift with a Rust core through a bridge, or Ferrokit with a few SwiftUI views compiled in by [`ferrokit-build`](swiftui-views-in-a-rust-mac-app.md).
+
 ## When to pick which
 
 **Pick egui** for tools, debug UIs, editors and anything that also runs on Windows, Linux or the web, when a consistent look of its own is fine. It's the quickest way from nothing to a window, and it's mature.
@@ -65,7 +73,9 @@ Ferrokit is written by the same person as this page, so read it with that in min
 
 **cacao** pioneered safe AppKit bindings in Rust, but it hasn't had a release since 2023 or a commit since 2024 and pins an old objc2 beta, so it's hard to recommend for a new app.
 
-**Pick Ferrokit** when the app is Mac only, should behave exactly like a Mac app (tables, outlines, text, menus, VoiceOver, Dark Mode, Liquid Glass) without you rebuilding any of it, and you'd rather write Rust than Swift. Go in knowing what it is today: an alpha with one maintainer and no outside users yet, whose API will still change. The [examples](https://github.com/lhassa8/ferrokit#the-example-apps) show how far it goes, and the [roadmap](https://github.com/lhassa8/ferrokit/blob/main/ROADMAP.md) where it's heading.
+**Pick Swift** (AppKit or SwiftUI) for a Mac app with no Rust code behind it, or one that should also run on iOS.
+
+**Pick Ferrokit** when the app is Mac only, its core is (or will be) Rust, should behave exactly like a Mac app (tables, outlines, text, menus, VoiceOver, Dark Mode, Liquid Glass) without you rebuilding any of it, and you'd rather write Rust than Swift. Go in knowing what it is today: an alpha with one maintainer and no outside users yet, whose API will still change. The [examples](https://github.com/lhassa8/ferrokit#the-example-apps) show how far it goes, and the [roadmap](https://github.com/lhassa8/ferrokit/blob/main/ROADMAP.md) where it's heading.
 
 ## Coming from egui, Iced or Slint
 

@@ -17,7 +17,7 @@
 
 # Choosing
 
-- [Ferrokit vs egui, Iced, Slint, Tauri, GPUI, NSH, cacao and objc2 on the Mac](compare.md)
+- [Ferrokit vs Swift, egui, Iced, Slint, Tauri, GPUI, NSH, cacao and objc2 on the Mac](compare.md)
 
 # The guide
 

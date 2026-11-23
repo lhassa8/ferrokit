@@ -1,6 +1,12 @@
 # Ferrokit: native Mac apps in Rust
 
-**Ferrokit is a native macOS GUI framework for Rust.** Every view is a real AppKit control (an actual `NSTableView`, `NSOutlineView`, `NSTextView`, `NSSplitView`), built once and updated in place by fine-grained signals. It isn't a web view, and it isn't a GPU renderer imitating AppKit. So scrolling, keyboard navigation, VoiceOver, spell check, input methods and Dark Mode are Apple's own.
+**Ferrokit is a native macOS GUI framework for Rust.** It puts a real Mac app on top of your Rust code: every view is a real AppKit control (an actual `NSTableView`, `NSOutlineView`, `NSTextView`, `NSSplitView`), built once and updated in place by fine-grained signals.
+
+- **Your Rust code, a real Mac app on top.** The UI calls your crates directly, in one language and one `cargo` build: no Swift layer, no FFI bridge, no types written twice, no Xcode project.
+- **The real controls, without the ceremony.** Not a web view, and not a GPU renderer imitating AppKit, so scrolling, keyboard navigation, VoiceOver, spell check, input methods and Dark Mode are Apple's own. You declare views and signals; Ferrokit writes the data sources and delegates.
+- **Apps that check themselves.** An app can run its own checks through its real controls, unattended, and every project ships an `AGENTS.md`, so you or your AI assistant can build a change and know it works.
+
+**Built with it:** [Rowboat](https://apps.apple.com/us/app/rowboat-sqlite-editor/id6832358629), a SQLite editor in the Mac App Store, about 17,000 lines of Rust.
 
 It's Mac only, on purpose, and needs macOS 15 or later. If you need Windows or Linux too, read [the comparison](compare.md) first: other toolkits fit that better.
 
