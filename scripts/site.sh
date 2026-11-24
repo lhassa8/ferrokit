@@ -30,6 +30,15 @@ for f in crates/ferrokit/guide/[0-9][0-9]-*.md; do
   ' "$f" > "site/src/guide/${f:t}"
 done
 cp assets/sql-browser.png assets/habits.png assets/charts-dark.png site/src/images/
+# The stability policy and the migration guide, from the repository's root
+# (their links to other root files pointed at GitHub, to each other at the pages).
+gh=https://github.com/lhassa8/ferrokit/blob/main
+for f in STABILITY MIGRATING; do
+  perl -pe "
+    s{\\]\\(STABILITY\\.md}{](stability.md}g; s{\\]\\(MIGRATING\\.md}{](migrating.md}g;
+    s{\\]\\(((?:CHANGELOG|SECURITY|ROADMAP)\\.md|crates/[^)]+)}{]($gh/\\1}g;
+  " $f.md > site/src/${(L)f}.md
+done
 
 echo "site: building"
 mdbook build site
@@ -53,7 +62,7 @@ echo "site: writing llms.txt, llms-full.txt"
   print
   print -r -- "Each page is also at its .html address; these are the Markdown copies."
   print
-  for p in faq native-mac-app-in-rust gui-for-an-existing-rust-cli nstableview-from-rust voiceover-and-mac-text mac-app-store wrap-any-nsview async-in-a-mac-app open-mac-app-from-a-link swiftui-views-in-a-rust-mac-app compare; do
+  for p in faq native-mac-app-in-rust gui-for-an-existing-rust-cli nstableview-from-rust voiceover-and-mac-text mac-app-store wrap-any-nsview async-in-a-mac-app open-mac-app-from-a-link swiftui-views-in-a-rust-mac-app compare stability migrating; do
     title=$(grep -m1 '^# ' site/src/$p.md | sed 's/^# //')
     print -r -- "- [$title]($site/$p.md)"
   done

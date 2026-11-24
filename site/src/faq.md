@@ -18,7 +18,7 @@ No. It's Mac only, on purpose, and needs macOS 15 or later. If your app must run
 
 ## Is Ferrokit ready for production?
 
-It's an alpha (0.15, November 2026): the API still changes between minor versions, it's made by one person with an AI coding assistant, and it has no outside users yet. Against that: about 550 self-checks across 18 example apps run the real apps on every change, on macOS 15 and 26, and [Rowboat](https://apps.apple.com/us/app/rowboat-sqlite-editor/id6832358629), a SQLite editor built with it, is in the Mac App Store. Pin the version and read the [changelog](https://github.com/lhassa8/ferrokit/blob/main/CHANGELOG.md) before upgrading.
+It's an alpha (0.15, November 2026): the API still changes between minor versions, it's made by one person with an AI coding assistant, and it has no outside users yet. Against that: about 550 self-checks across 18 example apps run the real apps on every change, on macOS 15 and 26, and [Rowboat](https://apps.apple.com/us/app/rowboat-sqlite-editor/id6832358629), a SQLite editor built with it, is in the Mac App Store. Pin the version and read the [changelog](https://github.com/lhassa8/ferrokit/blob/main/CHANGELOG.md) before upgrading; [Stability and support](stability.md) says what's promised, and [the migration guide](migrating.md) covers the API changes before 1.0.
 
 ## How does Ferrokit compare with egui, Iced, Slint, Tauri and GPUI?
 

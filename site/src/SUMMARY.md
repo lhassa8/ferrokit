@@ -18,6 +18,8 @@
 # Choosing
 
 - [Ferrokit vs Swift, egui, Iced, Slint, Tauri, GPUI, NSH, cacao and objc2 on the Mac](compare.md)
+- [Stability and support](stability.md)
+- [Migrating to the 1.0 API](migrating.md)
 
 # The guide
 

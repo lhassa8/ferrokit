@@ -174,15 +174,12 @@ The crates share one version number and are released together, so use matching v
 
 ## Stability
 
-Ferrokit is an alpha. It promises the following.
+Ferrokit is an alpha (0.15), and 0.15's API is the one proposed for 1.0. [STABILITY.md](STABILITY.md) says what's promised:
+- semver: from 1.0, breaking changes wait for 2.0;
+- macOS 15 or later, always the current release and the one before;
+- how fast fixes come: a reply to a security report within 3 days, and a patch within 2 weeks for what a new macOS breaks.
 
-- **Versions:** while it's 0.x, a minor release (0.4 → 0.5) may change the API; a patch release (0.4.0 → 0.4.1) never does. Every change that breaks code is listed in the CHANGELOG with what to write instead, and a renamed item keeps working, deprecated, for one minor release where it can.
-- **AppKit types:** the everyday API names no AppKit or objc2 types (windows are `WindowRef`s). What does is an escape hatch: `WindowRef::ns`, `native(..)`, `TableModel::table_view`, `TextModel::text_view`, `Color::ns`, `Font::ns`, the `Stored` trait and the view lookups in `testing`. Those follow objc2's versions: when Ferrokit moves to a new objc2-app-kit, they may change in a minor release.
-- **One version:** the crates are released together under one version; `ferrokit` pins `ferrokit-core` exactly.
-- **macOS:** 15 or later. Checked on macOS 15 and the current release (CI), and on the newest beta locally. Each macOS release is checked when it ships; AppKit changes (macOS 27 turned column browser cells into text cells) are fixed in a patch.
-- **Rust:** the latest stable; the minimum (`rust-version`, 1.88) only rises in a minor release.
-- **Failures:** an Objective-C exception or a panic in code AppKit calls is caught where it came in, reported (`App::on_error`) and survived, never silently dropped.
-- **Checks:** every change runs the self-checks above (`scripts/check-all.sh`).
+Upgrading from 0.12 or earlier: [MIGRATING.md](MIGRATING.md). Security issues: [SECURITY.md](SECURITY.md).
 
 ## Earlier names
 
