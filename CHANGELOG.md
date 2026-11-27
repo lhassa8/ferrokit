@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Fixed: `cargo ferrokit appcast` names the update without spaces** (`My-App-1.1.0.zip`, was `My App 1.1.0.zip`). GitHub Releases turns a space in a file's name into a dot, so the feed's link to the update was broken there. Found by the first update over HTTPS with a Developer ID app (a notarised 1.0.0, downloaded from a GitHub release, updated itself to 1.0.1).
+
 ## 0.15.0 (2026-11-24): the third step to 1.0's API
 
 Windows get a Ferrokit type, so 1.0's everyday API names no AppKit types and objc2's yearly releases don't become Ferrokit major versions. [MIGRATING.md](MIGRATING.md) takes an app from 0.12 to here in one pass.

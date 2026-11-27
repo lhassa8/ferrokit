@@ -42,7 +42,7 @@ USAGE:
         the signing commands.
 
     cargo ferrokit appcast [--key-file <file>] [--app <path>] [--out <dir>] [--bin <name>]
-        For updates through Sparkle: zips the bundled app as \"<name> <version>.zip\"
+        For updates through Sparkle: zips the bundled app as \"<name>-<version>.zip\"
         in the updates folder (updates/ by default) and writes the feed there with
         Sparkle's generate_appcast, signing with the key from your keychain (or
         --key-file). Upload the folder's new files where `feed` points.
@@ -1418,6 +1418,13 @@ fn self_checks(exe: &Path, timeout: Duration) -> std::result::Result<String, Str
 
 // ---- appcast ----
 
+/// The update's file name: no spaces, since hosts rename them (GitHub
+/// Releases turns a space into a dot) and the feed's link would break.
+fn update_zip_name(display: &str, version: &str) -> String {
+    let name: String = display.split_whitespace().collect::<Vec<_>>().join("-");
+    format!("{name}-{version}.zip")
+}
+
 /// `appcast`: the bundled app zipped into the updates folder, and the feed
 /// written (or brought up to date) there by Sparkle's generate_appcast,
 /// which signs each update with the private key.
@@ -1442,7 +1449,8 @@ fn appcast(args: &[String]) -> Result<()> {
     let version = read("CFBundleShortVersionString")?;
     let out = a.value("--out").map(PathBuf::from).unwrap_or_else(|| p.dir.join("updates"));
     std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
-    let zip = out.join(format!("{} {version}.zip", p.display));
+    let zip_name = update_zip_name(&p.display, &version);
+    let zip = out.join(&zip_name);
     if zip.exists() {
         return Err(format!("{} is already there: each update needs a higher version (`version` in Cargo.toml)", zip.display()));
     }
@@ -1468,7 +1476,7 @@ fn appcast(args: &[String]) -> Result<()> {
         let _ = std::fs::remove_file(&zip);
         return Err(e);
     }
-    eprintln!("    upload the new files in {} ({} {version}.zip, {} and any .delta files) to {prefix}", out.display(), p.display, u.feed_name());
+    eprintln!("    upload the new files in {} ({zip_name}, {} and any .delta files) to {prefix}", out.display(), u.feed_name());
     println!("{}", feed.display());
     Ok(())
 }
@@ -1722,5 +1730,11 @@ mod tests {
         let ios = r#"{"application-identifier":"ABCDE12345.com.example.notes"}"#;
         assert_eq!(profile_ids(ios).unwrap().1, "ABCDE12345");
         assert!(profile_ids("{}").is_err());
+    }
+
+    #[test]
+    fn update_zip_names() {
+        assert_eq!(update_zip_name("My App", "1.1.0"), "My-App-1.1.0.zip");
+        assert_eq!(update_zip_name("Rowboat", "1.2.0"), "Rowboat-1.2.0.zip");
     }
 }

@@ -396,10 +396,12 @@ Each release:
 1. Raise `version` in `Cargo.toml`.
 2. `cargo ferrokit notarize` (a Developer ID signature and Apple's ticket).
 3. `cargo ferrokit appcast`. It zips the app into `updates/` as
-   `My App 1.1.0.zip` and writes `updates/appcast.xml` with Sparkle's
+   `My-App-1.1.0.zip` and writes `updates/appcast.xml` with Sparkle's
    `generate_appcast`, signing the update with your key.
 4. Upload the new files to the feed's folder. Any HTTPS host works: your
-   site, S3, GitHub Pages.
+   site, S3, GitHub Pages, or a GitHub release that holds the feed and the
+   updates (`feed = "https://github.com/you/myapp/releases/download/updates/appcast.xml"`,
+   then `gh release upload updates <the new files> --clobber`).
 
 Keep `updates/` between releases. `generate_appcast` keeps the feed's
 history and makes small delta updates from the earlier versions.
