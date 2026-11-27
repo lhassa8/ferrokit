@@ -4,6 +4,7 @@ Where Ferrokit is going, roughly in order. It changes as people tell us what the
 
 ## Now: 0.15
 
+- **Released in 0.15.1:** a guide chapter for people coming from egui, Iced or Slint, and `cargo ferrokit appcast` naming updates without spaces (GitHub Releases broke their links).
 - **0.15.0, the third step to 1.0's API:** windows are `WindowRef`s, Ferrokit's own handle, so the everyday API names no AppKit types; what does (`WindowRef::ns`, `native`, the models' views) is an escape hatch that follows objc2's versions. This is the API proposed for 1.0. Beside it: the support policy ([STABILITY.md](STABILITY.md)) and the migration guide from 0.12 ([MIGRATING.md](MIGRATING.md)).
 - **Released in 0.14.1:** `set_recent_documents` (an app's own Open Recent list) and `Outline::transparent_background` (an outline on a card, without a lighter panel in Dark Mode).
 - **Released in 0.14.0, the second step to 1.0's API:** what's internal is hidden (the models' plumbing, how views are built, Ferrokit's own probes in `testing::probes`), toolbar items can gain options without breaking apps, and what 0.13 deprecated is gone. One more step (0.15) settles the API for 1.0.
