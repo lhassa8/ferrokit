@@ -37,6 +37,7 @@
 - [More controls and charts](guide/12-more-controls-and-charts.md)
 - [Web, PDF, video and the system's services](guide/13-web-pdf-video-and-services.md)
 - [Custom native views](guide/14-custom-native-views.md)
+- [Coming from egui, Iced or Slint](guide/15-coming-from-egui-iced-slint.md)
 
 ---
 

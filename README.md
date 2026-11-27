@@ -81,7 +81,7 @@ model.set_rows(orders); // 200,000 rows load in about 5 ms
 let view = table(&model).on_activate(|row| println!("opened row {row}"));
 ```
 
-The [guide](crates/ferrokit/guide/README.md) has the rest in 14 chapters, and every example in it compiles as a test.
+The [guide](crates/ferrokit/guide/README.md) has the rest in 15 chapters, and every example in it compiles as a test.
 
 ## The example apps
 

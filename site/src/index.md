@@ -56,7 +56,7 @@ If you build something with it, even a weekend toy, [say so in an issue](https:/
 
 ## Links
 
-- [The guide](guide/01-getting-started.md), 14 chapters whose examples compile as tests
+- [The guide](guide/01-getting-started.md), 15 chapters whose examples compile as tests
 - [API reference on docs.rs](https://docs.rs/ferrokit)
 - [Source on GitHub](https://github.com/lhassa8/ferrokit) · [crates.io](https://crates.io/crates/ferrokit) · MIT OR Apache-2.0
 - [For AI coding agents](agents.md): `AGENTS.md`, `API.md` and [`llms.txt`](llms.txt)

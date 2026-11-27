@@ -39,6 +39,9 @@ public item. `cargo ferrokit agents` writes `AGENTS.md` into an app.
     and menu-bar extras.
 14. [Custom native views](14-custom-native-views.md): any `NSView` as a
     Ferrokit view, from MapKit's map to a view your app draws itself.
+15. [Coming from egui, Iced or Slint](15-coming-from-egui-iced-slint.md):
+    how their ideas (frames, messages, markup) map to signals and
+    closures, with a counter written in all four.
 
 The example apps are the long form of these chapters. They're in
 Ferrokit's repository (and in the published crate's `examples` folder):
