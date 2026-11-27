@@ -18,11 +18,11 @@ No. It's Mac only, on purpose, and needs macOS 15 or later. If your app must run
 
 ## Is Ferrokit ready for production?
 
-It's an alpha (0.15, November 2026): the API still changes between minor versions, it's made by one person with an AI coding assistant, and it has no outside users yet. Against that: about 550 self-checks across 18 example apps run the real apps on every change, on macOS 15 and 26, and [Rowboat](https://apps.apple.com/us/app/rowboat-sqlite-editor/id6832358629), a SQLite editor built with it, is in the Mac App Store. Pin the version and read the [changelog](https://github.com/lhassa8/ferrokit/blob/main/CHANGELOG.md) before upgrading; [Stability and support](stability.md) says what's promised, and [the migration guide](migrating.md) covers the API changes before 1.0.
+It's an alpha (0.15, November 2026): the API still changes between minor versions, it's made by one person with an AI coding assistant, and it has no outside users yet. Against that: about 580 self-checks across 18 example apps and `cargo ferrokit`'s templates run the real apps on every change, on macOS 15 and 26, and [Rowboat](https://apps.apple.com/us/app/rowboat-sqlite-editor/id6832358629), a SQLite editor built with it, is in the Mac App Store. Pin the version and read the [changelog](https://github.com/lhassa8/ferrokit/blob/main/CHANGELOG.md) before upgrading; [Stability and support](stability.md) says what's promised, and [the migration guide](migrating.md) covers the API changes before 1.0.
 
 ## How does Ferrokit compare with egui, Iced, Slint, Tauri and GPUI?
 
-They're cross-platform and draw their own controls (Tauri uses a web view); Ferrokit is Mac only and uses AppKit's. Pick one of them if the app must run on Windows or Linux, or is a tool, a game or a debug UI. Pick Ferrokit when it's a Mac app that should behave exactly like one. The [comparison page](compare.md) has the details, with links to each project's docs.
+They're cross-platform and draw their own controls (Tauri uses a web view); Ferrokit is Mac only and uses AppKit's. Pick one of them if the app must run on Windows or Linux, or is a tool, a game or a debug UI. Pick Ferrokit when it's a Mac app that should behave exactly like one. The [comparison page](compare.md) has the details, with links to each project's docs. If you know egui, Iced or Slint already, [Coming from egui, Iced or Slint](guide/15-coming-from-egui-iced-slint.md) maps their ideas onto Ferrokit's, with the same app written in each.
 
 ## Why not write the Mac app in Swift?
 

@@ -17,7 +17,7 @@ Where Ferrokit is going, roughly in order. It changes as people tell us what the
 - **Released in 0.8.0:** links into the app (`myapp://`, [#1](https://github.com/lhassa8/ferrokit/issues/1)) and async tasks ([#2](https://github.com/lhassa8/ferrokit/issues/2)).
 - **Released in 0.12.0, the rest of async ([#2](https://github.com/lhassa8/ferrokit/issues/2)):** awaitable alerts, panels and sheets (`alert_async`, `sheet_async`…), async resources (`Resource::new_async`), and `on_runtime` for work on your tokio runtime (the `tokio` feature).
 - **Found by agents building apps in trials:** a toolbar button that shows an on/off state, a collapsed split pane that comes back at its old width, thousands grouping in number columns.
-- **Contributor experience:** starter issues, a guide page for people coming from egui, Iced or Slint.
+- **Contributor experience:** starter issues, and a guide chapter for people coming from egui, Iced or Slint ([chapter 15](https://lhassa8.github.io/ferrokit/guide/15-coming-from-egui-iced-slint.html)).
 
 ## Next
 
@@ -28,11 +28,14 @@ What people build decides the order: "What I'm building" issues weigh most.
 
 ## 1.0
 
-1.0 comes once a few independent apps are built on Ferrokit, not on a date. Before it:
+1.0 comes once a few independent apps are built on Ferrokit, not on a date. What had to come first is done:
 
-- a last API review, deprecated items removed, anything that might change made private;
-- a migration guide from 0.x;
-- a support policy one person can keep: semver, the current macOS and the one before it at least, and how fast fixes for AppKit changes and security issues come.
+- the last API review (0.13 to 0.15): deprecated items removed, anything that might change made private;
+- a migration guide from 0.x ([MIGRATING.md](MIGRATING.md));
+- a support policy one person can keep ([STABILITY.md](STABILITY.md)): semver, the current macOS and the one before it at least, and how fast fixes for AppKit changes and security issues come;
+- updates shipped for real: a Mac App Store update (Rowboat 1.1) and a Sparkle update over HTTPS with a notarised Developer ID app.
+
+Still open: a run of the suites on an Intel Mac ([#6](https://github.com/lhassa8/ferrokit/issues/6)).
 
 ## Not planned
 

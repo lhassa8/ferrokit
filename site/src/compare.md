@@ -79,7 +79,7 @@ For a Mac-only app, the real alternative to Ferrokit isn't another Rust toolkit:
 
 ## Coming from egui, Iced or Slint
 
-The ideas carry over, with a few differences:
+The ideas carry over, with a few differences. [Coming from egui, Iced or Slint](guide/15-coming-from-egui-iced-slint.md) has them in full, with the same app written in each:
 
 - **Views are built once.** Unlike egui, nothing re-runs every frame; unlike Iced, there's no `view` function rebuilding a tree after each message. A view reads signals, and when a signal changes only the native views that read it update ([State](guide/02-state.md)).
 - **State is signals,** `Signal<T>`, which are `Copy`: closures take them with `move`. It's closer to Slint's properties or SolidJS than to Elm's messages.

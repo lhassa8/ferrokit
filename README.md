@@ -81,7 +81,7 @@ model.set_rows(orders); // 200,000 rows load in about 5 ms
 let view = table(&model).on_activate(|row| println!("opened row {row}"));
 ```
 
-The [guide](crates/ferrokit/guide/README.md) has the rest in 15 chapters, and every example in it compiles as a test.
+The [guide](crates/ferrokit/guide/README.md) has the rest in 15 chapters, and every example in it compiles as a test. Coming from egui, Iced or Slint? [Chapter 15](crates/ferrokit/guide/15-coming-from-egui-iced-slint.md) maps what you know onto Ferrokit.
 
 ## The example apps
 
@@ -145,13 +145,13 @@ If Claude Code, Cursor or Codex writes most of your code, it can learn Ferrokit 
 - you'd rather write Rust than Swift.
 
 **Not yet, if:**
-- you need Windows or Linux. Ferrokit is Mac only for now, and Windows is the planned second platform. Cross-platform toolkits such as Tauri, egui, Iced, Slint and GPUI are the tools for that today; they draw their own widgets or use a web view.
+- you need Windows or Linux. Ferrokit is Mac only for now; Windows is a possible second platform later, not planned yet. Cross-platform toolkits such as Tauri, egui, Iced, Slint and GPUI are the tools for that today; they draw their own widgets or use a web view.
 - you need a stable API. It's an alpha (0.15), and the API will still change.
 - you're happy in Swift and have no Rust code to reuse, or you want iOS too. Then Swift with AppKit or SwiftUI is the better choice: Apple's own tools, documentation and sample code, and a stable API.
 
 ## Testing it like you mean it
 
-Ferrokit tests itself with real apps. About 550 self-checks across 18 example apps click real buttons, type into real text views and read back what AppKit did. They run in release and debug builds and in the App Sandbox, on macOS 15, 26 and the newest beta. Your app gets the same tools: `ferrokit::testing` and `cargo ferrokit check`.
+Ferrokit tests itself with real apps. About 580 self-checks across 18 example apps and `cargo ferrokit`'s templates click real buttons, type into real text views and read back what AppKit did. They run in release and debug builds and in the App Sandbox, on macOS 15, 26 and the newest beta. Your app gets the same tools: `ferrokit::testing` and `cargo ferrokit check`.
 
 ## Built something?
 

@@ -52,4 +52,4 @@ Fixes go into the latest release only: before 1.0, the newest 0.x; from 1.0, the
 
 ## Failures
 
-An Objective-C exception or a panic in code AppKit calls is caught where it came in, reported (`App::on_error`) and survived, never silently dropped. Every change runs the self-checks: about 550 checks across 18 example apps, through the real controls (`scripts/check-all.sh`).
+An Objective-C exception or a panic in code AppKit calls is caught where it came in, reported (`App::on_error`) and survived, never silently dropped. Every change runs the self-checks: about 580 checks across 18 example apps and `cargo ferrokit`'s templates, through the real controls (`scripts/check-all.sh`).
