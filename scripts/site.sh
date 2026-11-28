@@ -29,7 +29,7 @@ for f in crates/ferrokit/guide/[0-9][0-9]-*.md; do
     s{\]\(crate::(?:[A-Za-z_]+::)*([A-Za-z_]+)\)}{](https://docs.rs/ferrokit/latest/ferrokit/?search=$1)}g;
   ' "$f" > "site/src/guide/${f:t}"
 done
-cp assets/sql-browser.png assets/habits.png assets/charts-dark.png site/src/images/
+cp assets/sql-browser.png assets/habits.png assets/charts-dark.png assets/rowboat-*.jpg site/src/images/
 # The stability policy and the migration guide, from the repository's root
 # (their links to other root files pointed at GitHub, to each other at the pages).
 gh=https://github.com/lhassa8/ferrokit/blob/main
@@ -62,7 +62,7 @@ echo "site: writing llms.txt, llms-full.txt"
   print
   print -r -- "Each page is also at its .html address; these are the Markdown copies."
   print
-  for p in faq native-mac-app-in-rust gui-for-an-existing-rust-cli nstableview-from-rust voiceover-and-mac-text mac-app-store wrap-any-nsview async-in-a-mac-app open-mac-app-from-a-link swiftui-views-in-a-rust-mac-app compare stability migrating; do
+  for p in faq rowboat native-mac-app-in-rust gui-for-an-existing-rust-cli nstableview-from-rust voiceover-and-mac-text mac-app-store wrap-any-nsview async-in-a-mac-app open-mac-app-from-a-link swiftui-views-in-a-rust-mac-app compare stability migrating; do
     title=$(grep -m1 '^# ' site/src/$p.md | sed 's/^# //')
     print -r -- "- [$title]($site/$p.md)"
   done

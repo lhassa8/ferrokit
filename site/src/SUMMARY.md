@@ -2,6 +2,7 @@
 
 [Ferrokit: native Mac apps in Rust](index.md)
 [FAQ](faq.md)
+[Built with Ferrokit: Rowboat](rowboat.md)
 
 # How to
 

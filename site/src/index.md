@@ -6,7 +6,7 @@
 - **The real controls, without the ceremony.** Not a web view, and not a GPU renderer imitating AppKit, so scrolling, keyboard navigation, VoiceOver, spell check, input methods and Dark Mode are Apple's own. You declare views and signals; Ferrokit writes the data sources and delegates.
 - **Apps that check themselves.** An app can run its own checks through its real controls, unattended, and every project ships an `AGENTS.md`, so you or your AI assistant can build a change and know it works.
 
-**Built with it:** [Rowboat](https://apps.apple.com/us/app/rowboat-sqlite-editor/id6832358629), a SQLite editor in the Mac App Store, about 17,000 lines of Rust.
+**Built with it:** [Rowboat](https://apps.apple.com/us/app/rowboat-sqlite-editor/id6832358629), a SQLite editor in the Mac App Store, about 17,000 lines of Rust ([how it's made](rowboat.md)).
 
 It's Mac only, on purpose, and needs macOS 15 or later. If you need Windows or Linux too, read [the comparison](compare.md) first: other toolkits fit that better.
 
